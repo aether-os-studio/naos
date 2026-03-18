@@ -28,10 +28,12 @@ fi
 /bin/mkdir -p /proc/
 /bin/mkdir -p /sys/
 /bin/mkdir -p /run/
+/bin/mkdir -p /tmp/
 
 /bin/mount -t proc proc /proc
 /bin/mount -t sysfs sysfs /sys
 /bin/mount -t tmpfs tmpfs /run
+/bin/mount -t tmpfs tmpfs /tmp
 
 /bin/mkdir -p /mnt/dev/
 /bin/mkdir -p /mnt/proc/

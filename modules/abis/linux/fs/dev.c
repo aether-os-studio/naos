@@ -687,9 +687,11 @@ ssize_t inputdev_event_read(void *data, void *buf, uint64_t offset,
         if (flags & O_NONBLOCK)
             return -EWOULDBLOCK;
 
-        int reason = inputdev_wait_node(event->devnode, EPOLLIN, "evdev_read");
-        if (reason != EOK)
-            return -EINTR;
+        // int reason = inputdev_wait_node(event->devnode, EPOLLIN,
+        // "evdev_read"); if (reason != EOK)
+        //     return -EINTR;
+
+        return 0;
     }
 }
 

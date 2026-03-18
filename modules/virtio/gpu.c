@@ -3,6 +3,7 @@
 #include "pci.h"
 #include <fs/fs_syscall.h>
 #include <dev/drm/drm.h>
+#include <dev/drm/drm_ioctl.h>
 #include <mm/mm.h>
 #include <libs/klibc.h>
 
@@ -19,17 +20,7 @@ uint32_t virtio_gpu_devices_count = 0;
 #ifndef VIRTGPU_PARAM_CREATE_GUEST_HANDLE
 #define VIRTGPU_PARAM_CREATE_GUEST_HANDLE 10
 #endif
-#define VIRTGPU_DRM_CAPSET_WIRE_FORMAT_VERSION 2
-
-typedef struct virtgpu_drm_capset_compat {
-    uint32_t wire_format_version;
-    uint32_t version_major;
-    uint32_t version_minor;
-    uint32_t version_patchlevel;
-    uint32_t context_type;
-    uint32_t pad[35];
-} virtgpu_drm_capset_compat_t;
-
+#define VIRTIO_GPU_BO_SHARED_ROOT_NONE UINT32_MAX
 typedef enum virtio_gpu_scanout_kind {
     VIRTIO_GPU_SCANOUT_DUMB = 0,
     VIRTIO_GPU_SCANOUT_BO,
@@ -48,14 +39,15 @@ typedef struct virtio_gpu_scanout_source {
 } virtio_gpu_scanout_source_t;
 
 static int virtio_gpu_resource_unmap_blob(virtio_gpu_device_t *gpu_dev,
-                                          uint32_t resource_id,
-                                          uint32_t ctx_id);
+                                          uint32_t resource_id);
 static int virtio_gpu_destroy_context(virtio_gpu_device_t *gpu_dev,
                                       uint32_t ctx_id);
 static int virtio_gpu_resource_map_blob(virtio_gpu_device_t *gpu_dev,
-                                        uint32_t resource_id, uint32_t ctx_id,
-                                        uint64_t offset,
+                                        uint32_t resource_id, uint64_t offset,
                                         uint32_t *map_info_out);
+static int virtio_gpu_attach_resource_to_ctx(virtio_gpu_device_t *gpu_dev,
+                                             uint32_t ctx_id,
+                                             uint32_t resource_id);
 static int virtio_gpu_detach_resource_from_ctx(virtio_gpu_device_t *gpu_dev,
                                                uint32_t ctx_id,
                                                uint32_t resource_id);
@@ -63,8 +55,14 @@ static int virtio_gpu_get_current_context(virtio_gpu_device_t *gpu_dev,
                                           uint32_t capset_id,
                                           uint32_t *ctx_id_out,
                                           uint32_t *capset_out, fd_t *fd);
+static void virtio_gpu_refresh_capset_mask(virtio_gpu_device_t *gpu_dev);
 static struct virtio_gpu_bo *virtio_gpu_bo_get(virtio_gpu_device_t *gpu_dev,
                                                uint32_t bo_handle);
+static struct virtio_gpu_bo *virtio_gpu_bo_alloc(virtio_gpu_device_t *gpu_dev,
+                                                 fd_t *fd);
+static struct virtio_gpu_bo *virtio_gpu_bo_resolve(virtio_gpu_device_t *gpu_dev,
+                                                   struct virtio_gpu_bo *bo);
+static uint32_t virtio_gpu_alloc_bo_handle(virtio_gpu_device_t *gpu_dev);
 
 static bool virtio_gpu_handle_to_index(uint32_t handle, uint32_t *idx) {
     if (!idx || handle == 0 || handle > 32) {
@@ -122,6 +120,34 @@ static bool virtio_gpu_owner_matches(uint64_t owner_file, fd_t *fd) {
     return owner_file == 0 || current_file == 0 || owner_file == current_file;
 }
 
+static uint32_t virtio_gpu_bo_index(virtio_gpu_device_t *gpu_dev,
+                                    struct virtio_gpu_bo *bo) {
+    if (!gpu_dev || !bo || bo < gpu_dev->bos ||
+        bo >= gpu_dev->bos + VIRTIO_GPU_MAX_BOS) {
+        return VIRTIO_GPU_BO_SHARED_ROOT_NONE;
+    }
+
+    return (uint32_t)(bo - gpu_dev->bos);
+}
+
+static struct virtio_gpu_bo *virtio_gpu_bo_resolve(virtio_gpu_device_t *gpu_dev,
+                                                   struct virtio_gpu_bo *bo) {
+    if (!gpu_dev || !bo || !bo->in_use) {
+        return NULL;
+    }
+
+    if (bo->shared_root_idx == VIRTIO_GPU_BO_SHARED_ROOT_NONE) {
+        return bo;
+    }
+
+    if (bo->shared_root_idx >= VIRTIO_GPU_MAX_BOS) {
+        return NULL;
+    }
+
+    struct virtio_gpu_bo *root = &gpu_dev->bos[bo->shared_root_idx];
+    return root->in_use ? root : NULL;
+}
+
 static int
 virtio_gpu_lookup_scanout_handle(virtio_gpu_device_t *gpu_dev, uint32_t handle,
                                  uint32_t width_hint, uint32_t height_hint,
@@ -161,20 +187,22 @@ virtio_gpu_lookup_scanout_handle(virtio_gpu_device_t *gpu_dev, uint32_t handle,
     }
 
     struct virtio_gpu_bo *bo = virtio_gpu_bo_get(gpu_dev, handle);
-    if (!bo || bo->resource_id == 0) {
-        return -ENOENT;
-    }
-    if (!virtio_gpu_owner_matches(bo->owner_file, fd)) {
+    if (!bo || !virtio_gpu_owner_matches(bo->owner_file, fd)) {
         return -ENOENT;
     }
 
-    uint32_t width = bo->width ? bo->width : width_hint;
-    uint32_t height = bo->height ? bo->height : height_hint;
-    uint32_t pitch = bo->stride ? bo->stride : pitch_hint;
+    struct virtio_gpu_bo *shared = virtio_gpu_bo_resolve(gpu_dev, bo);
+    if (!shared || shared->resource_id == 0) {
+        return -ENOENT;
+    }
 
-    if ((width_hint && bo->width && width_hint > bo->width) ||
-        (height_hint && bo->height && height_hint > bo->height) ||
-        (pitch_hint && bo->stride && pitch_hint != bo->stride)) {
+    uint32_t width = shared->width ? shared->width : width_hint;
+    uint32_t height = shared->height ? shared->height : height_hint;
+    uint32_t pitch = shared->stride ? shared->stride : pitch_hint;
+
+    if ((width_hint && shared->width && width_hint > shared->width) ||
+        (height_hint && shared->height && height_hint > shared->height) ||
+        (pitch_hint && shared->stride && pitch_hint != shared->stride)) {
         return -EINVAL;
     }
 
@@ -183,12 +211,12 @@ virtio_gpu_lookup_scanout_handle(virtio_gpu_device_t *gpu_dev, uint32_t handle,
     }
 
     out->kind = VIRTIO_GPU_SCANOUT_BO;
-    out->resource_id = bo->resource_id;
+    out->resource_id = shared->resource_id;
     out->width = width_hint ? width_hint : width;
     out->height = height_hint ? height_hint : height;
     out->pitch = pitch;
     out->needs_2d_upload = false;
-    out->is_blob = bo->is_blob;
+    out->is_blob = shared->is_blob;
     return 0;
 }
 
@@ -647,6 +675,95 @@ virtio_gpu_bo_get_owned(virtio_gpu_device_t *gpu_dev, uint32_t bo_handle,
     return bo;
 }
 
+static struct virtio_gpu_bo *
+virtio_gpu_bo_find_owner_alias(virtio_gpu_device_t *gpu_dev,
+                               struct virtio_gpu_bo *shared,
+                               uint64_t owner_file) {
+    if (!gpu_dev || !shared || owner_file == 0) {
+        return NULL;
+    }
+
+    for (uint32_t i = 0; i < VIRTIO_GPU_MAX_BOS; i++) {
+        struct virtio_gpu_bo *bo = &gpu_dev->bos[i];
+        if (!bo->in_use || bo->bo_handle == 0 || bo->owner_file != owner_file) {
+            continue;
+        }
+
+        if (virtio_gpu_bo_resolve(gpu_dev, bo) == shared) {
+            return bo;
+        }
+    }
+
+    return NULL;
+}
+
+static int virtio_gpu_bo_import_handle(virtio_gpu_device_t *gpu_dev,
+                                       struct virtio_gpu_bo *bo, fd_t *fd,
+                                       uint32_t *bo_handle_out) {
+    if (!gpu_dev || !bo || !fd || !bo_handle_out) {
+        return -EINVAL;
+    }
+
+    uint64_t owner_file = virtio_gpu_owner_file(fd);
+    if (owner_file == 0) {
+        return -EINVAL;
+    }
+
+    struct virtio_gpu_bo *shared = virtio_gpu_bo_resolve(gpu_dev, bo);
+    if (!shared || shared->resource_id == 0) {
+        return -ENOENT;
+    }
+
+    struct virtio_gpu_bo *existing =
+        virtio_gpu_bo_find_owner_alias(gpu_dev, shared, owner_file);
+    if (existing) {
+        *bo_handle_out = existing->bo_handle;
+        return 0;
+    }
+
+    struct virtio_gpu_bo *alias = virtio_gpu_bo_alloc(gpu_dev, fd);
+    if (!alias) {
+        return -ENOSPC;
+    }
+
+    uint32_t handle = virtio_gpu_alloc_bo_handle(gpu_dev);
+    if (handle == 0) {
+        memset(alias, 0, sizeof(*alias));
+        return -ENOSPC;
+    }
+
+    alias->bo_handle = handle;
+    alias->shared_root_idx = virtio_gpu_bo_index(gpu_dev, shared);
+    alias->shared_refcount = 0;
+    alias->attached_ctx_id = 0;
+    shared->shared_refcount++;
+
+    *bo_handle_out = handle;
+    return 0;
+}
+
+static int virtio_gpu_bo_ensure_ctx(virtio_gpu_device_t *gpu_dev,
+                                    struct virtio_gpu_bo *bo, uint32_t ctx_id) {
+    struct virtio_gpu_bo *shared = virtio_gpu_bo_resolve(gpu_dev, bo);
+    if (!gpu_dev || !bo || !shared || shared->resource_id == 0) {
+        return -EINVAL;
+    }
+
+    if (!gpu_dev->virgl_enabled || ctx_id == 0 ||
+        bo->attached_ctx_id == ctx_id) {
+        return 0;
+    }
+
+    int ret =
+        virtio_gpu_attach_resource_to_ctx(gpu_dev, ctx_id, shared->resource_id);
+    if (ret != 0) {
+        return ret;
+    }
+
+    bo->attached_ctx_id = ctx_id;
+    return 0;
+}
+
 static struct virtio_gpu_bo *virtio_gpu_bo_alloc(virtio_gpu_device_t *gpu_dev,
                                                  fd_t *fd) {
     if (!gpu_dev) {
@@ -658,6 +775,8 @@ static struct virtio_gpu_bo *virtio_gpu_bo_alloc(virtio_gpu_device_t *gpu_dev,
             memset(&gpu_dev->bos[i], 0, sizeof(gpu_dev->bos[i]));
             gpu_dev->bos[i].in_use = true;
             gpu_dev->bos[i].owner_file = virtio_gpu_owner_file(fd);
+            gpu_dev->bos[i].shared_root_idx = VIRTIO_GPU_BO_SHARED_ROOT_NONE;
+            gpu_dev->bos[i].shared_refcount = 1;
             return &gpu_dev->bos[i];
         }
     }
@@ -685,7 +804,9 @@ static int virtio_gpu_alloc_host_visible_offset(virtio_gpu_device_t *gpu_dev,
 
         for (uint32_t i = 0; i < VIRTIO_GPU_MAX_BOS; i++) {
             struct virtio_gpu_bo *mapped = &gpu_dev->bos[i];
-            if (!mapped->in_use || !mapped->blob_mapped || mapped->addr != 0) {
+            if (!mapped->in_use ||
+                mapped->shared_root_idx != VIRTIO_GPU_BO_SHARED_ROOT_NONE ||
+                !mapped->blob_mapped || mapped->addr != 0) {
                 continue;
             }
 
@@ -727,19 +848,20 @@ static int virtio_gpu_alloc_host_visible_offset(virtio_gpu_device_t *gpu_dev,
 
 static int virtio_gpu_map_host_visible_blob(virtio_gpu_device_t *gpu_dev,
                                             struct virtio_gpu_bo *bo) {
-    if (!gpu_dev || !bo || bo->resource_id == 0) {
+    struct virtio_gpu_bo *shared = virtio_gpu_bo_resolve(gpu_dev, bo);
+    if (!gpu_dev || !bo || !shared || shared->resource_id == 0) {
         return -EINVAL;
     }
-    if (bo->blob_mapped) {
+    if (shared->blob_mapped) {
         return 0;
     }
-    if (!bo->is_blob || bo->addr != 0) {
+    if (!shared->is_blob || shared->addr != 0) {
         return -EOPNOTSUPP;
     }
-    if (!(bo->blob_flags & VIRTGPU_BLOB_FLAG_USE_MAPPABLE)) {
+    if (!(shared->blob_flags & VIRTGPU_BLOB_FLAG_USE_MAPPABLE)) {
         return -EOPNOTSUPP;
     }
-    if (bo->blob_mem != VIRTGPU_BLOB_MEM_HOST3D) {
+    if (shared->blob_mem != VIRTGPU_BLOB_MEM_HOST3D) {
         return -EOPNOTSUPP;
     }
     if (gpu_dev->host_visible_shm_paddr == 0 ||
@@ -747,7 +869,7 @@ static int virtio_gpu_map_host_visible_blob(virtio_gpu_device_t *gpu_dev,
         return -EOPNOTSUPP;
     }
 
-    uint64_t map_size = bo->size ? bo->size : bo->alloc_size;
+    uint64_t map_size = shared->size ? shared->size : shared->alloc_size;
     if (map_size == 0) {
         return -EINVAL;
     }
@@ -759,35 +881,30 @@ static int virtio_gpu_map_host_visible_blob(virtio_gpu_device_t *gpu_dev,
     }
 
     uint32_t map_info = 0;
-    ret = virtio_gpu_resource_map_blob(gpu_dev, bo->resource_id,
-                                       bo->attached_ctx_id, offset, &map_info);
+    ret = virtio_gpu_resource_map_blob(gpu_dev, shared->resource_id, offset,
+                                       &map_info);
     if (ret != 0) {
         return ret;
     }
 
-    bo->host_visible_offset = offset;
-    bo->blob_map_info = map_info;
-    bo->blob_mapped = true;
+    shared->host_visible_offset = offset;
+    shared->blob_map_info = map_info;
+    shared->blob_mapped = true;
     return 0;
 }
 
 static void virtio_gpu_bo_release_resource(virtio_gpu_device_t *gpu_dev,
                                            struct virtio_gpu_bo *bo) {
-    if (!gpu_dev || !bo || !bo->in_use) {
+    if (!gpu_dev || !bo || !bo->in_use ||
+        bo->shared_root_idx != VIRTIO_GPU_BO_SHARED_ROOT_NONE) {
         return;
     }
 
     if (bo->blob_mapped && bo->resource_id) {
-        virtio_gpu_resource_unmap_blob(gpu_dev, bo->resource_id,
-                                       bo->attached_ctx_id);
+        virtio_gpu_resource_unmap_blob(gpu_dev, bo->resource_id);
     }
 
     if (bo->resource_id) {
-        if (bo->attached_ctx_id) {
-            virtio_gpu_detach_resource_from_ctx(gpu_dev, bo->attached_ctx_id,
-                                                bo->resource_id);
-        }
-
         if (!bo->is_blob || bo->addr) {
             virtio_gpu_detach_backing(gpu_dev, bo->resource_id);
         }
@@ -806,11 +923,10 @@ static void virtio_gpu_bo_release_resource(virtio_gpu_device_t *gpu_dev,
     bo->blob_mapped = false;
     bo->blob_map_info = 0;
     bo->host_visible_offset = 0;
-    bo->attached_ctx_id = 0;
 }
 
-static void virtio_gpu_bo_free(virtio_gpu_device_t *gpu_dev,
-                               struct virtio_gpu_bo *bo) {
+static void virtio_gpu_bo_destroy_slot(virtio_gpu_device_t *gpu_dev,
+                                       struct virtio_gpu_bo *bo) {
     if (!gpu_dev || !bo || !bo->in_use) {
         return;
     }
@@ -828,6 +944,42 @@ static void virtio_gpu_bo_free(virtio_gpu_device_t *gpu_dev,
     }
 
     memset(bo, 0, sizeof(*bo));
+}
+
+static void virtio_gpu_bo_free(virtio_gpu_device_t *gpu_dev,
+                               struct virtio_gpu_bo *bo) {
+    if (!gpu_dev || !bo || !bo->in_use) {
+        return;
+    }
+
+    struct virtio_gpu_bo *shared = virtio_gpu_bo_resolve(gpu_dev, bo);
+    if (!shared || shared->shared_refcount == 0) {
+        memset(bo, 0, sizeof(*bo));
+        return;
+    }
+
+    if (bo->attached_ctx_id && shared->resource_id) {
+        virtio_gpu_detach_resource_from_ctx(gpu_dev, bo->attached_ctx_id,
+                                            shared->resource_id);
+        bo->attached_ctx_id = 0;
+    }
+
+    shared->shared_refcount--;
+    if (bo == shared) {
+        if (shared->shared_refcount == 0) {
+            virtio_gpu_bo_destroy_slot(gpu_dev, shared);
+            return;
+        }
+
+        shared->bo_handle = 0;
+        shared->owner_file = 0;
+        return;
+    }
+
+    memset(bo, 0, sizeof(*bo));
+    if (shared->shared_refcount == 0) {
+        virtio_gpu_bo_destroy_slot(gpu_dev, shared);
+    }
 }
 
 static void virtio_gpu_framebuffer_release(virtio_gpu_device_t *gpu_dev,
@@ -1000,15 +1152,14 @@ static int virtio_gpu_create_resource_blob(virtio_gpu_device_t *gpu_dev,
 }
 
 static int virtio_gpu_resource_map_blob(virtio_gpu_device_t *gpu_dev,
-                                        uint32_t resource_id, uint32_t ctx_id,
-                                        uint64_t offset,
+                                        uint32_t resource_id, uint64_t offset,
                                         uint32_t *map_info_out) {
     if (!gpu_dev) {
         return -EINVAL;
     }
 
     virtio_gpu_resource_map_blob_t cmd = {
-        .hdr = {.type = VIRTIO_GPU_CMD_RESOURCE_MAP_BLOB, .ctx_id = ctx_id},
+        .hdr = {.type = VIRTIO_GPU_CMD_RESOURCE_MAP_BLOB},
         .resource_id = resource_id,
         .padding = 0,
         .offset = offset,
@@ -1033,14 +1184,13 @@ static int virtio_gpu_resource_map_blob(virtio_gpu_device_t *gpu_dev,
 }
 
 static int virtio_gpu_resource_unmap_blob(virtio_gpu_device_t *gpu_dev,
-                                          uint32_t resource_id,
-                                          uint32_t ctx_id) {
+                                          uint32_t resource_id) {
     if (!gpu_dev) {
         return -EINVAL;
     }
 
     virtio_gpu_resource_unmap_blob_t cmd = {
-        .hdr = {.type = VIRTIO_GPU_CMD_RESOURCE_UNMAP_BLOB, .ctx_id = ctx_id},
+        .hdr = {.type = VIRTIO_GPU_CMD_RESOURCE_UNMAP_BLOB},
         .resource_id = resource_id,
         .padding = 0,
     };
@@ -1070,7 +1220,7 @@ static int virtio_gpu_create_context(virtio_gpu_device_t *gpu_dev,
     };
 
     if (gpu_dev->negotiated_features & VIRTIO_GPU_F_CONTEXT_INIT) {
-        cmd.context_init = capset_id & 0xFF;
+        cmd.context_init = capset_id & VIRTIO_GPU_CONTEXT_INIT_CAPSET_ID_MASK;
     }
 
     virtio_gpu_ctrl_hdr_t resp;
@@ -1186,7 +1336,7 @@ static int virtio_gpu_submit_3d(virtio_gpu_device_t *gpu_dev, uint32_t ctx_id,
 }
 
 static int virtio_gpu_transfer_to_host_3d(virtio_gpu_device_t *gpu_dev,
-                                          uint32_t resource_id,
+                                          uint32_t ctx_id, uint32_t resource_id,
                                           const struct drm_virtgpu_3d_box *box,
                                           uint32_t level, uint32_t offset,
                                           uint32_t stride,
@@ -1196,7 +1346,7 @@ static int virtio_gpu_transfer_to_host_3d(virtio_gpu_device_t *gpu_dev,
     }
 
     virtio_gpu_transfer_host_3d_t cmd = {
-        .hdr = {.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D},
+        .hdr = {.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D, .ctx_id = ctx_id},
         .box.x = box->x,
         .box.y = box->y,
         .box.z = box->z,
@@ -1223,7 +1373,7 @@ static int virtio_gpu_transfer_to_host_3d(virtio_gpu_device_t *gpu_dev,
 }
 
 static int virtio_gpu_transfer_from_host_3d(
-    virtio_gpu_device_t *gpu_dev, uint32_t resource_id,
+    virtio_gpu_device_t *gpu_dev, uint32_t ctx_id, uint32_t resource_id,
     const struct drm_virtgpu_3d_box *box, uint32_t level, uint32_t offset,
     uint32_t stride, uint32_t layer_stride) {
     if (!gpu_dev || !box) {
@@ -1231,7 +1381,7 @@ static int virtio_gpu_transfer_from_host_3d(
     }
 
     virtio_gpu_transfer_host_3d_t cmd = {
-        .hdr = {.type = VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D},
+        .hdr = {.type = VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D, .ctx_id = ctx_id},
         .box.x = box->x,
         .box.y = box->y,
         .box.z = box->z,
@@ -1287,14 +1437,20 @@ static int virtio_gpu_find_capset_info(virtio_gpu_device_t *gpu_dev,
         return -EINVAL;
     }
 
-    for (uint32_t i = 0; i < 64; i++) {
-        virtio_gpu_resp_capset_info_t info;
-        if (virtio_gpu_get_capset_info(gpu_dev, i, &info) != 0) {
-            break;
+    if (!gpu_dev->capset_cache_valid) {
+        virtio_gpu_refresh_capset_mask(gpu_dev);
+    }
+
+    for (uint32_t pass = 0; pass < 2; pass++) {
+        for (uint32_t i = 0; i < gpu_dev->capset_info_count; i++) {
+            if (gpu_dev->capset_infos[i].capset_id == capset_id) {
+                *out = gpu_dev->capset_infos[i];
+                return 0;
+            }
         }
-        if (info.capset_id == capset_id) {
-            *out = info;
-            return 0;
+
+        if (pass == 0) {
+            virtio_gpu_refresh_capset_mask(gpu_dev);
         }
     }
 
@@ -1337,15 +1493,107 @@ static int virtio_gpu_get_capset(virtio_gpu_device_t *gpu_dev,
     return ret;
 }
 
-static void virtio_gpu_refresh_capset_mask(virtio_gpu_device_t *gpu_dev);
-
 static uint32_t virtio_gpu_normalize_capset_id(virtio_gpu_device_t *gpu_dev,
                                                uint32_t capset_id) {
-    if (capset_id == VIRTGPU_DRM_CAPSET_DRM && gpu_dev &&
-        gpu_dev->virgl_enabled) {
+    (void)gpu_dev;
+    return capset_id;
+}
+
+static uint32_t virtio_gpu_select_default_capset(virtio_gpu_device_t *gpu_dev) {
+    if (!gpu_dev || !gpu_dev->virgl_enabled) {
+        return 0;
+    }
+
+    if (gpu_dev->supported_capset_mask == 0) {
+        virtio_gpu_refresh_capset_mask(gpu_dev);
+    }
+
+    uint64_t mask = gpu_dev->supported_capset_mask;
+    if (!(gpu_dev->negotiated_features & VIRTIO_GPU_F_CONTEXT_INIT)) {
+        if (mask & (1ULL << VIRTGPU_DRM_CAPSET_VIRGL)) {
+            return VIRTGPU_DRM_CAPSET_VIRGL;
+        }
+        return mask == 0 ? VIRTGPU_DRM_CAPSET_VIRGL : 0;
+    }
+    if (mask & (1ULL << VIRTGPU_DRM_CAPSET_VIRGL2)) {
+        return VIRTGPU_DRM_CAPSET_VIRGL2;
+    }
+    if (mask & (1ULL << VIRTGPU_DRM_CAPSET_VIRGL)) {
         return VIRTGPU_DRM_CAPSET_VIRGL;
     }
-    return capset_id;
+
+    return mask == 0 ? VIRTGPU_DRM_CAPSET_VIRGL : 0;
+}
+
+static struct virtio_gpu_context *
+virtio_gpu_lookup_active_context(virtio_gpu_device_t *gpu_dev,
+                                 uint64_t owner_file) {
+    if (!gpu_dev || owner_file == 0) {
+        return NULL;
+    }
+
+    struct virtio_gpu_context *fallback = NULL;
+    for (uint32_t i = 0; i < VIRTIO_GPU_MAX_CONTEXTS; i++) {
+        struct virtio_gpu_context *ctx = &gpu_dev->contexts[i];
+        if (!ctx->in_use || !ctx->initialized || ctx->ctx_id == 0 ||
+            ctx->owner_file != owner_file) {
+            continue;
+        }
+
+        if (ctx->capset_id == VIRTGPU_DRM_CAPSET_VIRGL2) {
+            return ctx;
+        }
+        if (ctx->capset_id == VIRTGPU_DRM_CAPSET_VIRGL) {
+            fallback = ctx;
+            continue;
+        }
+        if (!fallback) {
+            fallback = ctx;
+        }
+    }
+
+    return fallback;
+}
+
+static int virtio_gpu_get_active_context(virtio_gpu_device_t *gpu_dev,
+                                         uint32_t *ctx_id_out,
+                                         uint32_t *capset_out, fd_t *fd) {
+    if (!gpu_dev || !ctx_id_out) {
+        return -EINVAL;
+    }
+
+    uint64_t owner_file = virtio_gpu_owner_file(fd);
+    if (owner_file == 0) {
+        return -EINVAL;
+    }
+
+    struct virtio_gpu_context *ctx =
+        virtio_gpu_lookup_active_context(gpu_dev, owner_file);
+    if (ctx) {
+        *ctx_id_out = ctx->ctx_id;
+        if (capset_out) {
+            *capset_out = ctx->capset_id;
+        }
+        return 0;
+    }
+
+    /*
+     * With CONTEXT_INIT, userspace is expected to initialize the context
+     * explicitly. Avoid creating an implicit default context here, otherwise
+     * later explicit CONTEXT_INIT can race with or conflict against the
+     * auto-selected capset/context.
+     */
+    if (gpu_dev->negotiated_features & VIRTIO_GPU_F_CONTEXT_INIT) {
+        return -ENOENT;
+    }
+
+    uint32_t capset_id = virtio_gpu_select_default_capset(gpu_dev);
+    if (capset_id == 0) {
+        return -EOPNOTSUPP;
+    }
+
+    return virtio_gpu_get_current_context(gpu_dev, capset_id, ctx_id_out,
+                                          capset_out, fd);
 }
 
 static int virtio_gpu_ensure_context(virtio_gpu_device_t *gpu_dev,
@@ -1360,11 +1608,18 @@ static void virtio_gpu_refresh_capset_mask(virtio_gpu_device_t *gpu_dev) {
         return;
     }
 
+    gpu_dev->capset_cache_valid = false;
+    gpu_dev->capset_info_count = 0;
+    memset(gpu_dev->capset_infos, 0, sizeof(gpu_dev->capset_infos));
+
     uint64_t mask = 0;
     for (uint32_t i = 0; i < 64; i++) {
         virtio_gpu_resp_capset_info_t info;
         if (virtio_gpu_get_capset_info(gpu_dev, i, &info) != 0) {
-            break;
+            continue;
+        }
+        if (gpu_dev->capset_info_count < 64) {
+            gpu_dev->capset_infos[gpu_dev->capset_info_count++] = info;
         }
         if (info.capset_id > 0 && info.capset_id < 64) {
             mask |= 1ULL << info.capset_id;
@@ -1374,11 +1629,8 @@ static void virtio_gpu_refresh_capset_mask(virtio_gpu_device_t *gpu_dev) {
     if (mask == 0 && gpu_dev->virgl_enabled) {
         mask |= 1ULL << VIRTGPU_DRM_CAPSET_VIRGL;
     }
-    if (gpu_dev->virgl_enabled) {
-        mask |= 1ULL << VIRTGPU_DRM_CAPSET_DRM;
-    }
-
     gpu_dev->supported_capset_mask = mask;
+    gpu_dev->capset_cache_valid = true;
 }
 
 static uint32_t virtio_gpu_alloc_context_id(virtio_gpu_device_t *gpu_dev) {
@@ -1409,14 +1661,19 @@ static uint32_t virtio_gpu_alloc_context_id(virtio_gpu_device_t *gpu_dev) {
 }
 
 static struct virtio_gpu_context *
-virtio_gpu_lookup_context(virtio_gpu_device_t *gpu_dev, uint64_t owner_file) {
+virtio_gpu_lookup_context(virtio_gpu_device_t *gpu_dev, uint64_t owner_file,
+                          uint32_t capset_id) {
     if (!gpu_dev || owner_file == 0) {
         return NULL;
     }
 
     for (uint32_t i = 0; i < VIRTIO_GPU_MAX_CONTEXTS; i++) {
-        if (gpu_dev->contexts[i].in_use &&
-            gpu_dev->contexts[i].owner_file == owner_file) {
+        if (!gpu_dev->contexts[i].in_use ||
+            gpu_dev->contexts[i].owner_file != owner_file) {
+            continue;
+        }
+
+        if (capset_id == 0 || gpu_dev->contexts[i].capset_id == capset_id) {
             return &gpu_dev->contexts[i];
         }
     }
@@ -1452,7 +1709,7 @@ static int virtio_gpu_get_current_context(virtio_gpu_device_t *gpu_dev,
     }
 
     struct virtio_gpu_context *ctx =
-        virtio_gpu_lookup_context(gpu_dev, owner_file);
+        virtio_gpu_lookup_context(gpu_dev, owner_file, effective_capset_id);
     if (!ctx) {
         for (uint32_t i = 0; i < VIRTIO_GPU_MAX_CONTEXTS; i++) {
             if (!gpu_dev->contexts[i].in_use) {
@@ -1475,11 +1732,6 @@ static int virtio_gpu_get_current_context(virtio_gpu_device_t *gpu_dev,
     }
 
     if (ctx->initialized) {
-        if (effective_capset_id != 0 && ctx->capset_id != 0 &&
-            ctx->capset_id != effective_capset_id) {
-            return -EINVAL;
-        }
-
         *ctx_id_out = ctx->ctx_id;
         if (capset_out) {
             *capset_out = ctx->capset_id;
@@ -2625,6 +2877,8 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
     }
 
     if (render_node && cmd != DRM_IOCTL_GEM_CLOSE &&
+        cmd != DRM_IOCTL_PRIME_HANDLE_TO_FD &&
+        cmd != DRM_IOCTL_PRIME_FD_TO_HANDLE &&
         !virtio_gpu_is_private_ioctl(cmd)) {
         return -EACCES;
     }
@@ -2676,8 +2930,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
             value = gpu_dev->supported_capset_mask;
             break;
         case VIRTGPU_PARAM_EXPLICIT_DEBUG_NAME:
-            value =
-                !!(gpu_dev->negotiated_features & VIRTIO_GPU_F_CONTEXT_INIT);
+            value = 0;
             break;
         case VIRTGPU_PARAM_CREATE_FENCE_PASSING:
             value = 1;
@@ -2696,6 +2949,9 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
         uint32_t capset_id = VIRTGPU_DRM_CAPSET_VIRGL;
         uint32_t num_rings = 1;
         uint64_t poll_mask = 0;
+        if (!(gpu_dev->negotiated_features & VIRTIO_GPU_F_CONTEXT_INIT)) {
+            return -EOPNOTSUPP;
+        }
         if ((ctx->num_params == 0) != (ctx->ctx_set_params == 0)) {
             return -EINVAL;
         }
@@ -2747,24 +3003,6 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
             return -E2BIG;
         }
 
-        if (caps->cap_set_id == VIRTGPU_DRM_CAPSET_DRM) {
-            virtgpu_drm_capset_compat_t drm_caps;
-            memset(&drm_caps, 0, sizeof(drm_caps));
-            drm_caps.wire_format_version =
-                VIRTGPU_DRM_CAPSET_WIRE_FORMAT_VERSION;
-            drm_caps.version_major = 1;
-            drm_caps.version_minor = 0;
-            drm_caps.version_patchlevel = 0;
-            drm_caps.context_type = 0;
-
-            uint32_t copy_size = MIN(caps->size, (uint32_t)sizeof(drm_caps));
-            if (copy_to_user((void *)(uintptr_t)caps->addr, &drm_caps,
-                             copy_size)) {
-                return -EFAULT;
-            }
-            return 0;
-        }
-
         virtio_gpu_resp_capset_info_t info;
         int ret = virtio_gpu_find_capset_info(gpu_dev, caps->cap_set_id, &info);
         if (ret != 0) {
@@ -2806,6 +3044,12 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
             return -EINVAL;
         }
 
+        uint32_t ctx_id = 0;
+        int ret = virtio_gpu_get_active_context(gpu_dev, &ctx_id, NULL, fd);
+        if (ret != 0) {
+            return ret;
+        }
+
         bool reuse_bo = req->bo_handle != 0;
         struct virtio_gpu_bo *bo =
             reuse_bo ? virtio_gpu_bo_get_owned(gpu_dev, req->bo_handle, fd)
@@ -2813,12 +3057,23 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
         if (!bo) {
             return reuse_bo ? -ENOENT : -ENOSPC;
         }
-        if (reuse_bo && bo->resource_id != 0) {
-            virtio_gpu_bo_release_resource(gpu_dev, bo);
+        struct virtio_gpu_bo *shared = virtio_gpu_bo_resolve(gpu_dev, bo);
+        if (reuse_bo) {
+            if (!shared || bo != shared || shared->shared_refcount > 1) {
+                return -EBUSY;
+            }
+            if (shared->attached_ctx_id && shared->resource_id) {
+                virtio_gpu_detach_resource_from_ctx(
+                    gpu_dev, shared->attached_ctx_id, shared->resource_id);
+                shared->attached_ctx_id = 0;
+            }
+            if (shared->resource_id != 0) {
+                virtio_gpu_bo_release_resource(gpu_dev, shared);
+            }
         }
 
         uint32_t resource_id = 0;
-        int ret = virtio_gpu_alloc_resource_id(gpu_dev, &resource_id);
+        ret = virtio_gpu_alloc_resource_id(gpu_dev, &resource_id);
         if (ret != 0) {
             if (!reuse_bo) {
                 memset(bo, 0, sizeof(*bo));
@@ -2828,7 +3083,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
 
         uint64_t size = req->size;
         if (size == 0 && reuse_bo) {
-            size = bo->size;
+            size = shared->size;
         }
         if (size == 0) {
             uint64_t depth = req->depth ? req->depth : 1;
@@ -2845,11 +3100,12 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
         uint64_t alloc_size = 0;
         uint64_t addr = 0;
         if (reuse_bo) {
-            uint64_t max_size = bo->alloc_size ? bo->alloc_size : bo->size;
-            if (!bo->addr || max_size == 0 || size > max_size) {
+            uint64_t max_size =
+                shared->alloc_size ? shared->alloc_size : shared->size;
+            if (!shared->addr || max_size == 0 || size > max_size) {
                 return -EINVAL;
             }
-            addr = bo->addr;
+            addr = shared->addr;
             alloc_size = max_size;
         } else {
             alloc_size = PADDING_UP(size, (uint64_t)DEFAULT_PAGE_SIZE);
@@ -2877,6 +3133,17 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
         ret = virtio_gpu_attach_backing(gpu_dev, resource_id, addr,
                                         (uint32_t)size);
         if (ret != 0) {
+            virtio_gpu_unref_resource(gpu_dev, resource_id);
+            if (!reuse_bo) {
+                free_frames(addr, alloc_size / DEFAULT_PAGE_SIZE);
+                memset(bo, 0, sizeof(*bo));
+            }
+            return ret;
+        }
+
+        ret = virtio_gpu_attach_resource_to_ctx(gpu_dev, ctx_id, resource_id);
+        if (ret != 0) {
+            virtio_gpu_detach_backing(gpu_dev, resource_id);
             virtio_gpu_unref_resource(gpu_dev, resource_id);
             if (!reuse_bo) {
                 free_frames(addr, alloc_size / DEFAULT_PAGE_SIZE);
@@ -2913,7 +3180,9 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
         bo->blob_mapped = false;
         bo->blob_map_info = 0;
         bo->host_visible_offset = 0;
-        bo->attached_ctx_id = 0;
+        bo->attached_ctx_id = ctx_id;
+        bo->shared_root_idx = VIRTIO_GPU_BO_SHARED_ROOT_NONE;
+        bo->shared_refcount = 1;
 
         req->bo_handle = bo_handle;
         req->res_handle = resource_id;
@@ -2945,6 +3214,15 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
             req->blob_mem != VIRTGPU_BLOB_MEM_HOST3D_GUEST) {
             return -EINVAL;
         }
+        if (req->blob_mem == VIRTGPU_BLOB_MEM_GUEST) {
+            if (req->blob_id != 0 || req->cmd_size != 0) {
+                return -EINVAL;
+            }
+        } else {
+            if (!gpu_dev->virgl_enabled || (req->cmd_size & 3U)) {
+                return -EINVAL;
+            }
+        }
         if ((req->blob_mem == VIRTGPU_BLOB_MEM_GUEST ||
              req->blob_mem == VIRTGPU_BLOB_MEM_HOST3D_GUEST) &&
             req->size > UINT32_MAX) {
@@ -2963,8 +3241,19 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
         if (!bo) {
             return reuse_bo ? -ENOENT : -ENOSPC;
         }
-        if (reuse_bo && bo->resource_id != 0) {
-            virtio_gpu_bo_release_resource(gpu_dev, bo);
+        struct virtio_gpu_bo *shared = virtio_gpu_bo_resolve(gpu_dev, bo);
+        if (reuse_bo) {
+            if (!shared || bo != shared || shared->shared_refcount > 1) {
+                return -EBUSY;
+            }
+            if (shared->attached_ctx_id && shared->resource_id) {
+                virtio_gpu_detach_resource_from_ctx(
+                    gpu_dev, shared->attached_ctx_id, shared->resource_id);
+                shared->attached_ctx_id = 0;
+            }
+            if (shared->resource_id != 0) {
+                virtio_gpu_bo_release_resource(gpu_dev, shared);
+            }
         }
 
         uint32_t resource_id = 0;
@@ -2981,11 +3270,12 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
         if (req->blob_mem == VIRTGPU_BLOB_MEM_GUEST ||
             req->blob_mem == VIRTGPU_BLOB_MEM_HOST3D_GUEST) {
             if (reuse_bo) {
-                uint64_t max_size = bo->alloc_size ? bo->alloc_size : bo->size;
-                if (!bo->addr || max_size == 0 || req->size > max_size) {
+                uint64_t max_size =
+                    shared->alloc_size ? shared->alloc_size : shared->size;
+                if (!shared->addr || max_size == 0 || req->size > max_size) {
                     return -EINVAL;
                 }
-                addr = bo->addr;
+                addr = shared->addr;
                 alloc_size = max_size;
             } else {
                 alloc_size = PADDING_UP(req->size, (uint64_t)DEFAULT_PAGE_SIZE);
@@ -2996,16 +3286,44 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
                 }
                 memset((void *)phys_to_virt(addr), 0, alloc_size);
             }
-        } else if (reuse_bo && (bo->alloc_size || bo->size)) {
-            alloc_size = bo->alloc_size ? bo->alloc_size : bo->size;
+        } else if (reuse_bo && (shared->alloc_size || shared->size)) {
+            alloc_size = shared->alloc_size ? shared->alloc_size : shared->size;
         } else {
             alloc_size = PADDING_UP(req->size, (uint64_t)DEFAULT_PAGE_SIZE);
         }
 
         uint32_t create_ctx_id = 0;
         if (req->blob_mem != VIRTGPU_BLOB_MEM_GUEST || req->cmd_size > 0) {
-            ret = virtio_gpu_get_current_context(
-                gpu_dev, VIRTGPU_DRM_CAPSET_VIRGL, &create_ctx_id, NULL, fd);
+            ret = virtio_gpu_get_active_context(gpu_dev, &create_ctx_id, NULL,
+                                                fd);
+            if (ret != 0) {
+                if (!reuse_bo && addr) {
+                    free_frames(addr, alloc_size / DEFAULT_PAGE_SIZE);
+                }
+                if (!reuse_bo) {
+                    memset(bo, 0, sizeof(*bo));
+                }
+                return ret;
+            }
+        }
+
+        if (req->cmd_size && req->cmd) {
+            void *cmd_data = NULL;
+            ret = virtio_gpu_copy_from_user_alloc(req->cmd, req->cmd_size,
+                                                  &cmd_data);
+            if (ret != 0) {
+                if (!reuse_bo && addr) {
+                    free_frames(addr, alloc_size / DEFAULT_PAGE_SIZE);
+                }
+                if (!reuse_bo) {
+                    memset(bo, 0, sizeof(*bo));
+                }
+                return ret;
+            }
+
+            ret = virtio_gpu_submit_3d(gpu_dev, create_ctx_id, cmd_data,
+                                       req->cmd_size);
+            free(cmd_data);
             if (ret != 0) {
                 if (!reuse_bo && addr) {
                     free_frames(addr, alloc_size / DEFAULT_PAGE_SIZE);
@@ -3030,25 +3348,10 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
             return ret;
         }
 
-        if (req->cmd_size && req->cmd) {
-            void *cmd_data = NULL;
-            ret = virtio_gpu_copy_from_user_alloc(req->cmd, req->cmd_size,
-                                                  &cmd_data);
-            if (ret != 0) {
-                virtio_gpu_unref_resource(gpu_dev, resource_id);
-                if (!reuse_bo && addr) {
-                    free_frames(addr, alloc_size / DEFAULT_PAGE_SIZE);
-                }
-                if (!reuse_bo) {
-                    memset(bo, 0, sizeof(*bo));
-                }
-                return ret;
-            }
-
+        if (create_ctx_id != 0) {
             ret = virtio_gpu_attach_resource_to_ctx(gpu_dev, create_ctx_id,
                                                     resource_id);
             if (ret != 0) {
-                free(cmd_data);
                 virtio_gpu_unref_resource(gpu_dev, resource_id);
                 if (!reuse_bo && addr) {
                     free_frames(addr, alloc_size / DEFAULT_PAGE_SIZE);
@@ -3058,36 +3361,14 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
                 }
                 return ret;
             }
-
-            ret = virtio_gpu_submit_3d(gpu_dev, create_ctx_id, cmd_data,
-                                       req->cmd_size);
-            free(cmd_data);
-            if (ret != 0) {
-                virtio_gpu_detach_resource_from_ctx(gpu_dev, create_ctx_id,
-                                                    resource_id);
-                virtio_gpu_unref_resource(gpu_dev, resource_id);
-                if (!reuse_bo && addr) {
-                    free_frames(addr, alloc_size / DEFAULT_PAGE_SIZE);
-                }
-                if (!reuse_bo) {
-                    memset(bo, 0, sizeof(*bo));
-                }
-                return ret;
-            }
-
-            bo->attached_ctx_id = create_ctx_id;
         }
 
         uint32_t bo_handle = req->bo_handle;
         if (!reuse_bo) {
             bo_handle = virtio_gpu_alloc_bo_handle(gpu_dev);
             if (bo_handle == 0) {
-                uint32_t detach_ctx_id = bo->attached_ctx_id;
-                if (detach_ctx_id == 0) {
-                    detach_ctx_id = create_ctx_id;
-                }
-                if (detach_ctx_id) {
-                    virtio_gpu_detach_resource_from_ctx(gpu_dev, detach_ctx_id,
+                if (create_ctx_id != 0) {
+                    virtio_gpu_detach_resource_from_ctx(gpu_dev, create_ctx_id,
                                                         resource_id);
                 }
                 virtio_gpu_unref_resource(gpu_dev, resource_id);
@@ -3115,9 +3396,9 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
         bo->blob_mapped = false;
         bo->blob_map_info = 0;
         bo->host_visible_offset = 0;
-        if (req->cmd_size == 0) {
-            bo->attached_ctx_id = create_ctx_id;
-        }
+        bo->attached_ctx_id = create_ctx_id;
+        bo->shared_root_idx = VIRTIO_GPU_BO_SHARED_ROOT_NONE;
+        bo->shared_refcount = 1;
 
         req->bo_handle = bo_handle;
         req->res_handle = resource_id;
@@ -3127,72 +3408,98 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
         struct drm_virtgpu_resource_info *info = arg;
         struct virtio_gpu_bo *bo =
             virtio_gpu_bo_get_owned(gpu_dev, info->bo_handle, fd);
-        if (!bo || bo->resource_id == 0) {
+        struct virtio_gpu_bo *shared = virtio_gpu_bo_resolve(gpu_dev, bo);
+        if (!shared || shared->resource_id == 0) {
             return -ENOENT;
         }
-        info->res_handle = bo->resource_id;
-        info->size = (uint32_t)MIN(bo->size, (uint64_t)UINT32_MAX);
-        info->blob_mem = bo->blob_mem;
+        info->res_handle = shared->resource_id;
+        info->size = (uint32_t)MIN(shared->size, (uint64_t)UINT32_MAX);
+        info->blob_mem = shared->blob_mem;
         return 0;
     }
     case DRM_IOCTL_VIRTGPU_MAP: {
         struct drm_virtgpu_map *map = arg;
         struct virtio_gpu_bo *bo =
             virtio_gpu_bo_get_owned(gpu_dev, map->handle, fd);
-        if (!bo || bo->resource_id == 0) {
+        struct virtio_gpu_bo *shared = virtio_gpu_bo_resolve(gpu_dev, bo);
+        if (!shared || shared->resource_id == 0) {
             return -ENOENT;
         }
-        if (!bo->addr) {
+        if (!shared->addr) {
             int ret = virtio_gpu_map_host_visible_blob(gpu_dev, bo);
             if (ret != 0) {
                 return ret;
             }
             map->offset =
-                gpu_dev->host_visible_shm_paddr + bo->host_visible_offset;
+                gpu_dev->host_visible_shm_paddr + shared->host_visible_offset;
             return 0;
         }
-        map->offset = bo->addr;
+        map->offset = shared->addr;
         return 0;
     }
     case DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST: {
         struct drm_virtgpu_3d_transfer_to_host *req = arg;
         struct virtio_gpu_bo *bo =
             virtio_gpu_bo_get_owned(gpu_dev, req->bo_handle, fd);
-        if (!bo || bo->resource_id == 0) {
+        struct virtio_gpu_bo *shared = virtio_gpu_bo_resolve(gpu_dev, bo);
+        if (!shared || shared->resource_id == 0) {
             return -ENOENT;
         }
         if (req->box.w == 0) {
-            req->box.w = bo->width;
+            req->box.w = shared->width;
         }
         if (req->box.h == 0) {
-            req->box.h = bo->height;
+            req->box.h = shared->height;
         }
         if (req->box.d == 0) {
             req->box.d = 1;
         }
+        uint32_t ctx_id = 0;
+        if (gpu_dev->virgl_enabled) {
+            int ret = virtio_gpu_get_active_context(gpu_dev, &ctx_id, NULL, fd);
+            if (ret != 0) {
+                return ret;
+            }
+            ret = virtio_gpu_bo_ensure_ctx(gpu_dev, bo, ctx_id);
+            if (ret != 0) {
+                return ret;
+            }
+        }
         return virtio_gpu_transfer_to_host_3d(
-            gpu_dev, bo->resource_id, &req->box, req->level, req->offset,
-            req->stride, req->layer_stride);
+            gpu_dev, ctx_id, shared->resource_id, &req->box, req->level,
+            req->offset, req->stride, req->layer_stride);
     }
     case DRM_IOCTL_VIRTGPU_TRANSFER_FROM_HOST: {
         struct drm_virtgpu_3d_transfer_from_host *req = arg;
         struct virtio_gpu_bo *bo =
             virtio_gpu_bo_get_owned(gpu_dev, req->bo_handle, fd);
-        if (!bo || bo->resource_id == 0) {
+        struct virtio_gpu_bo *shared = virtio_gpu_bo_resolve(gpu_dev, bo);
+        if (!shared || shared->resource_id == 0) {
             return -ENOENT;
         }
         if (req->box.w == 0) {
-            req->box.w = bo->width;
+            req->box.w = shared->width;
         }
         if (req->box.h == 0) {
-            req->box.h = bo->height;
+            req->box.h = shared->height;
         }
         if (req->box.d == 0) {
             req->box.d = 1;
         }
+        uint32_t ctx_id = 0;
+        if (gpu_dev->virgl_enabled) {
+            int ret = virtio_gpu_get_active_context(gpu_dev, &ctx_id, NULL, fd);
+            if (ret != 0) {
+                return ret;
+            }
+            ret = virtio_gpu_bo_ensure_ctx(gpu_dev, bo, ctx_id);
+            if (ret != 0) {
+                return ret;
+            }
+        }
         return virtio_gpu_transfer_from_host_3d(
-            gpu_dev, bo->resource_id, &req->box, req->level, req->offset,
-            req->stride, req->layer_stride);
+            gpu_dev, ctx_id, shared->resource_id, &req->box, req->level,
+            req->offset, req->stride, req->layer_stride);
     }
     case DRM_IOCTL_VIRTGPU_EXECBUFFER: {
         struct drm_virtgpu_execbuffer *req = arg;
@@ -3233,8 +3540,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
             }
         }
         uint32_t ctx_id = 0;
-        int ret = virtio_gpu_get_current_context(
-            gpu_dev, VIRTGPU_DRM_CAPSET_VIRGL, &ctx_id, NULL, fd);
+        int ret = virtio_gpu_get_active_context(gpu_dev, &ctx_id, NULL, fd);
         if (ret != 0) {
             return ret;
         }
@@ -3261,20 +3567,18 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
             for (uint32_t i = 0; i < req->num_bo_handles; i++) {
                 struct virtio_gpu_bo *bo =
                     virtio_gpu_bo_get_owned(gpu_dev, bo_handles[i], fd);
-                if (!bo || bo->resource_id == 0) {
+                struct virtio_gpu_bo *shared =
+                    virtio_gpu_bo_resolve(gpu_dev, bo);
+                if (!shared || shared->resource_id == 0) {
                     free(bo_handles);
                     free(command_data);
                     return -ENOENT;
                 }
-                if (bo->attached_ctx_id != ctx_id) {
-                    ret = virtio_gpu_attach_resource_to_ctx(gpu_dev, ctx_id,
-                                                            bo->resource_id);
-                    if (ret != 0) {
-                        free(bo_handles);
-                        free(command_data);
-                        return ret;
-                    }
-                    bo->attached_ctx_id = ctx_id;
+                ret = virtio_gpu_bo_ensure_ctx(gpu_dev, bo, ctx_id);
+                if (ret != 0) {
+                    free(bo_handles);
+                    free(command_data);
+                    return ret;
                 }
             }
         }
@@ -3298,9 +3602,75 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
         if (req->flags & ~VIRTGPU_WAIT_NOWAIT) {
             return -EINVAL;
         }
-        if (!bo || bo->resource_id == 0) {
+        struct virtio_gpu_bo *shared = virtio_gpu_bo_resolve(gpu_dev, bo);
+        if (!shared || shared->resource_id == 0) {
             return -ENOENT;
         }
+        return 0;
+    }
+    case DRM_IOCTL_PRIME_FD_TO_HANDLE: {
+        struct drm_prime_handle *prime = arg;
+        struct virtio_gpu_bo *bo = virtio_gpu_bo_get(gpu_dev, prime->handle);
+        if (!bo || !gpu_dev->virgl_enabled) {
+            return bo ? 0 : -ENOENT;
+        }
+
+        if (!virtio_gpu_owner_matches(bo->owner_file, fd)) {
+            uint32_t imported_handle = 0;
+            int ret =
+                virtio_gpu_bo_import_handle(gpu_dev, bo, fd, &imported_handle);
+            if (ret != 0) {
+                return ret;
+            }
+            prime->handle = imported_handle;
+            bo = virtio_gpu_bo_get(gpu_dev, imported_handle);
+            if (!bo) {
+                return -ENOENT;
+            }
+        }
+
+        struct virtio_gpu_bo *shared = virtio_gpu_bo_resolve(gpu_dev, bo);
+        if (!shared || shared->resource_id == 0) {
+            return -ENOENT;
+        }
+
+        uint32_t ctx_id = 0;
+        int ret = virtio_gpu_get_active_context(gpu_dev, &ctx_id, NULL, fd);
+        if (ret == -ENOENT &&
+            (gpu_dev->negotiated_features & VIRTIO_GPU_F_CONTEXT_INIT)) {
+            return 0;
+        }
+        if (ret != 0) {
+            return ret;
+        }
+
+        return virtio_gpu_bo_ensure_ctx(gpu_dev, bo, ctx_id);
+    }
+    case DRM_IOCTL_PRIME_HANDLE_TO_FD: {
+        struct drm_prime_handle *prime = arg;
+        struct virtio_gpu_bo *bo =
+            virtio_gpu_bo_get_owned(gpu_dev, prime->handle, fd);
+        if (!bo) {
+            return -ENOTTY;
+        }
+
+        struct virtio_gpu_bo *shared = virtio_gpu_bo_resolve(gpu_dev, bo);
+        if (!shared || shared->resource_id == 0) {
+            return -ENOENT;
+        }
+
+        uint64_t size = shared->size ? shared->size : shared->alloc_size;
+        if (size == 0) {
+            size = DEFAULT_PAGE_SIZE;
+        }
+
+        ssize_t fd_ret = drm_primefd_create(drm_dev, prime->handle,
+                                            shared->addr, size, prime->flags);
+        if (fd_ret < 0) {
+            return fd_ret;
+        }
+
+        prime->fd = (int)fd_ret;
         return 0;
     }
     default:
@@ -3336,9 +3706,8 @@ drm_device_op_t virtio_gpu_drm_device_op = {
 int virtio_gpu_init(virtio_driver_t *driver) {
     uint64_t supported_features =
         VIRTIO_GPU_F_EDID | VIRTIO_GPU_F_VIRGL | VIRTIO_GPU_F_RESOURCE_BLOB |
-        VIRTIO_GPU_F_CONTEXT_INIT | VIRTIO_GPU_F_SUPPORTED_CAPSET_IDS |
-        VIRTIO_F_RING_INDIRECT_DESC | VIRTIO_F_RING_EVENT_IDX |
-        VIRTIO_F_VERSION_1;
+        VIRTIO_GPU_F_SUPPORTED_CAPSET_IDS | VIRTIO_F_RING_INDIRECT_DESC |
+        VIRTIO_F_RING_EVENT_IDX | VIRTIO_F_VERSION_1;
     uint64_t features = virtio_begin_init(driver, supported_features);
     if (!features) {
         printk("virtio_gpu: Failed to negotiate features\n");

@@ -17,6 +17,8 @@
 #define VIRTIO_GPU_MAX_BOS 256
 #define VIRTIO_GPU_MAX_CONTEXTS 64
 #define VIRTIO_GPU_FLAG_FENCE 0x1
+#define VIRTIO_GPU_FLAG_INFO_RING_IDX 0x2
+#define VIRTIO_GPU_CONTEXT_INIT_CAPSET_ID_MASK 0x000000ff
 
 // Virtio GPU request types
 typedef enum virtio_gpu_ctrl_type {
@@ -34,8 +36,6 @@ typedef enum virtio_gpu_ctrl_type {
     VIRTIO_GPU_CMD_RESOURCE_ASSIGN_UUID,
     VIRTIO_GPU_CMD_RESOURCE_CREATE_BLOB,
     VIRTIO_GPU_CMD_SET_SCANOUT_BLOB,
-    VIRTIO_GPU_CMD_RESOURCE_MAP_BLOB,
-    VIRTIO_GPU_CMD_RESOURCE_UNMAP_BLOB,
     VIRTIO_GPU_CMD_CTX_CREATE = 0x0200,
     VIRTIO_GPU_CMD_CTX_DESTROY,
     VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE,
@@ -44,6 +44,8 @@ typedef enum virtio_gpu_ctrl_type {
     VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D,
     VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D,
     VIRTIO_GPU_CMD_SUBMIT_3D,
+    VIRTIO_GPU_CMD_RESOURCE_MAP_BLOB,
+    VIRTIO_GPU_CMD_RESOURCE_UNMAP_BLOB,
     VIRTIO_GPU_CMD_UPDATE_CURSOR = 0x0300,
     VIRTIO_GPU_CMD_MOVE_CURSOR,
 } virtio_gpu_ctrl_type_t;
@@ -355,6 +357,8 @@ typedef struct virtio_gpu_device {
         uint64_t host_visible_offset;
         uint32_t attached_ctx_id;
         uint64_t owner_file;
+        uint32_t shared_root_idx;
+        uint32_t shared_refcount;
     } bos[VIRTIO_GPU_MAX_BOS];
 
     struct virtio_gpu_context {
@@ -367,6 +371,9 @@ typedef struct virtio_gpu_device {
 
     uint32_t next_bo_handle;
     uint32_t next_ctx_id;
+    bool capset_cache_valid;
+    uint32_t capset_info_count;
+    virtio_gpu_resp_capset_info_t capset_infos[64];
     uint64_t supported_capset_mask;
     uint64_t host_visible_shm_paddr;
     uint64_t host_visible_shm_size;

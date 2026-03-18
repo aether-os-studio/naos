@@ -34,6 +34,8 @@ ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
 
     struct k_drm_event *event = NULL;
     while (!event) {
+        arch_disable_interrupt();
+
         spin_lock(&dev->event_lock);
         if (dev->drm_events[0]) {
             event = dev->drm_events[0];
@@ -52,7 +54,6 @@ ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
 
         arch_enable_interrupt();
         schedule(SCHED_FLAG_YIELD);
-        arch_disable_interrupt();
     }
 
     struct drm_event_vblank vbl = {

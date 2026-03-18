@@ -47,14 +47,17 @@ ssize_t drm_ioctl_gem_close(drm_device_t *dev, void *arg, fd_t *fd);
  * @dev: DRM device
  * @arg: ioctl argument
  */
-ssize_t drm_ioctl_prime_handle_to_fd(drm_device_t *dev, void *arg);
+ssize_t drm_ioctl_prime_handle_to_fd(drm_device_t *dev, void *arg, fd_t *fd);
 
 /**
  * drm_ioctl_prime_fd_to_handle - Handle DRM_IOCTL_PRIME_FD_TO_HANDLE
  * @dev: DRM device
  * @arg: ioctl argument
  */
-ssize_t drm_ioctl_prime_fd_to_handle(drm_device_t *dev, void *arg);
+ssize_t drm_ioctl_prime_fd_to_handle(drm_device_t *dev, void *arg, fd_t *fd);
+
+ssize_t drm_primefd_create(drm_device_t *dev, uint32_t handle, uint64_t phys,
+                           uint64_t size, uint32_t flags);
 
 /**
  * drm_ioctl_mode_getresources - Handle DRM_IOCTL_MODE_GETRESOURCES

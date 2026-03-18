@@ -66,7 +66,7 @@ KVM ?= 0
 HVF ?= 0
 SMP ?= 4
 MEM ?= 8G
-SER ?= 0
+SER ?= 1
 MON ?= 0
 
 # Default user QEMU flags. These are appended to the QEMU command calls.
@@ -233,7 +233,9 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-device nvme,drive=rootdisk,serial=5678 \
 		-nic user,model=virtio-net-pci \
 		-rtc base=utc \
-		-display sdl \
+		-display sdl,gl=on \
+		-vga none \
+		-device virtio-gpu-gl-pci \
 		$(QEMUFLAGS)
 
 .PHONY: run-x86_64-single

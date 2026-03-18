@@ -140,7 +140,7 @@ static spinlock_t drm_prime_fsid_lock = SPIN_INIT;
 static ssize_t drm_primefd_read(fd_t *fd, void *buf, uint64_t offset,
                                 uint64_t len) {
     drm_prime_fd_ctx_t *ctx = fd->node->handle;
-    if (!ctx || !buf || offset >= ctx->size) {
+    if (!ctx || !buf || ctx->phys == 0 || offset >= ctx->size) {
         return 0;
     }
 
@@ -152,7 +152,7 @@ static ssize_t drm_primefd_read(fd_t *fd, void *buf, uint64_t offset,
 static ssize_t drm_primefd_write(fd_t *fd, const void *buf, uint64_t offset,
                                  uint64_t len) {
     drm_prime_fd_ctx_t *ctx = fd->node->handle;
-    if (!ctx || !buf || offset >= ctx->size) {
+    if (!ctx || !buf || ctx->phys == 0 || offset >= ctx->size) {
         return 0;
     }
 
@@ -293,7 +293,7 @@ static void *drm_primefd_map(fd_t *file, void *addr, size_t offset, size_t size,
     (void)flags;
 
     drm_prime_fd_ctx_t *ctx = file->node->handle;
-    if (!ctx || offset >= ctx->size || size == 0) {
+    if (!ctx || ctx->phys == 0 || offset >= ctx->size || size == 0) {
         return (void *)-EINVAL;
     }
 
@@ -803,9 +803,8 @@ static void drm_syncfd_notify_all(void) {
     spin_unlock(&drm_syncfd_contexts_lock);
 }
 
-static ssize_t drm_primefd_create(drm_device_t *dev, uint32_t handle,
-                                  uint64_t phys, uint64_t size,
-                                  uint32_t flags) {
+ssize_t drm_primefd_create(drm_device_t *dev, uint32_t handle, uint64_t phys,
+                           uint64_t size, uint32_t flags) {
     int ret = drm_primefd_ensure_registered();
     if (ret) {
         return ret;
@@ -2167,11 +2166,19 @@ ssize_t drm_ioctl_gem_close(drm_device_t *dev, void *arg, fd_t *fd) {
 /**
  * drm_ioctl_prime_handle_to_fd - Handle DRM_IOCTL_PRIME_HANDLE_TO_FD
  */
-ssize_t drm_ioctl_prime_handle_to_fd(drm_device_t *dev, void *arg) {
+ssize_t drm_ioctl_prime_handle_to_fd(drm_device_t *dev, void *arg, fd_t *fd) {
     struct drm_prime_handle *prime = (struct drm_prime_handle *)arg;
 
     if (prime->flags & ~(DRM_CLOEXEC | DRM_RDWR)) {
         return -EINVAL;
+    }
+
+    if (dev->op && dev->op->driver_ioctl) {
+        ssize_t ret = dev->op->driver_ioctl(dev, DRM_IOCTL_PRIME_HANDLE_TO_FD,
+                                            arg, false, fd);
+        if (ret != -ENOTTY) {
+            return ret;
+        }
     }
 
     uint64_t dumb_size = drm_dumb_get_size(dev, prime->handle);
@@ -2198,7 +2205,7 @@ ssize_t drm_ioctl_prime_handle_to_fd(drm_device_t *dev, void *arg) {
 /**
  * drm_ioctl_prime_fd_to_handle - Handle DRM_IOCTL_PRIME_FD_TO_HANDLE
  */
-ssize_t drm_ioctl_prime_fd_to_handle(drm_device_t *dev, void *arg) {
+ssize_t drm_ioctl_prime_fd_to_handle(drm_device_t *dev, void *arg, fd_t *fd) {
     struct drm_prime_handle *prime = (struct drm_prime_handle *)arg;
 
     if (prime->fd < 0 || prime->fd >= MAX_FD_NUM) {
@@ -2223,6 +2230,13 @@ ssize_t drm_ioctl_prime_fd_to_handle(drm_device_t *dev, void *arg) {
     });
 
     if (direct_ret == 0) {
+        if (dev->op && dev->op->driver_ioctl) {
+            ssize_t driver_ret = dev->op->driver_ioctl(
+                dev, DRM_IOCTL_PRIME_FD_TO_HANDLE, arg, false, fd);
+            if (driver_ret != -ENOTTY) {
+                return driver_ret;
+            }
+        }
         return 0;
     }
 
@@ -2239,6 +2253,15 @@ ssize_t drm_ioctl_prime_fd_to_handle(drm_device_t *dev, void *arg) {
     }
 
     prime->handle = handle;
+
+    if (dev->op && dev->op->driver_ioctl) {
+        ssize_t driver_ret = dev->op->driver_ioctl(
+            dev, DRM_IOCTL_PRIME_FD_TO_HANDLE, arg, false, fd);
+        if (driver_ret != -ENOTTY) {
+            return driver_ret;
+        }
+    }
+
     return 0;
 }
 
@@ -3973,10 +3996,10 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg, fd_t *fd) {
         ret = drm_ioctl_gem_close(dev, ioarg, fd);
         break;
     case DRM_IOCTL_PRIME_HANDLE_TO_FD:
-        ret = drm_ioctl_prime_handle_to_fd(dev, ioarg);
+        ret = drm_ioctl_prime_handle_to_fd(dev, ioarg, fd);
         break;
     case DRM_IOCTL_PRIME_FD_TO_HANDLE:
-        ret = drm_ioctl_prime_fd_to_handle(dev, ioarg);
+        ret = drm_ioctl_prime_fd_to_handle(dev, ioarg, fd);
         break;
     case DRM_IOCTL_MODE_GETRESOURCES:
         ret = drm_ioctl_mode_getresources(dev, ioarg);
