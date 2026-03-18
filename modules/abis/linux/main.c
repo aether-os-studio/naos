@@ -10,6 +10,7 @@
 #include <init/abis.h>
 #include <fs/dev.h>
 #include <fs/proc.h>
+#include <dev/fb.h>
 #include <dev/drm/drm.h>
 #include <libs/keys.h>
 #include <task/task.h>
@@ -379,6 +380,8 @@ void linuxabi_init_after_thread() {
 }
 
 void linuxabi_init_before_user() {
+    fbdev_init();
+
     drm_init_after_pci_sysfs();
 
     devtmpfs_init_umount();

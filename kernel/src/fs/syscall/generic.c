@@ -1092,11 +1092,11 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
 uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
     task_t *self = current_task;
 
-    fd_t *f = self->fd_info->fds[fd];
-
-    if (fd >= MAX_FD_NUM || f == NULL) {
+    if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
         return (uint64_t)-EBADF;
     }
+
+    fd_t *f = self->fd_info->fds[fd];
 
     if (fd_get_flags(f) & O_PATH) {
         return (uint64_t)-EBADF;

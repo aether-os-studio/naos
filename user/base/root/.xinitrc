@@ -1,5 +1,3 @@
 #!/bin/sh
 
-xsetroot -solid "#006666" &
-st &
-exec twm
+exec dbus-run-session startplasma-x11
