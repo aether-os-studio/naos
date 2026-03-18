@@ -1357,9 +1357,10 @@ struct k_drm_event {
     uint32_t type;
     uint64_t user_data;
     struct timespec timestamp;
+    uint64_t sequence;
 };
 
-#define DRM_MAX_EVENTS_COUNT 32
+#define DRM_MAX_EVENTS_COUNT 64
 
 struct drm_connector;
 typedef struct drm_connector drm_connector_t;
@@ -1450,7 +1451,9 @@ struct drm_device {
     uint32_t render_minor;
     bool render_node_registered;
     spinlock_t event_lock;
-    struct k_drm_event *drm_events[DRM_MAX_EVENTS_COUNT];
+    struct k_drm_event drm_events[DRM_MAX_EVENTS_COUNT];
+    uint32_t drm_event_head;
+    uint32_t drm_event_count;
     uint64_t vblank_counter;
     drm_resource_manager_t resource_mgr;
 };

@@ -13,6 +13,81 @@ static bool plainfb_handle_to_index(uint32_t handle, uint32_t *idx) {
     return true;
 }
 
+static size_t plainfb_native_size_bytes(const plainfb_device_t *gpu_dev) {
+    if (!gpu_dev || !gpu_dev->framebuffer) {
+        return 0;
+    }
+
+    return (size_t)gpu_dev->framebuffer->pitch *
+           (size_t)gpu_dev->framebuffer->height;
+}
+
+static int plainfb_present_dumbbuffer(plainfb_device_t *gpu_dev, uint32_t idx,
+                                      uint32_t x, uint32_t y, uint32_t width,
+                                      uint32_t height) {
+    if (!gpu_dev || !gpu_dev->framebuffer || idx >= 32 ||
+        !gpu_dev->dumbbuffers[idx].used) {
+        return -EINVAL;
+    }
+
+    if (gpu_dev->dumbbuffers[idx].direct_backed) {
+        return 0;
+    }
+
+    uint32_t bytes_per_pixel = gpu_dev->framebuffer->bpp / 8;
+    if (bytes_per_pixel == 0) {
+        return -EINVAL;
+    }
+
+    uint32_t src_pitch = gpu_dev->dumbbuffers[idx].pitch;
+    uint32_t src_width = gpu_dev->dumbbuffers[idx].width;
+    uint32_t src_height = gpu_dev->dumbbuffers[idx].height;
+    uint32_t dst_pitch = (uint32_t)gpu_dev->framebuffer->pitch;
+    uint32_t dst_width = (uint32_t)gpu_dev->framebuffer->width;
+    uint32_t dst_height = (uint32_t)gpu_dev->framebuffer->height;
+
+    if (x >= src_width || y >= src_height || x >= dst_width ||
+        y >= dst_height) {
+        return 0;
+    }
+
+    if (width == 0) {
+        width = src_width;
+    }
+    if (height == 0) {
+        height = src_height;
+    }
+
+    uint32_t max_src_width = src_pitch / bytes_per_pixel;
+    uint32_t max_dst_width = dst_pitch / bytes_per_pixel;
+
+    width = MIN(width, src_width - x);
+    width = MIN(width, dst_width - x);
+    width = MIN(width, max_src_width - x);
+    width = MIN(width, max_dst_width - x);
+    height = MIN(height, src_height - y);
+    height = MIN(height, dst_height - y);
+
+    if (width == 0 || height == 0) {
+        return 0;
+    }
+
+    size_t row_bytes = (size_t)width * bytes_per_pixel;
+    uint8_t *src =
+        (uint8_t *)(uintptr_t)phys_to_virt(gpu_dev->dumbbuffers[idx].addr) +
+        ((size_t)y * src_pitch) + ((size_t)x * bytes_per_pixel);
+    uint8_t *dst = (uint8_t *)(uintptr_t)gpu_dev->framebuffer->address +
+                   ((size_t)y * dst_pitch) + ((size_t)x * bytes_per_pixel);
+
+    for (uint32_t row = 0; row < height; row++) {
+        fast_copy_16(dst, src, row_bytes);
+        src += src_pitch;
+        dst += dst_pitch;
+    }
+
+    return 0;
+}
+
 int plainfb_get_display_info(drm_device_t *drm_dev, uint32_t *width,
                              uint32_t *height, uint32_t *bpp) {
     plainfb_device_t *dev = drm_dev->data;
@@ -55,8 +130,25 @@ int plainfb_create_dumb(drm_device_t *drm_dev,
             gpu_dev->dumbbuffers[i].used = true;
             gpu_dev->dumbbuffers[i].width = args->width;
             gpu_dev->dumbbuffers[i].height = args->height;
-            gpu_dev->dumbbuffers[i].pitch = args->pitch;
             gpu_dev->dumbbuffers[i].refcount = 1;
+            gpu_dev->dumbbuffers[i].direct_backed = false;
+
+            if ((size_t)args->width == gpu_dev->framebuffer->width &&
+                (size_t)args->height == gpu_dev->framebuffer->height &&
+                (size_t)args->bpp == gpu_dev->framebuffer->bpp) {
+                gpu_dev->dumbbuffers[i].direct_backed = true;
+                gpu_dev->dumbbuffers[i].pitch =
+                    (uint32_t)gpu_dev->framebuffer->pitch;
+                gpu_dev->dumbbuffers[i].addr =
+                    translate_address(get_current_page_dir(false),
+                                      (uint64_t)gpu_dev->framebuffer->address);
+                args->pitch = gpu_dev->dumbbuffers[i].pitch;
+                args->size = plainfb_native_size_bytes(gpu_dev);
+                args->handle = i + 1;
+                return 0;
+            }
+
+            gpu_dev->dumbbuffers[i].pitch = args->pitch;
 
             // Allocate memory for framebuffer
             gpu_dev->dumbbuffers[i].addr = alloc_frames(
@@ -88,13 +180,15 @@ static int plainfb_destroy_dumb(drm_device_t *drm_dev, uint32_t handle,
     }
 
     if (--gpu_dev->dumbbuffers[idx].refcount == 0) {
-        // Free memory
-        free_frames(gpu_dev->dumbbuffers[idx].addr,
-                    (gpu_dev->dumbbuffers[idx].pitch *
-                         gpu_dev->dumbbuffers[idx].height +
-                     DEFAULT_PAGE_SIZE - 1) /
-                        DEFAULT_PAGE_SIZE);
+        if (!gpu_dev->dumbbuffers[idx].direct_backed) {
+            free_frames(gpu_dev->dumbbuffers[idx].addr,
+                        (gpu_dev->dumbbuffers[idx].pitch *
+                             gpu_dev->dumbbuffers[idx].height +
+                         DEFAULT_PAGE_SIZE - 1) /
+                            DEFAULT_PAGE_SIZE);
+        }
 
+        gpu_dev->dumbbuffers[idx].direct_backed = false;
         gpu_dev->dumbbuffers[idx].used = false;
     }
 
@@ -126,6 +220,56 @@ static int plainfb_add_fb(drm_device_t *drm_dev, struct drm_mode_fb_cmd *fb_cmd,
     fb_cmd->fb_id = fb->id;
 
     return 0;
+}
+
+static int plainfb_dirty_fb(drm_device_t *drm_dev,
+                            struct drm_mode_fb_dirty_cmd *cmd, fd_t *fd) {
+    (void)fd;
+    plainfb_device_t *gpu_dev = drm_dev->data;
+    if (!gpu_dev || !gpu_dev->framebuffer || !cmd ||
+        (cmd->flags & ~DRM_MODE_FB_DIRTY_FLAGS)) {
+        return -EINVAL;
+    }
+
+    drm_framebuffer_t *fb =
+        drm_framebuffer_get(&gpu_dev->resource_mgr, cmd->fb_id);
+    if (!fb) {
+        return -ENOENT;
+    }
+
+    uint32_t idx = 0;
+    if (!plainfb_handle_to_index(fb->handle, &idx) ||
+        !gpu_dev->dumbbuffers[idx].used) {
+        drm_framebuffer_free(&gpu_dev->resource_mgr, fb->id);
+        return -EINVAL;
+    }
+
+    int ret = 0;
+    if (cmd->num_clips == 0 || cmd->clips_ptr == 0) {
+        ret = plainfb_present_dumbbuffer(gpu_dev, idx, 0, 0, 0, 0);
+    } else {
+        uint32_t clips_count = MIN(cmd->num_clips, DRM_MODE_FB_DIRTY_MAX_CLIPS);
+        drm_clip_rect_t *clips = (drm_clip_rect_t *)(uintptr_t)cmd->clips_ptr;
+        for (uint32_t i = 0; i < clips_count; i++) {
+            uint32_t x = clips[i].x1;
+            uint32_t y = clips[i].y1;
+            uint32_t w =
+                clips[i].x2 > clips[i].x1 ? clips[i].x2 - clips[i].x1 : 0;
+            uint32_t h =
+                clips[i].y2 > clips[i].y1 ? clips[i].y2 - clips[i].y1 : 0;
+            if (w == 0 || h == 0) {
+                continue;
+            }
+
+            ret = plainfb_present_dumbbuffer(gpu_dev, idx, x, y, w, h);
+            if (ret != 0) {
+                break;
+            }
+        }
+    }
+
+    drm_framebuffer_free(&gpu_dev->resource_mgr, fb->id);
+    return ret;
 }
 
 static int plainfb_add_fb2(drm_device_t *drm_dev,
@@ -447,21 +591,16 @@ int plainfb_atomic_commit(drm_device_t *drm_dev, struct drm_mode_atomic *atomic,
         return -EINVAL;
     }
 
-    size_t dst_size = (size_t)gpu_dev->framebuffer->pitch *
-                      (size_t)gpu_dev->framebuffer->height;
-    size_t src_size = (size_t)gpu_dev->dumbbuffers[scanout_idx].pitch *
-                      (size_t)gpu_dev->dumbbuffers[scanout_idx].height;
-    size_t copy_size = src_size < dst_size ? src_size : dst_size;
-
-    fast_copy_16(
-        (void *)gpu_dev->framebuffer->address,
-        (const void *)phys_to_virt(gpu_dev->dumbbuffers[scanout_idx].addr),
-        copy_size);
+    int ret = plainfb_present_dumbbuffer(gpu_dev, scanout_idx, 0, 0, 0, 0);
+    if (ret != 0) {
+        drm_framebuffer_free(&gpu_dev->resource_mgr, scanout_fb->id);
+        return ret;
+    }
 
     drm_framebuffer_free(&gpu_dev->resource_mgr, scanout_fb->id);
 
     if (atomic->flags & DRM_MODE_PAGE_FLIP_EVENT) {
-        int ret =
+        ret =
             drm_post_event(drm_dev, DRM_EVENT_FLIP_COMPLETE, atomic->user_data);
         if (ret < 0) {
             return ret;
@@ -497,10 +636,27 @@ int plainfb_map_dumb(drm_device_t *drm_dev, struct drm_mode_map_dumb *args,
 static int plainfb_set_crtc(drm_device_t *drm_dev, struct drm_mode_crtc *crtc,
                             fd_t *fd) {
     (void)fd;
-    (void)drm_dev;
-    (void)crtc;
-    // CRTC configuration handled by page flip
-    return 0;
+    plainfb_device_t *gpu_dev = drm_dev->data;
+    if (!gpu_dev || !gpu_dev->framebuffer || !crtc || crtc->fb_id == 0) {
+        return 0;
+    }
+
+    drm_framebuffer_t *fb =
+        drm_framebuffer_get(&gpu_dev->resource_mgr, crtc->fb_id);
+    if (!fb) {
+        return -ENOENT;
+    }
+
+    uint32_t idx = 0;
+    if (!plainfb_handle_to_index(fb->handle, &idx) ||
+        !gpu_dev->dumbbuffers[idx].used) {
+        drm_framebuffer_free(&gpu_dev->resource_mgr, fb->id);
+        return -EINVAL;
+    }
+
+    int ret = plainfb_present_dumbbuffer(gpu_dev, idx, 0, 0, 0, 0);
+    drm_framebuffer_free(&gpu_dev->resource_mgr, fb->id);
+    return ret;
 }
 
 static int plainfb_page_flip(drm_device_t *drm_dev,
@@ -534,13 +690,16 @@ static int plainfb_page_flip(drm_device_t *drm_dev,
         return -EINVAL;
     }
 
-    fast_copy_16((void *)gpu_dev->framebuffer->address,
-                 (const void *)phys_to_virt(gpu_dev->dumbbuffers[idx].addr),
-                 gpu_dev->framebuffer->pitch * gpu_dev->framebuffer->height);
-
-    int ret = drm_post_event(drm_dev, DRM_EVENT_FLIP_COMPLETE, flip->user_data);
-    if (ret < 0) {
+    int ret = plainfb_present_dumbbuffer(gpu_dev, idx, 0, 0, 0, 0);
+    if (ret != 0) {
         return ret;
+    }
+
+    if (flip->flags & DRM_MODE_PAGE_FLIP_EVENT) {
+        ret = drm_post_event(drm_dev, DRM_EVENT_FLIP_COMPLETE, flip->user_data);
+        if (ret < 0) {
+            return ret;
+        }
     }
 
     if (old_fb_id != 0 && old_fb_id != flip->fb_id) {
@@ -646,7 +805,7 @@ drm_device_op_t plainfb_drm_device_op = {
     .get_fb = NULL,
     .create_dumb = plainfb_create_dumb,
     .destroy_dumb = plainfb_destroy_dumb,
-    .dirty_fb = NULL,
+    .dirty_fb = plainfb_dirty_fb,
     .add_fb = plainfb_add_fb,
     .add_fb2 = plainfb_add_fb2,
     .set_plane = NULL,

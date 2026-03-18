@@ -134,6 +134,8 @@ virtio_driver_t *virtio_pci_init(void *data) {
         }
 
         cap_offset = (tmp & 0xff00) >> 8;
+        if (!cap_offset)
+            break;
     }
 
     virtio_pci_device_t *pci = malloc(sizeof(virtio_pci_device_t));

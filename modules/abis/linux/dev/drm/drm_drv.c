@@ -9,6 +9,106 @@
 #include <mm/page_table.h>
 #include <libs/klibc.h>
 
+#define DRM_MAX_EVENT_NODE_BINDINGS 16
+
+typedef struct drm_event_node_binding {
+    drm_device_t *dev;
+    vfs_node_t *node;
+} drm_event_node_binding_t;
+
+static drm_event_node_binding_t
+    drm_event_node_bindings[DRM_MAX_EVENT_NODE_BINDINGS];
+static spinlock_t drm_event_node_bindings_lock = SPIN_INIT;
+
+static vfs_node_t *drm_event_node_get(drm_device_t *dev) {
+    if (!dev) {
+        return NULL;
+    }
+
+    vfs_node_t *node = NULL;
+
+    spin_lock(&drm_event_node_bindings_lock);
+    for (uint32_t i = 0; i < DRM_MAX_EVENT_NODE_BINDINGS; i++) {
+        if (drm_event_node_bindings[i].dev == dev &&
+            drm_event_node_bindings[i].node) {
+            node = drm_event_node_bindings[i].node;
+            vfs_node_ref_get(node);
+            break;
+        }
+    }
+    spin_unlock(&drm_event_node_bindings_lock);
+
+    return node;
+}
+
+extern vfs_node_t *devtmpfs_root;
+
+static void drm_event_node_register(drm_device_t *dev,
+                                    const char *card_dev_name) {
+    if (!dev || !card_dev_name) {
+        return;
+    }
+
+    vfs_node_t *node = vfs_open_at(devtmpfs_root, card_dev_name, 0);
+    if (!node) {
+        return;
+    }
+
+    int free_slot = -1;
+    vfs_node_t *old_node = NULL;
+
+    spin_lock(&drm_event_node_bindings_lock);
+    for (uint32_t i = 0; i < DRM_MAX_EVENT_NODE_BINDINGS; i++) {
+        if (drm_event_node_bindings[i].dev == dev) {
+            old_node = drm_event_node_bindings[i].node;
+            drm_event_node_bindings[i].node = node;
+            node = NULL;
+            break;
+        }
+
+        if (free_slot < 0 && drm_event_node_bindings[i].dev == NULL) {
+            free_slot = (int)i;
+        }
+    }
+
+    if (node && free_slot >= 0) {
+        drm_event_node_bindings[free_slot].dev = dev;
+        drm_event_node_bindings[free_slot].node = node;
+        node = NULL;
+    }
+    spin_unlock(&drm_event_node_bindings_lock);
+
+    if (old_node) {
+        vfs_close(old_node);
+    }
+    if (node) {
+        vfs_close(node);
+    }
+}
+
+static void drm_event_node_unregister(drm_device_t *dev) {
+    if (!dev) {
+        return;
+    }
+
+    vfs_node_t *node = NULL;
+
+    spin_lock(&drm_event_node_bindings_lock);
+    for (uint32_t i = 0; i < DRM_MAX_EVENT_NODE_BINDINGS; i++) {
+        if (drm_event_node_bindings[i].dev == dev) {
+            node = drm_event_node_bindings[i].node;
+            drm_event_node_bindings[i].dev = NULL;
+            drm_event_node_bindings[i].node = NULL;
+            break;
+        }
+    }
+    spin_unlock(&drm_event_node_bindings_lock);
+
+    if (node) {
+        vfs_close(node);
+    }
+}
+
 /**
  * drm_read - Read from DRM device
  * @data: DRM device pointer
@@ -32,41 +132,70 @@ ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
         return -EINVAL;
     }
 
-    struct k_drm_event *event = NULL;
-    while (!event) {
-        arch_disable_interrupt();
+    struct k_drm_event event;
+    bool have_event = false;
+    memset(&event, 0, sizeof(event));
 
+    while (!have_event) {
         spin_lock(&dev->event_lock);
-        if (dev->drm_events[0]) {
-            event = dev->drm_events[0];
-            dev->drm_events[0] = NULL;
-            memmove(&dev->drm_events[0], &dev->drm_events[1],
-                    sizeof(struct k_drm_event *) * (DRM_MAX_EVENTS_COUNT - 1));
-            dev->drm_events[DRM_MAX_EVENTS_COUNT - 1] = NULL;
+        if (dev->drm_event_count != 0) {
+            event = dev->drm_events[dev->drm_event_head];
+            dev->drm_event_head =
+                (dev->drm_event_head + 1) % DRM_MAX_EVENTS_COUNT;
+            dev->drm_event_count--;
+            have_event = true;
         }
         spin_unlock(&dev->event_lock);
 
-        if (event)
+        if (have_event)
             break;
 
         if (flags & O_NONBLOCK)
             return -EWOULDBLOCK;
 
-        arch_enable_interrupt();
-        schedule(SCHED_FLAG_YIELD);
+        vfs_node_t *event_node = drm_event_node_get(dev);
+        if (!event_node) {
+            schedule(SCHED_FLAG_YIELD);
+            continue;
+        }
+
+        uint32_t want = EPOLLIN | EPOLLERR | EPOLLHUP;
+        vfs_poll_wait_t wait;
+        vfs_poll_wait_init(&wait, current_task, want);
+        int ret = vfs_poll_wait_arm(event_node, &wait);
+        if (ret != 0) {
+            vfs_node_ref_put(event_node, NULL);
+            return ret;
+        }
+
+        int events = vfs_poll(event_node, want);
+        if (!(events & want)) {
+            int reason = vfs_poll_wait_sleep(event_node, &wait, -1, "drm_read");
+            vfs_poll_wait_disarm(&wait);
+            vfs_node_ref_put(event_node, NULL);
+            if (reason != EOK) {
+                return reason == EINTR ? -EINTR : -EIO;
+            }
+            continue;
+        }
+
+        vfs_poll_wait_disarm(&wait);
+        vfs_node_ref_put(event_node, NULL);
+        if (events & (EPOLLERR | EPOLLHUP)) {
+            return -EIO;
+        }
     }
 
     struct drm_event_vblank vbl = {
-        .base.type = event->type,
+        .base.type = event.type,
         .base.length = sizeof(vbl),
-        .user_data = event->user_data,
-        .tv_sec = event->timestamp.tv_sec,
-        .tv_usec = event->timestamp.tv_nsec / 1000,
+        .user_data = event.user_data,
+        .tv_sec = (uint32_t)event.timestamp.tv_sec,
+        .tv_usec = (uint32_t)(event.timestamp.tv_nsec / 1000),
+        .sequence = (uint32_t)event.sequence,
         .crtc_id =
             dev->resource_mgr.crtcs[0] ? dev->resource_mgr.crtcs[0]->id : 0,
     };
-
-    free(event);
 
     ssize_t ret = 0;
 
@@ -101,7 +230,7 @@ ssize_t drm_poll(void *data, size_t event) {
 
     if (event & EPOLLIN) {
         spin_lock(&dev->event_lock);
-        bool has_event = (dev->drm_events[0] != NULL);
+        bool has_event = (dev->drm_event_count != 0);
         spin_unlock(&dev->event_lock);
         if (has_event) {
             revent |= EPOLLIN;
@@ -374,6 +503,8 @@ drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
         dev->render_node_registered = true;
     }
 
+    drm_event_node_register(dev, card_dev_name);
+
     // Populate hardware resources if driver supports it
     if (dev->op->get_connectors) {
         drm_connector_t *connectors[DRM_MAX_CONNECTORS_PER_DEVICE];
@@ -561,15 +692,10 @@ void drm_unregister_device(drm_device_t *dev) {
     if (!dev)
         return;
 
+    drm_event_node_unregister(dev);
+
     // Clean up resource manager
     drm_resource_manager_cleanup(&dev->resource_mgr);
-
-    // Free any pending events
-    for (int i = 0; i < DRM_MAX_EVENTS_COUNT; i++) {
-        if (dev->drm_events[i]) {
-            free(dev->drm_events[i]);
-        }
-    }
 
     free(dev);
 }
@@ -599,36 +725,35 @@ void drm_init_after_pci_sysfs() {
  */
 int drm_post_event(drm_device_t *dev, uint32_t type, uint64_t user_data) {
     int ret = 0;
-    int slot = -1;
+    uint32_t slot = 0;
+    uint64_t now = nano_time();
 
     spin_lock(&dev->event_lock);
-    for (int i = 0; i < DRM_MAX_EVENTS_COUNT; i++) {
-        if (!dev->drm_events[i]) {
-            slot = i;
-            break;
-        }
+
+    if (type == DRM_EVENT_VBLANK || type == DRM_EVENT_FLIP_COMPLETE) {
+        dev->vblank_counter++;
     }
 
-    if (slot < 0) {
-        free(dev->drm_events[0]);
-        dev->drm_events[0] = NULL;
-        memmove(&dev->drm_events[0], &dev->drm_events[1],
-                sizeof(struct k_drm_event *) * (DRM_MAX_EVENTS_COUNT - 1));
-        slot = DRM_MAX_EVENTS_COUNT - 1;
-        dev->drm_events[slot] = NULL;
+    if (dev->drm_event_count == DRM_MAX_EVENTS_COUNT) {
+        dev->drm_event_head = (dev->drm_event_head + 1) % DRM_MAX_EVENTS_COUNT;
+        dev->drm_event_count--;
     }
 
-    dev->drm_events[slot] = malloc(sizeof(struct k_drm_event));
-    if (!dev->drm_events[slot]) {
-        ret = -ENOMEM;
-    } else {
-        dev->drm_events[slot]->type = type;
-        dev->drm_events[slot]->user_data = user_data;
-        dev->drm_events[slot]->timestamp.tv_sec = nano_time() / 1000000000ULL;
-        dev->drm_events[slot]->timestamp.tv_nsec = nano_time() % 1000000000ULL;
-    }
+    slot = (dev->drm_event_head + dev->drm_event_count) % DRM_MAX_EVENTS_COUNT;
+    dev->drm_events[slot].type = type;
+    dev->drm_events[slot].user_data = user_data;
+    dev->drm_events[slot].timestamp.tv_sec = now / 1000000000ULL;
+    dev->drm_events[slot].timestamp.tv_nsec = now % 1000000000ULL;
+    dev->drm_events[slot].sequence = dev->vblank_counter;
+    dev->drm_event_count++;
 
     spin_unlock(&dev->event_lock);
+
+    vfs_node_t *event_node = drm_event_node_get(dev);
+    if (event_node) {
+        vfs_poll_notify(event_node, EPOLLIN);
+        vfs_node_ref_put(event_node, NULL);
+    }
 
     return ret;
 }
