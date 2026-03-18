@@ -58,111 +58,59 @@ char *proc_gen_stat_file(task_t *task, size_t *content_len) {
     proc_stat_signal_masks(task, &ignored, &caught);
     int len = sprintf(
         buffer,
-        // 1. pid: 进程ID (%d)
         "%d "
-        // 2. comm: 可执行文件名 (括号括起，%s)
         "(%s) "
-        // 3. state: 进程状态 (%c) [citation:1]
         "%c "
-        // 4. ppid: 父进程ID (%d)
         "%d "
-        // 5. pgrp: 进程组ID (%d) [原代码此处错误，不应为0]
         "%d "
-        // 6. session: 会话ID (%d) [原代码错误使用了task->uid]
         "%d "
-        // 7. tty_nr: 控制终端 (%d)
         "%d "
-        // 8. tpgid: 前台进程组ID (%d)
         "%d "
-        // 9. flags: 内核标志位 (%u) [citation:1]
         "%u "
-        // 10. minflt: 缺页次数(轻微) (%lu)
         "%lu "
-        // 11. cminflt: 子进程缺页(轻微) (%lu)
         "%lu "
-        // 12. majflt: 缺页次数(严重) (%lu)
         "%lu "
-        // 13. cmajflt: 子进程缺页(严重) (%lu)
         "%lu "
-        // 14. utime: 用户态时间 (%lu) [citation:1]
         "%lu "
-        // 15. stime: 内核态时间 (%lu) [citation:1]
         "%lu "
-        // 16. cutime: 子进程用户态时间 (%ld) [citation:1]
         "%ld "
-        // 17. cstime: 子进程内核态时间 (%ld) [citation:1]
         "%ld "
-        // 18. priority: 优先级 (%ld) [citation:1]
         "%ld "
-        // 19. nice: nice值 (%ld) [citation:1]
         "%ld "
-        // 20. num_threads: 线程数 (%ld) [citation:1]
         "%ld "
-        // 21. itrealvalue: 间隔定时器 (%ld) [citation:1]
         "%ld "
-        // 22. starttime: 启动时间 (时钟滴答, %llu) [citation:1]
         "%llu "
-        // 23. vsize: 虚拟内存大小 (%lu) [citation:1]
         "%lu "
-        // 24. rss: 驻留内存页数 (%ld) [citation:1]
         "%ld "
-        // 25. rsslim: RSS软限制 (%lu) [citation:1]
         "%lu "
-        // 26. startcode: 代码段起始地址 (%lu) [citation:1]
         "%lu "
-        // 27. endcode: 代码段结束地址 (%lu) [citation:1]
         "%lu "
-        // 28. startstack: 栈起始地址 (%lu) [citation:1]
         "%lu "
-        // 29. kstkesp: ESP指针值 (%lu) [citation:1]
         "%lu "
-        // 30. kstkeip: EIP指针值 (%lu) [citation:1]
         "%lu "
-        // 31. signal: 挂起信号位图 (%lu) [citation:1]
         "%lu "
-        // 32. blocked: 阻塞信号位图 (%lu) [citation:1]
         "%lu "
-        // 33. sigignore: 忽略信号位图 (%lu) [citation:1]
         "%lu "
-        // 34. sigcatch: 捕获信号位图 (%lu) [citation:1]
         "%lu "
-        // 35. wchan: 等待通道地址 (%lu) [citation:1]
         "%lu "
-        // 36. nswap: 交换页数 (%lu) [citation:1]
         "%lu "
-        // 37. cnswap: 子进程交换页数 (%lu) [citation:1]
         "%lu "
-        // 38. exit_signal: 退出信号 (%d) [citation:1]
         "%d "
-        // 39. processor: 最近执行的CPU (%d) [citation:1]
         "%d "
-        // 40. rt_priority: 实时优先级 (%u) [citation:1]
         "%u "
-        // 41. policy: 调度策略 (%u) [citation:1]
         "%u "
-        // 42. delayacct_blkio_ticks: IO延迟滴答数 (%llu) [citation:1]
         "%llu "
-        // 43. guest_time: 客户机时间 (%lu) [citation:1]
         "%lu "
-        // 44. cguest_time: 子进程客户机时间 (%ld) [citation:1]
         "%ld "
-        // 45. start_data: 数据段起始地址 (%lu) [citation:1]
         "%lu "
-        // 46. end_data: 数据段结束地址 (%lu) [citation:1]
         "%lu "
-        // 47. start_brk: 堆起始地址 (%lu) [citation:1]
         "%lu "
-        // 48. arg_start: 参数列表起始地址 (%lu) [citation:1]
         "%lu "
-        // 49. arg_end: 参数列表结束地址 (%lu) [citation:1]
         "%lu "
-        // 50. env_start: 环境变量起始地址 (%lu) [citation:1]
         "%lu "
-        // 51. env_end: 环境变量结束地址 (%lu) [citation:1]
         "%lu "
-        // 52. exit_code: 退出码 (%d)
         "%d\n",
-
+        // args
         task->pid,                  // 1. pid
         task->name,                 // 2. comm
         proc_stat_task_state(task), // 3. state

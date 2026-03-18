@@ -452,11 +452,17 @@ struct mount_point {
 #define IN_ISDIR 0x40000000
 #define IN_Q_OVERFLOW 0x4000
 #define IN_UNMOUNT 0x2000
+#define IN_ALL_EVENTS                                                          \
+    (IN_ACCESS | IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE | IN_CLOSE_NOWRITE |   \
+     IN_OPEN | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE |           \
+     IN_DELETE_SELF | IN_MOVE_SELF)
 
 struct vfs_notify_event {
     struct llist_header node;
-    vfs_node_t *changed_node;
     uint64_t mask;
+    uint32_t cookie;
+    uint32_t name_len;
+    char *name;
 };
 
 struct notifyfs_handle;
@@ -467,6 +473,7 @@ typedef struct notifyfs_watch {
     vfs_node_t *watch_node;
     notifyfs_handle_t *owner;
     uint64_t mask;
+    bool active;
     struct llist_header node;
     struct llist_header all_watches_node;
     spinlock_t events_lock;
@@ -478,7 +485,18 @@ struct notifyfs_handle {
     vfs_node_t *node;
 };
 
+bool notifyfs_watch_queue_event_locked(notifyfs_watch_t *watch,
+                                       vfs_node_t *changed_node,
+                                       const char *name, uint64_t mask,
+                                       uint32_t cookie);
+void notifyfs_watch_deactivate_locked(notifyfs_watch_t *watch,
+                                      bool queue_ignored);
+
 void vfs_on_new_event(vfs_node_t *node, uint64_t mask);
+void vfs_on_child_event(vfs_node_t *dir, vfs_node_t *child, uint64_t mask,
+                        uint32_t cookie);
+void vfs_on_named_child_event(vfs_node_t *dir, vfs_node_t *child,
+                              const char *name, uint64_t mask, uint32_t cookie);
 void vfs_mark_dirty(vfs_node_t *node, uint64_t dirty_flags);
 
 void vfs_poll_wait_init(vfs_poll_wait_t *wait, task_t *task, uint32_t events);

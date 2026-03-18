@@ -4,7 +4,7 @@
 #include <dev/drm/drm_mode.h>
 #include <drivers/bus/pci.h>
 
-#define HZ 60
+#define HZ 120
 
 #define fourcc_code(a, b, c, d)                                                \
     ((__u32)(a) | ((__u32)(b) << 8) | ((__u32)(c) << 16) | ((__u32)(d) << 24))

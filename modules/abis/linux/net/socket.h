@@ -72,6 +72,8 @@ typedef struct socket {
 
     // 我自己的凭据
     struct ucred cred;
+    struct ucred peer_cred;
+    bool has_peer_cred;
 
     // 对端指针 (SOCK_STREAM 连接后设置)
     struct socket *peer;

@@ -1560,7 +1560,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     if (flags & CLONE_VFORK) {
         flags |= CLONE_VM;
-        flags |= CLONE_FILES;
     }
 
     if ((flags & CLONE_THREAD) &&

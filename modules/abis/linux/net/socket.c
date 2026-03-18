@@ -35,11 +35,51 @@ static inline int32_t unix_socket_cred_pid_for_task(task_t *task) {
     if (!task)
         return -1;
 
-    uint64_t pid = task->tgid ? task->tgid : task->pid;
+    uint64_t pid = task_effective_tgid(task);
     if (pid > INT32_MAX)
         return -1;
 
     return (int32_t)pid;
+}
+
+static inline void unix_socket_fill_cred_from_task(struct ucred *cred,
+                                                   task_t *task) {
+    if (!cred) {
+        return;
+    }
+
+    cred->pid = unix_socket_cred_pid_for_task(task);
+    cred->uid = task ? task->uid : 0;
+    cred->gid = task ? task->gid : 0;
+}
+
+static inline void unix_socket_snapshot_peer_cred(socket_t *sock,
+                                                  const struct ucred *cred) {
+    if (!sock || !cred) {
+        return;
+    }
+
+    sock->peer_cred = *cred;
+    sock->has_peer_cred = true;
+}
+
+static inline bool unix_socket_get_peer_cred(const socket_t *sock,
+                                             struct ucred *cred) {
+    if (!sock || !cred) {
+        return false;
+    }
+
+    if (sock->has_peer_cred) {
+        *cred = sock->peer_cred;
+        return true;
+    }
+
+    if (!sock->peer) {
+        return false;
+    }
+
+    *cred = sock->peer->cred;
+    return true;
 }
 
 char *unix_socket_addr_safe(const struct sockaddr_un *addr, size_t len) {
@@ -214,9 +254,7 @@ socket_t *unix_socket_alloc() {
     sock->has_pending_cred = false;
 
     // 设置凭据
-    sock->cred.pid = unix_socket_cred_pid_for_task(current_task);
-    sock->cred.uid = current_task->uid;
-    sock->cred.gid = current_task->gid;
+    unix_socket_fill_cred_from_task(&sock->cred, current_task);
 
     // 加入链表
     spin_lock(&unix_socket_list_lock);
@@ -635,6 +673,7 @@ int socket_listen(uint64_t fd, int backlog) {
     socket_t *sock = handle->sock;
 
     mutex_lock(&sock->lock);
+    unix_socket_fill_cred_from_task(&sock->cred, current_task);
     if (sock->backlog) {
         free(sock->backlog);
         sock->backlog = NULL;
@@ -842,8 +881,12 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
 
     if (!listen_sock) {
         int ret = -ENOENT;
-        if (!is_abstract && vfs_open(safe, 0))
-            ret = -ECONNREFUSED;
+        if (!is_abstract) {
+            vfs_node_t *path_node = vfs_open(safe, 0);
+            if (path_node) {
+                ret = -ECONNREFUSED;
+            }
+        }
         free(safe);
         return ret;
     }
@@ -877,10 +920,11 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
     server_sock->domain = listen_sock->domain;
     server_sock->type = listen_sock->type;
     server_sock->protocol = listen_sock->protocol;
-    // server_sock retains its own credentials (client's credentials)
-    // server_sock->cred already set by unix_socket_alloc() to client's
-    // credentials
+    server_sock->cred = listen_sock->cred;
     server_sock->passcred = listen_sock->passcred;
+    unix_socket_fill_cred_from_task(&sock->cred, current_task);
+    unix_socket_snapshot_peer_cred(sock, &server_sock->cred);
+    unix_socket_snapshot_peer_cred(server_sock, &sock->cred);
     if (listen_sock->bindAddr) {
         server_sock->filename = strdup(listen_sock->bindAddr);
         if (!server_sock->filename) {
@@ -1046,8 +1090,6 @@ done:
                 }
             } else if (cmsg->cmsg_type == SCM_CREDENTIALS) {
                 if (cmsg->cmsg_len < CMSG_LEN(sizeof(struct ucred))) {
-                    printk("Invalid cmsg len for scm_credentials: %d\n",
-                           cmsg->cmsg_len);
                     mutex_unlock(&peer->lock);
                     return (size_t)-EINVAL;
                 }
@@ -1357,6 +1399,8 @@ bool socket_close(vfs_node_t *node) {
 
     if (sock->peer) {
         peer = sock->peer;
+        unix_socket_snapshot_peer_cred(sock, &peer->cred);
+        unix_socket_snapshot_peer_cred(peer, &sock->cred);
         sock->peer->peer = NULL; // 对端不再指向我
         sock->peer = NULL;
     }
@@ -1423,11 +1467,13 @@ int unix_socket_pair(int domain, int type, int protocol, int *sv) {
     sock2->peer = sock1;
     sock1->established = true;
     sock2->established = true;
+    unix_socket_snapshot_peer_cred(sock1, &sock2->cred);
+    unix_socket_snapshot_peer_cred(sock2, &sock1->cred);
 
     vfs_node_t *node1 = unix_socket_create_node(sock1);
     vfs_node_t *node2 = unix_socket_create_node(sock2);
 
-    uint64_t flags = 0;
+    uint64_t flags = O_RDWR;
     if (type & O_NONBLOCK)
         flags |= O_NONBLOCK;
 
@@ -1701,33 +1747,32 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, void *optval,
         *optlen = sizeof(int);
         break;
 
-    case SO_PEERCRED:
-        if (!sock->peer)
+    case SO_PEERCRED: {
+        struct ucred peer_cred = {0};
+        if (!unix_socket_get_peer_cred(sock, &peer_cred))
             return -ENOTCONN;
         if (*optlen < sizeof(struct ucred))
             return -EINVAL;
-        memcpy(optval, &sock->peer->cred, sizeof(struct ucred));
+        memcpy(optval, &peer_cred, sizeof(struct ucred));
         *optlen = sizeof(struct ucred);
-        break;
+    } break;
 
-    case SO_PEERPIDFD:
-        if (!sock->peer)
+    case SO_PEERPIDFD: {
+        struct ucred peer_cred = {0};
+        if (!unix_socket_get_peer_cred(sock, &peer_cred))
             return -ENOTCONN;
         if (*optlen < sizeof(int))
             return -EINVAL;
-        if (sock->peer->cred.pid <= 0)
+        if (peer_cred.pid <= 0)
             return -ESRCH;
-        {
-            uint64_t pidfd =
-                pidfd_create_for_pid((uint64_t)sock->peer->cred.pid, 0, true);
-            if ((int64_t)pidfd < 0)
-                return pidfd;
+        uint64_t pidfd = pidfd_create_for_pid((uint64_t)peer_cred.pid, 0, true);
+        if ((int64_t)pidfd < 0)
+            return pidfd;
 
-            int pidfd_value = (int)pidfd;
-            memcpy(optval, &pidfd_value, sizeof(pidfd_value));
-            *optlen = sizeof(pidfd_value);
-        }
-        break;
+        int pidfd_value = (int)pidfd;
+        memcpy(optval, &pidfd_value, sizeof(pidfd_value));
+        *optlen = sizeof(pidfd_value);
+    } break;
 
     case SO_ACCEPTCONN:
         if (*optlen < sizeof(int))

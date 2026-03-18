@@ -467,7 +467,6 @@ int linuxabi_on_new_task(task_t *task) { procfs_on_new_task(task); }
 
 int linuxabi_on_exit_task(task_t *task) {
     procfs_on_exit_task(task);
-    pidfd_on_task_exit(task);
     return 0;
 }
 
@@ -556,7 +555,7 @@ __attribute__((visibility("default"))) int dlmain() {
     regist_syscall_handler(SYS_SENDFILE, (syscall_handle_t)sys_sendfile);
     regist_syscall_handler(SYS_SOCKET, (syscall_handle_t)sys_socket);
     regist_syscall_handler(SYS_CONNECT, (syscall_handle_t)sys_connect);
-    regist_syscall_handler(SYS_ACCEPT, (syscall_handle_t)sys_accept);
+    regist_syscall_handler(SYS_ACCEPT, (syscall_handle_t)sys_accept_normal);
     regist_syscall_handler(SYS_SENDTO, (syscall_handle_t)sys_send);
     regist_syscall_handler(SYS_RECVFROM, (syscall_handle_t)sys_recv);
     regist_syscall_handler(SYS_SENDMSG, (syscall_handle_t)sys_sendmsg);

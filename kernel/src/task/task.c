@@ -5,6 +5,7 @@
 #include <task/sched.h>
 #include <drivers/kernel_logger.h>
 #include <fs/vfs/vfs.h>
+#include <fs/fs_syscall.h>
 #include <arch/arch.h>
 #include <mm/mm.h>
 #include <mm/shm.h>
@@ -1049,6 +1050,7 @@ void task_exit_inner(task_t *task, int64_t code) {
     task_cleanup_fd_info(task);
 
     futex_on_exit_task(task);
+    pidfd_on_task_exit(task);
     system_abi->on_exit_task(task);
 
     task->fd_info = NULL;
