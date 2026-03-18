@@ -2,10 +2,8 @@
 #include <fs/fs_syscall.h>
 #include <task/task.h>
 
-#define PROC_STAT_USER_HZ 100
-
 static unsigned long long proc_stat_ns_to_ticks(uint64_t ns) {
-    return (unsigned long long)(ns / (1000000000ULL / PROC_STAT_USER_HZ));
+    return (unsigned long long)(ns / (1000000000ULL / SCHED_HZ));
 }
 
 static char proc_stat_task_state(task_t *task) {

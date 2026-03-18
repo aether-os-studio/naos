@@ -6,6 +6,7 @@
 #include <mm/mm.h>
 #include <dev/drm/drm_core.h>
 #include <dev/drm/drm_mode.h>
+#include <libs/mutex.h>
 
 // Virtio GPU features
 #define VIRTIO_GPU_F_VIRGL (1ULL << 0)
@@ -16,6 +17,7 @@
 #define VIRTIO_GPU_F_SUPPORTED_CAPSET_IDS (1ULL << 5)
 #define VIRTIO_GPU_MAX_BOS 256
 #define VIRTIO_GPU_MAX_CONTEXTS 64
+#define VIRTIO_GPU_MAX_PENDING_SUBMITS 64
 #define VIRTIO_GPU_FLAG_FENCE 0x1
 #define VIRTIO_GPU_FLAG_INFO_RING_IDX 0x2
 #define VIRTIO_GPU_CONTEXT_INIT_CAPSET_ID_MASK 0x000000ff
@@ -238,6 +240,19 @@ typedef struct virtio_gpu_resource_create_blob {
     virtio_gpu_mem_entry_t mem_entry;
 } virtio_gpu_resource_create_blob_t;
 
+typedef struct virtio_gpu_set_scanout_blob {
+    struct virtio_gpu_ctrl_hdr hdr;
+    struct virtio_gpu_rect r;
+    uint32_t scanout_id;
+    uint32_t resource_id;
+    uint32_t width;
+    uint32_t height;
+    uint32_t format;
+    uint32_t padding;
+    uint32_t strides[4];
+    uint32_t offsets[4];
+} virtio_gpu_set_scanout_blob_t;
+
 typedef struct virtio_gpu_transfer_host_3d {
     struct virtio_gpu_ctrl_hdr hdr;
     virtio_gpu_box_t box;
@@ -377,9 +392,38 @@ typedef struct virtio_gpu_device {
     uint64_t supported_capset_mask;
     uint64_t host_visible_shm_paddr;
     uint64_t host_visible_shm_size;
+    struct virtio_gpu_scanout_state {
+        bool configured;
+        bool blob;
+        uint32_t resource_id;
+        uint32_t width;
+        uint32_t height;
+        uint32_t x;
+        uint32_t y;
+        uint32_t fb_width;
+        uint32_t fb_height;
+        uint32_t format;
+        uint32_t stride;
+        uint32_t offset;
+    } scanout_states[16];
 
     // Synchronization
-    spinlock_t lock;
+    mutex_t control_lock;
+    void *control_cmd_buf;
+    uint64_t control_cmd_buf_size;
+    void *control_resp_buf;
+    uint64_t control_resp_buf_size;
+    struct virtio_gpu_pending_submit {
+        bool in_use;
+        bool completed;
+        uint16_t desc_idx;
+        uint32_t cmd_type;
+        void *cmd_buf;
+        uint64_t cmd_buf_size;
+        void *resp_buf;
+        uint64_t resp_buf_size;
+        void *signal_node;
+    } pending_submits[VIRTIO_GPU_MAX_PENDING_SUBMITS];
     uint64_t fence_seq;
 } virtio_gpu_device_t;
 
