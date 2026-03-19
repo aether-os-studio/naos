@@ -90,6 +90,14 @@ static void *find_string_tag(void *mb2_info_addr) { return NULL; }
 extern char *fdt_kernel_cmdline(void *fdt);
 char *boot_get_cmdline() { return fdt_kernel_cmdline((void *)boot_get_dtb()); }
 
+void *boot_get_executable_file(size_t *size) {
+    if (size != NULL) {
+        *size = 0;
+    }
+
+    return NULL;
+}
+
 boot_module_t opensbi_modules[MAX_MODULES_NUM];
 
 void boot_get_modules(boot_module_t **modules, size_t *count) { *count = 0; }

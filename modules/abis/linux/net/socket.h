@@ -277,6 +277,11 @@ struct msghdr {
     int msg_flags;
 };
 
+struct mmsghdr {
+    struct msghdr msg_hdr;
+    unsigned int msg_len;
+};
+
 struct cmsghdr {
     size_t cmsg_len;
     int cmsg_level;

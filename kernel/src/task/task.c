@@ -829,7 +829,7 @@ void worker_thread(uint64_t arg) {
 
         bool did_work = sched_process_tick_work(queue_id);
 
-        if (softirq_has_pending()) {
+        if (current_cpu_id == 0 && softirq_has_pending()) {
             softirq_handle_pending();
             did_work = true;
         }

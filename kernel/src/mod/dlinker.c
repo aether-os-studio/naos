@@ -6,21 +6,28 @@
 
 uint64_t kernel_modules_load_offset = 0;
 
-extern const uint64_t kallsyms_lookup_address[] __attribute__((weak));
-extern const uint64_t kallsyms_lookup_num __attribute__((weak));
-extern const uint64_t kallsyms_lookup_names_index[] __attribute__((weak));
-extern const char kallsyms_lookup_names[] __attribute__((weak));
-
 size_t dlfunc_count = 0;
+
+typedef struct {
+    Elf64_Sym *symtab;
+    char *strtab;
+    size_t num_symbols;
+    bool initialized;
+    bool available;
+} kernel_symbol_table_t;
 
 static dlfunc_t __printf = {.name = "printf", .addr = (void *)printk};
 static dlfunc_t resolved_func;
 static module_symbol_t *loaded_module_symbols = NULL;
 static size_t loaded_module_symbol_count = 0;
 static size_t loaded_module_symbol_capacity = 0;
+static kernel_symbol_table_t kernel_symbol_table = {0};
 
 static void *find_symbol_address(const char *symbol_name, Elf64_Ehdr *ehdr,
                                  uint64_t offset);
+static bool get_elf_symbol_table(Elf64_Ehdr *ehdr, Elf64_Sym **symtab,
+                                 char **strtab, size_t *num_symbols);
+static bool elf_symbol_is_exported(const Elf64_Sym *sym);
 
 typedef struct {
     const char **exports;
@@ -98,23 +105,51 @@ static bool mmap_phdr_segment(Elf64_Ehdr *ehdr, Elf64_Phdr *phdrs,
     return true;
 }
 
-static bool kallsyms_lookup_available() {
-    return (uintptr_t)&kallsyms_lookup_num != 0 &&
-           (uintptr_t)kallsyms_lookup_address != 0 &&
-           (uintptr_t)kallsyms_lookup_names_index != 0 &&
-           (uintptr_t)kallsyms_lookup_names != 0;
+static bool init_kernel_symbol_table() {
+    if (kernel_symbol_table.initialized) {
+        return kernel_symbol_table.available;
+    }
+
+    kernel_symbol_table.initialized = true;
+
+    size_t executable_size = 0;
+    Elf64_Ehdr *ehdr = (Elf64_Ehdr *)boot_get_executable_file(&executable_size);
+    if (ehdr == NULL || executable_size < sizeof(*ehdr)) {
+        serial_fprintk(
+            "Kernel executable file is unavailable for symbol lookup.\n");
+        return false;
+    }
+
+    if (!arch_check_elf(ehdr)) {
+        serial_fprintk("Kernel executable file is not a valid ELF file.\n");
+        return false;
+    }
+
+    if (!get_elf_symbol_table(ehdr, &kernel_symbol_table.symtab,
+                              &kernel_symbol_table.strtab,
+                              &kernel_symbol_table.num_symbols)) {
+        serial_fprintk("Cannot find symbol table in kernel executable ELF.\n");
+        return false;
+    }
+
+    kernel_symbol_table.available = true;
+    return true;
 }
 
 static void *lookup_kernel_symbol_by_name(const char *name) {
-    if (name == NULL || !kallsyms_lookup_available()) {
+    if (name == NULL || !init_kernel_symbol_table()) {
         return NULL;
     }
 
-    const char *names = (const char *)kallsyms_lookup_names;
-    for (size_t i = 0; i < kallsyms_lookup_num; i++) {
-        const char *symbol_name = &names[kallsyms_lookup_names_index[i]];
+    for (size_t i = 0; i < kernel_symbol_table.num_symbols; i++) {
+        Elf64_Sym *sym = &kernel_symbol_table.symtab[i];
+        if (!elf_symbol_is_exported(sym)) {
+            continue;
+        }
+
+        const char *symbol_name = &kernel_symbol_table.strtab[sym->st_name];
         if (strcmp(symbol_name, name) == 0) {
-            return (void *)kallsyms_lookup_address[i];
+            return (void *)(uintptr_t)sym->st_value;
         }
     }
 
@@ -193,8 +228,8 @@ static bool register_module_symbol(const char *module_name, const char *name,
     return true;
 }
 
-static bool get_module_symbol_table(Elf64_Ehdr *ehdr, Elf64_Sym **symtab,
-                                    char **strtab, size_t *num_symbols) {
+static bool get_elf_symbol_table(Elf64_Ehdr *ehdr, Elf64_Sym **symtab,
+                                 char **strtab, size_t *num_symbols) {
     if (ehdr == NULL || symtab == NULL || strtab == NULL ||
         num_symbols == NULL) {
         return false;
@@ -330,7 +365,7 @@ static bool kernel_can_resolve_symbol(const char *name) {
     return lookup_kernel_symbol_by_name(name) != NULL;
 }
 
-static bool module_symbol_is_exported(const Elf64_Sym *sym) {
+static bool elf_symbol_is_exported(const Elf64_Sym *sym) {
     if (sym == NULL || sym->st_name == 0 || sym->st_shndx == SHN_UNDEF) {
         return false;
     }
@@ -352,7 +387,7 @@ static bool module_symbol_is_exported(const Elf64_Sym *sym) {
     }
 }
 
-static bool module_symbol_is_imported(const Elf64_Sym *sym) {
+static bool elf_symbol_is_imported(const Elf64_Sym *sym) {
     if (sym == NULL || sym->st_name == 0 || sym->st_shndx != SHN_UNDEF) {
         return false;
     }
@@ -367,7 +402,7 @@ static void register_module_symbols(module_t *module, Elf64_Ehdr *ehdr,
     char *strtab = NULL;
     size_t num_symbols = 0;
 
-    if (!get_module_symbol_table(ehdr, &symtab, &strtab, &num_symbols)) {
+    if (!get_elf_symbol_table(ehdr, &symtab, &strtab, &num_symbols)) {
         serial_fprintk("Cannot find symbol table in module %s\n",
                        module->module_name);
         return;
@@ -375,7 +410,7 @@ static void register_module_symbols(module_t *module, Elf64_Ehdr *ehdr,
 
     for (size_t i = 0; i < num_symbols; i++) {
         Elf64_Sym *sym = &symtab[i];
-        if (!module_symbol_is_exported(sym)) {
+        if (!elf_symbol_is_exported(sym)) {
             continue;
         }
 
@@ -419,7 +454,7 @@ static bool scan_module_symbols(module_t *module, module_plan_t *plan) {
     char *strtab = NULL;
     size_t num_symbols = 0;
 
-    if (!get_module_symbol_table(ehdr, &symtab, &strtab, &num_symbols)) {
+    if (!get_elf_symbol_table(ehdr, &symtab, &strtab, &num_symbols)) {
         serial_fprintk("Cannot find symbol table in module %s\n",
                        module->module_name);
         return false;
@@ -429,7 +464,7 @@ static bool scan_module_symbols(module_t *module, module_plan_t *plan) {
         Elf64_Sym *sym = &symtab[i];
         const char *sym_name = &strtab[sym->st_name];
 
-        if (module_symbol_is_exported(sym)) {
+        if (elf_symbol_is_exported(sym)) {
             if (!strcmp(sym_name, "dlmain")) {
                 continue;
             }
@@ -440,7 +475,7 @@ static bool scan_module_symbols(module_t *module, module_plan_t *plan) {
             }
         }
 
-        if (module_symbol_is_imported(sym)) {
+        if (elf_symbol_is_imported(sym)) {
             if (!append_unique_string(&plan->imports, &plan->import_count,
                                       &plan->import_capacity, sym_name)) {
                 return false;
@@ -705,7 +740,7 @@ static void *find_symbol_address(const char *symbol_name, Elf64_Ehdr *ehdr,
     char *strtab = NULL;
     size_t num_symbols = 0;
 
-    if (!get_module_symbol_table(ehdr, &symtab, &strtab, &num_symbols)) {
+    if (!get_elf_symbol_table(ehdr, &symtab, &strtab, &num_symbols)) {
         serial_fprintk("Cannot find symbol table in ELF file.\n");
         return NULL;
     }
@@ -847,6 +882,10 @@ bool dlinker_load(module_t *module) {
 dlfunc_t *find_func(const char *name) {
     if (name == NULL) {
         return NULL;
+    }
+
+    if (strcmp(name, __printf.name) == 0) {
+        return &__printf;
     }
 
     module_symbol_t *module_symbol = find_module_symbol(name);

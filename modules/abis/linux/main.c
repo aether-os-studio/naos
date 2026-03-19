@@ -925,7 +925,12 @@ __attribute__((visibility("default"))) int dlmain() {
     // (syscall_handle_t)sys_rt_tgsigqueueinfo);
     // regist_syscall_handler(SYS_PERF_EVENT_OPEN,
     // (syscall_handle_t)sys_perf_event_open);
-    // regist_syscall_handler(SYS_RECVMMSG, (syscall_handle_t)sys_recvmmsg);
+#ifdef SYS_RECVMMSG
+    regist_syscall_handler(SYS_RECVMMSG, (syscall_handle_t)sys_recvmmsg);
+#endif
+#ifdef SYS_RECVMMSG_TIME64
+    regist_syscall_handler(SYS_RECVMMSG_TIME64, (syscall_handle_t)sys_recvmmsg);
+#endif
     // regist_syscall_handler(SYS_FANOTIFY_INIT,
     // (syscall_handle_t)sys_fanotify_init);
     // regist_syscall_handler(SYS_FANOTIFY_MARK,
@@ -936,10 +941,12 @@ __attribute__((visibility("default"))) int dlmain() {
     regist_syscall_handler(SYS_OPEN_BY_HANDLE_AT,
                            (syscall_handle_t)sys_open_by_handle_at);
     // regist_syscall_handler(SYS_CLOCK_ADJTIME,
-    // (syscall_handle_t)sys_clock_adjtime); regist_syscall_handler(SYS_SYNCFS,
-    // (syscall_handle_t)sys_syncfs); regist_syscall_handler(SYS_SENDMMSG,
-    // (syscall_handle_t)sys_sendmmsg); regist_syscall_handler(SYS_SETNS,
-    // (syscall_handle_t)sys_setns);
+    // (syscall_handle_t)sys_clock_adjtime);
+    // regist_syscall_handler(SYS_SYNCFS, (syscall_handle_t)sys_syncfs);
+#ifdef SYS_SENDMMSG
+    regist_syscall_handler(SYS_SENDMMSG, (syscall_handle_t)sys_sendmmsg);
+#endif
+    // regist_syscall_handler(SYS_SETNS, (syscall_handle_t)sys_setns);
     regist_syscall_handler(SYS_GETCPU, (syscall_handle_t)sys_getcpu);
     // regist_syscall_handler(SYS_PROCESS_VM_READV,
     // (syscall_handle_t)sys_process_vm_readv);

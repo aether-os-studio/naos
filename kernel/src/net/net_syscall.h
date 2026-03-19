@@ -6,6 +6,9 @@
 #define SHUT_WR 1
 #define SHUT_RDWR 2
 
+struct mmsghdr;
+struct timespec;
+
 uint64_t sys_shutdown(uint64_t fd, uint64_t how);
 uint64_t sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen);
 uint64_t sys_getsockname(int sockfd, struct sockaddr_un *addr,
@@ -25,6 +28,10 @@ int64_t sys_recv(int sockfd, void *buff, size_t len, int flags,
                  struct sockaddr_un *dest_addr, socklen_t *addrlen);
 int64_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags);
 int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags);
+int64_t sys_sendmmsg(int sockfd, struct mmsghdr *msgvec, unsigned int vlen,
+                     int flags);
+int64_t sys_recvmmsg(int sockfd, struct mmsghdr *msgvec, unsigned int vlen,
+                     int flags, struct timespec *timeout);
 
 uint64_t sys_setsockopt(int fd, int level, int optname, const void *optval,
                         socklen_t optlen);

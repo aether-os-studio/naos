@@ -13,9 +13,9 @@ typedef struct task_index_bucket {
     struct llist_header tasks;
 } task_index_bucket_t;
 
-#define IDLE_PRIORITY 0
+#define IDLE_PRIORITY 20
 #define NORMAL_PRIORITY 0
-#define KTHREAD_PRIORITY 0
+#define KTHREAD_PRIORITY (-10)
 
 #define AT_NULL 0
 #define AT_IGNORE 1

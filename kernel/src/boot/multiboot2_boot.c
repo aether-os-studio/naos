@@ -183,6 +183,14 @@ char *boot_get_cmdline() {
     return (char *)string_tag->string;
 }
 
+void *boot_get_executable_file(size_t *size) {
+    if (size != NULL) {
+        *size = 0;
+    }
+
+    return NULL;
+}
+
 boot_module_t multiboot2_modules[MAX_MODULES_NUM];
 
 void boot_get_modules(boot_module_t **modules, size_t *count) {

@@ -53,12 +53,6 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num) {
         if (system_initialized && softirq_has_pending()) {
             sched_wake_worker(self->cpu_id);
         }
-
-        if (!system_initialized) {
-            softirq_handle_pending();
-        }
-    } else if (!system_initialized) {
-        softirq_handle_pending();
     }
 
     uint64_t current_sched_ipi =

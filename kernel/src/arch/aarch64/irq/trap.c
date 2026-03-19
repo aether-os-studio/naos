@@ -10,8 +10,18 @@ extern const uint64_t kallsyms_num __attribute__((weak));
 extern const uint64_t kallsyms_names_index[] __attribute__((weak));
 extern const char *kallsyms_names __attribute__((weak));
 
+static bool kallsyms_available() {
+    return (uintptr_t)kallsyms_address != 0 && (uintptr_t)&kallsyms_num != 0 &&
+           (uintptr_t)kallsyms_names_index != 0 &&
+           (uintptr_t)&kallsyms_names != 0;
+}
+
 int lookup_kallsyms(uint64_t addr, int level) {
-    const char *str = (const char *)&kallsyms_names;
+    if (!kallsyms_available() || kallsyms_num == 0) {
+        return -1;
+    }
+
+    const char *str = kallsyms_names;
 
     uint64_t index = 0;
     for (index = 0; index < kallsyms_num - 1; ++index) {

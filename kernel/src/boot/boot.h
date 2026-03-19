@@ -49,6 +49,7 @@ typedef struct boot_framebuffer {
 boot_framebuffer_t *boot_get_framebuffer();
 
 char *boot_get_cmdline();
+void *boot_get_executable_file(size_t *size);
 
 typedef struct boot_module {
     char path[64];

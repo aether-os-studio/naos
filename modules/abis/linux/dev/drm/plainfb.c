@@ -13,25 +13,12 @@ static bool plainfb_handle_to_index(uint32_t handle, uint32_t *idx) {
     return true;
 }
 
-static size_t plainfb_native_size_bytes(const plainfb_device_t *gpu_dev) {
-    if (!gpu_dev || !gpu_dev->framebuffer) {
-        return 0;
-    }
-
-    return (size_t)gpu_dev->framebuffer->pitch *
-           (size_t)gpu_dev->framebuffer->height;
-}
-
 static int plainfb_present_dumbbuffer(plainfb_device_t *gpu_dev, uint32_t idx,
                                       uint32_t x, uint32_t y, uint32_t width,
                                       uint32_t height) {
     if (!gpu_dev || !gpu_dev->framebuffer || idx >= 32 ||
         !gpu_dev->dumbbuffers[idx].used) {
         return -EINVAL;
-    }
-
-    if (gpu_dev->dumbbuffers[idx].direct_backed) {
-        return 0;
     }
 
     uint32_t bytes_per_pixel = gpu_dev->framebuffer->bpp / 8;
@@ -78,6 +65,11 @@ static int plainfb_present_dumbbuffer(plainfb_device_t *gpu_dev, uint32_t idx,
         ((size_t)y * src_pitch) + ((size_t)x * bytes_per_pixel);
     uint8_t *dst = (uint8_t *)(uintptr_t)gpu_dev->framebuffer->address +
                    ((size_t)y * dst_pitch) + ((size_t)x * bytes_per_pixel);
+
+    if (x == 0 && row_bytes == src_pitch && row_bytes == dst_pitch) {
+        fast_copy_16(dst, src, row_bytes * (size_t)height);
+        return 0;
+    }
 
     for (uint32_t row = 0; row < height; row++) {
         fast_copy_16(dst, src, row_bytes);
@@ -133,21 +125,6 @@ int plainfb_create_dumb(drm_device_t *drm_dev,
             gpu_dev->dumbbuffers[i].refcount = 1;
             gpu_dev->dumbbuffers[i].direct_backed = false;
 
-            if ((size_t)args->width == gpu_dev->framebuffer->width &&
-                (size_t)args->height == gpu_dev->framebuffer->height &&
-                (size_t)args->bpp == gpu_dev->framebuffer->bpp) {
-                gpu_dev->dumbbuffers[i].direct_backed = true;
-                gpu_dev->dumbbuffers[i].pitch =
-                    (uint32_t)gpu_dev->framebuffer->pitch;
-                gpu_dev->dumbbuffers[i].addr =
-                    translate_address(get_current_page_dir(false),
-                                      (uint64_t)gpu_dev->framebuffer->address);
-                args->pitch = gpu_dev->dumbbuffers[i].pitch;
-                args->size = plainfb_native_size_bytes(gpu_dev);
-                args->handle = i + 1;
-                return 0;
-            }
-
             gpu_dev->dumbbuffers[i].pitch = args->pitch;
 
             // Allocate memory for framebuffer
@@ -180,14 +157,11 @@ static int plainfb_destroy_dumb(drm_device_t *drm_dev, uint32_t handle,
     }
 
     if (--gpu_dev->dumbbuffers[idx].refcount == 0) {
-        if (!gpu_dev->dumbbuffers[idx].direct_backed) {
-            free_frames(gpu_dev->dumbbuffers[idx].addr,
-                        (gpu_dev->dumbbuffers[idx].pitch *
-                             gpu_dev->dumbbuffers[idx].height +
-                         DEFAULT_PAGE_SIZE - 1) /
-                            DEFAULT_PAGE_SIZE);
-        }
-
+        free_frames(gpu_dev->dumbbuffers[idx].addr,
+                    (gpu_dev->dumbbuffers[idx].pitch *
+                         gpu_dev->dumbbuffers[idx].height +
+                     DEFAULT_PAGE_SIZE - 1) /
+                        DEFAULT_PAGE_SIZE);
         gpu_dev->dumbbuffers[idx].direct_backed = false;
         gpu_dev->dumbbuffers[idx].used = false;
     }
@@ -250,6 +224,43 @@ static int plainfb_dirty_fb(drm_device_t *drm_dev,
     } else {
         uint32_t clips_count = MIN(cmd->num_clips, DRM_MODE_FB_DIRTY_MAX_CLIPS);
         drm_clip_rect_t *clips = (drm_clip_rect_t *)(uintptr_t)cmd->clips_ptr;
+        uint32_t bbox_x1 = UINT32_MAX;
+        uint32_t bbox_y1 = UINT32_MAX;
+        uint32_t bbox_x2 = 0;
+        uint32_t bbox_y2 = 0;
+        uint64_t clip_area = 0;
+        uint32_t valid_clips = 0;
+
+        for (uint32_t i = 0; i < clips_count; i++) {
+            uint32_t x1 = clips[i].x1;
+            uint32_t y1 = clips[i].y1;
+            uint32_t x2 = clips[i].x2;
+            uint32_t y2 = clips[i].y2;
+
+            if (x2 <= x1 || y2 <= y1) {
+                continue;
+            }
+
+            bbox_x1 = MIN(bbox_x1, x1);
+            bbox_y1 = MIN(bbox_y1, y1);
+            bbox_x2 = MAX(bbox_x2, x2);
+            bbox_y2 = MAX(bbox_y2, y2);
+            clip_area += (uint64_t)(x2 - x1) * (uint64_t)(y2 - y1);
+            valid_clips++;
+        }
+
+        if (valid_clips > 1 && bbox_x2 > bbox_x1 && bbox_y2 > bbox_y1) {
+            uint64_t bbox_area =
+                (uint64_t)(bbox_x2 - bbox_x1) * (uint64_t)(bbox_y2 - bbox_y1);
+            if (valid_clips > 8 || bbox_area <= clip_area * 2) {
+                ret = plainfb_present_dumbbuffer(gpu_dev, idx, bbox_x1, bbox_y1,
+                                                 bbox_x2 - bbox_x1,
+                                                 bbox_y2 - bbox_y1);
+                drm_framebuffer_free(&gpu_dev->resource_mgr, fb->id);
+                return ret;
+            }
+        }
+
         for (uint32_t i = 0; i < clips_count; i++) {
             uint32_t x = clips[i].x1;
             uint32_t y = clips[i].y1;

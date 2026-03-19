@@ -57,6 +57,6 @@ fi
 cd ${PROJECT_ROOT}/initramfs-${ARCH}
 
 # Make initramfs.img
-find . -print | cpio -o -H newc >${PROJECT_ROOT}/initramfs-${ARCH}.img
+(find . -print | cpio -o -H newc >${PROJECT_ROOT}/initramfs-${ARCH}.img) || exit 1
 
 cd ${PROJECT_ROOT}/

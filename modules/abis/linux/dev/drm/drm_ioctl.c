@@ -2124,10 +2124,10 @@ ssize_t drm_ioctl_get_cap(drm_device_t *dev, void *arg) {
         cap->value = 0;
         return 0;
     case DRM_CAP_DUMB_PREFER_SHADOW:
-        cap->value = 0;
+        cap->value = (dev && !dev->render_node_registered) ? 1 : 0;
         return 0;
     case DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP:
-        cap->value = 1;
+        cap->value = (dev && dev->render_node_registered) ? 1 : 0;
         return 0;
     case DRM_CAP_SYNCOBJ:
         cap->value = 1;

@@ -10,6 +10,3 @@
 /target
 /src/rust/bindings/bindings*.rs
 Cargo.lock
-/kallsyms
-/kallsyms.S
-/kallsyms.o

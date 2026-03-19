@@ -209,8 +209,30 @@ LIMINE_REQUEST static volatile struct limine_executable_cmdline_request
         .id = LIMINE_EXECUTABLE_CMDLINE_REQUEST_ID,
 };
 
+LIMINE_REQUEST static volatile struct limine_executable_file_request
+    executable_file_request = {
+        .id = LIMINE_EXECUTABLE_FILE_REQUEST_ID,
+};
+
 char *boot_get_cmdline() {
     return executable_cmdline_request.response->cmdline;
+}
+
+void *boot_get_executable_file(size_t *size) {
+    if (size != NULL) {
+        *size = 0;
+    }
+
+    if (executable_file_request.response == NULL ||
+        executable_file_request.response->executable_file == NULL) {
+        return NULL;
+    }
+
+    if (size != NULL) {
+        *size = executable_file_request.response->executable_file->size;
+    }
+
+    return executable_file_request.response->executable_file->address;
 }
 
 LIMINE_REQUEST static volatile struct limine_module_request modules_request = {

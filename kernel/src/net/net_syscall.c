@@ -17,6 +17,8 @@ typedef struct socket_kmsg {
     void *control_buffer;
 } socket_kmsg_t;
 
+#define SOCKET_MMSG_VLEN_MAX 1024U
+
 static bool is_socket(fd_t *fd) {
     if (!(fd->node->type & file_socket))
         return false;
@@ -197,6 +199,114 @@ static int socket_copy_recvmsg_to_user(struct msghdr *user_msg_ptr,
         return -EFAULT;
 
     return 0;
+}
+
+static int socket_validate_user_struct(const void *ptr, size_t len) {
+    if (!ptr || check_user_overflow((uint64_t)ptr, len) ||
+        check_unmapped((uint64_t)ptr, len))
+        return -EFAULT;
+    return 0;
+}
+
+static int socket_validate_mmsg_array(const struct mmsghdr *msgvec,
+                                      unsigned int vlen) {
+    if (!vlen || vlen > SOCKET_MMSG_VLEN_MAX)
+        return -EINVAL;
+
+    return socket_validate_user_struct(msgvec,
+                                       (size_t)vlen * sizeof(struct mmsghdr));
+}
+
+static int socket_copy_timeout_from_user(const struct timespec *user_timeout,
+                                         uint64_t *timeout_ns_out) {
+    if (!timeout_ns_out)
+        return -EINVAL;
+
+    if (!user_timeout) {
+        *timeout_ns_out = UINT64_MAX;
+        return 0;
+    }
+
+    int ret = socket_validate_user_struct(user_timeout, sizeof(*user_timeout));
+    if (ret < 0)
+        return ret;
+
+    struct timespec timeout;
+    if (copy_from_user(&timeout, user_timeout, sizeof(timeout)))
+        return -EFAULT;
+
+    if (timeout.tv_sec < 0 || timeout.tv_nsec < 0 ||
+        timeout.tv_nsec >= 1000000000L)
+        return -EINVAL;
+
+    uint64_t timeout_ns = (uint64_t)timeout.tv_nsec;
+    if ((uint64_t)timeout.tv_sec > UINT64_MAX / 1000000000ULL)
+        timeout_ns = UINT64_MAX;
+    else {
+        uint64_t sec_ns = (uint64_t)timeout.tv_sec * 1000000000ULL;
+        if (sec_ns > UINT64_MAX - timeout_ns)
+            timeout_ns = UINT64_MAX;
+        else
+            timeout_ns += sec_ns;
+    }
+
+    *timeout_ns_out = timeout_ns;
+    return 0;
+}
+
+static uint64_t socket_timeout_deadline(uint64_t timeout_ns) {
+    if (timeout_ns == UINT64_MAX)
+        return UINT64_MAX;
+
+    uint64_t now = nano_time();
+    if (timeout_ns > UINT64_MAX - now)
+        return UINT64_MAX;
+    return now + timeout_ns;
+}
+
+static int64_t socket_deadline_remaining_ns(uint64_t deadline) {
+    if (deadline == UINT64_MAX)
+        return -1;
+
+    uint64_t now = nano_time();
+    if (now >= deadline)
+        return 0;
+
+    uint64_t remaining = deadline - now;
+    if (remaining > (uint64_t)INT64_MAX)
+        return INT64_MAX;
+    return (int64_t)remaining;
+}
+
+static int socket_wait_fd_event(fd_t *fd, uint32_t events, int64_t timeout_ns,
+                                const char *reason) {
+    if (!fd || !fd->node)
+        return -EBADF;
+
+    vfs_poll_wait_t wait;
+    vfs_poll_wait_init(&wait, current_task, events);
+    if (vfs_poll_wait_arm(fd->node, &wait) < 0)
+        return -EINVAL;
+
+    int ret = vfs_poll_wait_sleep(fd->node, &wait, timeout_ns, reason);
+    vfs_poll_wait_disarm(&wait);
+
+    if (ret == EOK)
+        return 0;
+    if (ret == ETIMEDOUT)
+        return -ETIMEDOUT;
+    if (ret < 0)
+        return ret;
+    return -EINTR;
+}
+
+static int socket_store_mmsg_len(struct mmsghdr *msgvec, unsigned int idx,
+                                 int64_t len) {
+    unsigned int msg_len =
+        len > (int64_t)UINT32_MAX ? UINT32_MAX : (unsigned int)len;
+    return copy_to_user(&msgvec[idx].msg_len, &msg_len, sizeof(msg_len))
+               ? -EFAULT
+               : 0;
 }
 
 uint64_t sys_shutdown(uint64_t fd, uint64_t how) {
@@ -684,4 +794,87 @@ int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         return out;
     }
     return 0;
+}
+
+int64_t sys_sendmmsg(int sockfd, struct mmsghdr *msgvec, unsigned int vlen,
+                     int flags) {
+    int ret = socket_validate_mmsg_array(msgvec, vlen);
+    if (ret < 0)
+        return ret;
+
+    unsigned int sent = 0;
+    for (; sent < vlen; sent++) {
+        int64_t out = sys_sendmsg(sockfd, &msgvec[sent].msg_hdr, flags);
+        if (out < 0)
+            return sent ? (int64_t)sent : out;
+
+        ret = socket_store_mmsg_len(msgvec, sent, out);
+        if (ret < 0)
+            return ret;
+    }
+
+    return sent;
+}
+
+int64_t sys_recvmmsg(int sockfd, struct mmsghdr *msgvec, unsigned int vlen,
+                     int flags, struct timespec *timeout) {
+    int ret = socket_validate_mmsg_array(msgvec, vlen);
+    if (ret < 0)
+        return ret;
+
+    uint64_t timeout_ns = UINT64_MAX;
+    ret = socket_copy_timeout_from_user(timeout, &timeout_ns);
+    if (ret < 0)
+        return ret;
+
+    if (sockfd < 0 || sockfd >= MAX_FD_NUM)
+        return -EBADF;
+
+    fd_t *node = current_task->fd_info->fds[sockfd];
+    if (!node)
+        return -EBADF;
+    if (!is_socket(node))
+        return -ENOTSOCK;
+
+    uint64_t deadline = socket_timeout_deadline(timeout_ns);
+    unsigned int received = 0;
+    int recv_flags = flags;
+
+    while (received < vlen) {
+        bool should_wait = !(recv_flags & MSG_DONTWAIT);
+        if (should_wait) {
+            int64_t remaining_ns = socket_deadline_remaining_ns(deadline);
+            if (remaining_ns == 0)
+                break;
+
+            ret = socket_wait_fd_event(node, EPOLLIN, remaining_ns, "recvmmsg");
+            if (ret == -ETIMEDOUT)
+                break;
+            if (ret < 0)
+                return received ? (int64_t)received : ret;
+        }
+
+        int call_flags = (recv_flags & ~MSG_WAITFORONE) | MSG_DONTWAIT;
+        int64_t out =
+            sys_recvmsg(sockfd, &msgvec[received].msg_hdr, call_flags);
+        if (out == -(EWOULDBLOCK))
+            out = -EAGAIN;
+        if (out == -EAGAIN) {
+            if (!should_wait)
+                return received ? (int64_t)received : out;
+            continue;
+        }
+        if (out < 0)
+            return received ? (int64_t)received : out;
+
+        ret = socket_store_mmsg_len(msgvec, received, out);
+        if (ret < 0)
+            return ret;
+
+        received++;
+        if ((flags & MSG_WAITFORONE) && received == 1)
+            recv_flags |= MSG_DONTWAIT;
+    }
+
+    return received;
 }
