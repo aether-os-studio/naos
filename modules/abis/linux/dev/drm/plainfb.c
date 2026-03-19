@@ -3,6 +3,7 @@
 #include <dev/drm/drm_core.h>
 #include <dev/drm/drm.h>
 #include <fs/vfs/vfs.h>
+#include <fs/sys.h>
 
 static bool plainfb_handle_to_index(uint32_t handle, uint32_t *idx) {
     if (handle == 0 || handle > 32 || !idx) {
@@ -932,7 +933,7 @@ void drm_plainfb_init() {
 
             char driver_root[128];
             sprintf(driver_root, "/sys/bus/pci/drivers/%s", driver_name);
-            vfs_mkdir(driver_root);
+            sysfs_ensure_dir(driver_root);
 
             char pci_device_path[128];
             sprintf(pci_device_path, "/sys/bus/pci/devices/%04x:%02x:%02x.%u",
@@ -941,17 +942,17 @@ void drm_plainfb_init() {
 
             char driver_link_path[192];
             sprintf(driver_link_path, "%s/driver", pci_device_path);
-            vfs_symlink(driver_link_path, driver_root);
+            sysfs_symlink_path(driver_link_path, driver_root);
 
             char reverse_link_path[192];
             sprintf(reverse_link_path, "%s/%04x:%02x:%02x.%u", driver_root,
                     vga_pci_devices[0]->segment, vga_pci_devices[0]->bus,
                     vga_pci_devices[0]->slot, vga_pci_devices[0]->func);
-            vfs_symlink(reverse_link_path, pci_device_path);
+            sysfs_symlink_path(reverse_link_path, pci_device_path);
 
             char pci_uevent_path[192];
             sprintf(pci_uevent_path, "%s/uevent", pci_device_path);
-            vfs_node_t *pci_uevent = vfs_open(pci_uevent_path, 0);
+            vfs_node_t *pci_uevent = sysfs_open_node(pci_uevent_path, 0);
             if (pci_uevent) {
                 char uevent_content[256];
                 sprintf(uevent_content,

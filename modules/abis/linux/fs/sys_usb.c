@@ -67,7 +67,7 @@ static void sysfs_ensure_symlink(vfs_node_t *parent, const char *name,
     snprintf(path, sizeof(path), "%s/%s", parent_path, name);
     free(parent_path);
 
-    if (vfs_open(path, O_NOFOLLOW))
+    if (sysfs_open_node(path, O_NOFOLLOW))
         return;
     sysfs_child_append_symlink(parent, name, target_path);
 }

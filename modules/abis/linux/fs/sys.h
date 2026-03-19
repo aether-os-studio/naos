@@ -24,8 +24,10 @@ vfs_node_t *sysfs_write_attr(vfs_node_t *parent, const char *name,
                              const char *content);
 vfs_node_t *sysfs_write_attrf(vfs_node_t *parent, const char *name,
                               const char *fmt, ...);
+vfs_node_t *sysfs_open_node(const char *path, uint64_t flags);
 void sysfs_detach_node(vfs_node_t *node);
 void sysfs_detach_path(const char *path, bool nofollow);
+int sysfs_symlink_path(const char *path, const char *target_path);
 vfs_node_t *sysfs_child_append(vfs_node_t *parent, const char *name,
                                bool is_dir);
 vfs_node_t *sysfs_child_append_symlink(vfs_node_t *parent, const char *name,

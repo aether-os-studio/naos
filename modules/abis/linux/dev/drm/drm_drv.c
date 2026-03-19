@@ -409,7 +409,7 @@ static void drm_device_setup_sysfs(int major, int card_minor, int render_minor,
     char pci_device_path[128];
     sprintf(pci_device_path, "/sys/bus/pci/devices/%04x:%02x:%02x.%u",
             pci_dev->segment, pci_dev->bus, pci_dev->slot, pci_dev->func);
-    vfs_node_t *pci_device_dir = vfs_open(pci_device_path, 0);
+    vfs_node_t *pci_device_dir = sysfs_open_node(pci_device_path, 0);
     if (!pci_device_dir) {
         printk("drm: Failed to open PCI sysfs node %s\n", pci_device_path);
         return;
@@ -448,7 +448,7 @@ static void drm_device_setup_sysfs(int major, int card_minor, int render_minor,
     sysfs_child_append_symlink(card_node, "subsystem", "/sys/class/drm");
     sysfs_child_append_symlink(card_node, "device", pci_device_path);
 
-    vfs_node_t *class_drm = vfs_open("/sys/class/drm", 0);
+    vfs_node_t *class_drm = sysfs_open_node("/sys/class/drm", 0);
 
     char card_path[256];
     sprintf(card_path, "%s/drm/%s", pci_device_path, card_node_name);
@@ -861,12 +861,11 @@ void drm_handle_vblank_tick(void) {
         if (!dev)
             continue;
 
-        spin_lock(&dev->event_lock);
-
         if (!dev->vblank_period_ns) {
-            spin_unlock(&dev->event_lock);
             continue;
         }
+
+        spin_lock(&dev->event_lock);
 
         if (dev->next_vblank_ns == 0)
             dev->next_vblank_ns = now + dev->vblank_period_ns;

@@ -84,11 +84,11 @@ dev_input_event_t *regist_input_dev(const char *device_name,
     sysfs_regist_dev('c', (dev >> 8) & 0xFF, dev & 0xFF, sysfs_path, dirpath,
                      uevent);
 
-    vfs_node_t *input_root = vfs_open("/sys/class/input", 0);
+    vfs_node_t *input_root = sysfs_open_node("/sys/class/input", 0);
     vfs_node_t *eventn_node =
         sysfs_child_append_symlink(input_root, dirname, sysfs_path);
 
-    eventn_node = vfs_open(sysfs_path, 0);
+    eventn_node = sysfs_open_node(sysfs_path, 0);
     sysfs_child_append_symlink(eventn_node, "subsystem", "/sys/class/input");
 
     eventn++;
