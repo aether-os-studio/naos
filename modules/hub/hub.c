@@ -8,9 +8,8 @@ static inline void delay(uint64_t ms) {
     }
 }
 
-static int get_hub_desc(struct usb_pipe *pipe,
-                        struct usb_hub_descriptor *desc) {
-    struct usb_ctrlrequest req;
+static int get_hub_desc(usb_pipe_t *pipe, usb_hub_descriptor_t *desc) {
+    usb_ctrl_request_t req;
     req.bRequestType = USB_DIR_IN | USB_TYPE_CLASS | USB_RECIP_DEVICE;
     req.bRequest = USB_REQ_GET_DESCRIPTOR;
     if (pipe->speed == USB_SUPERSPEED)
@@ -22,8 +21,8 @@ static int get_hub_desc(struct usb_pipe *pipe,
     return usb_send_default_control(pipe, &req, desc);
 }
 
-static int set_hub_depth(struct usb_pipe *pipe, uint16_t depth) {
-    struct usb_ctrlrequest req;
+static int set_hub_depth(usb_pipe_t *pipe, uint16_t depth) {
+    usb_ctrl_request_t req;
     req.bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_DEVICE;
     req.bRequest = HUB_REQ_SET_HUB_DEPTH;
     req.wValue = depth;
@@ -32,8 +31,8 @@ static int set_hub_depth(struct usb_pipe *pipe, uint16_t depth) {
     return usb_send_default_control(pipe, &req, NULL);
 }
 
-static int set_port_feature(struct usbhub_s *hub, int port, int feature) {
-    struct usb_ctrlrequest req;
+static int set_port_feature(usb_hub_t *hub, int port, int feature) {
+    usb_ctrl_request_t req;
     req.bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_OTHER;
     req.bRequest = USB_REQ_SET_FEATURE;
     req.wValue = feature;
@@ -43,8 +42,8 @@ static int set_port_feature(struct usbhub_s *hub, int port, int feature) {
     return ret;
 }
 
-static int clear_port_feature(struct usbhub_s *hub, int port, int feature) {
-    struct usb_ctrlrequest req;
+static int clear_port_feature(usb_hub_t *hub, int port, int feature) {
+    usb_ctrl_request_t req;
     req.bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_OTHER;
     req.bRequest = USB_REQ_CLEAR_FEATURE;
     req.wValue = feature;
@@ -54,9 +53,8 @@ static int clear_port_feature(struct usbhub_s *hub, int port, int feature) {
     return ret;
 }
 
-static int get_port_status(struct usbhub_s *hub, int port,
-                           struct usb_port_status *sts) {
-    struct usb_ctrlrequest req;
+static int get_port_status(usb_hub_t *hub, int port, usb_port_status_t *sts) {
+    usb_ctrl_request_t req;
     req.bRequestType = USB_DIR_IN | USB_TYPE_CLASS | USB_RECIP_OTHER;
     req.bRequest = USB_REQ_GET_STATUS;
     req.wValue = 0;
@@ -67,8 +65,8 @@ static int get_port_status(struct usbhub_s *hub, int port,
 }
 
 // Check if device attached to port
-static int usb_hub_detect(struct usbhub_s *hub, uint32_t port) {
-    struct usb_port_status sts;
+static int usb_hub_detect(usb_hub_t *hub, uint32_t port) {
+    usb_port_status_t sts;
     int ret = get_port_status(hub, port, &sts);
     if (ret) {
         printk("Failure on hub port %d detect\n", port);
@@ -78,20 +76,20 @@ static int usb_hub_detect(struct usbhub_s *hub, uint32_t port) {
 }
 
 // Disable port
-static void usb_hub_disconnect(struct usbhub_s *hub, uint32_t port) {
+static void usb_hub_disconnect(usb_hub_t *hub, uint32_t port) {
     int ret = clear_port_feature(hub, port, USB_PORT_FEAT_ENABLE);
     if (ret)
         printk("Failure on hub port %d disconnect\n", port);
 }
 
 // Reset device on port
-static int usb_hub_reset(struct usbhub_s *hub, uint32_t port) {
+static int usb_hub_reset(usb_hub_t *hub, uint32_t port) {
     int ret = set_port_feature(hub, port, USB_PORT_FEAT_RESET);
     if (ret)
         goto fail;
 
     // Wait for reset to complete.
-    struct usb_port_status sts;
+    usb_port_status_t sts;
     uint64_t timeout = nano_time() + 1000000ULL * USB_TIME_DRST * 2;
     for (;;) {
         ret = get_port_status(hub, port, &sts);
@@ -123,49 +121,55 @@ fail:
     return -1;
 }
 
-static struct usbhub_op_s usb_hub_op = {
+static usb_hub_ops_t usb_hub_op = {
     .detect = usb_hub_detect,
     .reset = usb_hub_reset,
     .disconnect = usb_hub_disconnect,
 };
 
-int usb_hub_setup(struct usbdevice_s *usbdev,
-                  struct usbdevice_a_interface *iface) {
+int usb_hub_setup(usb_device_t *usbdev, usb_device_interface_t *iface) {
     usb_hub_op.realloc_pipe = usbdev->hub->op->realloc_pipe;
     usb_hub_op.send_pipe = usbdev->hub->op->send_pipe;
     usb_hub_op.send_intr_pipe = usbdev->hub->op->send_intr_pipe;
 
-    struct usb_hub_descriptor desc;
+    usb_hub_descriptor_t desc;
     int ret = get_hub_desc(usbdev->defpipe, &desc);
     if (ret)
         return ret;
 
-    struct usbhub_s *hub = malloc(sizeof(struct usbhub_s));
-    memset(hub, 0, sizeof(struct usbhub_s));
+    usb_hub_t *hub = malloc(sizeof(usb_hub_t));
+    memset(hub, 0, sizeof(usb_hub_t));
     hub->usbdev = usbdev;
     hub->cntl = usbdev->defpipe->cntl;
     hub->portcount = desc.bNbrPorts;
     hub->op = &usb_hub_op;
+    usbdev->childhub = hub;
 
     if (usbdev->speed == USB_SUPERSPEED) {
         int depth = 0;
-        struct usbdevice_s *parent = usbdev->hub->usbdev;
-        while (parent) {
+        usb_device_t *parent = usbdev->hub->usbdev;
+        while (parent && !parent->is_root_hub) {
             depth++;
             parent = parent->hub->usbdev;
         }
 
         ret = set_hub_depth(usbdev->defpipe, depth);
-        if (ret)
+        if (ret) {
+            usbdev->childhub = NULL;
+            free(hub);
             return ret;
+        }
     }
 
     // Turn on power to ports.
     int port;
     for (port = 0; port < desc.bNbrPorts; port++) {
         ret = set_port_feature(hub, port, USB_PORT_FEAT_POWER);
-        if (ret)
+        if (ret) {
+            usbdev->childhub = NULL;
+            free(hub);
             return ret;
+        }
     }
 
     // Wait for port power to stabilize.
@@ -178,7 +182,7 @@ int usb_hub_setup(struct usbdevice_s *usbdev,
     return 0;
 }
 
-int usb_hub_remove(struct usbdevice_s *usbdev) { return 0; }
+int usb_hub_remove(usb_device_t *usbdev) { return 0; }
 
 usb_driver_t hub_driver = {
     .class = USB_CLASS_HUB,

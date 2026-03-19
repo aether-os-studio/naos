@@ -1,25 +1,55 @@
 #include "task/sched.h"
 
 static inline list_node_t *sched_queue_head(list_queue_t *queue) {
-    return __atomic_load_n(&queue->head, __ATOMIC_ACQUIRE);
+    return queue ? queue->head : NULL;
 }
 
-static inline list_node_t *sched_node_next(list_node_t *node) {
-    return __atomic_load_n(&node->next, __ATOMIC_ACQUIRE);
+static inline void sched_node_reset(list_node_t *node) {
+    if (!node)
+        return;
+
+    node->prev = node;
+    node->next = node;
 }
 
-static inline struct sched_entity *sched_node_entity(list_node_t *node) {
-    return (struct sched_entity *)__atomic_load_n(&node->data,
-                                                  __ATOMIC_ACQUIRE);
+static inline void sched_queue_enqueue_locked(list_queue_t *queue,
+                                              list_node_t *node) {
+    node->next = NULL;
+    node->prev = queue->tail;
+
+    if (queue->tail) {
+        queue->tail->next = node;
+    } else {
+        queue->head = node;
+    }
+
+    queue->tail = node;
+    queue->size++;
 }
 
-static inline bool sched_entity_on_rq(struct sched_entity *entity) {
-    return __atomic_load_n(&entity->on_rq, __ATOMIC_ACQUIRE);
+static inline void sched_queue_remove_locked(list_queue_t *queue,
+                                             list_node_t *node) {
+    if (node->prev) {
+        node->prev->next = node->next;
+    } else {
+        queue->head = node->next;
+    }
+
+    if (node->next) {
+        node->next->prev = node->prev;
+    } else {
+        queue->tail = node->prev;
+    }
+
+    if (queue->size)
+        queue->size--;
+
+    sched_node_reset(node);
 }
 
 static list_node_t *
 sched_entity_node_get_or_create(struct sched_entity *entity) {
-    list_node_t *node = __atomic_load_n(&entity->node, __ATOMIC_ACQUIRE);
+    list_node_t *node = entity ? entity->node : NULL;
     if (node)
         return node;
 
@@ -28,79 +58,53 @@ sched_entity_node_get_or_create(struct sched_entity *entity) {
         return NULL;
 
     new_node->data = entity;
-    list_node_t *expected = NULL;
-    if (!__atomic_compare_exchange_n(&entity->node, &expected, new_node, false,
-                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-        free(new_node);
-        return expected;
-    }
-
+    sched_node_reset(new_node);
+    entity->node = new_node;
     return new_node;
-}
-
-static void sched_queue_enqueue_lockfree(list_queue_t *queue,
-                                         list_node_t *node) {
-    node->next = NULL;
-    node->prev = NULL;
-
-    list_node_t *prev =
-        __atomic_exchange_n(&queue->tail, node, __ATOMIC_ACQ_REL);
-
-    if (prev) {
-        node->prev = prev;
-        __atomic_store_n(&prev->next, node, __ATOMIC_RELEASE);
-    } else {
-        __atomic_store_n(&queue->head, node, __ATOMIC_RELEASE);
-    }
 }
 
 static task_t *sched_pick_next_task_internal(sched_rq_t *scheduler,
                                              task_t *excluded) {
-    struct sched_entity *entity =
-        __atomic_load_n(&scheduler->curr, __ATOMIC_RELAXED);
-    list_node_t *head =
-        __atomic_load_n(&scheduler->sched_queue->head, __ATOMIC_ACQUIRE);
+    task_t *next_task = NULL;
+
+    spin_lock(&scheduler->lock);
+
+    struct sched_entity *entity = scheduler->curr;
+    list_node_t *head = sched_queue_head(scheduler->sched_queue);
 
     if (__builtin_expect(!head, 0)) {
-        __atomic_store_n(&scheduler->curr, scheduler->idle, __ATOMIC_RELAXED);
-        return scheduler->idle->task;
+        scheduler->curr = scheduler->idle;
+        next_task = scheduler->idle->task;
+        goto out;
     }
 
-    list_node_t *nextL;
-    if (!entity || entity == scheduler->idle ||
-        !__atomic_load_n(&entity->on_rq, __ATOMIC_RELAXED)) {
-        nextL = head;
-    } else {
-        list_node_t *entity_node =
-            __atomic_load_n(&entity->node, __ATOMIC_RELAXED);
-        nextL = entity_node
-                    ? __atomic_load_n(&entity_node->next, __ATOMIC_ACQUIRE)
-                    : head;
-        if (!nextL)
-            nextL = head;
+    list_node_t *next_node = head;
+    if (entity && entity != scheduler->idle && entity->on_rq && entity->node) {
+        next_node = entity->node->next ? entity->node->next : head;
     }
 
-    list_node_t *start = nextL;
+    list_node_t *start = next_node;
     do {
-        struct sched_entity *next = (struct sched_entity *)__atomic_load_n(
-            &nextL->data, __ATOMIC_RELAXED);
-        if (__builtin_expect(
-                next && __atomic_load_n(&next->on_rq, __ATOMIC_RELAXED), 1)) {
-            task_t *next_task = __atomic_load_n(&next->task, __ATOMIC_RELAXED);
-            if (next_task && next_task->state == TASK_READY &&
-                next_task != excluded) {
-                __atomic_store_n(&scheduler->curr, next, __ATOMIC_RELAXED);
-                return next_task;
+        struct sched_entity *next = next_node->data;
+        if (__builtin_expect(next && next->on_rq, 1)) {
+            task_t *candidate = next->task;
+            if (candidate && candidate->state == TASK_READY &&
+                candidate != excluded) {
+                scheduler->curr = next;
+                next_task = candidate;
+                goto out;
             }
         }
 
-        nextL = __atomic_load_n(&nextL->next, __ATOMIC_ACQUIRE);
-        if (!nextL)
-            nextL = head;
-    } while (nextL != start);
+        next_node = next_node->next ? next_node->next : head;
+    } while (next_node != start);
 
-    __atomic_store_n(&scheduler->curr, scheduler->idle, __ATOMIC_RELAXED);
-    return scheduler->idle->task;
+    scheduler->curr = scheduler->idle;
+    next_task = scheduler->idle->task;
+
+out:
+    spin_unlock(&scheduler->lock);
+    return next_task;
 }
 
 void add_sched_entity(task_t *task, sched_rq_t *scheduler) {
@@ -108,23 +112,25 @@ void add_sched_entity(task_t *task, sched_rq_t *scheduler) {
         return;
 
     struct sched_entity *entity = task->sched_info;
-    __atomic_store_n(&entity->task, task, __ATOMIC_RELAXED);
+    entity->task = task;
 
-    bool expected_on_rq = false;
-    if (!__atomic_compare_exchange_n(&entity->on_rq, &expected_on_rq, true,
-                                     false, __ATOMIC_RELEASE, __ATOMIC_RELAXED))
-        return;
+    spin_lock(&scheduler->lock);
 
-    list_node_t *node = sched_entity_node_get_or_create(entity);
-    if (!node) {
-        __atomic_store_n(&entity->on_rq, false, __ATOMIC_RELAXED);
+    if (entity->on_rq) {
+        spin_unlock(&scheduler->lock);
         return;
     }
 
-    bool expected_once = false;
-    if (__atomic_compare_exchange_n(&entity->queued_once, &expected_once, true,
-                                    false, __ATOMIC_RELEASE, __ATOMIC_RELAXED))
-        sched_queue_enqueue_lockfree(scheduler->sched_queue, node);
+    list_node_t *node = sched_entity_node_get_or_create(entity);
+    if (!node) {
+        spin_unlock(&scheduler->lock);
+        return;
+    }
+
+    sched_queue_enqueue_locked(scheduler->sched_queue, node);
+    entity->on_rq = true;
+
+    spin_unlock(&scheduler->lock);
 }
 
 void remove_sched_entity(task_t *thread, sched_rq_t *scheduler) {
@@ -132,13 +138,25 @@ void remove_sched_entity(task_t *thread, sched_rq_t *scheduler) {
         return;
 
     struct sched_entity *entity = thread->sched_info;
-    if (!__atomic_exchange_n(&entity->on_rq, false, __ATOMIC_RELAXED))
-        return;
 
-    struct sched_entity *curr =
-        __atomic_load_n(&scheduler->curr, __ATOMIC_RELAXED);
-    if (curr == entity)
-        __atomic_store_n(&scheduler->curr, scheduler->idle, __ATOMIC_RELAXED);
+    spin_lock(&scheduler->lock);
+
+    if (!entity->on_rq) {
+        spin_unlock(&scheduler->lock);
+        return;
+    }
+
+    entity->on_rq = false;
+
+    if (entity->node) {
+        sched_queue_remove_locked(scheduler->sched_queue, entity->node);
+    }
+
+    if (scheduler->curr == entity) {
+        scheduler->curr = scheduler->idle;
+    }
+
+    spin_unlock(&scheduler->lock);
 }
 
 task_t *sched_pick_next_task(sched_rq_t *scheduler) {

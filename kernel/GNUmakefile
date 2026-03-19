@@ -27,11 +27,13 @@ ifeq ($(filter $(ARCH),aarch64 loongarch64 riscv64 x86_64),)
     $(error Architecture $(ARCH) not supported)
 endif
 
+GLOBAL_CFLAGS := -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-cast-function-type -Wno-sign-compare -Wno-discarded-qualifiers -Wno-address-of-packed-member
+
 # User controllable C flags.
 ifeq ($(BUILD_MODE), debug)
-CFLAGS := -g3 -O0 -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-cast-function-type -Wno-sign-compare -Wno-discarded-qualifiers -Wno-address-of-packed-member -DDEBUG
+CFLAGS := -g3 -O0 $(GLOBAL_CFLAGS) -DDEBUG
 else
-CFLAGS := -O2 -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-cast-function-type -Wno-sign-compare -Wno-discarded-qualifiers -Wno-address-of-packed-member
+CFLAGS := -O3 $(GLOBAL_CFLAGS)
 endif
 
 # User controllable C preprocessor flags. We set none by default.

@@ -24,6 +24,7 @@ hashmap_t task_parent_map = HASHMAP_INIT;
 hashmap_t task_pgid_map = HASHMAP_INIT;
 rb_root_t task_timeout_root = RB_ROOT_INIT;
 spinlock_t task_timeout_lock = SPIN_INIT;
+static uint64_t task_timeout_next_ns = UINT64_MAX;
 spinlock_t should_free_lock = SPIN_INIT;
 DEFINE_LLIST(should_free_tasks);
 
@@ -271,6 +272,12 @@ static inline task_t *task_timeout_first_locked(void) {
     return first ? rb_entry(first, task_t, timeout_node) : NULL;
 }
 
+static inline void task_timeout_refresh_next_locked(void) {
+    task_t *first = task_timeout_first_locked();
+    uint64_t next = first ? first->force_wakeup_ns : UINT64_MAX;
+    __atomic_store_n(&task_timeout_next_ns, next, __ATOMIC_RELEASE);
+}
+
 static void task_timeout_remove_locked(task_t *task) {
     if (!task || !task->timeout_queued) {
         return;
@@ -313,6 +320,7 @@ static void task_timeout_add_locked(task_t *task) {
 void task_timeout_cancel(task_t *task) {
     spin_lock(&task_timeout_lock);
     task_timeout_remove_locked(task);
+    task_timeout_refresh_next_locked();
     spin_unlock(&task_timeout_lock);
 }
 
@@ -320,6 +328,7 @@ static void task_timeout_arm(task_t *task) {
     spin_lock(&task_timeout_lock);
     task_timeout_remove_locked(task);
     task_timeout_add_locked(task);
+    task_timeout_refresh_next_locked();
     spin_unlock(&task_timeout_lock);
 }
 
@@ -340,6 +349,7 @@ static void task_timeout_softirq(void) {
             task_timeout_remove_locked(task);
             expired[expired_count++] = task;
         }
+        task_timeout_refresh_next_locked();
         spin_unlock(&task_timeout_lock);
 
         if (!expired_count) {
@@ -840,6 +850,7 @@ void task_init() {
     ASSERT(hashmap_init(&task_parent_map, 512) == 0);
     ASSERT(hashmap_init(&task_pgid_map, 512) == 0);
     task_timeout_root = RB_ROOT_INIT;
+    __atomic_store_n(&task_timeout_next_ns, UINT64_MAX, __ATOMIC_RELEASE);
     spin_init(&task_timeout_lock);
     llist_init_head(&should_free_tasks);
     spin_init(&should_free_lock);
@@ -849,6 +860,7 @@ void task_init() {
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
         schedulers[cpu] = calloc(1, sizeof(sched_rq_t));
         schedulers[cpu]->sched_queue = create_llist_queue();
+        spin_init(&schedulers[cpu]->lock);
     }
     for (uint32_t i = 0; i < MAX_WORKER_NUM; i++) {
         llist_init_head(&worker_tick_queues[i]);
@@ -911,10 +923,10 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
     bool should_trigger_sched_ipi = false;
     if (target_cpu != current_task->cpu_id && task->sched_info &&
         schedulers[target_cpu]) {
-        struct sched_entity *curr =
-            __atomic_load_n(&schedulers[target_cpu]->curr, __ATOMIC_ACQUIRE);
-        should_trigger_sched_ipi =
-            (curr == (struct sched_entity *)task->sched_info);
+        spin_lock(&schedulers[target_cpu]->lock);
+        should_trigger_sched_ipi = (schedulers[target_cpu]->curr ==
+                                    (struct sched_entity *)task->sched_info);
+        spin_unlock(&schedulers[target_cpu]->lock);
     }
 
     task->state = state;
@@ -950,12 +962,12 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
         goto ret;
     }
 
+    arch_enable_interrupt();
+
     if (should_trigger_sched_ipi) {
         write_barrier();
         irq_trigger_sched_ipi(target_cpu);
     }
-
-    arch_enable_interrupt();
 
     schedule(SCHED_FLAG_YIELD);
 
@@ -1036,8 +1048,8 @@ void task_exit_inner(task_t *task, int64_t code) {
     remove_sched_entity(task, schedulers[task->cpu_id]);
     if (entity) {
         if (entity->node)
-            __atomic_store_n(&entity->node->data, NULL, __ATOMIC_RELEASE);
-        __atomic_store_n(&entity->task, NULL, __ATOMIC_RELEASE);
+            entity->node->data = NULL;
+        entity->task = NULL;
     }
 
     task->current_state = TASK_DIED;
@@ -1247,14 +1259,10 @@ void sched_defer_tick(void) {
 }
 
 void sched_check_wakeup() {
-    uint64_t now = nano_time();
-
-    spin_lock(&task_timeout_lock);
-    task_t *first = task_timeout_first_locked();
-    if (first && first->force_wakeup_ns <= now) {
+    uint64_t next = __atomic_load_n(&task_timeout_next_ns, __ATOMIC_ACQUIRE);
+    if (next != UINT64_MAX && next <= nano_time()) {
         softirq_raise(SOFTIRQ_TIMER);
     }
-    spin_unlock(&task_timeout_lock);
 }
 
 static int task_kill_process_group_internal(int pgid, int sig,

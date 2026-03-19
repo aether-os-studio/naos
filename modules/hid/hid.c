@@ -19,9 +19,8 @@ extern dev_input_event_t *mouse_input_event;
  ****************************************************************/
 
 // Send USB HID protocol message.
-static int set_protocol(struct usb_pipe *pipe, uint16_t val,
-                        uint16_t inferface) {
-    struct usb_ctrlrequest req;
+static int set_protocol(usb_pipe_t *pipe, uint16_t val, uint16_t inferface) {
+    usb_ctrl_request_t req;
     req.bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE;
     req.bRequest = HID_REQ_SET_PROTOCOL;
     req.wValue = val;
@@ -31,8 +30,8 @@ static int set_protocol(struct usb_pipe *pipe, uint16_t val,
 }
 
 // Send USB HID SetIdle request.
-static int set_idle(struct usb_pipe *pipe, int ms) {
-    struct usb_ctrlrequest req;
+static int set_idle(usb_pipe_t *pipe, int ms) {
+    usb_ctrl_request_t req;
     req.bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE;
     req.bRequest = HID_REQ_SET_IDLE;
     req.wValue = (ms / 4) << 8;
@@ -53,11 +52,10 @@ struct keyevent {
 
 #define MAX_KBD_EVENT 16
 
-static void usb_check_key(struct hiddevice_s *hid);
+static void usb_check_key(hid_device_t *hid);
 
-static int usb_kbd_setup(struct usbdevice_s *usbdev,
-                         struct usbdevice_a_interface *iface,
-                         struct usb_endpoint_descriptor *epdesc) {
+static int usb_kbd_setup(usb_device_t *usbdev, usb_device_interface_t *iface,
+                         usb_endpoint_descriptor_t *epdesc) {
     if (epdesc->wMaxPacketSize < sizeof(struct keyevent) ||
         epdesc->wMaxPacketSize > MAX_KBD_EVENT) {
         return -1;
@@ -72,7 +70,7 @@ static int usb_kbd_setup(struct usbdevice_s *usbdev,
     if (set_idle(usbdev->defpipe, KEYREPEATMS))
         return -1;
 
-    struct hiddevice_s *hid = malloc(sizeof(struct hiddevice_s));
+    hid_device_t *hid = malloc(sizeof(hid_device_t));
     hid->upipe = usb_alloc_pipe(usbdev, epdesc, NULL);
     if (!hid->upipe) {
         free(hid);
@@ -248,12 +246,12 @@ static void handle_key(struct keyevent *data) {
 }
 
 static void key_cb(int status, void *user_data) {
-    struct hiddevice_s *hid = user_data;
+    hid_device_t *hid = user_data;
     hid->xfer_ok = true;
 }
 
 // Check if a USB keyboard event is pending and process it if so.
-static void usb_check_key(struct hiddevice_s *hid) {
+static void usb_check_key(hid_device_t *hid) {
     uint8_t data[MAX_KBD_EVENT];
 
     for (;;) {
@@ -287,11 +285,11 @@ static void handle_mouse(struct mouseevent *data) {
 }
 
 static void mouse_cb(int status, void *user_data) {
-    struct hiddevice_s *hid = user_data;
+    hid_device_t *hid = user_data;
     hid->xfer_ok = true;
 }
 
-static void usb_check_mouse(struct hiddevice_s *hid) {
+static void usb_check_mouse(hid_device_t *hid) {
     uint8_t data[MAX_MOUSE_EVENT];
 
     for (;;) {
@@ -309,9 +307,8 @@ static void usb_check_mouse(struct hiddevice_s *hid) {
     }
 }
 
-static int usb_mouse_setup(struct usbdevice_s *usbdev,
-                           struct usbdevice_a_interface *iface,
-                           struct usb_endpoint_descriptor *epdesc) {
+static int usb_mouse_setup(usb_device_t *usbdev, usb_device_interface_t *iface,
+                           usb_endpoint_descriptor_t *epdesc) {
     if (epdesc->wMaxPacketSize < sizeof(struct mouseevent) ||
         epdesc->wMaxPacketSize > MAX_MOUSE_EVENT) {
         printk("USB mouse wMaxPacketSize=%d; aborting\n",
@@ -323,7 +320,7 @@ static int usb_mouse_setup(struct usbdevice_s *usbdev,
     if (set_protocol(usbdev->defpipe, 0, iface->iface->bInterfaceNumber))
         return -1;
 
-    struct hiddevice_s *hid = malloc(sizeof(struct hiddevice_s));
+    hid_device_t *hid = malloc(sizeof(hid_device_t));
     hid->upipe = usb_alloc_pipe(usbdev, epdesc, NULL);
     if (!hid->upipe) {
         free(hid);
@@ -344,15 +341,14 @@ static int usb_mouse_setup(struct usbdevice_s *usbdev,
 }
 
 // Initialize a found USB HID device (if applicable).
-int usb_hid_setup(struct usbdevice_s *usbdev,
-                  struct usbdevice_a_interface *iface) {
-    struct usb_interface_descriptor *i = iface->iface;
+int usb_hid_setup(usb_device_t *usbdev, usb_device_interface_t *iface) {
+    usb_interface_descriptor_t *i = iface->iface;
     if (i->bInterfaceSubClass != USB_INTERFACE_SUBCLASS_BOOT)
         // Doesn't support boot protocol.
         return -1;
 
     // Find intr in endpoint.
-    struct usb_endpoint_descriptor *epdesc =
+    usb_endpoint_descriptor_t *epdesc =
         usb_find_desc(iface, USB_ENDPOINT_XFER_INT, USB_DIR_IN);
     if (!epdesc) {
         printk("HID: Cannot find epdesc for interrupt transfer\n");
@@ -367,7 +363,7 @@ int usb_hid_setup(struct usbdevice_s *usbdev,
     return -1;
 }
 
-int usb_hid_remove(struct usbdevice_s *usbdev) { return 0; }
+int usb_hid_remove(usb_device_t *usbdev) { return 0; }
 
 usb_driver_t hid_driver = {
     .class = USB_CLASS_HID,

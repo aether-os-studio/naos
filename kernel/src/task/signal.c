@@ -1,5 +1,3 @@
-#pragma GCC optimize("O0")
-
 #include <arch/arch.h>
 #include <task/signal.h>
 

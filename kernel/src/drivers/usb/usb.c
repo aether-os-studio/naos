@@ -1,14 +1,740 @@
-// Main code for handling USB controllers and devices.
-//
-// Copyright (C) 2009-2013  Kevin O'Connor <kevin@koconnor.net>
-//
-// This file may be distributed under the terms of the GNU LGPLv3 license.
+// Rewrite version from seabios usb.c
 
-#include <drivers/usb/usb.h>
-#include <drivers/kernel_logger.h>
 #include <arch/arch.h>
+#include <dev/device.h>
+#include <drivers/kernel_logger.h>
+#include <drivers/usb/usb.h>
+#include <task/task.h>
+
+#define USB_HOTPLUG_SCAN_NS (250ULL * 1000ULL * 1000ULL)
+#define USB_HUB_SNAPSHOT_MAX 64
 
 usb_driver_t *usb_drivers[MAX_USBDEV_NUM] = {NULL};
+
+static usb_bus_notifier_ops_t *usb_bus_notifier;
+static spinlock_t usb_notifier_lock = SPIN_INIT;
+
+static struct llist_header usb_hub_list = {
+    .prev = &usb_hub_list,
+    .next = &usb_hub_list,
+};
+static spinlock_t usb_hub_list_lock = SPIN_INIT;
+static task_t *usb_hotplug_task;
+static spinlock_t usb_hotplug_lock = SPIN_INIT;
+static uint8_t usb_next_busnum = 1;
+
+static void usb_register_devnode(usb_device_t *usbdev);
+static void usb_unregister_devnode(usb_device_t *usbdev);
+
+typedef struct usbdevfs_ctrltransfer {
+    uint8_t bRequestType;
+    uint8_t bRequest;
+    uint16_t wValue;
+    uint16_t wIndex;
+    uint16_t wLength;
+    uint32_t timeout;
+    void *data;
+} __attribute__((packed)) usbdevfs_ctrltransfer_t;
+
+typedef struct usbdevfs_bulktransfer {
+    unsigned int ep;
+    unsigned int len;
+    unsigned int timeout;
+    void *data;
+} usbdevfs_bulktransfer_t;
+
+typedef struct usbdevfs_setinterface {
+    unsigned int interface;
+    unsigned int altsetting;
+} usbdevfs_setinterface_t;
+
+typedef struct usbdevfs_getdriver {
+    unsigned int interface;
+    char driver[256];
+} usbdevfs_getdriver_t;
+
+typedef struct usbdevfs_connectinfo {
+    unsigned int devnum;
+    unsigned char slow;
+} usbdevfs_connectinfo_t;
+
+typedef struct usbdevfs_conninfo_ex {
+    uint32_t size;
+    uint32_t busnum;
+    uint32_t devnum;
+    uint32_t speed;
+    uint8_t num_ports;
+    uint8_t ports[7];
+} usbdevfs_conninfo_ex_t;
+
+typedef struct usbdevfs_hub_portinfo {
+    char nports;
+    char port[127];
+} usbdevfs_hub_portinfo_t;
+
+typedef struct usb_root_hub_config {
+    usb_config_descriptor_t config;
+    usb_interface_descriptor_t iface;
+    usb_endpoint_descriptor_t ep;
+    usb_super_speed_endpoint_descriptor_t ss_ep;
+} __attribute__((packed)) usb_root_hub_config_t;
+
+#define USBDEVFS_CONTROL _IOWR('U', 0, usbdevfs_ctrltransfer_t)
+#define USBDEVFS_BULK _IOWR('U', 2, usbdevfs_bulktransfer_t)
+#define USBDEVFS_SETINTERFACE _IOR('U', 4, usbdevfs_setinterface_t)
+#define USBDEVFS_SETCONFIGURATION _IOR('U', 5, unsigned int)
+#define USBDEVFS_GETDRIVER _IOW('U', 8, usbdevfs_getdriver_t)
+#define USBDEVFS_CLAIMINTERFACE _IOR('U', 15, unsigned int)
+#define USBDEVFS_RELEASEINTERFACE _IOR('U', 16, unsigned int)
+#define USBDEVFS_CONNECTINFO _IOW('U', 17, usbdevfs_connectinfo_t)
+#define USBDEVFS_HUB_PORTINFO _IOR('U', 19, usbdevfs_hub_portinfo_t)
+#define USBDEVFS_GET_CAPABILITIES _IOR('U', 26, uint32_t)
+#define USBDEVFS_GET_SPEED _IO('U', 31)
+
+#define USBDEVFS_CAP_ZERO_PACKET 0x01
+#define USBDEVFS_CAP_CONNINFO_EX 0x80
+
+#define USB_SPEED_UNKNOWN 0
+#define USB_SPEED_LOW 1
+#define USB_SPEED_FULL 2
+#define USB_SPEED_HIGH 3
+#define USB_SPEED_WIRELESS 4
+#define USB_SPEED_SUPER 5
+#define USB_SPEED_SUPER_PLUS 6
+
+static const char *usb_root_hub_product_name(uint8_t type) {
+    switch (type) {
+    case USB_TYPE_XHCI:
+        return "xHCI Root Hub";
+    case USB_TYPE_EHCI:
+        return "EHCI Root Hub";
+    case USB_TYPE_OHCI:
+        return "OHCI Root Hub";
+    case USB_TYPE_UHCI:
+        return "UHCI Root Hub";
+    default:
+        return "USB Root Hub";
+    }
+}
+
+static uint16_t usb_root_hub_product_id(uint8_t type) {
+    switch (type) {
+    case USB_TYPE_XHCI:
+        return 0x0003;
+    case USB_TYPE_EHCI:
+        return 0x0002;
+    case USB_TYPE_OHCI:
+    case USB_TYPE_UHCI:
+    default:
+        return 0x0001;
+    }
+}
+
+static uint16_t usb_root_hub_bcd(uint8_t type) {
+    switch (type) {
+    case USB_TYPE_XHCI:
+        return 0x0310;
+    case USB_TYPE_EHCI:
+        return 0x0200;
+    default:
+        return 0x0110;
+    }
+}
+
+static uint32_t usb_linux_speed(uint8_t speed) {
+    switch (speed) {
+    case USB_LOWSPEED:
+        return USB_SPEED_LOW;
+    case USB_FULLSPEED:
+        return USB_SPEED_FULL;
+    case USB_HIGHSPEED:
+        return USB_SPEED_HIGH;
+    case USB_SUPERSPEED:
+        return USB_SPEED_SUPER;
+    default:
+        return USB_SPEED_UNKNOWN;
+    }
+}
+
+static void usb_format_devnode_name(const usb_device_t *usbdev, char *name,
+                                    size_t size) {
+    snprintf(name, size, "bus/usb/%03u/%03u", usbdev->busnum, usbdev->devnum);
+}
+
+static uint64_t usb_timeout_ns(uint32_t timeout_ms) {
+    if (!timeout_ms)
+        return (uint64_t)-1;
+    return (uint64_t)timeout_ms * 1000000ULL;
+}
+
+static size_t usb_root_hub_num_ports(const usb_device_t *usbdev) {
+    if (!usbdev || !usbdev->childhub)
+        return 0;
+    return usbdev->childhub->portcount;
+}
+
+static size_t usb_root_hub_status_bytes(size_t portcount) {
+    return 1 + ((portcount + 7) / 8);
+}
+
+static size_t usb_root_hub_config_size(const usb_device_t *usbdev) {
+    size_t size = sizeof(usb_config_descriptor_t) +
+                  sizeof(usb_interface_descriptor_t) +
+                  sizeof(usb_endpoint_descriptor_t);
+    if (usbdev && usbdev->speed == USB_SUPERSPEED)
+        size += sizeof(usb_super_speed_endpoint_descriptor_t);
+    return size;
+}
+
+static size_t usb_root_hub_fill_config(const usb_device_t *usbdev, void *buf,
+                                       size_t len) {
+    usb_root_hub_config_t desc;
+    size_t total = usb_root_hub_config_size(usbdev);
+    uint16_t maxpacket =
+        (uint16_t)usb_root_hub_status_bytes(usb_root_hub_num_ports(usbdev));
+
+    memset(&desc, 0, sizeof(desc));
+
+    desc.config.bLength = sizeof(desc.config);
+    desc.config.bDescriptorType = USB_DT_CONFIG;
+    desc.config.wTotalLength = total;
+    desc.config.bNumInterfaces = 1;
+    desc.config.bConfigurationValue = 1;
+    desc.config.bmAttributes = 0x40;
+    desc.config.bMaxPower = 0;
+
+    desc.iface.bLength = sizeof(desc.iface);
+    desc.iface.bDescriptorType = USB_DT_INTERFACE;
+    desc.iface.bInterfaceNumber = 0;
+    desc.iface.bAlternateSetting = 0;
+    desc.iface.bNumEndpoints = 1;
+    desc.iface.bInterfaceClass = USB_CLASS_HUB;
+    desc.iface.bInterfaceSubClass = 0;
+    desc.iface.bInterfaceProtocol = usbdev->speed == USB_SUPERSPEED ? 1 : 0;
+
+    desc.ep.bLength = sizeof(desc.ep);
+    desc.ep.bDescriptorType = USB_DT_ENDPOINT;
+    desc.ep.bEndpointAddress = USB_DIR_IN | 1;
+    desc.ep.bmAttributes = USB_ENDPOINT_XFER_INT;
+    desc.ep.wMaxPacketSize = maxpacket;
+    desc.ep.bInterval = usbdev->speed == USB_SUPERSPEED ? 12 : 255;
+
+    desc.ss_ep.bLength = sizeof(desc.ss_ep);
+    desc.ss_ep.bDescriptorType = USB_DT_ENDPOINT_COMPANION;
+    desc.ss_ep.bMaxBurst = 0;
+    desc.ss_ep.bmAttributes = 0;
+    desc.ss_ep.wBytesPerInterval = maxpacket;
+
+    if (!buf || !len)
+        return total;
+
+    size_t copied = 0;
+    memcpy((uint8_t *)buf + copied, &desc.config,
+           MIN(len - copied, sizeof(desc.config)));
+    copied += MIN(len - copied, sizeof(desc.config));
+    if (copied < len) {
+        memcpy((uint8_t *)buf + copied, &desc.iface,
+               MIN(len - copied, sizeof(desc.iface)));
+        copied += MIN(len - copied, sizeof(desc.iface));
+    }
+    if (copied < len) {
+        memcpy((uint8_t *)buf + copied, &desc.ep,
+               MIN(len - copied, sizeof(desc.ep)));
+        copied += MIN(len - copied, sizeof(desc.ep));
+    }
+    if (usbdev->speed == USB_SUPERSPEED && copied < len) {
+        memcpy((uint8_t *)buf + copied, &desc.ss_ep,
+               MIN(len - copied, sizeof(desc.ss_ep)));
+    }
+
+    return total;
+}
+
+static size_t usb_fill_string_descriptor(const char *src, void *buf,
+                                         size_t len) {
+    size_t slen = src ? strlen(src) : 0;
+    size_t total = 2 + slen * 2;
+    uint8_t *dst = buf;
+
+    if (!buf || !len)
+        return total;
+
+    if (len >= 1)
+        dst[0] = MIN(total, 255);
+    if (len >= 2)
+        dst[1] = USB_DT_STRING;
+
+    for (size_t i = 0; i < slen && 2 + i * 2 + 1 < len; i++) {
+        dst[2 + i * 2] = (uint8_t)src[i];
+        dst[2 + i * 2 + 1] = 0;
+    }
+
+    return total;
+}
+
+static int usb_root_hub_control(usb_device_t *usbdev,
+                                const usb_ctrl_request_t *req, void *data) {
+    uint8_t desc_type = (req->wValue >> 8) & 0xff;
+    uint8_t desc_index = req->wValue & 0xff;
+
+    if (!req)
+        return -EINVAL;
+
+    switch (req->bRequest) {
+    case USB_REQ_GET_DESCRIPTOR:
+        if (desc_type == USB_DT_DEVICE) {
+            if (data && req->wLength)
+                memcpy(data, &usbdev->device_desc,
+                       MIN((size_t)req->wLength, sizeof(usbdev->device_desc)));
+            return 0;
+        }
+        if (desc_type == USB_DT_CONFIG) {
+            if (data && req->wLength)
+                usb_root_hub_fill_config(usbdev, data, req->wLength);
+            return 0;
+        }
+        if (desc_type == USB_DT_STRING) {
+            if (!data || !req->wLength)
+                return 0;
+
+            if (desc_index == 0) {
+                uint8_t langid[4] = {4, USB_DT_STRING, 0x09, 0x04};
+                memcpy(data, langid, MIN((size_t)req->wLength, sizeof(langid)));
+                return 0;
+            }
+            if (desc_index == usbdev->device_desc.iManufacturer)
+                return usb_fill_string_descriptor(usbdev->manufacturer, data,
+                                                  req->wLength),
+                       0;
+            if (desc_index == usbdev->device_desc.iProduct)
+                return usb_fill_string_descriptor(usbdev->product, data,
+                                                  req->wLength),
+                       0;
+            if (desc_index == usbdev->device_desc.iSerialNumber)
+                return usb_fill_string_descriptor(usbdev->serial, data,
+                                                  req->wLength),
+                       0;
+        }
+        return -ENOSYS;
+    case USB_REQ_GET_CONFIGURATION:
+        if (data && req->wLength)
+            *(uint8_t *)data = 1;
+        return 0;
+    case USB_REQ_SET_CONFIGURATION:
+    case USB_REQ_GET_STATUS:
+    case USB_REQ_SET_INTERFACE:
+        if (data && req->wLength)
+            memset(data, 0, req->wLength);
+        return 0;
+    default:
+        return -ENOSYS;
+    }
+}
+
+static int usb_device_control(usb_device_t *usbdev,
+                              const usb_ctrl_request_t *req, void *data,
+                              uint32_t timeout_ms) {
+    if (!usbdev || !req)
+        return -EINVAL;
+    if (usbdev->is_root_hub)
+        return usb_root_hub_control(usbdev, req, data);
+    if (!usbdev->defpipe)
+        return -ENODEV;
+
+    return usb_send_pipe(usbdev->defpipe, req->bRequestType & USB_DIR_IN, req,
+                         data, req->wLength, usb_timeout_ns(timeout_ms));
+}
+
+static int usb_find_endpoint(usb_device_t *usbdev, uint8_t epaddr,
+                             usb_device_interface_t **iface_out,
+                             usb_endpoint_descriptor_t **ep_out,
+                             usb_super_speed_endpoint_descriptor_t **ss_out) {
+    if (!usbdev)
+        return -ENODEV;
+
+    for (int i = 0; i < usbdev->ifaces_num; i++) {
+        usb_device_interface_t *iface = &usbdev->ifaces[i];
+        uint8_t *ptr = (uint8_t *)iface->iface + iface->iface->bLength;
+        uint8_t *end = iface->end;
+        usb_endpoint_descriptor_t *last_ep = NULL;
+
+        while (ptr && end && ptr + 2 <= end) {
+            uint8_t len = ptr[0];
+            uint8_t type = ptr[1];
+
+            if (len < 2)
+                break;
+            if (type == USB_DT_INTERFACE)
+                break;
+
+            if (type == USB_DT_ENDPOINT) {
+                usb_endpoint_descriptor_t *ep = (void *)ptr;
+                last_ep = ep;
+                if (ep->bEndpointAddress == epaddr) {
+                    if (iface_out)
+                        *iface_out = iface;
+                    if (ep_out)
+                        *ep_out = ep;
+                    if (ss_out)
+                        *ss_out = NULL;
+                }
+            } else if (type == USB_DT_ENDPOINT_COMPANION && last_ep &&
+                       last_ep->bEndpointAddress == epaddr) {
+                if (ss_out)
+                    *ss_out = (void *)ptr;
+                return 0;
+            }
+
+            if (last_ep && last_ep->bEndpointAddress == epaddr &&
+                type != USB_DT_ENDPOINT_COMPANION)
+                return 0;
+
+            ptr += len;
+        }
+    }
+
+    return ep_out && *ep_out ? 0 : -ENOENT;
+}
+
+static int usb_device_bulk_transfer(usb_device_t *usbdev, uint8_t epaddr,
+                                    void *data, size_t len,
+                                    uint32_t timeout_ms) {
+    usb_endpoint_descriptor_t *ep = NULL;
+    usb_super_speed_endpoint_descriptor_t *ss_ep = NULL;
+    usb_pipe_t *pipe;
+    int dir = (epaddr & USB_DIR_IN) ? USB_DIR_IN : USB_DIR_OUT;
+    int ret;
+
+    if (usb_find_endpoint(usbdev, epaddr, NULL, &ep, &ss_ep) != 0 || !ep)
+        return -ENOENT;
+
+    pipe = usb_alloc_pipe(usbdev, ep, ss_ep);
+    if (!pipe)
+        return -ENOMEM;
+
+    ret = usb_send_pipe(pipe, dir, NULL, data, (int)len,
+                        usb_timeout_ns(timeout_ms));
+    usb_free_pipe(usbdev, pipe);
+    return ret;
+}
+
+static size_t usb_descriptor_blob_size(usb_device_t *usbdev) {
+    size_t size = sizeof(usbdev->device_desc);
+    if (usbdev->is_root_hub)
+        return size + usb_root_hub_config_size(usbdev);
+    if (usbdev->config)
+        size += usbdev->config->wTotalLength;
+    return size;
+}
+
+static usb_endpoint_descriptor_t *
+usb_find_endpoint_by_address(usb_device_t *usbdev, uint8_t epaddr,
+                             usb_device_interface_t **iface_out,
+                             usb_super_speed_endpoint_descriptor_t **ss_out) {
+    int type = (epaddr & USB_ENDPOINT_DIR_MASK) ? USB_DIR_IN : USB_DIR_OUT;
+
+    for (int i = 0; i < usbdev->ifaces_num; i++) {
+        usb_device_interface_t *iface = &usbdev->ifaces[i];
+        usb_endpoint_descriptor_t *ep =
+            usb_find_desc(iface, USB_ENDPOINT_XFER_BULK, type);
+        if (!ep)
+            continue;
+        if (ep->bEndpointAddress != epaddr)
+            continue;
+        if (iface_out)
+            *iface_out = iface;
+        if (ss_out)
+            *ss_out = usb_find_ss_desc(iface);
+        return ep;
+    }
+
+    return NULL;
+}
+
+static ssize_t usbfs_read(void *dev, void *buf, uint64_t offset, size_t size,
+                          fd_t *fd) {
+    usb_device_t *usbdev = dev;
+    size_t total;
+    size_t copied = 0;
+
+    if (!usbdev || !buf)
+        return -EINVAL;
+
+    total = usb_descriptor_blob_size(usbdev);
+    if (offset >= total)
+        return 0;
+    size = MIN(size, total - offset);
+
+    if (offset < sizeof(usbdev->device_desc)) {
+        size_t chunk = MIN(size, sizeof(usbdev->device_desc) - offset);
+        memcpy(buf, (uint8_t *)&usbdev->device_desc + offset, chunk);
+        copied += chunk;
+        offset += chunk;
+    }
+
+    if (copied >= size)
+        return copied;
+
+    if (usbdev->is_root_hub) {
+        usb_root_hub_config_t config;
+        size_t cfg_size = usb_root_hub_config_size(usbdev);
+        memset(&config, 0, sizeof(config));
+        usb_root_hub_fill_config(usbdev, &config, cfg_size);
+        memcpy((uint8_t *)buf + copied,
+               (uint8_t *)&config + (offset - sizeof(usbdev->device_desc)),
+               size - copied);
+        return size;
+    }
+
+    if (!usbdev->config)
+        return copied;
+
+    memcpy((uint8_t *)buf + copied,
+           (uint8_t *)usbdev->config + (offset - sizeof(usbdev->device_desc)),
+           size - copied);
+    return size;
+}
+
+static ssize_t usbfs_write(void *dev, void *buf, uint64_t offset, size_t size,
+                           fd_t *fd) {
+    return -EINVAL;
+}
+
+static int usb_topology_ports(const usb_device_t *usbdev, uint8_t *ports,
+                              size_t max_ports) {
+    const char *dash;
+    const char *p;
+    int count = 0;
+
+    if (!usbdev || usbdev->is_root_hub)
+        return 0;
+
+    dash = strchr(usbdev->topology, '-');
+    if (!dash)
+        return 0;
+
+    p = dash + 1;
+    while (*p && count < (int)max_ports) {
+        unsigned int port = 0;
+        while (*p >= '0' && *p <= '9') {
+            port = port * 10 + (unsigned int)(*p - '0');
+            p++;
+        }
+        ports[count++] = (uint8_t)port;
+        if (*p != '.')
+            break;
+        p++;
+    }
+
+    return count;
+}
+
+static ssize_t usbfs_ioctl(void *dev, int cmd, void *args, fd_t *fd) {
+    usb_device_t *usbdev = dev;
+
+    if (!usbdev)
+        return -ENODEV;
+
+    switch ((uint32_t)cmd) {
+    case USBDEVFS_CONTROL: {
+        usbdevfs_ctrltransfer_t ctrl;
+        usb_ctrl_request_t req;
+        void *kbuf = NULL;
+        int ret;
+
+        if (!args)
+            return -EFAULT;
+        if (copy_from_user(&ctrl, args, sizeof(ctrl)))
+            return -EFAULT;
+
+        memset(&req, 0, sizeof(req));
+        req.bRequestType = ctrl.bRequestType;
+        req.bRequest = ctrl.bRequest;
+        req.wValue = ctrl.wValue;
+        req.wIndex = ctrl.wIndex;
+        req.wLength = ctrl.wLength;
+
+        if (ctrl.wLength) {
+            kbuf = malloc(ctrl.wLength);
+            if (!kbuf)
+                return -ENOMEM;
+            if (!(ctrl.bRequestType & USB_DIR_IN) &&
+                copy_from_user(kbuf, ctrl.data, ctrl.wLength)) {
+                free(kbuf);
+                return -EFAULT;
+            }
+        }
+
+        ret = usb_device_control(usbdev, &req, kbuf, ctrl.timeout);
+        if (ret == 0 && (ctrl.bRequestType & USB_DIR_IN) && ctrl.wLength &&
+            copy_to_user(ctrl.data, kbuf, ctrl.wLength)) {
+            ret = -EFAULT;
+        }
+
+        free(kbuf);
+        return ret;
+    }
+    case USBDEVFS_BULK: {
+        usbdevfs_bulktransfer_t bulk;
+        usb_endpoint_descriptor_t *ep;
+        usb_super_speed_endpoint_descriptor_t *ss_ep = NULL;
+        usb_pipe_t *pipe;
+        void *kbuf = NULL;
+        int dir;
+        int ret;
+
+        if (!args)
+            return -EFAULT;
+        if (copy_from_user(&bulk, args, sizeof(bulk)))
+            return -EFAULT;
+        if (usbdev->bound_driver_count > 0)
+            return -EBUSY;
+
+        ep = usb_find_endpoint_by_address(usbdev, (uint8_t)bulk.ep, NULL,
+                                          &ss_ep);
+        if (!ep)
+            return -ENOENT;
+
+        pipe = usb_alloc_pipe(usbdev, ep, ss_ep);
+        if (!pipe)
+            return -ENOMEM;
+
+        if (bulk.len) {
+            kbuf = malloc(bulk.len);
+            if (!kbuf) {
+                usb_free_pipe(usbdev, pipe);
+                return -ENOMEM;
+            }
+            if (!(bulk.ep & USB_DIR_IN) &&
+                copy_from_user(kbuf, bulk.data, bulk.len)) {
+                free(kbuf);
+                usb_free_pipe(usbdev, pipe);
+                return -EFAULT;
+            }
+        }
+
+        dir = (bulk.ep & USB_DIR_IN) ? USB_DIR_IN : USB_DIR_OUT;
+        ret = usb_send_pipe(pipe, dir, NULL, kbuf, (int)bulk.len,
+                            usb_timeout_ns(bulk.timeout));
+        if (ret == 0 && (bulk.ep & USB_DIR_IN) && bulk.len &&
+            copy_to_user(bulk.data, kbuf, bulk.len)) {
+            ret = -EFAULT;
+        }
+
+        free(kbuf);
+        usb_free_pipe(usbdev, pipe);
+        return ret;
+    }
+    case USBDEVFS_CONNECTINFO: {
+        usbdevfs_connectinfo_t info = {
+            .devnum = usbdev->devnum,
+            .slow = usbdev->speed == USB_LOWSPEED,
+        };
+        if (!args || copy_to_user(args, &info, sizeof(info)))
+            return -EFAULT;
+        return 0;
+    }
+    case USBDEVFS_GET_CAPABILITIES: {
+        uint32_t caps = USBDEVFS_CAP_ZERO_PACKET | USBDEVFS_CAP_CONNINFO_EX;
+        if (!args || copy_to_user(args, &caps, sizeof(caps)))
+            return -EFAULT;
+        return 0;
+    }
+    case USBDEVFS_GET_SPEED:
+        return usb_linux_speed(usbdev->speed);
+    case USBDEVFS_CLAIMINTERFACE:
+    case USBDEVFS_RELEASEINTERFACE:
+        return 0;
+    case USBDEVFS_SETCONFIGURATION: {
+        unsigned int config = 0;
+        usb_ctrl_request_t req;
+        if (!args || copy_from_user(&config, args, sizeof(config)))
+            return -EFAULT;
+        memset(&req, 0, sizeof(req));
+        req.bRequestType = USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_DEVICE;
+        req.bRequest = USB_REQ_SET_CONFIGURATION;
+        req.wValue = (uint16_t)config;
+        return usb_device_control(usbdev, &req, NULL, 1000);
+    }
+    case USBDEVFS_SETINTERFACE: {
+        usbdevfs_setinterface_t setif;
+        usb_ctrl_request_t req;
+        if (!args || copy_from_user(&setif, args, sizeof(setif)))
+            return -EFAULT;
+        memset(&req, 0, sizeof(req));
+        req.bRequestType =
+            USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_INTERFACE;
+        req.bRequest = USB_REQ_SET_INTERFACE;
+        req.wIndex = (uint16_t)setif.interface;
+        req.wValue = (uint16_t)setif.altsetting;
+        return usb_device_control(usbdev, &req, NULL, 1000);
+    }
+    case USBDEVFS_GETDRIVER: {
+        usbdevfs_getdriver_t driver;
+        memset(&driver, 0, sizeof(driver));
+        if (!args || copy_from_user(&driver, args, sizeof(driver)))
+            return -EFAULT;
+        snprintf(driver.driver, sizeof(driver.driver), "%s",
+                 usbdev->is_root_hub ? "hub" : "usb");
+        if (copy_to_user(args, &driver, sizeof(driver)))
+            return -EFAULT;
+        return 0;
+    }
+    case USBDEVFS_HUB_PORTINFO: {
+        usbdevfs_hub_portinfo_t info;
+        usb_hub_t *hub = usbdev->childhub;
+        memset(&info, 0, sizeof(info));
+        if (!hub)
+            return -ENODEV;
+        info.nports = (char)MIN(hub->portcount, (uint32_t)127);
+        for (uint32_t i = 0; i < hub->portcount && i < 127; i++) {
+            usb_device_t *child = hub->ports ? hub->ports[i] : NULL;
+            info.port[i] = child ? (char)child->devnum : 0;
+        }
+        if (!args || copy_to_user(args, &info, sizeof(info)))
+            return -EFAULT;
+        return 0;
+    }
+    default:
+        if (_IOC_TYPE((uint32_t)cmd) == 'U' && _IOC_NR((uint32_t)cmd) == 32) {
+            usbdevfs_conninfo_ex_t info;
+            memset(&info, 0, sizeof(info));
+            info.size = sizeof(info);
+            info.busnum = usbdev->busnum;
+            info.devnum = usbdev->devnum;
+            info.speed = usb_linux_speed(usbdev->speed);
+            info.num_ports = (uint8_t)usb_topology_ports(usbdev, info.ports,
+                                                         sizeof(info.ports));
+            size_t len = _IOC_SIZE((uint32_t)cmd);
+            len = MIN(len, sizeof(info));
+            if (!args || copy_to_user(args, &info, len))
+                return -EFAULT;
+            return 0;
+        }
+        return -ENOTTY;
+    }
+}
+
+static ssize_t usbfs_poll(void *dev, int events) { return 0; }
+
+static void usb_register_devnode(usb_device_t *usbdev) {
+    char name[NAMELEN];
+
+    if (!usbdev || usbdev->usbfs_devnr)
+        return;
+
+    usb_format_devnode_name(usbdev, name, sizeof(name));
+    usbdev->usbfs_devnr =
+        device_install(DEV_CHAR, DEV_USB, usbdev, name, 0, NULL, NULL,
+                       usbfs_ioctl, usbfs_poll, usbfs_read, usbfs_write, NULL);
+}
+
+static void usb_unregister_devnode(usb_device_t *usbdev) {
+    if (!usbdev || !usbdev->usbfs_devnr)
+        return;
+    device_uninstall(usbdev->usbfs_devnr);
+    usbdev->usbfs_devnr = 0;
+}
 
 void regist_usb_driver(usb_driver_t *driver) {
     for (int i = 0; i < MAX_USBDEV_NUM; i++) {
@@ -19,93 +745,163 @@ void regist_usb_driver(usb_driver_t *driver) {
     }
 }
 
-static inline void delay(uint64_t ms) {
-    uint64_t ns = ms * 1000000ULL;
-    uint64_t timeout = nano_time() + ns;
+void usb_register_bus_notifier(usb_bus_notifier_ops_t *ops) {
+    spin_lock(&usb_notifier_lock);
+    usb_bus_notifier = ops;
+    spin_unlock(&usb_notifier_lock);
+}
+
+void usb_unregister_bus_notifier(usb_bus_notifier_ops_t *ops) {
+    spin_lock(&usb_notifier_lock);
+    if (usb_bus_notifier == ops)
+        usb_bus_notifier = NULL;
+    spin_unlock(&usb_notifier_lock);
+}
+
+const char *usb_speed_name(uint8_t speed) {
+    switch (speed) {
+    case USB_LOWSPEED:
+        return "low";
+    case USB_FULLSPEED:
+        return "full";
+    case USB_HIGHSPEED:
+        return "high";
+    case USB_SUPERSPEED:
+        return "super";
+    default:
+        return "unknown";
+    }
+}
+
+static inline void usb_delay_ms(uint64_t ms) {
+    uint64_t timeout = nano_time() + ms * 1000000ULL;
     while (nano_time() < timeout) {
         arch_pause();
     }
 }
 
-// Allocate, update, or free a usb pipe.
-struct usb_pipe *
-usb_realloc_pipe(struct usbdevice_s *usbdev, struct usb_pipe *pipe,
-                 struct usb_endpoint_descriptor *epdesc,
-                 struct usb_super_speed_endpoint_descriptor *ss_epdesc) {
+static inline void usb_notify_controller_add(usb_controller_t *cntl) {
+    usb_bus_notifier_ops_t *ops;
+
+    spin_lock(&usb_notifier_lock);
+    ops = usb_bus_notifier;
+    spin_unlock(&usb_notifier_lock);
+
+    if (ops && ops->controller_add)
+        ops->controller_add(cntl);
+}
+
+static inline void usb_notify_controller_remove(usb_controller_t *cntl) {
+    usb_bus_notifier_ops_t *ops;
+
+    spin_lock(&usb_notifier_lock);
+    ops = usb_bus_notifier;
+    spin_unlock(&usb_notifier_lock);
+
+    if (ops && ops->controller_remove)
+        ops->controller_remove(cntl);
+}
+
+static inline void usb_notify_device_add(usb_device_t *usbdev) {
+    usb_bus_notifier_ops_t *ops;
+
+    usb_register_devnode(usbdev);
+
+    spin_lock(&usb_notifier_lock);
+    ops = usb_bus_notifier;
+    spin_unlock(&usb_notifier_lock);
+
+    if (ops && ops->device_add)
+        ops->device_add(usbdev);
+}
+
+static inline void usb_notify_device_remove(usb_device_t *usbdev) {
+    usb_bus_notifier_ops_t *ops;
+
+    spin_lock(&usb_notifier_lock);
+    ops = usb_bus_notifier;
+    spin_unlock(&usb_notifier_lock);
+
+    if (ops && ops->device_remove)
+        ops->device_remove(usbdev);
+
+    usb_unregister_devnode(usbdev);
+}
+
+static void usb_hotplug_wake(void) {
+    spin_lock(&usb_hotplug_lock);
+    task_t *task = usb_hotplug_task;
+    spin_unlock(&usb_hotplug_lock);
+
+    if (task)
+        task_unblock(task, EOK);
+}
+
+static usb_pipe_t *
+usb_realloc_pipe(usb_device_t *usbdev, usb_pipe_t *pipe,
+                 usb_endpoint_descriptor_t *epdesc,
+                 usb_super_speed_endpoint_descriptor_t *ss_epdesc) {
     return usbdev->hub->op->realloc_pipe(usbdev, pipe, epdesc, ss_epdesc);
 }
 
-// Send a message on a control pipe using the default control descriptor.
-int usb_send_pipe(struct usb_pipe *pipe_fl, int dir, const void *cmd,
-                  void *data, int datasize, uint64_t timeout_ns) {
+int usb_send_pipe(usb_pipe_t *pipe_fl, int dir, const void *cmd, void *data,
+                  int datasize, uint64_t timeout_ns) {
     return pipe_fl->usbdev->hub->op->send_pipe(pipe_fl, dir, cmd, data,
                                                datasize, timeout_ns);
 }
 
-int usb_send_intr_pipe(struct usb_pipe *pipe_fl, void *data_ptr, int len,
+int usb_send_intr_pipe(usb_pipe_t *pipe_fl, void *data_ptr, int len,
                        intr_xfer_cb cb, void *user_data) {
     return pipe_fl->usbdev->hub->op->send_intr_pipe(pipe_fl, data_ptr, len, cb,
                                                     user_data);
 }
 
-int usb_32bit_pipe(struct usb_pipe *pipe_fl) { return 1; }
+int usb_32bit_pipe(usb_pipe_t *pipe_fl) { return 1; }
 
-/****************************************************************
- * Helper functions
- ****************************************************************/
-
-// Allocate a usb pipe.
-struct usb_pipe *
-usb_alloc_pipe(struct usbdevice_s *usbdev,
-               struct usb_endpoint_descriptor *epdesc,
-               struct usb_super_speed_endpoint_descriptor *ss_epdesc) {
+usb_pipe_t *usb_alloc_pipe(usb_device_t *usbdev,
+                           usb_endpoint_descriptor_t *epdesc,
+                           usb_super_speed_endpoint_descriptor_t *ss_epdesc) {
     return usb_realloc_pipe(usbdev, NULL, epdesc, ss_epdesc);
 }
 
-// Free an allocated control or bulk pipe.
-void usb_free_pipe(struct usbdevice_s *usbdev, struct usb_pipe *pipe) {
+void usb_free_pipe(usb_device_t *usbdev, usb_pipe_t *pipe) {
     if (!pipe)
         return;
     usb_realloc_pipe(usbdev, pipe, NULL, NULL);
 }
 
-// Send a message to the default control pipe of a device.
-int usb_send_default_control(struct usb_pipe *pipe,
-                             const struct usb_ctrlrequest *req, void *data) {
+int usb_send_default_control(usb_pipe_t *pipe, const usb_ctrl_request_t *req,
+                             void *data) {
     return usb_send_pipe(pipe, req->bRequestType & USB_DIR_IN, req, data,
                          req->wLength, (uint64_t)-1);
 }
 
-// Send a message to a bulk endpoint
-int usb_send_bulk(struct usb_pipe *pipe_fl, int dir, void *data, int datasize) {
+int usb_send_bulk(usb_pipe_t *pipe_fl, int dir, void *data, int datasize) {
     return usb_send_pipe(pipe_fl, dir, NULL, data, datasize, (uint64_t)-1);
 }
 
-// Send a message to a bulk endpoint
-int usb_send_bulk_nonblock(struct usb_pipe *pipe_fl, int dir, void *data,
+int usb_send_bulk_nonblock(usb_pipe_t *pipe_fl, int dir, void *data,
                            int datasize) {
     return usb_send_pipe(pipe_fl, dir, NULL, data, datasize, 0);
 }
 
-// Check if a pipe for a given controller is on the freelist
-int usb_is_freelist(struct usb_s *cntl, struct usb_pipe *pipe) {
+int usb_is_freelist(usb_controller_t *cntl, usb_pipe_t *pipe) {
     return pipe->cntl != cntl;
 }
 
-// Add a pipe to the controller's freelist
-void usb_add_freelist(struct usb_pipe *pipe) {
+void usb_add_freelist(usb_pipe_t *pipe) {
     if (!pipe)
         return;
-    struct usb_s *cntl = pipe->cntl;
+    usb_controller_t *cntl = pipe->cntl;
     pipe->freenext = cntl->freelist;
     cntl->freelist = pipe;
 }
 
-// Check for an available pipe on the freelist.
-struct usb_pipe *usb_get_freelist(struct usb_s *cntl, uint8_t eptype) {
-    struct usb_pipe **pfree = &cntl->freelist;
+usb_pipe_t *usb_get_freelist(usb_controller_t *cntl, uint8_t eptype) {
+    usb_pipe_t **pfree = &cntl->freelist;
+
     for (;;) {
-        struct usb_pipe *pipe = *pfree;
+        usb_pipe_t *pipe = *pfree;
         if (!pipe)
             return NULL;
         if (pipe->eptype == eptype) {
@@ -116,9 +912,8 @@ struct usb_pipe *usb_get_freelist(struct usb_s *cntl, uint8_t eptype) {
     }
 }
 
-// Fill "pipe" endpoint info from an endpoint descriptor.
-void usb_desc2pipe(struct usb_pipe *pipe, struct usbdevice_s *usbdev,
-                   struct usb_endpoint_descriptor *epdesc) {
+void usb_desc2pipe(usb_pipe_t *pipe, usb_device_t *usbdev,
+                   usb_endpoint_descriptor_t *epdesc) {
     pipe->cntl = usbdev->hub->cntl;
     pipe->type = usbdev->hub->cntl->type;
     pipe->ep = epdesc->bEndpointAddress & USB_ENDPOINT_NUMBER_MASK;
@@ -135,128 +930,367 @@ static inline int __fls(unsigned int x) {
     return 32 - __builtin_clz(x);
 }
 
-// Find the exponential period of the requested interrupt end point.
-int usb_get_period(struct usbdevice_s *usbdev,
-                   struct usb_endpoint_descriptor *epdesc) {
+int usb_get_period(usb_device_t *usbdev, usb_endpoint_descriptor_t *epdesc) {
     int period = epdesc->bInterval;
     if (usbdev->speed != USB_HIGHSPEED)
-        return (period <= 0) ? 0 : __fls(period);
-    return (period <= 4) ? 0 : period - 4;
+        return period <= 0 ? 0 : __fls(period);
+    return period <= 4 ? 0 : period - 4;
 }
 
-// Maximum time (in ms) a data transfer should take
-int usb_xfer_time(struct usb_pipe *pipe, int datalen) {
-    // Use the maximum command time (5 seconds), except for
-    // set_address commands where we don't want to stall the boot if
-    // the device doesn't actually exist.  Add 100ms to account for
-    // any controller delays.
+int usb_xfer_time(usb_pipe_t *pipe, int datalen) {
     if (!pipe->devaddr)
         return USB_TIME_STATUS + 100;
     return USB_TIME_COMMAND + 100;
 }
 
-// Find the first endpoint of a given type in an interface description.
-struct usb_endpoint_descriptor *
-usb_find_desc(struct usbdevice_a_interface *iface, int type, int dir) {
-    struct usb_interface_descriptor *iface_desc = iface->iface;
-    struct usb_endpoint_descriptor *epdesc = (void *)&iface_desc[1];
-    for (;;) {
-        if ((void *)epdesc >=
-                (void *)epdesc + iface->iface->bNumEndpoints *
-                                     sizeof(struct usb_endpoint_descriptor) ||
-            epdesc->bDescriptorType == USB_DT_INTERFACE) {
-            return NULL;
+usb_endpoint_descriptor_t *usb_find_desc(usb_device_interface_t *iface,
+                                         int type, int dir) {
+    uint8_t *ptr = (uint8_t *)iface->iface + iface->iface->bLength;
+    uint8_t *end = iface->end;
+
+    while (ptr && end && ptr + 2 <= end) {
+        uint8_t len = ptr[0];
+        uint8_t desc_type = ptr[1];
+
+        if (len < 2)
+            break;
+        if (desc_type == USB_DT_INTERFACE)
+            break;
+
+        if (desc_type == USB_DT_ENDPOINT) {
+            usb_endpoint_descriptor_t *epdesc = (void *)ptr;
+            if ((epdesc->bEndpointAddress & USB_ENDPOINT_DIR_MASK) == dir &&
+                (epdesc->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK) == type)
+                return epdesc;
         }
-        if (epdesc->bDescriptorType == USB_DT_ENDPOINT &&
-            (epdesc->bEndpointAddress & USB_ENDPOINT_DIR_MASK) == dir &&
-            (epdesc->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK) == type)
-            return epdesc;
-        epdesc = (void *)epdesc + epdesc->bLength;
+
+        ptr += len;
     }
+
+    return NULL;
 }
 
-struct usb_super_speed_endpoint_descriptor *
-usb_find_ss_desc(struct usbdevice_a_interface *iface) {
-    struct usb_interface_descriptor *iface_desc = iface->iface;
-    struct usb_super_speed_endpoint_descriptor *epdesc = (void *)&iface_desc[1];
-    for (;;) {
-        if ((void *)epdesc >=
-                (void *)epdesc +
-                    iface->iface->bNumEndpoints *
-                        sizeof(struct usb_super_speed_endpoint_descriptor) ||
-            epdesc->bDescriptorType == USB_DT_INTERFACE) {
-            return NULL;
-        }
-        if (epdesc->bDescriptorType == USB_DT_ENDPOINT_COMPANION)
-            return epdesc;
-        epdesc = (void *)epdesc + epdesc->bLength;
+usb_super_speed_endpoint_descriptor_t *
+usb_find_ss_desc(usb_device_interface_t *iface) {
+    uint8_t *ptr = (uint8_t *)iface->iface + iface->iface->bLength;
+    uint8_t *end = iface->end;
+    bool saw_endpoint = false;
+
+    while (ptr && end && ptr + 2 <= end) {
+        uint8_t len = ptr[0];
+        uint8_t desc_type = ptr[1];
+
+        if (len < 2)
+            break;
+        if (desc_type == USB_DT_INTERFACE)
+            break;
+
+        if (desc_type == USB_DT_ENDPOINT)
+            saw_endpoint = true;
+        else if (saw_endpoint && desc_type == USB_DT_ENDPOINT_COMPANION)
+            return (void *)ptr;
+
+        ptr += len;
     }
+
+    return NULL;
 }
 
-// Get the first 8 bytes of the device descriptor.
-static int get_device_info8(struct usb_pipe *pipe,
-                            struct usb_device_descriptor *dinfo) {
-    struct usb_ctrlrequest req;
-    req.bRequestType = USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_DEVICE;
-    req.bRequest = USB_REQ_GET_DESCRIPTOR;
-    req.wValue = USB_DT_DEVICE << 8;
-    req.wIndex = 0;
-    req.wLength = 8;
+static int get_device_info8(usb_pipe_t *pipe, usb_device_descriptor_t *dinfo) {
+    usb_ctrl_request_t req = {
+        .bRequestType = USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_DEVICE,
+        .bRequest = USB_REQ_GET_DESCRIPTOR,
+        .wValue = USB_DT_DEVICE << 8,
+        .wIndex = 0,
+        .wLength = 8,
+    };
     return usb_send_default_control(pipe, &req, dinfo);
 }
 
-// Get the full bytes of the device descriptor.
-static int get_device_info_full(struct usb_pipe *pipe,
-                                struct usb_device_descriptor *dinfo) {
-    struct usb_ctrlrequest req;
-    req.bRequestType = USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_DEVICE;
-    req.bRequest = USB_REQ_GET_DESCRIPTOR;
-    req.wValue = USB_DT_DEVICE << 8;
-    req.wIndex = 0;
-    req.wLength = sizeof(struct usb_device_descriptor);
+static int get_device_info_full(usb_pipe_t *pipe,
+                                usb_device_descriptor_t *dinfo) {
+    usb_ctrl_request_t req = {
+        .bRequestType = USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_DEVICE,
+        .bRequest = USB_REQ_GET_DESCRIPTOR,
+        .wValue = USB_DT_DEVICE << 8,
+        .wIndex = 0,
+        .wLength = sizeof(*dinfo),
+    };
     return usb_send_default_control(pipe, &req, dinfo);
 }
 
-static struct usb_config_descriptor *get_device_config(struct usb_pipe *pipe) {
-    struct usb_config_descriptor cfg;
-
-    struct usb_ctrlrequest req;
-    req.bRequestType = USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_DEVICE;
-    req.bRequest = USB_REQ_GET_DESCRIPTOR;
-    req.wValue = USB_DT_CONFIG << 8;
-    req.wIndex = 0;
-    req.wLength = sizeof(cfg);
+static usb_config_descriptor_t *get_device_config(usb_pipe_t *pipe) {
+    usb_config_descriptor_t cfg;
+    usb_ctrl_request_t req = {
+        .bRequestType = USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_DEVICE,
+        .bRequest = USB_REQ_GET_DESCRIPTOR,
+        .wValue = USB_DT_CONFIG << 8,
+        .wIndex = 0,
+        .wLength = sizeof(cfg),
+    };
     int ret = usb_send_default_control(pipe, &req, &cfg);
     if (ret)
         return NULL;
 
-    struct usb_config_descriptor *config = malloc(cfg.wTotalLength);
-    if (!config) {
+    usb_config_descriptor_t *config = malloc(cfg.wTotalLength);
+    if (!config)
         return NULL;
-    }
+
     req.wLength = cfg.wTotalLength;
     ret = usb_send_default_control(pipe, &req, config);
     if (ret || config->wTotalLength != cfg.wTotalLength) {
         free(config);
         return NULL;
     }
-    // hexdump(config, cfg.wTotalLength);
+
     return config;
 }
 
-static int set_configuration(struct usb_pipe *pipe, uint16_t val) {
-    struct usb_ctrlrequest req;
-    req.bRequestType = USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_DEVICE;
-    req.bRequest = USB_REQ_SET_CONFIGURATION;
-    req.wValue = val;
-    req.wIndex = 0;
-    req.wLength = 0;
+static int set_configuration(usb_pipe_t *pipe, uint16_t val) {
+    usb_ctrl_request_t req = {
+        .bRequestType = USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_DEVICE,
+        .bRequest = USB_REQ_SET_CONFIGURATION,
+        .wValue = val,
+        .wIndex = 0,
+        .wLength = 0,
+    };
     return usb_send_default_control(pipe, &req, NULL);
 }
 
-/****************************************************************
- * Initialization and enumeration
- ****************************************************************/
+static int usb_get_string_descriptor(usb_pipe_t *pipe, uint8_t index,
+                                     uint16_t langid, void *buf, size_t len) {
+    usb_ctrl_request_t req = {
+        .bRequestType = USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_DEVICE,
+        .bRequest = USB_REQ_GET_DESCRIPTOR,
+        .wValue = (USB_DT_STRING << 8) | index,
+        .wIndex = langid,
+        .wLength = len,
+    };
+    return usb_send_default_control(pipe, &req, buf);
+}
+
+static uint16_t usb_get_string_langid(usb_pipe_t *pipe) {
+    uint8_t buf[8];
+
+    memset(buf, 0, sizeof(buf));
+    if (usb_get_string_descriptor(pipe, 0, 0, buf, sizeof(buf)) != 0)
+        return 0x0409;
+    if (buf[0] < 4 || buf[1] != USB_DT_STRING)
+        return 0x0409;
+    return (uint16_t)buf[2] | ((uint16_t)buf[3] << 8);
+}
+
+static void usb_decode_string(char *dst, size_t dst_len, const uint8_t *src,
+                              size_t src_len) {
+    size_t out = 0;
+
+    if (!dst_len)
+        return;
+    dst[0] = '\0';
+
+    if (src_len < 2 || src[1] != USB_DT_STRING)
+        return;
+
+    for (size_t i = 2; i + 1 < src_len && out + 1 < dst_len; i += 2) {
+        uint16_t ch = (uint16_t)src[i] | ((uint16_t)src[i + 1] << 8);
+        if (!ch)
+            break;
+        dst[out++] = ch < 0x80 && ch >= 0x20 ? (char)ch : '?';
+    }
+
+    dst[out] = '\0';
+}
+
+static void usb_read_string(usb_device_t *usbdev, uint8_t index, char *dst,
+                            size_t dst_len) {
+    uint8_t buf[256];
+    uint16_t langid;
+
+    if (!index || !usbdev->defpipe || !dst || !dst_len) {
+        if (dst && dst_len)
+            dst[0] = '\0';
+        return;
+    }
+
+    memset(buf, 0, sizeof(buf));
+    langid = usb_get_string_langid(usbdev->defpipe);
+    if (usb_get_string_descriptor(usbdev->defpipe, index, langid, buf,
+                                  sizeof(buf)) != 0) {
+        dst[0] = '\0';
+        return;
+    }
+
+    usb_decode_string(dst, dst_len, buf, MIN((size_t)buf[0], sizeof(buf)));
+}
+
+static void usb_fill_topology_name(usb_device_t *usbdev) {
+    if (!usbdev || !usbdev->hub)
+        return;
+
+    if (!usbdev->hub->usbdev || usbdev->hub->usbdev->is_root_hub) {
+        sprintf(usbdev->topology, "%u-%u", usbdev->busnum, usbdev->port + 1);
+        usbdev->level = 0;
+        return;
+    }
+
+    snprintf(usbdev->topology, sizeof(usbdev->topology), "%s.%u",
+             usbdev->hub->usbdev->topology, usbdev->port + 1);
+    usbdev->level = usbdev->hub->usbdev->level + 1;
+}
+
+static usb_device_t *usb_create_root_hub_device(usb_controller_t *cntl,
+                                                usb_hub_t *hub) {
+    usb_device_t *rootdev = calloc(1, sizeof(*rootdev));
+    if (!rootdev)
+        return NULL;
+
+    rootdev->hub = NULL;
+    rootdev->busnum = cntl->busnum;
+    rootdev->devnum = 1;
+    rootdev->devaddr = 1;
+    rootdev->speed =
+        cntl->type == USB_TYPE_XHCI ? USB_SUPERSPEED : USB_HIGHSPEED;
+    rootdev->online = true;
+    rootdev->is_root_hub = true;
+    rootdev->vendorid = 0x1d6b;
+    rootdev->productid = usb_root_hub_product_id(cntl->type);
+    rootdev->childhub = hub;
+    rootdev->device_desc.bLength = sizeof(rootdev->device_desc);
+    rootdev->device_desc.bDescriptorType = USB_DT_DEVICE;
+    rootdev->device_desc.bcdUSB = usb_root_hub_bcd(cntl->type);
+    rootdev->device_desc.bDeviceClass = USB_CLASS_HUB;
+    rootdev->device_desc.bDeviceSubClass = 0;
+    rootdev->device_desc.bDeviceProtocol = cntl->type == USB_TYPE_XHCI ? 3 : 1;
+    rootdev->device_desc.bMaxPacketSize0 = 64;
+    rootdev->device_desc.idVendor = rootdev->vendorid;
+    rootdev->device_desc.idProduct = rootdev->productid;
+    rootdev->device_desc.bcdDevice = 0x0001;
+    rootdev->device_desc.iManufacturer = 1;
+    rootdev->device_desc.iProduct = 2;
+    rootdev->device_desc.bNumConfigurations = 1;
+    snprintf(rootdev->topology, sizeof(rootdev->topology), "usb%u",
+             cntl->busnum);
+    snprintf(rootdev->manufacturer, sizeof(rootdev->manufacturer),
+             "NeoAetherOS");
+    snprintf(rootdev->product, sizeof(rootdev->product), "%s",
+             usb_root_hub_product_name(cntl->type));
+
+    return rootdev;
+}
+
+static uint8_t usb_alloc_devnum(usb_controller_t *cntl) {
+    if (cntl->next_devnum == 0)
+        cntl->next_devnum = 1;
+    return cntl->next_devnum++;
+}
+
+static int usb_bind_driver(usb_device_t *usbdev, usb_driver_t *driver) {
+    for (uint8_t i = 0; i < usbdev->bound_driver_count; i++) {
+        if (usbdev->bound_drivers[i] == driver)
+            return 0;
+    }
+
+    if (usbdev->bound_driver_count >= USB_MAX_BOUND_DRIVERS)
+        return -ENOMEM;
+
+    usbdev->bound_drivers[usbdev->bound_driver_count++] = driver;
+    return 0;
+}
+
+static int usb_probe_interface(usb_device_t *usbdev,
+                               usb_device_interface_t *iface) {
+    for (int i = 0; i < MAX_USBDEV_NUM; i++) {
+        usb_driver_t *driver = usb_drivers[i];
+        int matched = 0;
+
+        if (!driver)
+            continue;
+
+        if (iface->iface->bInterfaceClass == USB_CLASS_VENDOR_SPEC) {
+            matched = driver->vendorid == usbdev->vendorid;
+            if (matched && driver->productid &&
+                driver->productid != usbdev->productid)
+                matched = 0;
+        } else {
+            matched = driver->class == iface->iface->bInterfaceClass;
+            if (matched && driver->subclass &&
+                driver->subclass != iface->iface->bInterfaceSubClass)
+                matched = 0;
+        }
+
+        if (!matched)
+            continue;
+
+        if (driver->probe(usbdev, iface) < 0)
+            return -1;
+
+        return usb_bind_driver(usbdev, driver);
+    }
+
+    return 0;
+}
+
+int usb_init_driver(usb_device_t *usbdev) {
+    for (int iface_n = 0; iface_n < usbdev->ifaces_num; iface_n++) {
+        if (usb_probe_interface(usbdev, &usbdev->ifaces[iface_n]) < 0)
+            return -1;
+    }
+
+    return 0;
+}
+
+static int usb_parse_config(usb_device_t *usbdev,
+                            usb_config_descriptor_t *config) {
+    uint8_t *ptr = (uint8_t *)&config[1];
+    uint8_t *end = (uint8_t *)config + config->wTotalLength;
+    int count = 0;
+    usb_device_interface_t *curr = NULL;
+
+    for (uint8_t *scan = ptr; scan + 2 <= end;) {
+        uint8_t len = scan[0];
+        uint8_t type = scan[1];
+
+        if (len < 2)
+            break;
+        if (type == USB_DT_INTERFACE)
+            count++;
+        scan += len;
+    }
+
+    if (!count) {
+        usbdev->ifaces = NULL;
+        usbdev->ifaces_num = 0;
+        return 0;
+    }
+
+    usbdev->ifaces = calloc(count, sizeof(*usbdev->ifaces));
+    if (!usbdev->ifaces)
+        return -ENOMEM;
+
+    for (; ptr + 2 <= end;) {
+        uint8_t len = ptr[0];
+        uint8_t type = ptr[1];
+
+        if (len < 2)
+            break;
+
+        if (type == USB_DT_INTERFACE) {
+            if (curr)
+                curr->end = ptr;
+
+            curr = &usbdev->ifaces[usbdev->ifaces_num++];
+            curr->iface = (void *)ptr;
+            curr->end = end;
+        }
+
+        ptr += len;
+    }
+
+    if (curr)
+        curr->end = end;
+
+    return 0;
+}
 
 static const int speed_to_ctlsize[] = {
     [USB_FULLSPEED] = 8,
@@ -265,251 +1299,442 @@ static const int speed_to_ctlsize[] = {
     [USB_SUPERSPEED] = 512,
 };
 
-// Assign an address to a device in the default state on the given
-// controller.
-static int usb_set_address(struct usbdevice_s *usbdev) {
-    struct usb_s *cntl = usbdev->hub->cntl;
-    if (cntl->maxaddr >= USB_MAXADDR)
-        return -1;
-
-    delay(USB_TIME_RSTRCY);
-
-    // Create a pipe for the default address.
-    struct usb_endpoint_descriptor epdesc = {
+static int usb_set_address(usb_device_t *usbdev) {
+    usb_controller_t *cntl = usbdev->hub->cntl;
+    usb_endpoint_descriptor_t epdesc = {
         .wMaxPacketSize = speed_to_ctlsize[usbdev->speed],
         .bmAttributes = USB_ENDPOINT_XFER_CONTROL,
     };
+
+    usb_delay_ms(USB_TIME_RSTRCY);
+
     usbdev->defpipe = usb_alloc_pipe(usbdev, &epdesc, NULL);
     if (!usbdev->defpipe)
         return -1;
 
-    // Send set_address command.
-    struct usb_ctrlrequest req;
-    req.bRequestType = USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_DEVICE;
-    req.bRequest = USB_REQ_SET_ADDRESS;
-    req.wValue = cntl->maxaddr + 1;
-    req.wIndex = 0;
-    req.wLength = 0;
+    if (cntl->flags & USB_CNTL_FLAG_NATIVE_ADDR)
+        return 0;
+
+    if (cntl->maxaddr >= USB_MAXADDR)
+        return -1;
+
+    usb_ctrl_request_t req = {
+        .bRequestType = USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_DEVICE,
+        .bRequest = USB_REQ_SET_ADDRESS,
+        .wValue = cntl->maxaddr + 1,
+        .wIndex = 0,
+        .wLength = 0,
+    };
     int ret = usb_send_default_control(usbdev->defpipe, &req, NULL);
     if (ret) {
         usb_free_pipe(usbdev, usbdev->defpipe);
+        usbdev->defpipe = NULL;
         return -1;
     }
 
-    delay(USB_TIME_SETADDR_RECOVERY);
+    usb_delay_ms(USB_TIME_SETADDR_RECOVERY);
 
     cntl->maxaddr++;
     usbdev->devaddr = cntl->maxaddr;
     usbdev->defpipe = usb_realloc_pipe(usbdev, usbdev->defpipe, &epdesc, NULL);
-    if (!usbdev->defpipe)
-        return -1;
-    return 0;
+    return usbdev->defpipe ? 0 : -1;
 }
 
-int usb_init_driver(struct usbdevice_s *usbdev) {
-    int iface_n;
-    for (iface_n = 0; iface_n < usbdev->ifaces_num; iface_n++) {
-        struct usbdevice_a_interface *iface = &usbdev->ifaces[iface_n];
+static int configure_usb_device(usb_device_t *usbdev) {
+    usb_device_descriptor_t dinfo;
+    usb_config_descriptor_t *config;
+    uint16_t maxpacket;
 
-        for (int i = 0; i < MAX_USBDEV_NUM; i++) {
-            if (usb_drivers[i]) {
-                if (iface->iface->bInterfaceClass == USB_CLASS_VENDOR_SPEC) {
-                    if (usb_drivers[i]->vendorid == usbdev->vendorid) {
-                        if (usb_drivers[i]->probe(usbdev, iface) < 0)
-                            return -1;
-                        break;
-                    }
-                } else {
-                    if (usb_drivers[i]->class ==
-                        iface->iface->bInterfaceClass) {
-                        if (usb_drivers[i]->probe(usbdev, iface) < 0)
-                            return -1;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    if (iface_n != usbdev->ifaces_num)
-        return -1;
-
-    return 0;
-}
-
-// Called for every found device - see if a driver is available for
-// this device and do setup if so.
-static int configure_usb_device(struct usbdevice_s *usbdev) {
-    // Set the max packet size for endpoint 0 of this device.
-    struct usb_device_descriptor dinfo;
-    memset(&dinfo, 0, sizeof(struct usb_device_descriptor));
-    int ret = get_device_info8(usbdev->defpipe, &dinfo);
-    if (ret) {
-        printk("Failed get device info 8\n");
+    memset(&dinfo, 0, sizeof(dinfo));
+    if (get_device_info8(usbdev->defpipe, &dinfo) != 0) {
+        printk("USB: failed to read first 8 bytes of device descriptor\n");
         return 0;
     }
-    printk("USB device descriptor:\n");
-    printk("  bLength = %d\n", dinfo.bLength);
-    printk("  bDescriptorType = %d\n", dinfo.bDescriptorType);
-    printk("  bcdUSB = %#06lx\n", dinfo.bcdUSB);
-    printk("  bDeviceClass = %#04lx\n", dinfo.bDeviceClass);
-    printk("  bDeviceSubClass = %#04lx\n", dinfo.bDeviceSubClass);
-    printk("  bMaxPacketSize0 = %#04lx\n", dinfo.bMaxPacketSize0);
-    uint16_t maxpacket = dinfo.bMaxPacketSize0;
+
+    maxpacket = dinfo.bMaxPacketSize0;
     if (dinfo.bcdUSB >= 0x0300)
-        maxpacket = 1 << dinfo.bMaxPacketSize0;
+        maxpacket = 1U << dinfo.bMaxPacketSize0;
     if (maxpacket < 8) {
-        printk("Failed get max packet size, maxpacket = %d\n", maxpacket);
+        printk("USB: invalid ep0 maxpacket %u\n", maxpacket);
         return 0;
     }
-    struct usb_endpoint_descriptor epdesc = {
+
+    usb_endpoint_descriptor_t epdesc = {
         .wMaxPacketSize = maxpacket,
         .bmAttributes = USB_ENDPOINT_XFER_CONTROL,
     };
+
     usbdev->defpipe = usb_realloc_pipe(usbdev, usbdev->defpipe, &epdesc, NULL);
-    if (!usbdev->defpipe) {
-        printk("Failed realloc pipe\n");
+    if (!usbdev->defpipe)
+        return 0;
+
+    if (get_device_info_full(usbdev->defpipe, &dinfo) != 0) {
+        printk("USB: failed to read full device descriptor\n");
         return 0;
     }
 
-    delay(100ULL);
+    memcpy(&usbdev->device_desc, &dinfo, sizeof(dinfo));
+    usbdev->vendorid = dinfo.idVendor;
+    usbdev->productid = dinfo.idProduct;
 
-    if (usbdev->defpipe->maxpacket > sizeof(struct usb_device_descriptor)) {
-        int ret = get_device_info_full(usbdev->defpipe, &dinfo);
-        if (ret) {
-            printk("Failed get device info full\n");
-            return 0;
-        }
-        printk("USB: Probing device %04x:%04x\n", dinfo.idProduct,
-               dinfo.idVendor);
-        usbdev->vendorid = dinfo.idVendor;
-        usbdev->productid = dinfo.idProduct;
-    }
-
-    // Get configuration
-    struct usb_config_descriptor *config = get_device_config(usbdev->defpipe);
+    config = get_device_config(usbdev->defpipe);
     if (!config) {
-        printk("Failed get device configuration\n");
+        printk("USB: failed to read configuration descriptor\n");
         return 0;
     }
 
-    // Determine if a driver exists for this device - only look at the
-    // interfaces of the first configuration.
-    int num_iface = config->bNumInterfaces;
-    usbdev->ifaces =
-        calloc(config->bNumInterfaces, sizeof(struct usbdevice_a_interface));
-    usbdev->ifaces_num = 0;
-    void *config_end = (void *)config + config->wTotalLength;
-    struct usb_interface_descriptor *iface = (void *)(&config[1]);
-    for (;;) {
-        if (!num_iface || (void *)iface > config_end) {
-            break;
-        }
-        if (iface->bDescriptorType == USB_DT_INTERFACE) {
-            num_iface--;
-            if (iface->bInterfaceClass == USB_CLASS_VENDOR_SPEC ||
-                iface->bInterfaceClass == USB_CLASS_HUB ||
-                (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE &&
-                 iface->bInterfaceProtocol == US_PR_BULK) ||
-                (iface->bInterfaceClass == USB_CLASS_HID &&
-                 iface->bInterfaceSubClass == USB_INTERFACE_SUBCLASS_BOOT)) {
-                usbdev->ifaces[usbdev->ifaces_num].iface = iface;
-                usbdev->ifaces_num++;
-            } else {
-                printk("Unupported interface class %d\n",
-                       iface->bInterfaceClass);
-            }
-        }
-        iface = (void *)iface + iface->bLength;
+    if (usb_parse_config(usbdev, config) != 0) {
+        free(config);
+        return 0;
     }
 
-    delay(100ULL);
-    printk("Setting configuration (value = %d)\n", config->bConfigurationValue);
-
-    // Set the configuration.
-    ret = set_configuration(usbdev->defpipe, config->bConfigurationValue);
-    if (ret) {
-        printk("Failed set configuration\n");
-        goto fail;
-    }
-
-    // Configure driver.
     usbdev->config = config;
-    // if (iface->bInterfaceClass == USB_CLASS_HUB)
-    //     ret = usb_hub_setup(usbdev);
-    // else if (iface->bInterfaceClass == USB_CLASS_MASS_STORAGE) {
-    //     if (iface->bInterfaceProtocol == US_PR_BULK)
-    //         ret = usb_msc_setup(usbdev);
-    //     if (iface->bInterfaceProtocol == US_PR_UAS)
-    //         ret = usb_uas_setup(usbdev);
-    // } else
-    //     ret = usb_hid_setup(usbdev);
+
+    usb_delay_ms(100);
+    if (set_configuration(usbdev->defpipe, config->bConfigurationValue) != 0) {
+        free(usbdev->ifaces);
+        usbdev->ifaces = NULL;
+        usbdev->ifaces_num = 0;
+        free(config);
+        usbdev->config = NULL;
+        return 0;
+    }
+
+    usb_read_string(usbdev, dinfo.iManufacturer, usbdev->manufacturer,
+                    sizeof(usbdev->manufacturer));
+    usb_read_string(usbdev, dinfo.iProduct, usbdev->product,
+                    sizeof(usbdev->product));
+    usb_read_string(usbdev, dinfo.iSerialNumber, usbdev->serial,
+                    sizeof(usbdev->serial));
+
+    usbdev->online = true;
+    usb_notify_device_add(usbdev);
 
     if (usb_init_driver(usbdev) < 0) {
-        printk("Failed probe usb device\n");
-        goto fail;
+        usbdev->online = false;
+        usb_notify_device_remove(usbdev);
+        free(usbdev->ifaces);
+        usbdev->ifaces = NULL;
+        usbdev->ifaces_num = 0;
+        free(config);
+        usbdev->config = NULL;
+        return 0;
     }
 
     return 1;
-fail:
-    free(config);
-    return 0;
 }
 
-static bool usb_hub_port_setup(struct usbdevice_s *usbdev) {
-    struct usbhub_s *hub = usbdev->hub;
-    uint32_t port = usbdev->port;
+static void usb_disconnect_device(usb_device_t *usbdev);
 
-    // Detect if device present (and possibly start reset)
-    int ret = hub->op->detect(hub, port);
-    if (!ret)
-        goto resetfail;
+static void usb_hub_disconnect_children(usb_hub_t *hub) {
+    if (!hub || !hub->ports)
+        return;
 
-    delay(USB_TIME_ATTDB);
+    for (uint32_t port = 0; port < hub->portcount; port++) {
+        usb_device_t *child = NULL;
 
-    // Reset port and determine device speed
-    ret = hub->op->reset(hub, port);
-    if (ret < 0)
-        // Reset failed
-        goto resetfail;
-    usbdev->speed = ret;
+        spin_lock(&hub->lock);
+        child = hub->ports[port];
+        hub->ports[port] = NULL;
+        spin_unlock(&hub->lock);
 
-    // Set address of port
-    ret = usb_set_address(usbdev);
-    if (ret) {
-        hub->op->disconnect(hub, port);
-        goto resetfail;
+        if (!child)
+            continue;
+
+        if (hub->op && hub->op->disconnect)
+            hub->op->disconnect(hub, port);
+        usb_disconnect_device(child);
     }
 
-    // Configure the device
-    int count = configure_usb_device(usbdev);
-    if (!count) {
-        hub->op->disconnect(hub, port);
-        printk("Configure device at port %d failed\n", port);
+    hub->devcount = 0;
+}
+
+static void usb_hub_release(usb_hub_t *hub) {
+    if (!hub)
+        return;
+    free(hub->ports);
+    free(hub);
+}
+
+static void usb_hub_put(usb_hub_t *hub) {
+    bool release = false;
+
+    spin_lock(&usb_hub_list_lock);
+    if (hub->refcount)
+        hub->refcount--;
+    release = hub->removing && hub->refcount == 0;
+    spin_unlock(&usb_hub_list_lock);
+
+    if (release)
+        usb_hub_release(hub);
+}
+
+static void usb_hub_unregister(usb_hub_t *hub) {
+    bool release = false;
+
+    if (!hub)
+        return;
+
+    usb_hub_disconnect_children(hub);
+
+    spin_lock(&usb_hub_list_lock);
+    if (hub->registered) {
+        llist_delete(&hub->node);
+        hub->registered = false;
+    }
+    hub->removing = true;
+    release = hub->refcount == 0;
+    spin_unlock(&usb_hub_list_lock);
+
+    if (release)
+        usb_hub_release(hub);
+}
+
+static void usb_disconnect_device(usb_device_t *usbdev) {
+    if (!usbdev)
+        return;
+
+    if (usbdev->childhub) {
+        usb_hub_unregister(usbdev->childhub);
+        usbdev->childhub = NULL;
+    }
+
+    for (uint8_t i = 0; i < usbdev->bound_driver_count; i++) {
+        usb_driver_t *driver = usbdev->bound_drivers[i];
+        if (driver && driver->remove)
+            driver->remove(usbdev);
+    }
+
+    if (usbdev->online) {
+        usbdev->online = false;
+        usb_notify_device_remove(usbdev);
+    }
+
+    if (usbdev->defpipe)
+        usb_free_pipe(usbdev, usbdev->defpipe);
+    free(usbdev->ifaces);
+    free(usbdev->config);
+    free(usbdev);
+}
+
+static bool usb_hub_port_setup(usb_device_t *usbdev) {
+    usb_hub_t *hub = usbdev->hub;
+    int ret;
+
+    ret = hub->op->detect(hub, usbdev->port);
+    if (ret <= 0)
+        return false;
+
+    usb_delay_ms(USB_TIME_ATTDB);
+
+    ret = hub->op->reset(hub, usbdev->port);
+    if (ret < 0)
+        return false;
+
+    usbdev->speed = ret;
+    usbdev->busnum = hub->cntl->busnum;
+    usbdev->devnum = usb_alloc_devnum(hub->cntl);
+    usb_fill_topology_name(usbdev);
+
+    if (usb_set_address(usbdev) != 0) {
+        if (hub->op->disconnect)
+            hub->op->disconnect(hub, usbdev->port);
         return false;
     }
-    hub->devcount += count;
-    printk("Configure device at port %d successfully\n", port);
 
+    if (!configure_usb_device(usbdev)) {
+        if (hub->op->disconnect)
+            hub->op->disconnect(hub, usbdev->port);
+        return false;
+    }
+
+    printk("USB: enumerated %s (%04x:%04x, %s-speed)\n", usbdev->topology,
+           usbdev->vendorid, usbdev->productid, usb_speed_name(usbdev->speed));
     return true;
-
-resetfail:
-    return false;
 }
 
-void usb_enumerate(struct usbhub_s *hub) {
-    uint32_t portcount = hub->portcount;
+static void usb_scan_hub(usb_hub_t *hub) {
+    if (!hub || !hub->ports)
+        return;
 
-    int i;
-    for (i = 0; i < portcount; i++) {
-        struct usbdevice_s *usbdev = malloc(sizeof(struct usbdevice_s));
-        if (!usbdev) {
-            continue;
+    for (uint32_t port = 0; port < hub->portcount; port++) {
+        usb_device_t *child;
+        int present;
+
+        present = hub->op->detect(hub, port);
+
+        spin_lock(&hub->lock);
+        child = hub->ports[port];
+        spin_unlock(&hub->lock);
+
+        if (present > 0) {
+            if (child)
+                continue;
+
+            usb_device_t *usbdev = calloc(1, sizeof(*usbdev));
+            if (!usbdev)
+                continue;
+
+            usbdev->hub = hub;
+            usbdev->port = port;
+
+            if (!usb_hub_port_setup(usbdev)) {
+                free(usbdev);
+                continue;
+            }
+
+            spin_lock(&hub->lock);
+            if (!hub->ports[port]) {
+                hub->ports[port] = usbdev;
+                hub->devcount++;
+                usbdev = NULL;
+            }
+            spin_unlock(&hub->lock);
+
+            if (usbdev)
+                usb_disconnect_device(usbdev);
+        } else if (present == 0 && child) {
+            spin_lock(&hub->lock);
+            hub->ports[port] = NULL;
+            if (hub->devcount)
+                hub->devcount--;
+            spin_unlock(&hub->lock);
+
+            if (hub->op->disconnect)
+                hub->op->disconnect(hub, port);
+            usb_disconnect_device(child);
         }
-        memset(usbdev, 0, sizeof(struct usbdevice_s));
-        usbdev->hub = hub;
-        usbdev->port = i;
-        if (!usb_hub_port_setup(usbdev))
-            free(usbdev);
     }
+}
+
+static void usb_hotplug_thread(uint64_t arg) {
+    (void)arg;
+
+    for (;;) {
+        usb_hub_t *snapshot[USB_HUB_SNAPSHOT_MAX];
+        uint32_t snapshot_count = 0;
+        uint64_t now = nano_time();
+
+        spin_lock(&usb_hub_list_lock);
+        for (struct llist_header *node = usb_hub_list.next;
+             node != &usb_hub_list && snapshot_count < USB_HUB_SNAPSHOT_MAX;
+             node = node->next) {
+            usb_hub_t *hub = container_of(node, usb_hub_t, node);
+            if (hub->removing)
+                continue;
+            if (!hub->needs_rescan && now < hub->next_scan_ns)
+                continue;
+
+            hub->refcount++;
+            hub->needs_rescan = false;
+            hub->next_scan_ns = now + USB_HOTPLUG_SCAN_NS;
+            snapshot[snapshot_count++] = hub;
+        }
+        spin_unlock(&usb_hub_list_lock);
+
+        for (uint32_t i = 0; i < snapshot_count; i++) {
+            usb_scan_hub(snapshot[i]);
+            usb_hub_put(snapshot[i]);
+        }
+
+        task_block(current_task, TASK_BLOCKING,
+                   snapshot_count ? 1000000LL : (int64_t)USB_HOTPLUG_SCAN_NS,
+                   "usb_hotplug");
+    }
+}
+
+static void usb_hotplug_start(void) {
+    spin_lock(&usb_hotplug_lock);
+    if (!usb_hotplug_task)
+        usb_hotplug_task =
+            task_create("usb_hotplug", usb_hotplug_thread, 0, KTHREAD_PRIORITY);
+    spin_unlock(&usb_hotplug_lock);
+}
+
+void usb_hub_mark_port_changed(usb_hub_t *hub, uint32_t port) {
+    (void)port;
+    if (!hub)
+        return;
+
+    spin_lock(&usb_hub_list_lock);
+    if (!hub->removing)
+        hub->needs_rescan = true;
+    spin_unlock(&usb_hub_list_lock);
+
+    usb_hotplug_wake();
+}
+
+void usb_enumerate(usb_hub_t *hub) {
+    if (!hub)
+        return;
+
+    if (!hub->ports) {
+        hub->ports = calloc(hub->portcount, sizeof(*hub->ports));
+        if (!hub->ports)
+            return;
+    }
+
+    usb_hotplug_start();
+
+    spin_lock(&usb_hub_list_lock);
+    if (!hub->registered) {
+        spin_init(&hub->lock);
+        llist_init_head(&hub->node);
+        llist_append(&usb_hub_list, &hub->node);
+        hub->registered = true;
+        hub->removing = false;
+        hub->needs_rescan = true;
+        hub->refcount = 0;
+        hub->next_scan_ns = 0;
+    }
+    spin_unlock(&usb_hub_list_lock);
+
+    usb_hub_mark_port_changed(hub, 0);
+    usb_scan_hub(hub);
+}
+
+void usb_register_controller(usb_controller_t *cntl, usb_hub_t *hub) {
+    if (!cntl || !hub)
+        return;
+
+    spin_lock(&usb_hub_list_lock);
+    if (usb_next_busnum == 0)
+        usb_next_busnum = 1;
+    cntl->busnum = usb_next_busnum++;
+    spin_unlock(&usb_hub_list_lock);
+
+    cntl->freelist = NULL;
+    cntl->maxaddr = 0;
+    cntl->next_devnum = 2;
+    cntl->roothub = hub;
+    cntl->rootdev = usb_create_root_hub_device(cntl, hub);
+    hub->cntl = cntl;
+    hub->usbdev = cntl->rootdev;
+    spin_init(&hub->lock);
+
+    usb_notify_controller_add(cntl);
+    if (cntl->rootdev)
+        usb_notify_device_add(cntl->rootdev);
+    usb_enumerate(hub);
+}
+
+void usb_unregister_controller(usb_controller_t *cntl) {
+    if (!cntl)
+        return;
+
+    if (cntl->roothub) {
+        usb_hub_unregister(cntl->roothub);
+        cntl->roothub = NULL;
+    }
+
+    if (cntl->rootdev) {
+        if (cntl->rootdev->online) {
+            cntl->rootdev->online = false;
+            usb_notify_device_remove(cntl->rootdev);
+        }
+        free(cntl->rootdev);
+        cntl->rootdev = NULL;
+    }
+
+    usb_notify_controller_remove(cntl);
 }

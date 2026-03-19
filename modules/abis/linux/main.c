@@ -505,7 +505,10 @@ int linuxabi_on_close_file(task_t *task, int fd, fd_t *file) {
 
 int linuxabi_on_new_device(device_t *dev) { devfs_register_device(dev); }
 
-int linuxabi_on_remove_device(device_t *dev) {}
+int linuxabi_on_remove_device(device_t *dev) {
+    devfs_unregister_device(dev);
+    return 0;
+}
 
 void *linuxabi_regist_input_dev(const char *device_name, void *arg) {
     regist_input_dev_arg_t *regist_arg = arg;

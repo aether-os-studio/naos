@@ -812,6 +812,22 @@ void devfs_register_device(device_t *device) {
     }
 }
 
+void devfs_unregister_device(device_t *device) {
+    if (!device || !device->name[0])
+        return;
+
+    char path[128];
+    sprintf(path, "/dev/%s", device->name);
+
+    vfs_node_t *node = vfs_open(path, O_NOFOLLOW);
+    if (!node)
+        node = vfs_open(path, 0);
+    if (!node)
+        return;
+
+    vfs_free(node);
+}
+
 bool devfs_initialized = false;
 
 void devtmpfs_init() {
@@ -898,6 +914,8 @@ void setup_console_symlinks() {
 
 void devfs_nodes_init() {
     vfs_mkdir("/dev/shm");
+    vfs_mkdir("/dev/bus");
+    vfs_mkdir("/dev/bus/usb");
 
     device_install(DEV_CHAR, DEV_SYSDEV, NULL, "null", 0, NULL, NULL, NULL,
                    NULL, nulldev_read, nulldev_write, NULL);

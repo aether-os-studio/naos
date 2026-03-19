@@ -43,7 +43,7 @@ bool arch_interrupt_enabled() {
 // 构造中断entry
 // 为了复用返回函数的代码，需要压入一个错误码0
 
-#define Build_IRQ(number)                                                      \
+#define BUILD_IRQ(number)                                                      \
     extern void IRQ_NAME(number);                                              \
     asm(".section .text\n\t" SYMBOL_NAME_STR(IRQ) #number                      \
         "interrupt:\n\t"                                                       \
@@ -55,40 +55,40 @@ bool arch_interrupt_enabled() {
         "jmp do_irq\n\t");
 
 // 构造中断入口
-Build_IRQ(0x20);
-Build_IRQ(0x21);
-Build_IRQ(0x22);
-Build_IRQ(0x23);
-Build_IRQ(0x24);
-Build_IRQ(0x25);
-Build_IRQ(0x26);
-Build_IRQ(0x27);
-Build_IRQ(0x28);
-Build_IRQ(0x29);
-Build_IRQ(0x2a);
-Build_IRQ(0x2b);
-Build_IRQ(0x2c);
-Build_IRQ(0x2d);
-Build_IRQ(0x2e);
-Build_IRQ(0x2f);
-Build_IRQ(0x30);
-Build_IRQ(0x31);
-Build_IRQ(0x32);
-Build_IRQ(0x33);
-Build_IRQ(0x34);
-Build_IRQ(0x35);
-Build_IRQ(0x36);
-Build_IRQ(0x37);
-Build_IRQ(0x38);
-Build_IRQ(0x39);
-Build_IRQ(0x3a);
-Build_IRQ(0x3b);
-Build_IRQ(0x3c);
-Build_IRQ(0x3d);
-Build_IRQ(0x3e);
-Build_IRQ(0x3f);
-Build_IRQ(0x40);
-Build_IRQ(0x41);
+BUILD_IRQ(0x20);
+BUILD_IRQ(0x21);
+BUILD_IRQ(0x22);
+BUILD_IRQ(0x23);
+BUILD_IRQ(0x24);
+BUILD_IRQ(0x25);
+BUILD_IRQ(0x26);
+BUILD_IRQ(0x27);
+BUILD_IRQ(0x28);
+BUILD_IRQ(0x29);
+BUILD_IRQ(0x2a);
+BUILD_IRQ(0x2b);
+BUILD_IRQ(0x2c);
+BUILD_IRQ(0x2d);
+BUILD_IRQ(0x2e);
+BUILD_IRQ(0x2f);
+BUILD_IRQ(0x30);
+BUILD_IRQ(0x31);
+BUILD_IRQ(0x32);
+BUILD_IRQ(0x33);
+BUILD_IRQ(0x34);
+BUILD_IRQ(0x35);
+BUILD_IRQ(0x36);
+BUILD_IRQ(0x37);
+BUILD_IRQ(0x38);
+BUILD_IRQ(0x39);
+BUILD_IRQ(0x3a);
+BUILD_IRQ(0x3b);
+BUILD_IRQ(0x3c);
+BUILD_IRQ(0x3d);
+BUILD_IRQ(0x3e);
+BUILD_IRQ(0x3f);
+BUILD_IRQ(0x40);
+BUILD_IRQ(0x41);
 
 // 初始化中断数组
 void (*interrupt_table[])(void) = {

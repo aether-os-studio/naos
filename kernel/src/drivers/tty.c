@@ -2,7 +2,7 @@
 #include <mm/mm.h>
 #include <boot/boot.h>
 
-struct llist_header tty_device_list;
+DEFINE_LLIST(tty_device_list);
 tty_t *kernel_session = NULL; // 内核会话
 
 tty_device_t *alloc_tty_device(enum tty_device_type type) {
@@ -81,7 +81,6 @@ next:
 }
 
 void tty_init() {
-    llist_init_head(&tty_device_list);
     kernel_session = malloc(sizeof(tty_t));
 
     boot_framebuffer_t *framebuffer = boot_get_framebuffer();

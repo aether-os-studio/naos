@@ -3,6 +3,7 @@
 #include <drivers/kernel_logger.h>
 #include <drivers/bus/pci.h>
 #include <net/netlink.h>
+#include <stdarg.h>
 
 int sysfs_fsid = 0;
 
@@ -186,6 +187,7 @@ void sysfs_init() {
     vfs_mkdir("/sys/kernel/tracing");
 
     vfs_mkdir("/sys/devices");
+    vfs_mkdir("/sys/devices/usb");
 
     vfs_mkdir("/sys/module");
 
@@ -199,11 +201,14 @@ void sysfs_init() {
     vfs_mkdir("/sys/bus/pci/drivers");
     vfs_mkdir("/sys/bus/usb");
     vfs_mkdir("/sys/bus/usb/devices");
+    vfs_mkdir("/sys/bus/usb/drivers");
 
     vfs_mkdir("/sys/class");
     vfs_mkdir("/sys/class/graphics");
     vfs_mkdir("/sys/class/input");
     vfs_mkdir("/sys/class/drm");
+
+    usb_sysfs_init();
 
     for (uint32_t i = 0; i < pci_device_number; i++) {
         pci_device_t *dev = pci_devices[i];
@@ -331,6 +336,61 @@ vfs_node_t *sysfs_regist_dev(char t, int major, int minor,
     netlink_kernel_uevent_send(buffer, len);
 
     return real_device_node;
+}
+
+vfs_node_t *sysfs_ensure_dir(const char *path) {
+    vfs_node_t *node = vfs_open(path, 0);
+    if (node)
+        return node;
+    vfs_mkdir(path);
+    return vfs_open(path, 0);
+}
+
+vfs_node_t *sysfs_write_attr(vfs_node_t *parent, const char *name,
+                             const char *content) {
+    char *parent_path = vfs_get_fullpath(parent);
+    char path[512];
+
+    sprintf(path, "%s/%s", parent_path, name);
+    free(parent_path);
+
+    vfs_node_t *node = vfs_open(path, 0);
+    if (!node)
+        node = sysfs_child_append(parent, name, false);
+    if (!node)
+        return NULL;
+
+    sysfs_node_t *handle = node->handle;
+    if (handle)
+        handle->size = 0;
+    if (content)
+        vfs_write(node, content, 0, strlen(content));
+    return node;
+}
+
+vfs_node_t *sysfs_write_attrf(vfs_node_t *parent, const char *name,
+                              const char *fmt, ...) {
+    char content[256];
+    va_list ap;
+
+    memset(content, 0, sizeof(content));
+    va_start(ap, fmt);
+    vsnprintf(content, sizeof(content), fmt, ap);
+    va_end(ap);
+    return sysfs_write_attr(parent, name, content);
+}
+
+void sysfs_detach_node(vfs_node_t *node) {
+    if (!node)
+        return;
+    vfs_detach_child(node);
+    node->parent = NULL;
+}
+
+void sysfs_detach_path(const char *path, bool nofollow) {
+    vfs_node_t *node = vfs_open(path, nofollow ? O_NOFOLLOW : 0);
+    if (node)
+        sysfs_detach_node(node);
 }
 
 vfs_node_t *sysfs_child_append(vfs_node_t *parent, const char *name,

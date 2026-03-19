@@ -160,7 +160,7 @@ typedef struct dev_input_event {
 #define LED_CNT (LED_MAX + 1)
 
 #define DEVICE_NR 256 // 设备数量
-#define NAMELEN 16
+#define NAMELEN 256
 
 // 设备类型
 enum device_type_t {
@@ -179,6 +179,7 @@ enum device_subtype_t {
     DEV_DISK,       // 磁盘
     DEV_NETIF,      // 网卡
     DEV_SYSDEV,     // 系统设备
+    DEV_USB,        // USB userspace node
     DEV_GPU = 226,  // 显卡
     DEV_MAX,
 };
@@ -222,6 +223,7 @@ uint64_t device_install_with_minor(int type, int subtype, void *ptr, char *name,
                                    uint64_t parent, void *open, void *close,
                                    void *ioctl, void *poll, void *read,
                                    void *write, void *map, uint64_t minor);
+int device_uninstall(uint64_t dev);
 
 // 根据子类型查找设备
 device_t *device_find(int type, uint64_t idx);

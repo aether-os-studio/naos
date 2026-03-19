@@ -8,7 +8,6 @@ struct sched_entity {
     task_t *task;
     list_node_t *node;
     bool on_rq;
-    bool queued_once;
 };
 
 typedef struct sched_rq {

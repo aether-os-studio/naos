@@ -1,6 +1,7 @@
 #include <boot/boot.h>
 #include <init/abis.h>
 #include <libs/string_builder.h>
+#include <task/sched.h>
 #include <task/task_syscall.h>
 
 extern hashmap_t task_parent_map;
@@ -388,8 +389,12 @@ void free_task(task_t *ptr) {
     arch_context_free(ptr->arch_context);
     free(ptr->arch_context);
 
-    free(ptr->sched_info);
-    ptr->sched_info = NULL;
+    struct sched_entity *entity = ptr->sched_info;
+    if (entity) {
+        free(entity->node);
+        free(entity);
+        ptr->sched_info = NULL;
+    }
 
     free_frames_bytes((void *)(ptr->kernel_stack - STACK_SIZE), STACK_SIZE);
     free_frames_bytes((void *)(ptr->syscall_stack - STACK_SIZE), STACK_SIZE);

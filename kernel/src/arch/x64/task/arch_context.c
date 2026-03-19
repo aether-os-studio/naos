@@ -151,7 +151,7 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry,
     asm volatile("ldmxcsr %0" : : "m"(default_mxcsr) : "memory");
 
     asm volatile("movq %0, %%rsp\n\t"
-                 "jmp %1" ::"r"(context->ctx),
+                 "jmp *%1" ::"r"(context->ctx),
                  "r"(context->rip));
 }
 

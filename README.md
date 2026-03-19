@@ -2,9 +2,9 @@
 
 ![Screenshot](./images/naos.png?raw=true)
 
-## What is this about?
+## LICENSE
 
-This is the main repository of neo-aether-os, a linux compatable operating system.
+This project is licensed under GPLv3.
 
 ## Features
 
@@ -21,11 +21,11 @@ Programs supported on aether-os include [Weston](https://gitlab.freedesktop.org/
 ## Supported Hardware
 
 **General** USB (XHCI)\
-**Graphics** virtio GPU, VMWare SVGA\
+**Graphics** virtio GPU, nvidia-open\
 **Input** USB human interface devices, PS/2 keyboard and mouse\
 **Storage** USB mass storage devices, NVMe, AHCI, virtio block\
-**Network** E1000, virtio network
+**Network** E1000, virtio network\
 
-## Running aether-os
+## Running naos
 
 Running `make prepare` and `make run` will build the kernel and a bootable image and a rootfs image, and then run it using `qemu` (if installed).

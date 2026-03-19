@@ -7,6 +7,7 @@ uint64_t devices_idxs[DEV_MAX];
 spinlock_t device_lock = SPIN_INIT;
 
 static device_t *get_null_device();
+static void device_reset_entry(device_t *device);
 
 static bool device_minor_in_use(int subtype, uint64_t minor) {
     for (size_t i = 1; i < DEVICE_NR; i++) {
@@ -29,6 +30,9 @@ static uint64_t device_install_internal(int type, int subtype, void *ptr,
                                         void *read, void *write, void *map,
                                         bool use_fixed_minor,
                                         uint64_t fixed_minor) {
+    device_t *device;
+    uint64_t devnr;
+
     if (subtype < 0 || subtype >= DEV_MAX) {
         return 0;
     }
@@ -39,7 +43,7 @@ static uint64_t device_install_internal(int type, int subtype, void *ptr,
 
     spin_lock(&device_lock);
 
-    device_t *device = get_null_device();
+    device = get_null_device();
     if (!device) {
         spin_unlock(&device_lock);
         return 0;
@@ -68,6 +72,7 @@ static uint64_t device_install_internal(int type, int subtype, void *ptr,
     device->subtype = subtype;
     device->dev = (dev_major << 8) | dev_minor;
     strncpy(device->name, name, NAMELEN);
+    device->name[NAMELEN - 1] = '\0';
     device->open = open;
     device->close = close;
     device->ioctl = ioctl;
@@ -76,10 +81,13 @@ static uint64_t device_install_internal(int type, int subtype, void *ptr,
     device->write = write;
     device->map = map;
 
-    system_abi->on_new_device(device);
+    devnr = device->dev;
     spin_unlock(&device_lock);
 
-    return device->dev;
+    if (system_abi && system_abi->on_new_device)
+        system_abi->on_new_device(device);
+
+    return devnr;
 }
 
 // 获取空设备
@@ -90,6 +98,18 @@ static device_t *get_null_device() {
             return device;
     }
     return NULL;
+}
+
+static void device_reset_entry(device_t *device) {
+    if (!device)
+        return;
+
+    memset(device, 0, sizeof(*device));
+    strcpy(device->name, "null");
+    device->type = DEV_NULL;
+    device->subtype = DEV_NULL;
+    device->dev = 0;
+    device->parent = 0;
 }
 
 ssize_t device_open(uint64_t dev, void *arg) {
@@ -183,16 +203,34 @@ uint64_t device_install_with_minor(int type, int subtype, void *ptr, char *name,
                                    minor);
 }
 
+int device_uninstall(uint64_t dev) {
+    device_t removed;
+    int ret = -ENODEV;
+
+    spin_lock(&device_lock);
+
+    device_t *device = device_get(dev);
+    if (!device || device->type == DEV_NULL) {
+        spin_unlock(&device_lock);
+        return ret;
+    }
+
+    memcpy(&removed, device, sizeof(removed));
+    device_reset_entry(device);
+    ret = 0;
+
+    spin_unlock(&device_lock);
+
+    if (system_abi && system_abi->on_remove_device)
+        system_abi->on_remove_device(&removed);
+
+    return ret;
+}
+
 void device_init() {
     memset(devices_idxs, 0, sizeof(devices_idxs));
     for (size_t i = 0; i < DEVICE_NR; i++) {
-        device_t *device = &devices[i];
-        memset(device, 0, sizeof(device_t));
-        strcpy((char *)device->name, "null");
-        device->type = DEV_NULL;
-        device->subtype = DEV_NULL;
-        device->dev = 0;
-        device->parent = 0;
+        device_reset_entry(&devices[i]);
     }
 }
 

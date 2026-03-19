@@ -228,6 +228,7 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
+		-device qemu-xhci,id=xhci \
 		-device ahci,id=ahci \
 		-device ide-hd,drive=harddisk,bus=ahci.0 \
 		-device nvme,drive=rootdisk,serial=5678 \
@@ -246,6 +247,7 @@ run-x86_64-single: assets/ovmf-code-$(ARCH).fd all-single
 		-device usb-kbd \
 		-device usb-mouse \
 		-device usb-storage,drive=harddisk,bus=xhci.0 \
+		-display sdl \
 		$(QEMUFLAGS)
 
 .PHONY: run-aarch64

@@ -9,7 +9,7 @@
 
 #define HUB_REQ_SET_HUB_DEPTH 0x0C
 
-struct usb_hub_descriptor {
+typedef struct usb_hub_descriptor {
     uint8_t bDescLength;
     uint8_t bDescriptorType;
     uint8_t bNbrPorts;
@@ -17,7 +17,7 @@ struct usb_hub_descriptor {
     uint8_t bPwrOn2PwrGood;
     uint8_t bHubContrCurrent;
     // Variable length fields for DeviceRemovable[], PortPwrCtrlMask[] follow.
-} __attribute__((packed));
+} __attribute__((packed)) usb_hub_descriptor_t;
 
 #define USB_PORT_FEAT_CONNECTION 0
 #define USB_PORT_FEAT_ENABLE 1
@@ -35,10 +35,10 @@ struct usb_hub_descriptor {
 #define USB_PORT_FEAT_INDICATOR 22
 #define USB_PORT_FEAT_C_PORT_L1 23
 
-struct usb_port_status {
+typedef struct usb_port_status {
     uint16_t wPortStatus;
     uint16_t wPortChange;
-} __attribute__((packed));
+} __attribute__((packed)) usb_port_status_t;
 
 #define USB_PORT_STAT_CONNECTION 0x0001
 #define USB_PORT_STAT_ENABLE 0x0002

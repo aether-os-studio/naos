@@ -32,9 +32,9 @@ static inline void msc_delay_ms(uint64_t ms) {
     }
 }
 
-static int msc_bulk_transfer(usb_msc_device *ctrl, bool is_read, void *data,
+static int msc_bulk_transfer(usb_msc_device_t *ctrl, bool is_read, void *data,
                              size_t len) {
-    struct usb_pipe *pipe;
+    usb_pipe_t *pipe;
 
     if (!ctrl || !ctrl->bulk_in || !ctrl->bulk_out)
         return -EINVAL;
@@ -57,9 +57,8 @@ static int msc_bulk_transfer(usb_msc_device *ctrl, bool is_read, void *data,
     return 0;
 }
 
-static int msc_clear_endpoint_halt(usb_msc_device *ctrl,
-                                   struct usb_pipe *pipe) {
-    struct usb_ctrlrequest req;
+static int msc_clear_endpoint_halt(usb_msc_device_t *ctrl, usb_pipe_t *pipe) {
+    usb_ctrl_request_t req;
 
     memset(&req, 0, sizeof(req));
     req.bRequestType = USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_ENDPOINT;
@@ -69,8 +68,8 @@ static int msc_clear_endpoint_halt(usb_msc_device *ctrl,
     return usb_send_default_control(ctrl->udev->defpipe, &req, NULL);
 }
 
-static void msc_reset_recovery(usb_msc_device *ctrl) {
-    struct usb_ctrlrequest reset_req;
+static void msc_reset_recovery(usb_msc_device_t *ctrl) {
+    usb_ctrl_request_t reset_req;
 
     memset(&reset_req, 0, sizeof(reset_req));
     reset_req.bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE;
@@ -83,7 +82,7 @@ static void msc_reset_recovery(usb_msc_device *ctrl) {
     msc_delay_ms(MSC_RESET_DELAY_MS);
 }
 
-static int msc_receive_csw(usb_msc_device *ctrl, usb_msc_csw_t *csw,
+static int msc_receive_csw(usb_msc_device_t *ctrl, usb_msc_csw_t *csw,
                            uint32_t expected_tag) {
     int ret;
 
@@ -101,9 +100,9 @@ static int msc_receive_csw(usb_msc_device *ctrl, usb_msc_csw_t *csw,
     return 0;
 }
 
-static int msc_command_once(usb_msc_device *ctrl, uint8_t lun, const void *cmd,
-                            uint8_t cmd_len, void *data, size_t data_len,
-                            bool is_read) {
+static int msc_command_once(usb_msc_device_t *ctrl, uint8_t lun,
+                            const void *cmd, uint8_t cmd_len, void *data,
+                            size_t data_len, bool is_read) {
     usb_msc_cbw_t cbw;
     usb_msc_csw_t csw;
     uint32_t tag;
@@ -164,7 +163,7 @@ transport_error:
     return -EAGAIN;
 }
 
-static int msc_command(usb_msc_device *ctrl, uint8_t lun, const void *cmd,
+static int msc_command(usb_msc_device_t *ctrl, uint8_t lun, const void *cmd,
                        uint8_t cmd_len, void *data, size_t data_len,
                        bool is_read) {
     int ret;
@@ -179,17 +178,17 @@ static int msc_command(usb_msc_device *ctrl, uint8_t lun, const void *cmd,
     return -EIO;
 }
 
-static int msc_test_unit_ready(usb_msc_lun *lun) {
+static int msc_test_unit_ready(usb_msc_lun_t *lun) {
     uint8_t cmd[6] = {0x00, 0, 0, 0, 0, 0};
     return msc_command(lun->ctrl, lun->lun, cmd, sizeof(cmd), NULL, 0, true);
 }
 
-static int msc_request_sense(usb_msc_lun *lun, uint8_t *sense) {
+static int msc_request_sense(usb_msc_lun_t *lun, uint8_t *sense) {
     uint8_t cmd[6] = {0x03, 0, 0, 0, 18, 0};
     return msc_command(lun->ctrl, lun->lun, cmd, sizeof(cmd), sense, 18, true);
 }
 
-static int msc_inquiry(usb_msc_lun *lun) {
+static int msc_inquiry(usb_msc_lun_t *lun) {
     uint8_t cmd[6] = {0x12, 0, 0, 0, 36, 0};
     uint8_t data[36];
 
@@ -204,7 +203,7 @@ static int msc_inquiry(usb_msc_lun *lun) {
     return 0;
 }
 
-static int msc_read_capacity(usb_msc_lun *lun) {
+static int msc_read_capacity(usb_msc_lun_t *lun) {
     uint8_t cmd10[10] = {0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     uint8_t cap10[8];
 
@@ -239,7 +238,7 @@ static int msc_read_capacity(usb_msc_lun *lun) {
     return -EIO;
 }
 
-static int msc_wait_ready(usb_msc_lun *lun) {
+static int msc_wait_ready(usb_msc_lun_t *lun) {
     uint8_t sense[18];
 
     for (int i = 0; i < MSC_READY_RETRIES; i++) {
@@ -261,7 +260,7 @@ static int msc_wait_ready(usb_msc_lun *lun) {
     return -EIO;
 }
 
-static uint64_t msc_rw_blocks(usb_msc_lun *lun, uint64_t lba, void *buf,
+static uint64_t msc_rw_blocks(usb_msc_lun_t *lun, uint64_t lba, void *buf,
                               uint64_t count, bool is_read) {
     uint64_t transferred = 0;
     uint64_t max_blocks;
@@ -339,16 +338,16 @@ static uint64_t msc_rw_blocks(usb_msc_lun *lun, uint64_t lba, void *buf,
 
 uint64_t usb_msc_read_blocks(void *dev_ptr, uint64_t lba, void *buf,
                              uint64_t count) {
-    return msc_rw_blocks((usb_msc_lun *)dev_ptr, lba, buf, count, true);
+    return msc_rw_blocks((usb_msc_lun_t *)dev_ptr, lba, buf, count, true);
 }
 
 uint64_t usb_msc_write_blocks(void *dev_ptr, uint64_t lba, void *buf,
                               uint64_t count) {
-    return msc_rw_blocks((usb_msc_lun *)dev_ptr, lba, buf, count, false);
+    return msc_rw_blocks((usb_msc_lun_t *)dev_ptr, lba, buf, count, false);
 }
 
-static uint8_t msc_get_max_lun(usb_msc_device *ctrl) {
-    struct usb_ctrlrequest req;
+static uint8_t msc_get_max_lun(usb_msc_device_t *ctrl) {
+    usb_ctrl_request_t req;
     uint8_t max_lun = 0;
 
     memset(&req, 0, sizeof(req));
@@ -366,7 +365,7 @@ static uint8_t msc_get_max_lun(usb_msc_device *ctrl) {
     return max_lun;
 }
 
-static int msc_probe_lun(usb_msc_lun *lun) {
+static int msc_probe_lun(usb_msc_lun_t *lun) {
     char name[32];
 
     if (msc_wait_ready(lun) != 0) {
@@ -394,12 +393,11 @@ static int msc_probe_lun(usb_msc_lun *lun) {
     return 0;
 }
 
-int usb_msc_setup(struct usbdevice_s *usbdev,
-                  struct usbdevice_a_interface *iface) {
-    usb_msc_device *ctrl;
-    struct usb_endpoint_descriptor *indesc;
-    struct usb_endpoint_descriptor *outdesc;
-    struct usb_super_speed_endpoint_descriptor *ss_desc;
+int usb_msc_setup(usb_device_t *usbdev, usb_device_interface_t *iface) {
+    usb_msc_device_t *ctrl;
+    usb_endpoint_descriptor_t *indesc;
+    usb_endpoint_descriptor_t *outdesc;
+    usb_super_speed_endpoint_descriptor_t *ss_desc;
     uint8_t max_lun;
     bool has_registered_lun = false;
 
@@ -470,13 +468,13 @@ fail:
     return -1;
 }
 
-int usb_msc_remove(struct usbdevice_s *usbdev) {
-    usb_msc_device *ctrl;
+int usb_msc_remove(usb_device_t *usbdev) {
+    usb_msc_device_t *ctrl;
 
     if (!usbdev || !usbdev->desc)
         return 0;
 
-    ctrl = (usb_msc_device *)usbdev->desc;
+    ctrl = (usb_msc_device_t *)usbdev->desc;
 
     if (ctrl->luns) {
         for (uint8_t lun = 0; lun < ctrl->lun_count; lun++) {
