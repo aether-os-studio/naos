@@ -3750,18 +3750,49 @@ ssize_t drm_ioctl_set_client_cap(drm_device_t *dev, void *arg) {
 ssize_t drm_ioctl_wait_vblank(drm_device_t *dev, void *arg) {
     union drm_wait_vblank *vbl = (union drm_wait_vblank *)arg;
 
-    uint64_t seq = dev->vblank_counter;
+    if (!dev || !vbl)
+        return -EINVAL;
 
-    if (vbl->request.type & _DRM_VBLANK_RELATIVE)
-        vbl->request.sequence += seq;
-    else
-        vbl->request.sequence = seq;
+    uint64_t target_seq = 0;
+    bool target_set = false;
 
-    vbl->reply.sequence = vbl->request.sequence;
-    vbl->reply.tval_sec = nano_time() / 1000000000ULL;
-    vbl->reply.tval_usec = (nano_time() % 1000000000ULL) / 1000ULL;
+    while (true) {
+        uint64_t seq = 0;
+        uint64_t next_vblank_ns = 0;
 
-    return 0;
+        spin_lock(&dev->event_lock);
+        seq = dev->vblank_counter;
+        next_vblank_ns = dev->next_vblank_ns;
+        spin_unlock(&dev->event_lock);
+
+        if (!target_set) {
+            if (vbl->request.type & _DRM_VBLANK_RELATIVE)
+                target_seq = seq + vbl->request.sequence;
+            else
+                target_seq = vbl->request.sequence;
+            target_set = true;
+        }
+
+        if (seq >= target_seq) {
+            vbl->reply.sequence = seq;
+            vbl->reply.tval_sec = nano_time() / 1000000000ULL;
+            vbl->reply.tval_usec = (nano_time() % 1000000000ULL) / 1000ULL;
+            return 0;
+        }
+
+        uint64_t now = nano_time();
+        int64_t wait_ns = 1000000LL;
+
+        if (next_vblank_ns > now) {
+            uint64_t delta = next_vblank_ns - now;
+            wait_ns = (int64_t)MIN(delta, 100000000LL);
+        }
+
+        int reason =
+            task_block(current_task, TASK_BLOCKING, wait_ns, "drm_wait_vblank");
+        if (reason != EOK && reason != ETIMEDOUT)
+            return reason == EINTR ? -EINTR : -EIO;
+    }
 }
 
 /**

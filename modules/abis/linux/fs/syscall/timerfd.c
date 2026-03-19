@@ -13,6 +13,8 @@ static rb_root_t timerfd_mono_root = RB_ROOT_INIT;
 static rb_root_t timerfd_real_root = RB_ROOT_INIT;
 static spinlock_t timerfd_mono_lock = SPIN_INIT;
 static spinlock_t timerfd_real_lock = SPIN_INIT;
+static uint64_t timerfd_mono_next_ns = UINT64_MAX;
+static uint64_t timerfd_real_next_ns = UINT64_MAX;
 
 static uint64_t get_current_time_ns(int clock_type);
 
@@ -24,6 +26,11 @@ static inline spinlock_t *timerfd_tree_lock_for_clock(int clock_type) {
 static inline rb_root_t *timerfd_root_for_clock(int clock_type) {
     return clock_type == CLOCK_REALTIME ? &timerfd_real_root
                                         : &timerfd_mono_root;
+}
+
+static inline uint64_t *timerfd_next_deadline_for_clock(int clock_type) {
+    return clock_type == CLOCK_REALTIME ? &timerfd_real_next_ns
+                                        : &timerfd_mono_next_ns;
 }
 
 static inline int timerfd_cmp(timerfd_t *left, timerfd_t *right) {
@@ -43,13 +50,24 @@ static inline timerfd_t *timerfd_first_locked(rb_root_t *root) {
     return first ? rb_entry(first, timerfd_t, timeout_node) : NULL;
 }
 
+static inline void timerfd_refresh_next_locked(int clock_type) {
+    timerfd_t *first = timerfd_first_locked(timerfd_root_for_clock(clock_type));
+    uint64_t next = first ? first->timer.expires : UINT64_MAX;
+
+    __atomic_store_n(timerfd_next_deadline_for_clock(clock_type), next,
+                     __ATOMIC_RELEASE);
+}
+
 static void timerfd_timeout_remove_locked(timerfd_t *tfd) {
     if (!tfd || !tfd->timeout_queued)
         return;
 
-    rb_erase(&tfd->timeout_node, timerfd_root_for_clock(tfd->timer.clock_type));
+    int clock_type = tfd->timer.clock_type;
+
+    rb_erase(&tfd->timeout_node, timerfd_root_for_clock(clock_type));
     memset(&tfd->timeout_node, 0, sizeof(tfd->timeout_node));
     tfd->timeout_queued = false;
+    timerfd_refresh_next_locked(clock_type);
 }
 
 static void timerfd_timeout_add_locked(timerfd_t *tfd) {
@@ -77,6 +95,7 @@ static void timerfd_timeout_add_locked(timerfd_t *tfd) {
     *slot = &tfd->timeout_node;
     rb_insert_color(&tfd->timeout_node, root);
     tfd->timeout_queued = true;
+    timerfd_refresh_next_locked(tfd->timer.clock_type);
 }
 
 static bool timerfd_update_due_locked(timerfd_t *tfd, uint64_t now) {
@@ -157,27 +176,23 @@ static bool timerfd_refresh_due(timerfd_t *tfd, int clock_type, uint64_t now,
 
 void timerfd_check_wakeup(void) {
     bool raise = false;
-    uint64_t now_mono = nano_time();
+    uint64_t mono_next =
+        __atomic_load_n(&timerfd_mono_next_ns, __ATOMIC_ACQUIRE);
 
-    spin_lock(&timerfd_mono_lock);
-    timerfd_t *mono = timerfd_first_locked(&timerfd_mono_root);
-    if (mono && mono->timer.expires <= now_mono) {
+    if (mono_next != UINT64_MAX && mono_next <= nano_time())
         raise = true;
-    }
-    spin_unlock(&timerfd_mono_lock);
 
     if (!raise) {
-        uint64_t now_real = get_current_time_ns(CLOCK_REALTIME);
+        uint64_t real_next =
+            __atomic_load_n(&timerfd_real_next_ns, __ATOMIC_ACQUIRE);
 
-        spin_lock(&timerfd_real_lock);
-        timerfd_t *real = timerfd_first_locked(&timerfd_real_root);
-        if (real && real->timer.expires <= now_real)
+        if (real_next != UINT64_MAX &&
+            real_next <= get_current_time_ns(CLOCK_REALTIME))
             raise = true;
-        spin_unlock(&timerfd_real_lock);
     }
 
-    if (raise)
-        softirq_raise(SOFTIRQ_TIMERFD);
+    if (raise && softirq_raise(SOFTIRQ_TIMERFD))
+        sched_wake_worker(0);
 }
 
 void timerfd_softirq(void) {
@@ -366,8 +381,8 @@ uint64_t sys_timerfd_settime(int fd, int flags,
     if (notify_readable)
         vfs_poll_notify(node, EPOLLIN);
     vfs_poll_notify(node, EPOLLOUT);
-    if (raise_softirq)
-        softirq_raise(SOFTIRQ_TIMERFD);
+    if (raise_softirq && softirq_raise(SOFTIRQ_TIMERFD))
+        sched_wake_worker(0);
 
     return 0;
 }
@@ -517,6 +532,8 @@ void timerfd_init() {
     spin_init(&timerfd_real_lock);
     timerfd_mono_root = RB_ROOT_INIT;
     timerfd_real_root = RB_ROOT_INIT;
+    __atomic_store_n(&timerfd_mono_next_ns, UINT64_MAX, __ATOMIC_RELEASE);
+    __atomic_store_n(&timerfd_real_next_ns, UINT64_MAX, __ATOMIC_RELEASE);
     softirq_register(SOFTIRQ_TIMERFD, timerfd_softirq);
     timerfdfs_id = vfs_regist(&timefdfs);
 }

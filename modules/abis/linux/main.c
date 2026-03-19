@@ -388,7 +388,11 @@ void linuxabi_init_before_user() {
     sysfs_init_umount();
 }
 
-int linuxabi_on_sched_update(void) { timerfd_check_wakeup(); }
+int linuxabi_on_sched_update(void) {
+    drm_handle_vblank_tick();
+    timerfd_check_wakeup();
+    return 0;
+}
 
 extern int signalfdfs_id;
 

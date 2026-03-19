@@ -65,8 +65,8 @@ static inline void sched_entity_refresh_deadline(struct sched_entity *entity) {
                                           sched_entity_slice_vruntime(entity));
 }
 
-static inline bool sched_deadline_before(const struct sched_entity *left,
-                                         const struct sched_entity *right) {
+static inline bool sched_tree_entity_before(const struct sched_entity *left,
+                                            const struct sched_entity *right) {
     if (!right)
         return true;
     if (!left)
@@ -76,23 +76,6 @@ static inline bool sched_deadline_before(const struct sched_entity *left,
         return left->deadline < right->deadline;
     if (left->vruntime != right->vruntime)
         return left->vruntime < right->vruntime;
-    if (left->task && right->task && left->task->pid != right->task->pid)
-        return left->task->pid < right->task->pid;
-
-    return left < right;
-}
-
-static inline bool sched_run_entity_before(const struct sched_entity *left,
-                                           const struct sched_entity *right) {
-    if (!right)
-        return true;
-    if (!left)
-        return false;
-
-    if (left->vruntime != right->vruntime)
-        return left->vruntime < right->vruntime;
-    if (left->deadline != right->deadline)
-        return left->deadline < right->deadline;
     if (left->task && right->task && left->task->pid != right->task->pid)
         return left->task->pid < right->task->pid;
 
@@ -103,10 +86,10 @@ static inline struct sched_entity *sched_entity_from_run_node(rb_node_t *node) {
     return rb_entry(node, struct sched_entity, run_node);
 }
 
-static inline struct sched_entity *sched_subtree_best(const rb_node_t *node) {
+static inline uint64_t sched_subtree_min_vruntime(const rb_node_t *node) {
     return node ? rb_entry((rb_node_t *)node, struct sched_entity, run_node)
-                      ->subtree_best
-                : NULL;
+                      ->subtree_min_vruntime
+                : UINT64_MAX;
 }
 
 static inline void sched_entity_reset_run_node(struct sched_entity *entity) {
@@ -117,27 +100,26 @@ static inline void sched_entity_reset_run_node(struct sched_entity *entity) {
     entity->run_node.rb_parent_color = 0;
     entity->run_node.rb_left = NULL;
     entity->run_node.rb_right = NULL;
-    entity->subtree_best = entity;
+    entity->subtree_min_vruntime = entity->vruntime;
 }
 
-static inline void sched_recalc_subtree_best(struct sched_entity *entity) {
-    struct sched_entity *best = entity;
-    struct sched_entity *left_best =
-        sched_subtree_best(entity->run_node.rb_left);
-    struct sched_entity *right_best =
-        sched_subtree_best(entity->run_node.rb_right);
+static inline void
+sched_recalc_subtree_min_vruntime(struct sched_entity *entity) {
+    uint64_t min_vruntime = entity->vruntime;
+    uint64_t left_min = sched_subtree_min_vruntime(entity->run_node.rb_left);
+    uint64_t right_min = sched_subtree_min_vruntime(entity->run_node.rb_right);
 
-    if (sched_deadline_before(left_best, best))
-        best = left_best;
-    if (sched_deadline_before(right_best, best))
-        best = right_best;
+    if (left_min < min_vruntime)
+        min_vruntime = left_min;
+    if (right_min < min_vruntime)
+        min_vruntime = right_min;
 
-    entity->subtree_best = best;
+    entity->subtree_min_vruntime = min_vruntime;
 }
 
-static inline void sched_update_subtree_best_up(rb_node_t *node) {
+static inline void sched_update_subtree_min_vruntime_up(rb_node_t *node) {
     while (node) {
-        sched_recalc_subtree_best(sched_entity_from_run_node(node));
+        sched_recalc_subtree_min_vruntime(sched_entity_from_run_node(node));
         node = rb_parent(node);
     }
 }
@@ -151,7 +133,7 @@ static inline void sched_tree_insert_locked(sched_rq_t *scheduler,
         struct sched_entity *curr = sched_entity_from_run_node(*slot);
         parent = *slot;
 
-        if (sched_run_entity_before(entity, curr)) {
+        if (sched_tree_entity_before(entity, curr)) {
             slot = &(*slot)->rb_left;
         } else {
             slot = &(*slot)->rb_right;
@@ -164,12 +146,10 @@ static inline void sched_tree_insert_locked(sched_rq_t *scheduler,
     *slot = &entity->run_node;
 
     rb_insert_color(&entity->run_node, &scheduler->run_tree);
-    sched_update_subtree_best_up(&entity->run_node);
+    sched_update_subtree_min_vruntime_up(&entity->run_node);
 
     entity->queued = true;
     scheduler->total_weight += entity->weight;
-    scheduler->weighted_vruntime_sum +=
-        (__uint128_t)entity->vruntime * entity->weight;
 }
 
 static inline void sched_tree_remove_locked(sched_rq_t *scheduler,
@@ -194,35 +174,28 @@ static inline void sched_tree_remove_locked(sched_rq_t *scheduler,
     }
 
     scheduler->total_weight -= entity->weight;
-    scheduler->weighted_vruntime_sum -=
-        (__uint128_t)entity->vruntime * entity->weight;
 
     rb_erase(&entity->run_node, &scheduler->run_tree);
     sched_entity_reset_run_node(entity);
 
     if (successor)
-        sched_update_subtree_best_up(successor);
+        sched_update_subtree_min_vruntime_up(successor);
     if (successor_parent)
-        sched_update_subtree_best_up(successor_parent);
+        sched_update_subtree_min_vruntime_up(successor_parent);
     if (old_parent)
-        sched_update_subtree_best_up(old_parent);
+        sched_update_subtree_min_vruntime_up(old_parent);
     else if (scheduler->run_tree.rb_node)
-        sched_update_subtree_best_up(scheduler->run_tree.rb_node);
+        sched_update_subtree_min_vruntime_up(scheduler->run_tree.rb_node);
 }
 
 static inline void sched_refresh_min_vruntime_locked(sched_rq_t *scheduler) {
     uint64_t candidate = UINT64_MAX;
-    rb_node_t *first;
     struct sched_entity *entity;
 
     if (!scheduler)
         return;
 
-    first = rb_first(&scheduler->run_tree);
-    if (first) {
-        entity = sched_entity_from_run_node(first);
-        candidate = entity->vruntime;
-    }
+    candidate = sched_subtree_min_vruntime(scheduler->run_tree.rb_node);
 
     entity = scheduler->curr;
     if (sched_entity_on_cpu(entity, scheduler) && entity->on_rq &&
@@ -289,74 +262,8 @@ static inline void sched_requeue_curr_locked(sched_rq_t *scheduler) {
     sched_tree_insert_locked(scheduler, curr);
 }
 
-static inline uint64_t sched_avg_vruntime_locked(const sched_rq_t *scheduler) {
-    uint64_t avg_vruntime;
-
-    if (!scheduler || !scheduler->total_weight)
-        return scheduler ? scheduler->min_vruntime : 0;
-
-    avg_vruntime =
-        (uint64_t)(scheduler->weighted_vruntime_sum / scheduler->total_weight);
-
-    return MAX(avg_vruntime, scheduler->min_vruntime);
-}
-
-static struct sched_entity *sched_subtree_best_excluding(const rb_node_t *node,
-                                                         task_t *excluded) {
-    struct sched_entity *entity;
-    struct sched_entity *best;
-    struct sched_entity *candidate;
-
-    if (!node)
-        return NULL;
-
-    entity = rb_entry((rb_node_t *)node, struct sched_entity, run_node);
-    if (!excluded || !entity->subtree_best ||
-        entity->subtree_best->task != excluded)
-        return entity->subtree_best;
-
-    best = entity->task != excluded ? entity : NULL;
-
-    candidate = sched_subtree_best_excluding(node->rb_left, excluded);
-    if (sched_deadline_before(candidate, best))
-        best = candidate;
-
-    candidate = sched_subtree_best_excluding(node->rb_right, excluded);
-    if (sched_deadline_before(candidate, best))
-        best = candidate;
-
-    return best;
-}
-
 static struct sched_entity *
-sched_pick_eligible_entity_locked(sched_rq_t *scheduler, uint64_t avg_vruntime,
-                                  task_t *excluded) {
-    rb_node_t *node = scheduler ? scheduler->run_tree.rb_node : NULL;
-    struct sched_entity *best = NULL;
-
-    while (node) {
-        struct sched_entity *entity = sched_entity_from_run_node(node);
-        struct sched_entity *left_best;
-
-        if (entity->vruntime <= avg_vruntime) {
-            left_best = sched_subtree_best_excluding(node->rb_left, excluded);
-            if (sched_deadline_before(left_best, best))
-                best = left_best;
-
-            if (entity->task != excluded && sched_deadline_before(entity, best))
-                best = entity;
-
-            node = node->rb_right;
-        } else {
-            node = node->rb_left;
-        }
-    }
-
-    return best;
-}
-
-static struct sched_entity *
-sched_pick_min_vruntime_entity_locked(sched_rq_t *scheduler, task_t *excluded) {
+sched_pick_deadline_entity_locked(sched_rq_t *scheduler, task_t *excluded) {
     rb_node_t *node = scheduler ? rb_first(&scheduler->run_tree) : NULL;
 
     while (node) {
@@ -382,11 +289,7 @@ static task_t *sched_pick_next_task_internal(sched_rq_t *scheduler,
     sched_refresh_min_vruntime_locked(scheduler);
 
     while (scheduler->run_tree.rb_node && scheduler->total_weight) {
-        next = sched_pick_eligible_entity_locked(
-            scheduler, sched_avg_vruntime_locked(scheduler), excluded);
-        if (!next)
-            next = sched_pick_min_vruntime_entity_locked(scheduler, excluded);
-
+        next = sched_pick_deadline_entity_locked(scheduler, excluded);
         if (!next)
             break;
 

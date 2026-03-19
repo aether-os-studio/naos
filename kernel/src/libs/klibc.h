@@ -1,12 +1,12 @@
 #pragma once
 
-#include "../settings.h"
+#include <settings.h>
 
-#include "../../freestnd-c-hdrs/stdint.h"
-#include "../../freestnd-c-hdrs/stddef.h"
-#include "../../freestnd-c-hdrs/stdbool.h"
-#include "../../freestnd-c-hdrs/limits.h"
-#include "../limine.h"
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+#include <limits.h>
+#include <limine.h>
 
 #include "errno.h"
 

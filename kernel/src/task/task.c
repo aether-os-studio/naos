@@ -36,6 +36,7 @@ spinlock_t worker_tick_locks[MAX_WORKER_NUM];
 uint32_t worker_slot_by_cpu[MAX_CPU_NUM];
 
 static void sched_update_itimer_task(task_t *task, uint64_t now_ms);
+void task_refresh_tick_work_state(task_t *task);
 
 static task_sighand_t *task_sighand_alloc(void) {
     task_sighand_t *sighand = calloc(1, sizeof(task_sighand_t));
@@ -143,17 +144,31 @@ static inline bool task_has_tick_work(task_t *task) {
         return false;
     }
 
+    return task->tick_work_active;
+}
+
+void task_refresh_tick_work_state(task_t *task) {
+    bool active = false;
+
+    if (!task)
+        return;
+
     if (task->itimer_real.at) {
-        return true;
+        active = true;
+        goto out;
     }
 
     for (int i = 0; i < MAX_TIMERS_NUM; i++) {
-        if (task->timers[i]) {
-            return true;
+        kernel_timer_t *kt = task->timers[i];
+
+        if (kt && kt->expires) {
+            active = true;
+            break;
         }
     }
 
-    return false;
+out:
+    task->tick_work_active = active;
 }
 
 void task_membarrier_checkpoint(task_t *task) {
@@ -1217,6 +1232,8 @@ static void sched_update_itimer_task(task_t *task, uint64_t now_ms) {
                 kt->expires = 0;
         }
     }
+
+    task_refresh_tick_work_state(task);
 }
 
 void sched_wake_worker(uint32_t cpu_id) {
@@ -1261,7 +1278,8 @@ void sched_defer_tick(void) {
 void sched_check_wakeup() {
     uint64_t next = __atomic_load_n(&task_timeout_next_ns, __ATOMIC_ACQUIRE);
     if (next != UINT64_MAX && next <= nano_time()) {
-        softirq_raise(SOFTIRQ_TIMER);
+        if (softirq_raise(SOFTIRQ_TIMER))
+            sched_wake_worker(0);
     }
 }
 

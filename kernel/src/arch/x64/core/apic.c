@@ -358,17 +358,43 @@ void apic_init() {
 }
 
 void sse_init() {
-    asm volatile("movq %cr0, %rax\n\t"
-                 "and $0xFFF3, %ax	\n\t" // clear coprocessor emulation
-                                              // CR0.EM and CR0.TS
-                 "or $0x2, %ax\n\t" // set coprocessor monitoring  CR0.MP
-                 "movq %rax, %cr0\n\t"
-                 "movq %cr4, %rax\n\t"
-                 "and $~(1 << 18), %eax\n\t" // disable OSXSAVE until the
-                                             // kernel implements xsave/xrstor
-                 "or $(3 << 9), %ax\n\t" // set CR4.OSFXSR and CR4.OSXMMEXCPT at
-                                         // the same time
-                 "movq %rax, %cr4\n\t");
+    uint32_t eax, ebx, ecx, edx;
+    uint32_t features_ecx = 0;
+    uint64_t cr0 = get_cr0();
+    uint64_t cr4 = get_cr4();
+    uint64_t xcr0_mask = X64_XSTATE_X87 | X64_XSTATE_SSE;
+    uint64_t xsave_area_size = sizeof(fpu_context_t);
+    bool xsave_enabled = false;
+
+    cr0 &= ~((1ULL << 2) | (1ULL << 3));
+    cr0 |= (1ULL << 1);
+    set_cr0(cr0);
+
+    cr4 |= (1ULL << 9) | (1ULL << 10);
+
+    cpuid_count(1, 0, &eax, &ebx, &ecx, &edx);
+    features_ecx = ecx;
+    if (ecx & (1U << 26)) {
+        cr4 |= (1ULL << 18);
+        set_cr4(cr4);
+
+        cpuid_count(0xD, 0, &eax, &ebx, &ecx, &edx);
+        uint64_t supported_mask = ((uint64_t)edx << 32) | eax;
+
+        xcr0_mask &= supported_mask;
+        if ((features_ecx & (1U << 28)) && (supported_mask & X64_XSTATE_AVX))
+            xcr0_mask |= X64_XSTATE_AVX;
+
+        xsetbv(0, xcr0_mask);
+        cpuid_count(0xD, 0, &eax, &ebx, &ecx, &edx);
+        xsave_area_size = ebx ? ebx : sizeof(fpu_context_t);
+        xsave_enabled = true;
+    } else {
+        cr4 &= ~(1ULL << 18);
+        set_cr4(cr4);
+    }
+
+    x64_fpu_configure_xsave(xsave_enabled, xcr0_mask, xsave_area_size);
 }
 
 spinlock_t ap_startup_lock = SPIN_INIT;
@@ -419,7 +445,7 @@ void multiboot2_ap_entry() {
     general_ap_entry();
 }
 #else
-void limine_ap_entry(struct limine_mp_info *cpu) { general_ap_entry(); }
+void limine_ap_entry() { general_ap_entry(); }
 #endif
 
 uint64_t cpu_count;

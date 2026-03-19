@@ -18,12 +18,15 @@ void softirq_register(softirq_id_t id, softirq_handler_t handler) {
     __atomic_store_n(&softirq_handlers[id], handler, __ATOMIC_RELEASE);
 }
 
-void softirq_raise(softirq_id_t id) {
+bool softirq_raise(softirq_id_t id) {
     if (id >= SOFTIRQ_MAX) {
-        return;
+        return false;
     }
 
-    __atomic_fetch_or(&softirq_pending, 1ULL << id, __ATOMIC_ACQ_REL);
+    uint64_t old_pending =
+        __atomic_fetch_or(&softirq_pending, 1ULL << id, __ATOMIC_ACQ_REL);
+
+    return old_pending == 0;
 }
 
 bool softirq_has_pending(void) {

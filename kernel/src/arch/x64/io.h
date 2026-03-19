@@ -55,6 +55,16 @@ static inline uint64_t get_cr3(void) {
     return cr0;
 }
 
+static inline uint64_t get_cr4(void) {
+    uint64_t cr4;
+    asm volatile("mov %%cr4, %0" : "=r"(cr4));
+    return cr4;
+}
+
+static inline void set_cr4(uint64_t cr4) {
+    asm volatile("mov %0, %%cr4" : : "r"(cr4));
+}
+
 static inline uint64_t get_rsp(void) {
     uint64_t rsp;
     asm volatile("mov %%rsp, %0" : "=r"(rsp));
@@ -113,6 +123,18 @@ static inline void cpuid_count(uint32_t leaf, uint32_t subleaf, uint32_t *eax,
     asm volatile("cpuid"
                  : "=a"(*eax), "=b"(*ebx), "=c"(*ecx), "=d"(*edx)
                  : "a"(leaf), "c"(subleaf));
+}
+
+static inline uint64_t xgetbv(uint32_t index) {
+    uint32_t eax, edx;
+    asm volatile("xgetbv" : "=a"(eax), "=d"(edx) : "c"(index));
+    return ((uint64_t)edx << 32) | eax;
+}
+
+static inline void xsetbv(uint32_t index, uint64_t value) {
+    uint32_t eax = (uint32_t)value;
+    uint32_t edx = (uint32_t)(value >> 32);
+    asm volatile("xsetbv" : : "c"(index), "a"(eax), "d"(edx));
 }
 
 static inline uint64_t rdtsc_ordered(void) {

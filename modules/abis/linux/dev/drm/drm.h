@@ -4,7 +4,7 @@
 #include <dev/drm/drm_mode.h>
 #include <drivers/bus/pci.h>
 
-#define HZ 120
+#define HZ 60
 
 #define fourcc_code(a, b, c, d)                                                \
     ((__u32)(a) | ((__u32)(b) << 8) | ((__u32)(c) << 16) | ((__u32)(d) << 24))
@@ -1454,7 +1454,12 @@ struct drm_device {
     struct k_drm_event drm_events[DRM_MAX_EVENTS_COUNT];
     uint32_t drm_event_head;
     uint32_t drm_event_count;
+    struct k_drm_event pending_events[DRM_MAX_EVENTS_COUNT];
+    uint32_t pending_event_head;
+    uint32_t pending_event_count;
     uint64_t vblank_counter;
+    uint64_t vblank_period_ns;
+    uint64_t next_vblank_ns;
     drm_resource_manager_t resource_mgr;
 };
 
@@ -1506,3 +1511,5 @@ void *drm_map(void *data, void *addr, uint64_t offset, uint64_t len);
 
 /* Event handling */
 int drm_post_event(drm_device_t *dev, uint32_t type, uint64_t user_data);
+int drm_defer_event(drm_device_t *dev, uint32_t type, uint64_t user_data);
+void drm_handle_vblank_tick(void);

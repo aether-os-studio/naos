@@ -371,23 +371,6 @@ enum {
     X64_REG_CR2,
 };
 
-static inline void signal_x64_save_live_fpu(task_t *task) {
-    if (!task || !task->arch_context || !task->arch_context->fpu_ctx)
-        return;
-
-    asm volatile("fxsave (%0)" : : "r"(task->arch_context->fpu_ctx) : "memory");
-}
-
-static inline void signal_x64_restore_live_fpu(task_t *task) {
-    if (!task || !task->arch_context || !task->arch_context->fpu_ctx)
-        return;
-
-    asm volatile("fxrstor (%0)"
-                 :
-                 : "r"(task->arch_context->fpu_ctx)
-                 : "memory");
-}
-
 static inline bool signal_x64_is_syscall_context(const struct pt_regs *regs) {
     return ((regs->cs & 0x3) == 0x3) && regs->rip == regs->rcx &&
            regs->rflags == regs->r11 &&
@@ -588,7 +571,7 @@ static bool signal_x64_setup_frame(task_t *task, struct pt_regs *regs, int sig,
     uint64_t siginfo_addr = ucontext_addr + sizeof(ucontext_t);
 
     ucontext_t frame_ucontext;
-    signal_x64_save_live_fpu(task);
+    x64_fpu_save(task->arch_context->fpu_ctx);
     signal_x64_fill_ucontext(&frame_ucontext, &saved, task->signal->blocked,
                              &frame_altstack, task->arch_context->fpu_ctx);
     if (sig == SIGSEGV && info) {
@@ -840,7 +823,7 @@ uint64_t sys_sigreturn(struct pt_regs *regs) {
         task_exit(128 + SIGSEGV);
         return 0;
     }
-    signal_x64_restore_live_fpu(self);
+    x64_fpu_restore(self->arch_context->fpu_ctx);
 
     stack_t restore_altstack = frame_ucontext.uc_stack;
     restore_altstack.ss_flags &= ~SS_ONSTACK;

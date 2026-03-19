@@ -8,8 +8,6 @@ extern hashmap_t task_parent_map;
 extern hashmap_t task_pgid_map;
 extern spinlock_t should_free_lock;
 
-#define LINUX_USER_HZ 100
-
 static int read_task_file_into_user_memory(task_t *task, vfs_node_t *node,
                                            uint64_t uaddr, size_t offset,
                                            size_t size) {
@@ -550,7 +548,7 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
     PUSH_TO_STACK(tmp_stack, uint64_t, DEFAULT_PAGE_SIZE);
     PUSH_TO_STACK(tmp_stack, uint64_t, AT_PAGESZ);
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, LINUX_USER_HZ);
+    PUSH_TO_STACK(tmp_stack, uint64_t, SCHED_HZ);
     PUSH_TO_STACK(tmp_stack, uint64_t, AT_CLKTCK);
 
     PUSH_TO_STACK(tmp_stack, uint64_t, at_base);
@@ -2027,6 +2025,7 @@ size_t sys_setitimer(int which, struct itimerval *value,
 
         current_task->itimer_real.at = targValue ? (now + targValue) : 0ULL;
         current_task->itimer_real.reset = targInterval;
+        task_refresh_tick_work_state(current_task);
     }
 
     return 0;
@@ -2095,6 +2094,7 @@ uint64_t sys_timer_settime(timer_t timerid, const struct itimerval *new_value,
 
     kt->interval = interval;
     kt->expires = now + expires;
+    task_refresh_tick_work_state(current_task);
 
     return 0;
 }

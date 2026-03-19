@@ -16,7 +16,7 @@ struct sched_entity {
     uint64_t exec_start_ns;
     uint32_t weight;
     rb_node_t run_node;
-    struct sched_entity *subtree_best;
+    uint64_t subtree_min_vruntime;
 };
 
 typedef struct sched_rq {
@@ -26,7 +26,6 @@ typedef struct sched_rq {
     rb_root_t run_tree;
     uint64_t min_vruntime;
     uint64_t total_weight;
-    __uint128_t weighted_vruntime_sum;
     spinlock_t lock;
 } sched_rq_t;
 

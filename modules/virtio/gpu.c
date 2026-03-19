@@ -2712,7 +2712,7 @@ static int virtio_gpu_page_flip(drm_device_t *drm_dev,
     }
 
     if (flip->flags & DRM_MODE_PAGE_FLIP_EVENT) {
-        drm_post_event(drm_dev, DRM_EVENT_FLIP_COMPLETE, flip->user_data);
+        drm_defer_event(drm_dev, DRM_EVENT_FLIP_COMPLETE, flip->user_data);
     }
 
     return 0;
@@ -3018,7 +3018,7 @@ static int virtio_gpu_atomic_commit(drm_device_t *drm_dev,
     }
 
     if (atomic->flags & DRM_MODE_PAGE_FLIP_EVENT) {
-        drm_post_event(drm_dev, DRM_EVENT_FLIP_COMPLETE, atomic->user_data);
+        drm_defer_event(drm_dev, DRM_EVENT_FLIP_COMPLETE, atomic->user_data);
     }
 
     return 0;

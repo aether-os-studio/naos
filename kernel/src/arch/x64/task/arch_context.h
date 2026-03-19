@@ -54,6 +54,18 @@ typedef struct arch_context {
     bool dead;
 } arch_context_t;
 
+#define X64_XSTATE_X87 (1ULL << 0)
+#define X64_XSTATE_SSE (1ULL << 1)
+#define X64_XSTATE_AVX (1ULL << 2)
+
+uint64_t x64_fpu_state_size(void);
+bool x64_fpu_xsave_enabled(void);
+void x64_fpu_configure_xsave(bool enabled, uint64_t xsave_mask,
+                             uint64_t state_bytes);
+void x64_fpu_state_init(fpu_context_t *fpu_ctx);
+void x64_fpu_save(fpu_context_t *fpu_ctx);
+void x64_fpu_restore(fpu_context_t *fpu_ctx);
+
 #define switch_mm(prev, next)                                                  \
     do {                                                                       \
         if ((prev)->mm != (next)->mm) {                                        \
@@ -65,6 +77,7 @@ typedef struct arch_context {
 #define switch_to(prev, next)                                                  \
     do {                                                                       \
         asm volatile(                                                          \
+            "pushq %%rax\n\t"                                                  \
             "pushq %%rbp\n\t"                                                  \
             "pushq %%rbx\n\t"                                                  \
             "pushq %%r12\n\t"                                                  \
@@ -84,6 +97,7 @@ typedef struct arch_context {
             "popq %%r12\n\t"                                                   \
             "popq %%rbx\n\t"                                                   \
             "popq %%rbp\n\t"                                                   \
+            "popq %%rax\n\t"                                                   \
             : "=m"(prev->arch_context->rsp), "=m"(prev->arch_context->rip)     \
             : "m"(next->arch_context->rsp), "m"(next->arch_context->rip),      \
               "D"(prev), "S"(next)                                             \

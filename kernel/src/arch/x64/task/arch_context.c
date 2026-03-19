@@ -4,6 +4,80 @@
 #include <task/task.h>
 #include <task/sched.h>
 
+#define X64_XSAVE_HDR_OFFSET 512
+
+typedef struct x64_xsave_header {
+    uint64_t xstate_bv;
+    uint64_t xcomp_bv;
+    uint64_t reserved[6];
+} x64_xsave_header_t;
+
+static uint64_t x64_fpu_state_bytes = sizeof(fpu_context_t);
+static uint64_t x64_fpu_xsave_mask = 0;
+static bool x64_fpu_use_xsave = false;
+
+uint64_t x64_fpu_state_size(void) { return x64_fpu_state_bytes; }
+
+bool x64_fpu_xsave_enabled(void) { return x64_fpu_use_xsave; }
+
+void x64_fpu_configure_xsave(bool enabled, uint64_t xsave_mask,
+                             uint64_t state_bytes) {
+    x64_fpu_use_xsave = enabled;
+    x64_fpu_xsave_mask = enabled ? xsave_mask : 0;
+    x64_fpu_state_bytes = state_bytes ? state_bytes : sizeof(fpu_context_t);
+}
+
+void x64_fpu_state_init(fpu_context_t *fpu_ctx) {
+    if (!fpu_ctx)
+        return;
+
+    memset(fpu_ctx, 0, x64_fpu_state_bytes);
+    fpu_ctx->mxscr = 0x1f80;
+    fpu_ctx->fcw = 0x037f;
+
+    if (x64_fpu_use_xsave && x64_fpu_state_bytes > X64_XSAVE_HDR_OFFSET) {
+        x64_xsave_header_t *hdr =
+            (x64_xsave_header_t *)((uint8_t *)fpu_ctx + X64_XSAVE_HDR_OFFSET);
+        hdr->xstate_bv = x64_fpu_xsave_mask;
+    }
+}
+
+void x64_fpu_save(fpu_context_t *fpu_ctx) {
+    if (!fpu_ctx)
+        return;
+
+    if (x64_fpu_use_xsave) {
+        uint32_t eax = (uint32_t)x64_fpu_xsave_mask;
+        uint32_t edx = (uint32_t)(x64_fpu_xsave_mask >> 32);
+
+        asm volatile("xsave (%0)"
+                     :
+                     : "r"(fpu_ctx), "a"(eax), "d"(edx)
+                     : "memory");
+        return;
+    }
+
+    asm volatile("fxsave (%0)" : : "r"(fpu_ctx) : "memory");
+}
+
+void x64_fpu_restore(fpu_context_t *fpu_ctx) {
+    if (!fpu_ctx)
+        return;
+
+    if (x64_fpu_use_xsave) {
+        uint32_t eax = (uint32_t)x64_fpu_xsave_mask;
+        uint32_t edx = (uint32_t)(x64_fpu_xsave_mask >> 32);
+
+        asm volatile("xrstor (%0)"
+                     :
+                     : "r"(fpu_ctx), "a"(eax), "d"(edx)
+                     : "memory");
+        return;
+    }
+
+    asm volatile("fxrstor (%0)" : : "r"(fpu_ctx) : "memory");
+}
+
 extern void kernel_thread_func();
 
 extern void ret_to_user();
@@ -14,10 +88,8 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     memset(context, 0, sizeof(arch_context_t));
 
     if (!context->fpu_ctx) {
-        context->fpu_ctx = alloc_frames_bytes(DEFAULT_PAGE_SIZE);
-        memset(context->fpu_ctx, 0, DEFAULT_PAGE_SIZE);
-        context->fpu_ctx->mxscr = 0x1f80;
-        context->fpu_ctx->fcw = 0x037f;
+        context->fpu_ctx = alloc_frames_bytes(x64_fpu_state_size());
+        x64_fpu_state_init(context->fpu_ctx);
     }
     context->ctx = (struct pt_regs *)stack - 1;
     memset(context->ctx, 0, sizeof(struct pt_regs));
@@ -60,13 +132,11 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
     dst->ctx->rax = 0;
 
-    dst->fpu_ctx = alloc_frames_bytes(DEFAULT_PAGE_SIZE);
-    memset(dst->fpu_ctx, 0, DEFAULT_PAGE_SIZE);
+    dst->fpu_ctx = alloc_frames_bytes(x64_fpu_state_size());
     if (src->fpu_ctx) {
-        memcpy(dst->fpu_ctx, src->fpu_ctx, DEFAULT_PAGE_SIZE);
+        memcpy(dst->fpu_ctx, src->fpu_ctx, x64_fpu_state_size());
     } else {
-        dst->fpu_ctx->mxscr = 0x1f80;
-        dst->fpu_ctx->fcw = 0x037f;
+        x64_fpu_state_init(dst->fpu_ctx);
     }
 
     dst->fsbase = src->fsbase;
@@ -76,7 +146,7 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
 
 void arch_context_free(arch_context_t *context) {
     if (context->fpu_ctx) {
-        free_frames_bytes(context->fpu_ctx, DEFAULT_PAGE_SIZE);
+        free_frames_bytes(context->fpu_ctx, x64_fpu_state_size());
     }
     context->dead = true;
 }
@@ -97,15 +167,11 @@ void __switch_to(task_t *prev, task_t *next) {
     prev->arch_context->fsbase = read_fsbase();
     // prev->arch_context->gsbase = read_gsbase();
 
-    if (prev->arch_context->fpu_ctx) {
-        asm volatile("fxsave (%0)" ::"r"(prev->arch_context->fpu_ctx));
-    }
+    x64_fpu_save(prev->arch_context->fpu_ctx);
 
     tss[current_cpu_id].rsp0 = next->kernel_stack;
 
-    if (next->arch_context->fpu_ctx) {
-        asm volatile("fxrstor (%0)" ::"r"(next->arch_context->fpu_ctx));
-    }
+    x64_fpu_restore(next->arch_context->fpu_ctx);
 
     write_fsbase(next->arch_context->fsbase);
     // write_gsbase(next->arch_context->gsbase);
@@ -130,9 +196,7 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
     context->fsbase = 0;
     context->gsbase = 0;
 
-    memset(context->fpu_ctx, 0, sizeof(fpu_context_t));
-    context->fpu_ctx->mxscr = 0x1f80;
-    context->fpu_ctx->fcw = 0x037f;
+    x64_fpu_state_init(context->fpu_ctx);
 }
 
 void arch_to_user_mode(arch_context_t *context, uint64_t entry,
@@ -145,10 +209,7 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry,
     write_fsbase(context->fsbase);
     // write_gsbase(context->gsbase);
 
-    const uint16_t default_fcw = 0b1100111111;
-    asm volatile("fldcw %0" : : "m"(default_fcw) : "memory");
-    const uint32_t default_mxcsr = 0b1111110000000;
-    asm volatile("ldmxcsr %0" : : "m"(default_mxcsr) : "memory");
+    x64_fpu_restore(context->fpu_ctx);
 
     asm volatile("movq %0, %%rsp\n\t"
                  "jmp *%1" ::"r"(context->ctx),

@@ -103,17 +103,6 @@ static bool x64_deliver_user_sigsegv(struct pt_regs *regs, uint64_t fault_addr,
     return true;
 }
 
-extern const uint64_t kallsyms_address[] __attribute__((weak));
-extern const uint64_t kallsyms_num __attribute__((weak));
-extern const uint64_t kallsyms_names_index[] __attribute__((weak));
-extern const char *kallsyms_names __attribute__((weak));
-
-static bool kallsyms_available() {
-    return (uintptr_t)kallsyms_address != 0 && (uintptr_t)&kallsyms_num != 0 &&
-           (uintptr_t)kallsyms_names_index != 0 &&
-           (uintptr_t)&kallsyms_names != 0;
-}
-
 void irq_init() {
     gdtidt_setup();
 
@@ -143,26 +132,8 @@ void irq_init() {
 }
 
 int lookup_kallsyms(uint64_t addr, int level) {
-    if (!kallsyms_available() || kallsyms_num == 0) {
-        return -1;
-    }
-
-    const char *str = kallsyms_names;
-
-    uint64_t index = 0;
-    for (index = 0; index < kallsyms_num - 1; ++index) {
-        if (addr > kallsyms_address[index] &&
-            addr <= kallsyms_address[index + 1])
-            break;
-    }
-
-    if (index < kallsyms_num) {
-        printk("function:%s() \t(+) %04d address:%#018lx\n",
-               &str[kallsyms_names_index[index]],
-               addr - kallsyms_address[index], addr);
-        return 0;
-    } else
-        return -1;
+    printk("function:<unknown>() \t(+) 0000 address:%#018lx\n", addr);
+    return 0;
 }
 
 #define TRACEBACK_MAX_DEPTH 32

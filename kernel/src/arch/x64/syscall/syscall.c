@@ -2,6 +2,7 @@
 #include <task/task.h>
 #include <libs/strerror.h>
 #include <arch/x64/syscall/nr.h>
+#include <arch/x64/task/arch_context.h>
 
 void syscall_init() {
     uint64_t efer;

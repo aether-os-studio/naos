@@ -287,7 +287,9 @@ uint64_t epoll_wait(vfs_node_t *epollFd, struct epoll_event *events,
         }
     }
 
-    if (!irq_state) {
+    if (irq_state) {
+        arch_enable_interrupt();
+    } else {
         arch_disable_interrupt();
     }
     return ready;
