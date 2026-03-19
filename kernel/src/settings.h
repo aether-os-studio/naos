@@ -15,5 +15,4 @@
 #define BUILD_VERSION "0.10.0"
 
 #define MAX_TASK_NUM 16384
-#define MAX_CONTINUE_NULL_TASKS 16
-#define SCHED_HZ 250
+#define SCHED_HZ 1000

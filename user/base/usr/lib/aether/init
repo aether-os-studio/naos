@@ -10,6 +10,7 @@ export LC_ALL=en_US.utf8
 export PATH="/bin:/usr/bin:/usr/sbin:/sbin:/bin:/usr/local/bin:/usr/local/sbin"
 export SDL_VIDEODRIVER=x11
 export SDL_AUDIODRIVER=dummy
+export LIBGL_ALWAYS_SOFTWARE=1
 
 mkdir -p /tmp/.X11-unix
 mkdir -p /tmp/.ICE-unix
