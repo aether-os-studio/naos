@@ -1233,7 +1233,7 @@ static int usb_probe_interface(usb_device_t *usbdev,
 int usb_init_driver(usb_device_t *usbdev) {
     for (int iface_n = 0; iface_n < usbdev->ifaces_num; iface_n++) {
         if (usb_probe_interface(usbdev, &usbdev->ifaces[iface_n]) < 0)
-            return -1;
+            continue;
     }
 
     return 0;
@@ -1674,7 +1674,7 @@ void usb_enumerate(usb_hub_t *hub) {
             return;
     }
 
-    usb_hotplug_start();
+    // usb_hotplug_start();
 
     spin_lock(&usb_hub_list_lock);
     if (!hub->registered) {

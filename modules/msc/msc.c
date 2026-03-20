@@ -394,6 +394,9 @@ static int msc_probe_lun(usb_msc_lun_t *lun) {
 }
 
 int usb_msc_setup(usb_device_t *usbdev, usb_device_interface_t *iface) {
+    if (iface->iface->bInterfaceProtocol != 0x50)
+        return -1;
+
     usb_msc_device_t *ctrl;
     usb_endpoint_descriptor_t *indesc;
     usb_endpoint_descriptor_t *outdesc;
