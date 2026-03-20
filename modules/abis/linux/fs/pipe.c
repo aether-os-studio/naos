@@ -64,7 +64,8 @@ ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     }
 }
 
-ssize_t pipe_write_inner(fd_t *fd, void *file, const void *addr, size_t size) {
+ssize_t pipe_write_inner(fd_t *fd, void *file, const void *addr, size_t size,
+                         bool atomic, bool allow_wait) {
     pipe_specific_t *spec = (pipe_specific_t *)file;
     pipe_info_t *pipe = spec->info;
 
@@ -76,17 +77,21 @@ ssize_t pipe_write_inner(fd_t *fd, void *file, const void *addr, size_t size) {
             return -EPIPE;
         }
 
-        if ((PIPE_BUFF - pipe->ptr) >= size) {
-            memcpy(&pipe->buf[pipe->ptr], addr, size);
-            pipe->ptr += size;
+        size_t available = PIPE_BUFF - pipe->ptr;
+        if (available > 0 && (!atomic || available >= size)) {
+            size_t to_write = atomic ? size : MIN(size, available);
+            memcpy(&pipe->buf[pipe->ptr], addr, to_write);
+            pipe->ptr += to_write;
             spin_unlock(&pipe->lock);
             if (pipe->read_node)
                 vfs_poll_notify(pipe->read_node, EPOLLIN);
-            return size;
+            return to_write;
         }
 
         spin_unlock(&pipe->lock);
 
+        if (!allow_wait)
+            return 0;
         if (fd_get_flags(fd) & O_NONBLOCK)
             return -EWOULDBLOCK;
 
@@ -101,37 +106,26 @@ ssize_t pipe_write_inner(fd_t *fd, void *file, const void *addr, size_t size) {
 }
 
 ssize_t pipefs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
-    int ret = 0;
+    (void)offset;
+
     void *file = fd->node->handle;
     const char *data = addr;
-    size_t chunks = size / PIPE_BUFF;
-    size_t remainder = size % PIPE_BUFF;
-    if (chunks)
-        for (size_t i = 0; i < chunks; i++) {
-            int cycle = 0;
-            while (cycle < PIPE_BUFF) {
-                ssize_t wrote = pipe_write_inner(
-                    fd, file, data + i * PIPE_BUFF + cycle, PIPE_BUFF - cycle);
-                if (wrote < 0)
-                    return wrote;
-                cycle += wrote;
-            }
-            ret += cycle;
-        }
+    size_t written = 0;
+    // POSIX only requires atomicity for short pipe writes.
+    bool atomic = size <= PIPE_ATOMIC_MAX;
 
-    if (remainder) {
-        size_t cycle = 0;
-        while (cycle < remainder) {
-            ssize_t wrote = pipe_write_inner(
-                fd, file, data + chunks * PIPE_BUFF + cycle, remainder - cycle);
-            if (wrote < 0)
-                return wrote;
-            cycle += wrote;
-        }
-        ret += cycle;
+    while (written < size) {
+        ssize_t ret = pipe_write_inner(fd, file, data + written, size - written,
+                                       atomic, written == 0);
+        if (ret < 0)
+            return written ? (ssize_t)written : ret;
+        if (ret == 0)
+            break;
+
+        written += ret;
     }
 
-    return ret;
+    return written;
 }
 
 int pipefs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {

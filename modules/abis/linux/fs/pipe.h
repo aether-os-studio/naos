@@ -2,7 +2,8 @@
 
 #include <libs/klibc.h>
 
-#define PIPE_BUFF (64 * 1024)
+#define PIPE_BUFF 8192
+#define PIPE_ATOMIC_MAX MIN(PIPE_BUFF, DEFAULT_PAGE_SIZE)
 
 #define MAX_PIPES 32
 
