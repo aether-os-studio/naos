@@ -1,3 +1,4 @@
+#include <libs/keys.h>
 #include <fs/vfs/vfs.h>
 #include <fs/dev.h>
 #include <fs/sys.h>
@@ -858,6 +859,10 @@ ssize_t nulldev_write(void *data, const void *buf, uint64_t offset,
     return len;
 }
 
+ssize_t nulldev_ioctl(void *data, ssize_t request, ssize_t arg, fd_t *fd) {
+    return 0;
+}
+
 static uint64_t simple_rand() {
     uint32_t seed = boot_get_boottime() * 100 + nano_time() / 10;
     seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
@@ -875,6 +880,10 @@ ssize_t zerodev_write(void *data, const void *buf, uint64_t offset,
     return 0;
 }
 
+ssize_t zerodev_ioctl(void *data, ssize_t request, ssize_t arg, fd_t *fd) {
+    return 0;
+}
+
 ssize_t urandom_read(void *data, void *buf, uint64_t offset, uint64_t len,
                      uint64_t flags) {
     for (uint64_t i = 0; i < len; i++) {
@@ -888,6 +897,10 @@ ssize_t urandom_read(void *data, void *buf, uint64_t offset, uint64_t len,
 
 ssize_t urandom_write(void *data, const void *buf, uint64_t offset,
                       uint64_t len, uint64_t flags) {
+    return 0;
+}
+
+ssize_t urandom_ioctl(void *data, ssize_t request, ssize_t arg, fd_t *fd) {
     return 0;
 }
 
@@ -917,12 +930,12 @@ void devfs_nodes_init() {
     vfs_mkdir("/dev/bus");
     vfs_mkdir("/dev/bus/usb");
 
-    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "null", 0, NULL, NULL, NULL,
-                   NULL, nulldev_read, nulldev_write, NULL);
+    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "null", 0, NULL, NULL,
+                   nulldev_ioctl, NULL, nulldev_read, nulldev_write, NULL);
     device_install(DEV_CHAR, DEV_SYSDEV, NULL, "zero", 0, NULL, NULL, NULL,
-                   NULL, zerodev_read, zerodev_write, NULL);
+                   zerodev_ioctl, zerodev_read, zerodev_write, NULL);
     device_install(DEV_CHAR, DEV_SYSDEV, NULL, "urandom", 0, NULL, NULL, NULL,
-                   NULL, urandom_read, urandom_write, NULL);
+                   urandom_ioctl, urandom_read, urandom_write, NULL);
 
     setup_console_symlinks();
 
@@ -945,7 +958,7 @@ void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code,
     event.value = value;
 
     bool queued = input_event_queue_push(item, &event);
-    if (queued && item->devnode) {
+    if (type == EV_SYN && code == SYN_REPORT && queued && item->devnode) {
         vfs_poll_notify(item->devnode, EPOLLIN);
     }
 }

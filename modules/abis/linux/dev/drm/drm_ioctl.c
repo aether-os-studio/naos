@@ -3785,7 +3785,7 @@ ssize_t drm_ioctl_wait_vblank(drm_device_t *dev, void *arg) {
 
         if (next_vblank_ns > now) {
             uint64_t delta = next_vblank_ns - now;
-            wait_ns = (int64_t)MIN(delta, 100000000LL);
+            wait_ns = (int64_t)MIN(delta, 10000000LL);
         }
 
         int reason =

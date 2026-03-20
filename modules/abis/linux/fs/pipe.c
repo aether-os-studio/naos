@@ -1,5 +1,6 @@
 #include <arch/arch.h>
 #include <task/task.h>
+#include <task/signal.h>
 #include <fs/fs_syscall.h>
 #include <fs/pipe.h>
 #include <fs/dev.h>
@@ -74,6 +75,7 @@ ssize_t pipe_write_inner(fd_t *fd, void *file, const void *addr, size_t size,
 
         if (pipe->read_fds == 0) {
             spin_unlock(&pipe->lock);
+            task_commit_signal(current_task, SIGPIPE, NULL);
             return -EPIPE;
         }
 
@@ -166,8 +168,12 @@ bool pipefs_close(vfs_node_t *node) {
 
     if (pipe->read_node)
         vfs_poll_notify(pipe->read_node, EPOLLHUP);
-    if (pipe->write_node)
-        vfs_poll_notify(pipe->write_node, EPOLLHUP);
+    if (pipe->write_node) {
+        uint32_t write_events = EPOLLHUP;
+        if (pipe->read_fds == 0)
+            write_events |= EPOLLERR;
+        vfs_poll_notify(pipe->write_node, write_events);
+    }
 
     if (pipe->write_fds == 0 && pipe->read_fds == 0) {
         spin_unlock(&pipe->lock);
@@ -198,8 +204,8 @@ int pipefs_poll(vfs_node_t *node, size_t events) {
     }
 
     if (spec->write && !pipe->read_fds)
-        out |= EPOLLHUP;
-    if (events & EPOLLOUT) {
+        out |= EPOLLERR | EPOLLHUP;
+    if ((events & EPOLLOUT) && pipe->read_fds > 0) {
         if (pipe->ptr < PIPE_BUFF)
             out |= EPOLLOUT;
     }

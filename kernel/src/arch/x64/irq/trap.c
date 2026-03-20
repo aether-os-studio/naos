@@ -114,12 +114,12 @@ void irq_init() {
     set_system_trap_gate(5, 0, bounds);
     set_trap_gate(6, 0, undefined_opcode);
     set_trap_gate(7, 0, dev_not_avaliable);
-    set_trap_gate(8, 1, double_fault);
+    set_intr_gate(8, 1, double_fault);
     set_trap_gate(9, 0, coprocessor_segment_overrun);
     set_trap_gate(10, 0, invalid_TSS);
     set_trap_gate(11, 0, segment_not_exists);
     set_trap_gate(12, 0, stack_segment_fault);
-    set_trap_gate(13, 0, general_protection);
+    set_intr_gate(13, 0, general_protection);
     set_intr_gate(14, 0, page_fault);
     // 中断号15由Intel保留，不能使用
     set_trap_gate(16, 0, x87_FPU_error);

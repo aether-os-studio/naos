@@ -330,18 +330,6 @@ static size_t unix_socket_recv_readv_locked(socket_t *sock,
     return consumed;
 }
 
-static inline bool socket_has_pending_control(socket_t *sock) {
-    if (!sock)
-        return false;
-    if (sock->has_pending_cred)
-        return true;
-    for (int i = 0; i < MAX_PENDING_FILES_COUNT; i++) {
-        if (sock->pending_files[i])
-            return true;
-    }
-    return false;
-}
-
 static int socket_wait_node(vfs_node_t *node, uint32_t events,
                             const char *reason) {
     if (!node || !current_task)
@@ -1584,12 +1572,11 @@ int socket_poll(vfs_node_t *node, size_t events) {
         mutex_unlock(&sock->lock);
     } else if (unix_socket_is_dgram_type(sock->type)) {
         mutex_lock(&sock->lock);
-        bool has_pending_ctrl = socket_has_pending_control(sock);
         if ((events & EPOLLOUT) && !sock->closed && !sock->shut_wr &&
             sock->recv_pos < sock->recv_size)
             revents |= EPOLLOUT;
 
-        if ((events & EPOLLIN) && (sock->recv_pos > 0 || has_pending_ctrl))
+        if ((events & EPOLLIN) && sock->recv_pos > 0)
             revents |= EPOLLIN;
         if (sock->closed || sock->shut_rd)
             revents |= EPOLLERR | EPOLLHUP;
@@ -1597,7 +1584,6 @@ int socket_poll(vfs_node_t *node, size_t events) {
         mutex_unlock(&sock->lock);
     } else {
         mutex_lock(&sock->lock);
-        bool has_pending_ctrl = socket_has_pending_control(sock);
         socket_t *peer = sock->peer;
         if (peer) {
             if (peer->closed)
@@ -1611,9 +1597,8 @@ int socket_poll(vfs_node_t *node, size_t events) {
                 revents |= EPOLLOUT;
 
             // 可读：自己有数据
-            if ((events & EPOLLIN) &&
-                (sock->recv_pos > 0 || sock->shut_rd || peer->shut_wr ||
-                 peer->closed || has_pending_ctrl))
+            if ((events & EPOLLIN) && (sock->recv_pos > 0 || sock->shut_rd ||
+                                       peer->shut_wr || peer->closed))
                 revents |= EPOLLIN;
         } else {
             if ((events & EPOLLIN) && sock->established)

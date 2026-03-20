@@ -105,10 +105,26 @@ static ssize_t eventfd_write(fd_t *fd, const void *buf, size_t offset,
     uint64_t value;
     memcpy(&value, buf, sizeof(uint64_t));
 
+    if (value == UINT64_MAX)
+        return -EINVAL;
+
     while (true) {
         uint64_t old_count = __atomic_load_n(&efd->count, __ATOMIC_ACQUIRE);
-        if (UINT64_MAX - old_count < value)
-            return -EINVAL;
+        if (old_count > UINT64_MAX - 1 - value) {
+            if (fd_get_flags(fd) & O_NONBLOCK)
+                return -EAGAIN;
+
+            vfs_poll_wait_t wait;
+            vfs_poll_wait_init(&wait, current_task,
+                               EPOLLOUT | EPOLLERR | EPOLLHUP);
+            vfs_poll_wait_arm(fd->node, &wait);
+            int reason =
+                vfs_poll_wait_sleep(fd->node, &wait, -1, "eventfd_write");
+            vfs_poll_wait_disarm(&wait);
+            if (reason != EOK)
+                return -EINTR;
+            continue;
+        }
 
         uint64_t new_count = old_count + value;
         uint64_t expected = old_count;
@@ -142,7 +158,7 @@ static int eventfd_poll(vfs_node_t *node, size_t events) {
     if (events & EPOLLIN && count > 0)
         revents |= EPOLLIN;
 
-    if (events & EPOLLOUT && count < UINT64_MAX)
+    if (events & EPOLLOUT && count < UINT64_MAX - 1)
         revents |= EPOLLOUT;
 
     return revents;

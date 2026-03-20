@@ -553,7 +553,10 @@ int vfs_poll_wait_sleep(vfs_node_t *node, vfs_poll_wait_t *wait,
     while (true) {
         if ((wait->revents & want))
             return EOK;
-        uint32_t revents = (vfs_poll(node, want) & want);
+        int polled = vfs_poll(node, want);
+        if (polled < 0)
+            return polled;
+        uint32_t revents = ((uint32_t)polled & want);
         if (revents) {
             wait->revents |= revents;
             return EOK;

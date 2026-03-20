@@ -10,6 +10,8 @@
  * SC - System Control
  */
 
+#include <libs/klibc.h>
+
 #define KEY_RESERVED 0
 #define KEY_ESC 1
 #define KEY_1 2

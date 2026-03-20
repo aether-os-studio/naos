@@ -3,6 +3,7 @@
 #include <net/real_socket.h>
 #include <net/socket.h>
 #include <task/task.h>
+#include <fs/fs_syscall.h>
 #include <fs/vfs/vfs.h>
 #include <drivers/kernel_logger.h>
 #include <net/netlink.h>
@@ -495,12 +496,29 @@ uint64_t sys_socket(int domain, int type, int protocol) {
 }
 
 uint64_t sys_socketpair(int domain, int type, int protocol, int *sv) {
+    if (!sv || check_user_overflow((uint64_t)sv, sizeof(int) * 2)) {
+        return -EFAULT;
+    }
+
+    int ksv[2] = {-1, -1};
     int fd = -EAFNOSUPPORT;
     for (int i = 0; i < socket_num; i++) {
         if (real_sockets[i]->domain == domain) {
-            fd = real_sockets[i]->socketpair(domain, type, protocol, sv);
+            fd = real_sockets[i]->socketpair(domain, type, protocol, ksv);
             break;
         }
+    }
+
+    if (fd < 0) {
+        return fd;
+    }
+
+    if (copy_to_user(sv, ksv, sizeof(ksv))) {
+        if (ksv[0] >= 0)
+            sys_close((uint64_t)ksv[0]);
+        if (ksv[1] >= 0)
+            sys_close((uint64_t)ksv[1]);
+        return -EFAULT;
     }
 
     return fd;
