@@ -381,8 +381,6 @@ uint64_t find_unmapped_area(vma_manager_t *mgr, uint64_t hint, uint64_t len) {
     len = PADDING_UP(len, DEFAULT_PAGE_SIZE);
     if (len == 0)
         return (uint64_t)-ENOMEM;
-    if (USER_MMAP_END <= USER_MMAP_START)
-        return (uint64_t)-ENOMEM;
     if (len > USER_MMAP_END - USER_MMAP_START)
         return (uint64_t)-ENOMEM;
 
@@ -778,6 +776,10 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         return ret;
     }
 
+    spin_lock(&mgr->lock);
+    vma_try_merge_around(mgr, &vma);
+    spin_unlock(&mgr->lock);
+
     return start_addr;
 
 out_map_fd_nomem:
@@ -897,6 +899,21 @@ uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
     map_change_attribute_range(mm_pgdir(mm), addr, len,
                                vm_flags_to_pt_flags(new_vm_access));
     spin_unlock(&mm->lock);
+
+    cursor = addr;
+    while (cursor < end) {
+        vma_t *vma = vma_find(mgr, cursor);
+        if (!vma) {
+            spin_unlock(&mgr->lock);
+            return (uint64_t)-ENOMEM;
+        }
+
+        uint64_t next_cursor = vma->vm_end;
+        vma_try_merge_around(mgr, &vma);
+        if (vma->vm_end > next_cursor)
+            next_cursor = vma->vm_end;
+        cursor = next_cursor;
+    }
 
     spin_unlock(&mgr->lock);
     return 0;
@@ -1162,6 +1179,7 @@ static uint64_t mremap_move_locked(vma_manager_t *mgr, vma_t *old_vma,
             return ret;
     }
 
+    vma_try_merge_around(mgr, &new_vma);
     return target;
 }
 

@@ -8,6 +8,46 @@ static inline unsigned long vma_len(const vma_t *vma) {
     return vma->vm_end - vma->vm_start;
 }
 
+static vma_t *vma_prev(vma_manager_t *mgr, const vma_t *target) {
+    if (!mgr || !target)
+        return NULL;
+
+    rb_node_t *node = mgr->vma_tree.rb_node;
+    vma_t *best = NULL;
+
+    while (node) {
+        vma_t *vma = rb_entry(node, vma_t, vm_rb);
+        if (target->vm_start <= vma->vm_start) {
+            node = node->rb_left;
+        } else {
+            best = vma;
+            node = node->rb_right;
+        }
+    }
+
+    return best;
+}
+
+static vma_t *vma_next(vma_manager_t *mgr, const vma_t *target) {
+    if (!mgr || !target)
+        return NULL;
+
+    rb_node_t *node = mgr->vma_tree.rb_node;
+    vma_t *best = NULL;
+
+    while (node) {
+        vma_t *vma = rb_entry(node, vma_t, vm_rb);
+        if (target->vm_start < vma->vm_start) {
+            best = vma;
+            node = node->rb_left;
+        } else {
+            node = node->rb_right;
+        }
+    }
+
+    return best;
+}
+
 static bool vma_is_linked(vma_manager_t *mgr, const vma_t *target) {
     if (!mgr || !target)
         return false;
@@ -252,6 +292,29 @@ int vma_merge(vma_manager_t *mgr, vma_t *vma1, vma_t *vma2) {
 
 int vma_merge_ex(vma_manager_t *mgr, vma_t *vma1, vma_t *vma2) {
     return vma_merge(mgr, vma1, vma2);
+}
+
+void vma_try_merge_around(vma_manager_t *mgr, vma_t **vma_ptr) {
+    if (!mgr || !vma_ptr || !*vma_ptr)
+        return;
+
+    while (true) {
+        vma_t *vma = *vma_ptr;
+        vma_t *prev = vma_prev(mgr, vma);
+        if (prev && prev->vm_end == vma->vm_start &&
+            vma_merge(mgr, prev, vma) == 0) {
+            *vma_ptr = prev;
+            continue;
+        }
+
+        vma_t *next = vma_next(mgr, vma);
+        if (next && vma->vm_end == next->vm_start &&
+            vma_merge(mgr, vma, next) == 0) {
+            continue;
+        }
+
+        break;
+    }
 }
 
 int vma_unmap_range(vma_manager_t *mgr, uintptr_t start, uintptr_t end) {
