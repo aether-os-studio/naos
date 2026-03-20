@@ -2694,8 +2694,11 @@ ssize_t drm_ioctl_mode_setcrtc(drm_device_t *dev, void *arg, fd_t *fd) {
     crtc->fb_id = crtc_cmd->fb_id;
     crtc->x = crtc_cmd->x;
     crtc->y = crtc_cmd->y;
+    crtc->mode_valid = crtc_cmd->mode_valid;
     if (crtc_cmd->mode_valid) {
         memcpy(&crtc->mode, &crtc_cmd->mode, sizeof(struct drm_mode_modeinfo));
+        crtc->w = crtc_cmd->mode.hdisplay;
+        crtc->h = crtc_cmd->mode.vdisplay;
     }
 
     // Call driver to set CRTC if supported

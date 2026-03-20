@@ -4,14 +4,6 @@
 #include <task/task.h>
 #include <task/sched.h>
 
-#define X64_XSAVE_HDR_OFFSET 512
-
-typedef struct x64_xsave_header {
-    uint64_t xstate_bv;
-    uint64_t xcomp_bv;
-    uint64_t reserved[6];
-} x64_xsave_header_t;
-
 static uint64_t x64_fpu_state_bytes = sizeof(fpu_context_t);
 static uint64_t x64_fpu_xsave_mask = 0;
 static bool x64_fpu_use_xsave = false;
@@ -32,8 +24,8 @@ void x64_fpu_state_init(fpu_context_t *fpu_ctx) {
         return;
 
     memset(fpu_ctx, 0, x64_fpu_state_bytes);
-    fpu_ctx->mxscr = 0x1f80;
-    fpu_ctx->fcw = 0x037f;
+    fpu_ctx->mxcsr = 0x1f80;
+    fpu_ctx->cwd = 0x037f;
 
     if (x64_fpu_use_xsave && x64_fpu_state_bytes > X64_XSAVE_HDR_OFFSET) {
         x64_xsave_header_t *hdr =

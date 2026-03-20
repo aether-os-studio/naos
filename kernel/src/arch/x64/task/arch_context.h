@@ -8,19 +8,49 @@
 struct task;
 typedef struct task task_t;
 
+typedef struct x64_fpx_sw_bytes {
+    uint32_t magic1;
+    uint32_t extended_size;
+    uint64_t xstate_bv;
+    uint32_t xstate_size;
+    uint32_t reserved1[7];
+} x64_fpx_sw_bytes_t;
+
 typedef struct fpu_context {
-    uint16_t fcw;
-    uint16_t fsw;
-    uint16_t ftw;
+    uint16_t cwd;
+    uint16_t swd;
+    uint16_t twd;
     uint16_t fop;
-    uint64_t word2;
-    uint64_t word3;
-    uint32_t mxscr;
-    uint32_t mxcsr_mask;
-    uint64_t mm[16];
-    uint64_t xmm[32];
-    uint64_t rest[12];
+    uint64_t rip;
+    uint64_t rdp;
+    uint32_t mxcsr;
+    uint32_t mxcr_mask;
+    uint32_t st_space[32];
+    uint32_t xmm_space[64];
+    uint32_t reserved2[12];
+    union {
+        uint32_t reserved3[12];
+        x64_fpx_sw_bytes_t sw_reserved;
+    };
 } fpu_context_t;
+
+typedef struct x64_xsave_header {
+    uint64_t xstate_bv;
+    uint64_t reserved1[2];
+    uint64_t reserved2[5];
+} x64_xsave_header_t;
+
+#define X64_UC_FP_XSTATE 0x1
+#define X64_FP_XSTATE_MAGIC1 0x46505853U
+#define X64_FP_XSTATE_MAGIC2 0x46505845U
+#define X64_FP_XSTATE_MAGIC2_SIZE sizeof(uint32_t)
+#define X64_FPU_FRAME_ALIGN 64
+#define X64_XSAVE_HDR_OFFSET 512
+
+_Static_assert(sizeof(fpu_context_t) == 512,
+               "x86_64 fpu_context_t must match Linux _fpstate size");
+_Static_assert(offsetof(fpu_context_t, sw_reserved) == 464,
+               "x86_64 sw_reserved layout must match Linux _fpstate");
 
 typedef uint64_t gregset_t[23];
 
@@ -40,7 +70,7 @@ typedef struct __ucontext {
     stack_t uc_stack;
     mcontext_t uc_mcontext;
     user_sigset_t uc_sigmask;
-    uint64_t __fpregs_mem[64];
+    fpu_context_t __fpregs_mem;
     uint64_t __ssp[4];
 } ucontext_t;
 

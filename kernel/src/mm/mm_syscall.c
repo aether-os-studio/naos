@@ -524,6 +524,8 @@ static bool should_eager_map_file(vma_t *vma, uint64_t flags) {
         return false;
     if (!vm_flags_has_access(vma->vm_flags))
         return false;
+    if ((flags & MAP_FIXED) && (vma->vm_flags & VMA_WRITE))
+        return true;
     if (flags & (MAP_POPULATE | MAP_LOCKED))
         return true;
     if (vma->vm_flags & VMA_SHARED)

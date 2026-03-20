@@ -1,5 +1,6 @@
 #include <fs/vfs/vfs.h>
 #include <mm/mm.h>
+#include <mm/mm_syscall.h>
 #include <mm/shm.h>
 #include <task/task.h>
 
@@ -179,19 +180,15 @@ static void shm_try_free_locked(shm_t *shm) {
     free(shm);
 }
 
-/* 在用户 mmap 区间找空闲区域 */
 static void *find_free_region(vma_manager_t *mgr, size_t size) {
-    uint64_t addr = USER_MMAP_START;
-    while (addr + size <= USER_MMAP_END) {
-        vma_t *conflict = vma_find_intersection(mgr, addr, addr + size);
-        if (!conflict)
-            return (void *)addr;
-        addr = PAGE_ALIGN_UP(conflict->vm_end);
-    }
-    return NULL;
-}
+    uint64_t len = PAGE_ALIGN_UP(size);
+    uint64_t addr = find_unmapped_area(mgr, 0, len);
 
-/* ── 进程级挂载记录操作 ── */
+    if ((int64_t)addr < 0)
+        return NULL;
+
+    return (void *)addr;
+}
 
 static shm_mapping_t *mapping_add(task_t *task, shm_t *shm, uint64_t uaddr) {
     shm_mapping_t *m = malloc(sizeof(shm_mapping_t));

@@ -14,6 +14,38 @@ static bool plainfb_handle_to_index(uint32_t handle, uint32_t *idx) {
     return true;
 }
 
+static drm_encoder_t *
+plainfb_encoder_for_connector(plainfb_device_t *gpu_dev,
+                              drm_connector_t *connector) {
+    if (!gpu_dev || !connector || connector->encoder_id == 0) {
+        return NULL;
+    }
+
+    for (uint32_t i = 0; i < 16; i++) {
+        if (gpu_dev->encoders[i] &&
+            gpu_dev->encoders[i]->id == connector->encoder_id) {
+            return gpu_dev->encoders[i];
+        }
+    }
+
+    return NULL;
+}
+
+static void plainfb_bind_connector_crtc(plainfb_device_t *gpu_dev,
+                                        drm_connector_t *connector,
+                                        uint32_t crtc_id) {
+    if (!gpu_dev || !connector) {
+        return;
+    }
+
+    connector->crtc_id = crtc_id;
+
+    drm_encoder_t *encoder = plainfb_encoder_for_connector(gpu_dev, connector);
+    if (encoder) {
+        encoder->crtc_id = crtc_id;
+    }
+}
+
 static int plainfb_present_dumbbuffer(plainfb_device_t *gpu_dev, uint32_t idx,
                                       uint32_t x, uint32_t y, uint32_t width,
                                       uint32_t height) {
@@ -544,7 +576,38 @@ int plainfb_atomic_commit(drm_device_t *drm_dev, struct drm_mode_atomic *atomic,
                 break;
 
             case DRM_CRTC_MODE_ID_PROP_ID:
-                // plainfb has no mode blob store, so we validate presence only.
+                if (crtc && !test_only) {
+                    if (value == 0) {
+                        crtc->mode_valid = 0;
+                        memset(&crtc->mode, 0, sizeof(crtc->mode));
+                    } else {
+                        struct drm_mode_modeinfo mode;
+                        memset(&mode, 0, sizeof(mode));
+
+                        int ret = drm_property_get_modeinfo_from_blob(
+                            drm_dev, (uint32_t)value, &mode);
+                        if (ret != 0 || mode.hdisplay == 0 ||
+                            mode.vdisplay == 0) {
+                            if (connector) {
+                                drm_connector_free(&gpu_dev->resource_mgr,
+                                                   connector->id);
+                            }
+                            if (crtc) {
+                                drm_crtc_free(&gpu_dev->resource_mgr, crtc->id);
+                            }
+                            if (plane) {
+                                drm_plane_free(&gpu_dev->resource_mgr,
+                                               plane->id);
+                            }
+                            return ret != 0 ? ret : -EINVAL;
+                        }
+
+                        crtc->mode = mode;
+                        crtc->mode_valid = 1;
+                        crtc->w = mode.hdisplay;
+                        crtc->h = mode.vdisplay;
+                    }
+                }
                 break;
 
             case DRM_CONNECTOR_DPMS_PROP_ID:
@@ -565,7 +628,8 @@ int plainfb_atomic_commit(drm_device_t *drm_dev, struct drm_mode_atomic *atomic,
 
             case DRM_CONNECTOR_CRTC_ID_PROP_ID:
                 if (connector && !test_only) {
-                    connector->crtc_id = (uint32_t)value;
+                    plainfb_bind_connector_crtc(gpu_dev, connector,
+                                                (uint32_t)value);
                 }
                 break;
 
@@ -899,6 +963,11 @@ void drm_plainfb_init() {
     gpu_device->crtcs[i]->y = 0;
     gpu_device->crtcs[i]->w = fb->width;
     gpu_device->crtcs[i]->h = fb->height;
+    if (gpu_device->connectors[i] && gpu_device->connectors[i]->modes &&
+        gpu_device->connectors[i]->count_modes > 0) {
+        gpu_device->crtcs[i]->mode = gpu_device->connectors[i]->modes[0];
+        gpu_device->crtcs[i]->mode_valid = 1;
+    }
 
     // Create encoder
     gpu_device->encoders[i] = drm_encoder_alloc(
@@ -907,8 +976,10 @@ void drm_plainfb_init() {
     if (gpu_device->encoders[i] && gpu_device->connectors[i] &&
         gpu_device->crtcs[i]) {
         gpu_device->encoders[i]->possible_crtcs = 1 << i;
+        gpu_device->encoders[i]->crtc_id = gpu_device->crtcs[i]->id;
         gpu_device->connectors[i]->encoder_id = gpu_device->encoders[i]->id;
-        gpu_device->connectors[i]->crtc_id = gpu_device->crtcs[i]->id;
+        plainfb_bind_connector_crtc(gpu_device, gpu_device->connectors[i],
+                                    gpu_device->crtcs[i]->id);
     }
 
     memset(gpu_device->dumbbuffers, 0, sizeof(gpu_device->dumbbuffers));

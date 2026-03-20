@@ -710,7 +710,21 @@ drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
         if (encoder && dev->resource_mgr.connectors[0] &&
             dev->resource_mgr.crtcs[0]) {
             encoder->possible_crtcs = 1;
+            encoder->crtc_id = dev->resource_mgr.crtcs[0]->id;
             dev->resource_mgr.connectors[0]->encoder_id = encoder->id;
+        }
+    }
+
+    if (dev->resource_mgr.connectors[0] && dev->resource_mgr.crtcs[0]) {
+        drm_connector_t *connector = dev->resource_mgr.connectors[0];
+        drm_crtc_t *crtc = dev->resource_mgr.crtcs[0];
+
+        connector->crtc_id = crtc->id;
+        if (!crtc->mode_valid && connector->modes && connector->count_modes) {
+            crtc->mode = connector->modes[0];
+            crtc->mode_valid = 1;
+            crtc->w = connector->modes[0].hdisplay;
+            crtc->h = connector->modes[0].vdisplay;
         }
     }
 
