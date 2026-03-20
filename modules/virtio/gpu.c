@@ -3178,29 +3178,9 @@ static int virtio_gpu_set_plane(drm_device_t *drm_dev,
 
 static int virtio_gpu_set_cursor(drm_device_t *drm_dev,
                                  struct drm_mode_cursor *cursor) {
-    virtio_gpu_device_t *gpu_dev = drm_dev->data;
-    if (!gpu_dev || !cursor) {
-        return -EINVAL;
-    }
-
-    if (cursor->handle == 0) {
-        return virtio_gpu_update_cursor(gpu_dev, 0, cursor->x, cursor->y, 0, 0);
-    }
-
-    uint32_t idx = 0;
-    if (!virtio_gpu_handle_to_index(cursor->handle, &idx) ||
-        gpu_dev->framebuffers[idx].resource_id == 0) {
-        return -EINVAL;
-    }
-
-    uint32_t resource_id = gpu_dev->framebuffers[idx].resource_id;
-    int ret = virtio_gpu_update_cursor(gpu_dev, resource_id, cursor->x,
-                                       cursor->y, 0, 0);
-    if (ret != 0) {
-        return -EIO;
-    }
-
-    return virtio_gpu_move_cursor(gpu_dev, resource_id, cursor->x, cursor->y);
+    (void)drm_dev;
+    (void)cursor;
+    return -ENOTSUP;
 }
 
 static int virtio_gpu_set_crtc(drm_device_t *drm_dev,

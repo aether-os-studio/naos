@@ -25,7 +25,7 @@ sudo cp -r $SCRIPTPATH/base/etc/resolv.conf $ROOTFS_SYSROOT/etc/
 
 sudo chroot "$ROOTFS_SYSROOT/" /bin/bash --login -c "apk add musl-dev gcompat gzip xz make file tar pciutils tzdata nano vim lua5.1 gcc binutils fastfetch libdrm-dev libdrm-tests bind-tools curl evtest \
 seatd seatd-launch dbus eudev \
-weston weston-backend-drm weston-shell-desktop weston-xwayland xwayland xrandr ttf-dejavu \
+weston weston-backend-drm weston-shell-desktop weston-xwayland xwayland xrandr ttf-dejavu adwaita-icon-theme \
 weston-terminal \
 mesa mesa-gl mesa-egl mesa-gles mesa-gbm mesa-utils mesa-demos mesa-vulkan-swrast mesa-dri-gallium \
 "

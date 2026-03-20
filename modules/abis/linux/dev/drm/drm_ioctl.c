@@ -2112,10 +2112,10 @@ ssize_t drm_ioctl_get_cap(drm_device_t *dev, void *arg) {
         cap->value = 1;
         return 0;
     case DRM_CAP_CURSOR_WIDTH:
-        cap->value = 32;
+        cap->value = 24;
         return 0;
     case DRM_CAP_CURSOR_HEIGHT:
-        cap->value = 32;
+        cap->value = 24;
         return 0;
     case DRM_CAP_PRIME:
         cap->value = DRM_PRIME_CAP_EXPORT | DRM_PRIME_CAP_IMPORT;
@@ -3835,13 +3835,19 @@ ssize_t drm_ioctl_page_flip(drm_device_t *dev, void *arg, fd_t *fd) {
  */
 ssize_t drm_ioctl_cursor(drm_device_t *dev, void *arg) {
     struct drm_mode_cursor *cmd = (struct drm_mode_cursor *)arg;
-    if (cmd->flags & DRM_MODE_CURSOR_BO) {
-        return 0;
-    } else if (cmd->flags & DRM_MODE_CURSOR_MOVE) {
-        return 0;
+    if (!dev || !cmd) {
+        return -EINVAL;
     }
 
-    return 0;
+    if (cmd->flags & ~(DRM_MODE_CURSOR_BO | DRM_MODE_CURSOR_MOVE)) {
+        return -EINVAL;
+    }
+
+    if (!dev->op || !dev->op->set_cursor) {
+        return -ENOTSUP;
+    }
+
+    return dev->op->set_cursor(dev, cmd);
 }
 
 /**
@@ -3849,13 +3855,29 @@ ssize_t drm_ioctl_cursor(drm_device_t *dev, void *arg) {
  */
 ssize_t drm_ioctl_cursor2(drm_device_t *dev, void *arg) {
     struct drm_mode_cursor2 *cmd = (struct drm_mode_cursor2 *)arg;
-    if (cmd->flags & DRM_MODE_CURSOR_BO) {
-        return 0;
-    } else if (cmd->flags & DRM_MODE_CURSOR_MOVE) {
-        return 0;
+    if (!dev || !cmd) {
+        return -EINVAL;
     }
 
-    return 0;
+    if (cmd->flags & ~(DRM_MODE_CURSOR_BO | DRM_MODE_CURSOR_MOVE)) {
+        return -EINVAL;
+    }
+
+    if (!dev->op || !dev->op->set_cursor) {
+        return -ENOTSUP;
+    }
+
+    struct drm_mode_cursor legacy = {
+        .flags = cmd->flags,
+        .crtc_id = cmd->crtc_id,
+        .x = cmd->x - cmd->hot_x,
+        .y = cmd->y - cmd->hot_y,
+        .width = cmd->width,
+        .height = cmd->height,
+        .handle = cmd->handle,
+    };
+
+    return dev->op->set_cursor(dev, &legacy);
 }
 
 /**

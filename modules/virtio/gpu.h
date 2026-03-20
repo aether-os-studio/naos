@@ -328,6 +328,9 @@ typedef struct virtio_gpu_device {
     uint32_t num_displays;
     virtio_gpu_display_one_t displays[16];
     uint32_t scanout_ids[16];
+    uint32_t current_cursor_resource_id;
+    int32_t current_cursor_x;
+    int32_t current_cursor_y;
 
     // Resource management
     uint32_t next_resource_id;
