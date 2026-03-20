@@ -12,7 +12,7 @@ This project is licensed under GPLv3.
 * Support for many modern hardware devices such as USB XHCI controllers.
 * Networking support.
 * POSIX and Linux API compatibility.
-* Support for Linux-style special files (epoll, signalfd, ...) and pseudo file systems (`/sys`, `/proc`, ...).
+* Support for Linux-style special files (epoll, signalfd, timerfd, ...) and pseudo file systems (`/sys`, `/proc`, ...).
 
 ## Supported Software
 
@@ -24,7 +24,7 @@ Programs supported on aether-os include [Weston](https://gitlab.freedesktop.org/
 **Graphics** virtio GPU, nvidia-open\
 **Input** USB human interface devices, PS/2 keyboard and mouse\
 **Storage** USB mass storage devices, NVMe, AHCI, virtio block\
-**Network** E1000, virtio network\
+**Network** E1000, virtio network
 
 ## Running naos
 

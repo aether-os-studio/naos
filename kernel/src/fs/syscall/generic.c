@@ -1116,12 +1116,11 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
         else
             file_flags &= ~O_NONBLOCK;
         fd_set_flags(f, file_flags);
+        ret = 0;
         if (f->node->type & file_socket) {
             ret = vfs_ioctl(f, cmd, arg);
             if (ret == -ENOTTY || ret == -ENOSYS)
                 ret = 0;
-        } else {
-            ret = 0;
         }
         break;
     case FIOCLEX:

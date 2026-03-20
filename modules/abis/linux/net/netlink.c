@@ -1168,7 +1168,18 @@ static ssize_t netlink_write_op(fd_t *fd, const void *buf, size_t offset,
     return -EDESTADDRREQ;
 }
 
-int netlink_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) { return -EINVAL; }
+int netlink_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
+    socket_handle_t *handle = fd->node->handle;
+    struct netlink_sock *nl_sk = handle->sock;
+
+    switch (cmd) {
+    case FIONBIO:
+        return 0;
+
+    default:
+        return -ENOTTY;
+    }
+}
 
 void netlink_free_handle(vfs_node_t *node) {
     if (node == NULL) {
