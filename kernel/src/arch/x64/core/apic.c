@@ -6,6 +6,9 @@
 #include <task/task.h>
 #include <uacpi/acpi.h>
 #include <uacpi/tables.h>
+#include <libs/klibc.h>
+#include <arch/x64/irq/irq.h>
+#include <libs/llist_queue.h>
 
 bool x2apic_mode = false;
 uint64_t lapic_address;
@@ -63,6 +66,7 @@ uint64_t lapic_id() {
 }
 
 extern uint32_t cpuid_to_lapicid[MAX_CPU_NUM];
+spinlock_t ipi_send_lock = SPIN_INIT;
 
 void apic_send_ipi(uint32_t cpu_id, uint64_t irq_num) {
     if (cpu_id >= cpu_count || irq_num >= ARCH_MAX_IRQ_NUM ||
@@ -70,16 +74,20 @@ void apic_send_ipi(uint32_t cpu_id, uint64_t irq_num) {
         return;
     }
 
-    uint32_t flags = ICR_DELIVERY_FIXED | ICR_DEST_PHYSICAL |
-                     ICR_DEST_NOSHORTHAND | (uint32_t)irq_num;
-    uint32_t target_lapic_id = cpuid_to_lapicid[cpu_id];
+    bool irq_state = arch_interrupt_enabled();
 
-    bool irq_enabled = arch_interrupt_enabled();
     arch_disable_interrupt();
+
+    spin_lock(&ipi_send_lock);
+
+    uint32_t flags = ICR_DELIVERY_FIXED | ICR_DEST_PHYSICAL |
+                     ICR_DEST_NOSHORTHAND | ICR_TRIGGER_LEVEL |
+                     ICR_LEVEL_ASSERT | (uint32_t)irq_num;
+    uint32_t target_lapic_id = cpuid_to_lapicid[cpu_id];
 
     if (x2apic_mode) {
         uint64_t icr = ((uint64_t)target_lapic_id << 32) | flags;
-        wrmsr(0x830, icr);
+        wrmsr(0x800 + (LAPIC_ICR_LOW >> 4), icr);
     } else {
         while (lapic_read(LAPIC_ICR_LOW) & (1 << 12)) {
             arch_pause();
@@ -93,7 +101,9 @@ void apic_send_ipi(uint32_t cpu_id, uint64_t irq_num) {
         }
     }
 
-    if (irq_enabled) {
+    spin_unlock(&ipi_send_lock);
+
+    if (irq_state) {
         arch_enable_interrupt();
     }
 }
@@ -413,12 +423,12 @@ uint64_t general_ap_entry() {
 
     fsgsbase_init();
 
-    x64_cpu_local_init(get_cpuid_by_lapic_id((uint32_t)lapic_id()),
-                       (uint32_t)lapic_id());
-
     tss_init();
 
     local_apic_init();
+
+    x64_cpu_local_init(get_cpuid_by_lapic_id((uint32_t)lapic_id()),
+                       (uint32_t)lapic_id());
 
     syscall_init();
 
@@ -512,18 +522,16 @@ static void apic_resched_ipi_handler(uint64_t irq_num, void *data,
     (void)regs;
 }
 
-void apic_ipi_init() {
-    irq_regist_ipi(APIC_RESCHED_IPI_VECTOR, apic_resched_ipi_handler, 0, NULL,
-                   &apic_controller, "Apic resched ipi", IRQ_FLAGS_LAPIC,
-                   apic_send_ipi);
-    irq_set_sched_ipi(APIC_RESCHED_IPI_VECTOR);
-}
-
-void arch_tlb_shootdown_mm(task_mm_info_t *mm) {}
-
 irq_controller_t apic_controller = {
     .mask = apic_mask,
     .unmask = apic_unmask,
     .install = apic_install,
     .ack = apic_ack,
 };
+
+void apic_ipi_init() {
+    irq_regist_ipi(APIC_RESCHED_IPI_VECTOR, apic_resched_ipi_handler, 0, NULL,
+                   &apic_controller, "RESCHED_IPI", IRQ_FLAGS_LAPIC,
+                   apic_send_ipi);
+    irq_set_sched_ipi(APIC_RESCHED_IPI_VECTOR);
+}

@@ -17,8 +17,9 @@ void arch_early_init() {
     tss_init();
 
     apic_timer_init();
-    apic_ipi_init();
     local_apic_init();
+
+    apic_ipi_init();
 
     smp_init();
 

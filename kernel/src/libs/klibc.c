@@ -7,22 +7,36 @@
 
 void spin_init(spinlock_t *lock) { memset(lock, 0, sizeof(spinlock_t)); }
 
-void spin_lock(spinlock_t *sl) {
-    bool irq_state = arch_interrupt_enabled();
-    arch_disable_interrupt();
-
+void raw_spin_lock(spinlock_t *sl) {
     while (__sync_lock_test_and_set(&sl->lock, 1)) {
         arch_pause();
     }
+
+    __sync_synchronize();
+}
+
+void raw_spin_unlock(spinlock_t *sl) { __sync_lock_release(&sl->lock); }
+
+void spin_lock(spinlock_t *sl) {
+    bool irq_state = arch_interrupt_enabled();
+
+    arch_disable_interrupt();
+
+    if (current_task)
+        current_task->preempt_count++;
+
+    raw_spin_lock(sl);
 
     sl->irq_state = irq_state;
 }
 
 void spin_unlock(spinlock_t *sl) {
-    bool irq_state = sl->irq_state;
-    __sync_lock_release(&sl->lock);
+    raw_spin_unlock(sl);
 
-    if (irq_state) {
+    if (current_task)
+        current_task->preempt_count--;
+
+    if (sl->irq_state) {
         arch_enable_interrupt();
     }
 }
@@ -146,8 +160,6 @@ void *memcpy(void *restrict dest, const void *restrict src, size_t n) {
     unsigned char *d = dest;
     const unsigned char *s = src;
 
-#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv__) ||       \
-    defined(__loongarch64)
     typedef uint64_t __attribute__((__may_alias__)) u64;
 
     for (; (uintptr_t)s % 8 && n; n--)
@@ -185,40 +197,6 @@ void *memcpy(void *restrict dest, const void *restrict src, size_t n) {
         }
         return dest;
     }
-#else
-    typedef uint32_t __attribute__((__may_alias__)) u32;
-
-    for (; (uintptr_t)s % 4 && n; n--)
-        *d++ = *s++;
-
-    if ((uintptr_t)d % 4 == 0) {
-        for (; n >= 16; s += 16, d += 16, n -= 16) {
-            *(u32 *)(d + 0) = *(u32 *)(s + 0);
-            *(u32 *)(d + 4) = *(u32 *)(s + 4);
-            *(u32 *)(d + 8) = *(u32 *)(s + 8);
-            *(u32 *)(d + 12) = *(u32 *)(s + 12);
-        }
-        if (n & 8) {
-            *(u32 *)(d + 0) = *(u32 *)(s + 0);
-            *(u32 *)(d + 4) = *(u32 *)(s + 4);
-            d += 8;
-            s += 8;
-        }
-        if (n & 4) {
-            *(u32 *)(d + 0) = *(u32 *)(s + 0);
-            d += 4;
-            s += 4;
-        }
-        if (n & 2) {
-            *d++ = *s++;
-            *d++ = *s++;
-        }
-        if (n & 1) {
-            *d = *s;
-        }
-        return dest;
-    }
-#endif
 
     while (n--)
         *d++ = *s++;

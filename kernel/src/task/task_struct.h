@@ -303,6 +303,7 @@ typedef struct task {
     uint64_t system_time_ns;
     uint64_t child_user_time_ns;
     uint64_t child_system_time_ns;
+    uint64_t preempt_count;
     uint32_t cpu_id;
     char name[TASK_NAME_MAX];
     vfs_node_t *exec_node;

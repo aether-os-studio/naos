@@ -203,8 +203,8 @@ static bool sched_process_tick_work(uint32_t queue_id) {
 
     while (true) {
         task_t *task = NULL;
-
         spin_lock(&worker_tick_locks[queue_id]);
+
         if (!llist_empty(&worker_tick_queues[queue_id])) {
             struct llist_header *node = worker_tick_queues[queue_id].next;
             llist_delete(node);
@@ -354,6 +354,10 @@ static void task_timeout_softirq(void) {
         size_t expired_count = 0;
         uint64_t now = nano_time();
 
+        bool irq_state = arch_interrupt_enabled();
+
+        arch_disable_interrupt();
+
         spin_lock(&task_timeout_lock);
         while (expired_count < (sizeof(expired) / sizeof(expired[0]))) {
             task_t *task = task_timeout_first_locked();
@@ -366,6 +370,8 @@ static void task_timeout_softirq(void) {
         }
         task_timeout_refresh_next_locked();
         spin_unlock(&task_timeout_lock);
+
+        arch_enable_interrupt();
 
         if (!expired_count) {
             return;
@@ -927,11 +933,14 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
         return -EINVAL;
     }
 
-    bool irq_state = arch_interrupt_enabled();
     bool should_sleep = false;
     int result = EOK;
     uint32_t target_cpu = task->cpu_id;
     bool should_trigger_sched_ipi = false;
+
+    bool lock_irq_state = arch_interrupt_enabled();
+
+    arch_disable_interrupt();
 
     spin_lock(&task->block_lock);
 
@@ -981,23 +990,19 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
     if (!should_sleep)
         goto ret;
 
-    arch_enable_interrupt();
-
     if (should_trigger_sched_ipi) {
         write_barrier();
         irq_trigger_sched_ipi(target_cpu);
     }
 
+    if (lock_irq_state)
+        arch_enable_interrupt();
+
     schedule(SCHED_FLAG_YIELD);
+
     result = task->status;
 
 ret:
-    if (irq_state) {
-        arch_enable_interrupt();
-    } else {
-        arch_disable_interrupt();
-    }
-
     return result;
 }
 
@@ -1008,6 +1013,10 @@ void task_unblock(task_t *task, int reason) {
 
     bool irq_state = arch_interrupt_enabled();
     bool should_trigger_sched_ipi = false;
+
+    bool lock_irq_state = arch_interrupt_enabled();
+
+    arch_disable_interrupt();
 
     spin_lock(&task->block_lock);
 
@@ -1041,8 +1050,6 @@ void task_unblock(task_t *task, int reason) {
 ret:
     if (irq_state) {
         arch_enable_interrupt();
-    } else {
-        arch_disable_interrupt();
     }
 }
 
@@ -1067,6 +1074,7 @@ void task_cleanup_fd_info(task_t *task) {
 
 void task_exit_inner(task_t *task, int64_t code) {
     arch_disable_interrupt();
+
     uint64_t before_user_ns = task ? task->user_time_ns : 0;
     task_account_runtime_ns(task, nano_time());
     if (task && task->user_time_ns > before_user_ns)
@@ -1349,6 +1357,10 @@ void schedule(uint64_t sched_flags) {
     arch_disable_interrupt();
 
     task_t *prev = current_task;
+    if (prev->preempt_count) {
+        goto ret;
+    }
+
     int cpu_id = prev->cpu_id;
     uint64_t now_ns = nano_time();
 

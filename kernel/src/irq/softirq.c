@@ -2,12 +2,10 @@
 
 static softirq_handler_t softirq_handlers[SOFTIRQ_MAX] = {0};
 static uint64_t softirq_pending = 0;
-static spinlock_t softirq_exec_lock = SPIN_INIT;
 
 void softirq_init(void) {
     memset(softirq_handlers, 0, sizeof(softirq_handlers));
     __atomic_store_n(&softirq_pending, 0, __ATOMIC_RELEASE);
-    spin_init(&softirq_exec_lock);
 }
 
 void softirq_register(softirq_id_t id, softirq_handler_t handler) {
@@ -34,8 +32,6 @@ bool softirq_has_pending(void) {
 }
 
 void softirq_handle_pending(void) {
-    spin_lock(&softirq_exec_lock);
-
     while (true) {
         uint64_t pending =
             __atomic_exchange_n(&softirq_pending, 0, __ATOMIC_ACQ_REL);
@@ -55,6 +51,4 @@ void softirq_handle_pending(void) {
             }
         }
     }
-
-    spin_unlock(&softirq_exec_lock);
 }

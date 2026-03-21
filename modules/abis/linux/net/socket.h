@@ -49,8 +49,17 @@ struct ucred {
 #define SCM_CREDENTIALS 0x02
 
 #define MAX_PENDING_FILES_COUNT 64
-#define BUFFER_SIZE (64 * 1024)
+#define BUFFER_SIZE (512 * 1024)
 #define MAX_CONNECTIONS 16
+
+typedef struct unix_socket_ancillary {
+    struct unix_socket_ancillary *next;
+    uint64_t seq;
+    fd_t *files[MAX_PENDING_FILES_COUNT];
+    uint32_t file_count;
+    struct ucred cred;
+    bool has_cred;
+} unix_socket_ancillary_t;
 
 typedef struct socket {
     struct socket *next;
@@ -66,11 +75,9 @@ typedef struct socket {
     size_t recv_head;
     size_t recv_pos;
     size_t recv_size;
-
-    // pending files/creds（别人发给我的，待接收）
-    fd_t *pending_files[MAX_PENDING_FILES_COUNT];
-    struct ucred pending_cred;
-    bool has_pending_cred;
+    uint64_t recv_seq;
+    unix_socket_ancillary_t *ancillary_head;
+    unix_socket_ancillary_t *ancillary_tail;
 
     // 我自己的凭据
     struct ucred cred;

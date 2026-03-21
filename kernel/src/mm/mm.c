@@ -303,22 +303,15 @@ void unmap_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t size) {
         return;
 
     unmap_release_batch_t batch = {0};
-    bool changed = false;
 
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
         if (batch.page_count == UNMAP_RELEASE_BATCH_MAX) {
-            if (changed)
-                arch_tlb_shootdown_mm(mm);
             unmap_release_batch_commit(&batch);
-            changed = false;
         }
 
-        if (unmap_page_defer_release(task_mm_pgdir(mm), va, &batch) != 0)
-            changed = true;
+        unmap_page_defer_release(task_mm_pgdir(mm), va, &batch);
     }
 
-    if (changed)
-        arch_tlb_shootdown_mm(mm);
     unmap_release_batch_commit(&batch);
 }
 
@@ -335,7 +328,5 @@ uint64_t map_change_attribute_range_mm(task_mm_info_t *mm, uint64_t vaddr,
                                        uint64_t len, uint64_t flags) {
     uint64_t ret =
         map_change_attribute_range(task_mm_pgdir(mm), vaddr, len, flags);
-    if (len != 0)
-        arch_tlb_shootdown_mm(mm);
     return ret;
 }

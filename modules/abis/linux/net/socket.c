@@ -330,6 +330,249 @@ static size_t unix_socket_recv_readv_locked(socket_t *sock,
     return consumed;
 }
 
+static void unix_socket_ancillary_free(unix_socket_ancillary_t *ancillary) {
+    if (!ancillary)
+        return;
+
+    for (uint32_t i = 0; i < ancillary->file_count; i++) {
+        if (ancillary->files[i])
+            fd_release(ancillary->files[i]);
+    }
+
+    free(ancillary);
+}
+
+static void
+unix_socket_ancillary_free_list(unix_socket_ancillary_t *ancillary_list) {
+    while (ancillary_list) {
+        unix_socket_ancillary_t *next = ancillary_list->next;
+        unix_socket_ancillary_free(ancillary_list);
+        ancillary_list = next;
+    }
+}
+
+static void unix_socket_ancillary_enqueue_locked(socket_t *sock,
+                                                 unix_socket_ancillary_t *anc) {
+    if (!sock || !anc)
+        return;
+
+    anc->next = NULL;
+    if (sock->ancillary_tail) {
+        sock->ancillary_tail->next = anc;
+    } else {
+        sock->ancillary_head = anc;
+    }
+    sock->ancillary_tail = anc;
+}
+
+static void unix_socket_ancillary_drop_before_locked(socket_t *sock,
+                                                     uint64_t seq_limit) {
+    if (!sock)
+        return;
+
+    while (sock->ancillary_head && sock->ancillary_head->seq < seq_limit) {
+        unix_socket_ancillary_t *stale = sock->ancillary_head;
+        sock->ancillary_head = stale->next;
+        if (!sock->ancillary_head)
+            sock->ancillary_tail = NULL;
+        stale->next = NULL;
+        unix_socket_ancillary_free(stale);
+    }
+}
+
+static unix_socket_ancillary_t *
+unix_socket_ancillary_clone_one(const unix_socket_ancillary_t *src) {
+    if (!src)
+        return NULL;
+
+    unix_socket_ancillary_t *clone = calloc(1, sizeof(*clone));
+    if (!clone)
+        return NULL;
+
+    clone->seq = src->seq;
+    clone->file_count = src->file_count;
+    clone->cred = src->cred;
+    clone->has_cred = src->has_cred;
+
+    for (uint32_t i = 0; i < src->file_count; i++) {
+        clone->files[i] = vfs_dup(src->files[i]);
+        if (!clone->files[i]) {
+            unix_socket_ancillary_free(clone);
+            return NULL;
+        }
+    }
+
+    return clone;
+}
+
+static size_t unix_socket_iov_total_len(const struct iovec *iov,
+                                        size_t iovlen) {
+    size_t total = 0;
+
+    if (!iov)
+        return 0;
+
+    for (size_t i = 0; i < iovlen; i++)
+        total += iov[i].len;
+
+    return total;
+}
+
+static size_t unix_socket_stream_read_limit_locked(const socket_t *sock,
+                                                   size_t requested) {
+    size_t limit = MIN(requested, unix_socket_recv_used_locked(sock));
+    if (!sock || !limit)
+        return limit;
+
+    unix_socket_ancillary_t *ancillary = sock->ancillary_head;
+    while (ancillary && ancillary->seq < sock->recv_seq)
+        ancillary = ancillary->next;
+
+    if (ancillary && ancillary->seq < sock->recv_seq + limit)
+        limit = (size_t)(ancillary->seq - sock->recv_seq + 1);
+
+    return limit;
+}
+
+static int unix_socket_prepare_ancillary(const struct msghdr *msg,
+                                         unix_socket_ancillary_t **out_anc) {
+    if (!out_anc)
+        return -EINVAL;
+
+    *out_anc = NULL;
+    if (!msg || !msg->msg_control || msg->msg_controllen == 0)
+        return 0;
+
+    unix_socket_ancillary_t *anc = calloc(1, sizeof(*anc));
+    if (!anc)
+        return -ENOMEM;
+
+    bool have_rights = false;
+    bool have_cred = false;
+
+    for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg); cmsg != NULL;
+         cmsg = CMSG_NXTHDR((struct msghdr *)msg, cmsg)) {
+        if (cmsg->cmsg_level != SOL_SOCKET)
+            continue;
+
+        if (cmsg->cmsg_type == SCM_RIGHTS) {
+            if (have_rights || cmsg->cmsg_len < CMSG_LEN(sizeof(int))) {
+                unix_socket_ancillary_free(anc);
+                return -EINVAL;
+            }
+
+            size_t rights_len = cmsg->cmsg_len - CMSG_LEN(0);
+            if ((rights_len % sizeof(int)) != 0) {
+                unix_socket_ancillary_free(anc);
+                return -EINVAL;
+            }
+
+            uint32_t file_count = rights_len / sizeof(int);
+            if (file_count == 0 || file_count > MAX_PENDING_FILES_COUNT) {
+                unix_socket_ancillary_free(anc);
+                return -ETOOMANYREFS;
+            }
+
+            int *fds = (int *)CMSG_DATA(cmsg);
+            for (uint32_t i = 0; i < file_count; i++) {
+                int send_fd = fds[i];
+                if (send_fd < 0 || send_fd >= MAX_FD_NUM ||
+                    !current_task->fd_info->fds[send_fd]) {
+                    unix_socket_ancillary_free(anc);
+                    return -EBADF;
+                }
+
+                anc->files[anc->file_count] =
+                    vfs_dup(current_task->fd_info->fds[send_fd]);
+                if (!anc->files[anc->file_count]) {
+                    unix_socket_ancillary_free(anc);
+                    return -ENOMEM;
+                }
+                anc->file_count++;
+            }
+
+            have_rights = true;
+        } else if (cmsg->cmsg_type == SCM_CREDENTIALS) {
+            if (have_cred || cmsg->cmsg_len < CMSG_LEN(sizeof(struct ucred))) {
+                unix_socket_ancillary_free(anc);
+                return -EINVAL;
+            }
+
+            struct ucred *cred = (struct ucred *)CMSG_DATA(cmsg);
+            if (current_task->euid != 0 &&
+                (cred->pid != unix_socket_cred_pid_for_task(current_task) ||
+                 cred->uid != current_task->uid ||
+                 cred->gid != current_task->gid)) {
+                unix_socket_ancillary_free(anc);
+                return -EPERM;
+            }
+
+            anc->cred = *cred;
+            anc->has_cred = true;
+            have_cred = true;
+        }
+    }
+
+    if (!anc->file_count && !anc->has_cred) {
+        free(anc);
+        return 0;
+    }
+
+    *out_anc = anc;
+    return 0;
+}
+
+static int unix_socket_collect_ancillary_locked(socket_t *sock,
+                                                uint64_t end_seq, bool peek,
+                                                unix_socket_ancillary_t **out) {
+    if (!out)
+        return -EINVAL;
+
+    *out = NULL;
+    if (!sock)
+        return 0;
+
+    unix_socket_ancillary_t *list = NULL;
+    unix_socket_ancillary_t *tail = NULL;
+
+    if (peek) {
+        for (unix_socket_ancillary_t *curr = sock->ancillary_head;
+             curr && curr->seq < end_seq; curr = curr->next) {
+            unix_socket_ancillary_t *clone =
+                unix_socket_ancillary_clone_one(curr);
+            if (!clone) {
+                unix_socket_ancillary_free_list(list);
+                return -ENOMEM;
+            }
+
+            if (tail) {
+                tail->next = clone;
+            } else {
+                list = clone;
+            }
+            tail = clone;
+        }
+    } else {
+        while (sock->ancillary_head && sock->ancillary_head->seq < end_seq) {
+            unix_socket_ancillary_t *curr = sock->ancillary_head;
+            sock->ancillary_head = curr->next;
+            if (!sock->ancillary_head)
+                sock->ancillary_tail = NULL;
+            curr->next = NULL;
+
+            if (tail) {
+                tail->next = curr;
+            } else {
+                list = curr;
+            }
+            tail = curr;
+        }
+    }
+
+    *out = list;
+    return 0;
+}
+
 static int socket_wait_node(vfs_node_t *node, uint32_t events,
                             const char *reason) {
     if (!node || !current_task)
@@ -421,10 +664,10 @@ socket_t *unix_socket_alloc() {
     }
     sock->recv_head = 0;
     sock->recv_pos = 0;
+    sock->recv_seq = 0;
     sock->node = NULL;
-
-    memset(sock->pending_files, 0, sizeof(sock->pending_files));
-    sock->has_pending_cred = false;
+    sock->ancillary_head = NULL;
+    sock->ancillary_tail = NULL;
 
     // 设置凭据
     unix_socket_fill_cred_from_task(&sock->cred, current_task);
@@ -493,12 +736,7 @@ void unix_socket_free(socket_t *sock) {
     if (sock->filter)
         free(sock->filter);
 
-    // 清理 pending files
-    for (int i = 0; i < MAX_PENDING_FILES_COUNT; i++) {
-        if (sock->pending_files[i]) {
-            fd_release(sock->pending_files[i]);
-        }
-    }
+    unix_socket_ancillary_free_list(sock->ancillary_head);
 
     free(sock);
 }
@@ -506,7 +744,8 @@ void unix_socket_free(socket_t *sock) {
 // 发送数据到对端的 recv_buff
 static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
                                        const uint8_t *data, size_t len,
-                                       int flags, fd_t *fd_handle) {
+                                       int flags, fd_t *fd_handle,
+                                       unix_socket_ancillary_t **ancillary) {
     socket_t *active_peer = peer;
     if (self && !unix_socket_is_dgram_type(self->type))
         active_peer = self->peer;
@@ -544,6 +783,12 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
         }
         size_t available = unix_socket_recv_space_locked(active_peer);
         if (available > 0) {
+            if (ancillary && *ancillary) {
+                (*ancillary)->seq =
+                    active_peer->recv_seq + active_peer->recv_pos;
+                unix_socket_ancillary_enqueue_locked(active_peer, *ancillary);
+                *ancillary = NULL;
+            }
             size_t to_copy =
                 unix_socket_recv_write_locked(active_peer, data, len);
             mutex_unlock(&active_peer->lock);
@@ -588,7 +833,15 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
         mutex_lock(&self->lock);
 
         if (self->recv_pos > 0) {
-            size_t to_copy = unix_socket_recv_read_locked(self, buf, len, peek);
+            size_t limit = len;
+            if (!unix_socket_is_dgram_type(self->type))
+                limit = unix_socket_stream_read_limit_locked(self, len);
+            size_t to_copy =
+                unix_socket_recv_read_locked(self, buf, limit, peek);
+            if (!peek) {
+                self->recv_seq += to_copy;
+                unix_socket_ancillary_drop_before_locked(self, self->recv_seq);
+            }
             mutex_unlock(&self->lock);
             if (!peek) {
                 socket_notify_sock(self, EPOLLOUT);
@@ -625,7 +878,8 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
 
 static size_t unix_socket_recvmsg_from_self(socket_t *self, socket_t *peer,
                                             struct msghdr *msg, int flags,
-                                            fd_t *fd_handle) {
+                                            fd_t *fd_handle,
+                                            uint64_t *start_seq_out) {
     bool peek = !!(flags & MSG_PEEK);
 
     if (!self || !msg)
@@ -633,10 +887,7 @@ static size_t unix_socket_recvmsg_from_self(socket_t *self, socket_t *peer,
     if (self->shut_rd)
         return 0;
 
-    size_t len_total = 0;
-    for (size_t i = 0; i < msg->msg_iovlen; i++) {
-        len_total += msg->msg_iov[i].len;
-    }
+    size_t len_total = unix_socket_iov_total_len(msg->msg_iov, msg->msg_iovlen);
 
     if (!len_total)
         return 0;
@@ -645,9 +896,17 @@ static size_t unix_socket_recvmsg_from_self(socket_t *self, socket_t *peer,
         mutex_lock(&self->lock);
 
         if (self->recv_pos > 0) {
+            uint64_t start_seq = self->recv_seq;
+            size_t limit = len_total;
+            if (!unix_socket_is_dgram_type(self->type))
+                limit = unix_socket_stream_read_limit_locked(self, len_total);
             size_t copied = unix_socket_recv_readv_locked(
-                self, msg->msg_iov, msg->msg_iovlen, len_total, peek);
+                self, msg->msg_iov, msg->msg_iovlen, limit, peek);
+            if (!peek)
+                self->recv_seq += copied;
             mutex_unlock(&self->lock);
+            if (start_seq_out)
+                *start_seq_out = start_seq;
             if (!peek) {
                 socket_notify_sock(self, EPOLLOUT);
                 if (self->peer)
@@ -679,65 +938,10 @@ static size_t unix_socket_recvmsg_from_self(socket_t *self, socket_t *peer,
     }
 }
 
-// 发送 pending files 到对端
-static int unix_socket_send_files_to_peer(socket_t *peer, int *fds,
-                                          int num_fds) {
-    if (!peer)
-        return -EINVAL;
-
-    int free_slots = 0;
-    for (int i = 0; i < MAX_PENDING_FILES_COUNT; i++) {
-        if (!peer->pending_files[i])
-            free_slots++;
-    }
-    if (free_slots < num_fds)
-        return -ETOOMANYREFS;
-
-    for (int i = 0; i < num_fds; i++) {
-        int fd = fds[i];
-        if (fd < 0 || fd >= MAX_FD_NUM)
-            return -EBADF;
-        if (!current_task->fd_info->fds[fd])
-            return -EBADF;
-
-        bool inserted = false;
-        for (int j = 0; j < MAX_PENDING_FILES_COUNT; j++) {
-            if (peer->pending_files[j] == NULL) {
-                peer->pending_files[j] =
-                    vfs_dup(current_task->fd_info->fds[fd]);
-                if (!peer->pending_files[j])
-                    return -ENOMEM;
-                inserted = true;
-                break;
-            }
-        }
-        if (!inserted)
-            return -ETOOMANYREFS;
-    }
-    socket_notify_sock(peer, EPOLLIN);
-    return 0;
-}
-
 static void unix_socket_drop_pending_file(fd_t *pending_file) {
     if (!pending_file)
         return;
     fd_release(pending_file);
-}
-
-// 该函数要求调用者持有 self->lock
-static size_t unix_socket_take_pending_files_locked(socket_t *self,
-                                                    fd_t **pending_files,
-                                                    size_t max_fds) {
-    size_t taken = 0;
-
-    for (int i = 0; i < MAX_PENDING_FILES_COUNT && taken < max_fds; i++) {
-        if (!self->pending_files[i])
-            continue;
-        pending_files[taken++] = self->pending_files[i];
-        self->pending_files[i] = NULL;
-    }
-
-    return taken;
 }
 
 static size_t unix_socket_install_pending_files(fd_t **pending_files,
@@ -783,15 +987,6 @@ static size_t unix_socket_install_pending_files(fd_t **pending_files,
     }
 
     return installed;
-}
-
-// 发送凭据到对端
-static void unix_socket_send_cred_to_peer(socket_t *peer, struct ucred *cred) {
-    if (!peer)
-        return;
-    memcpy(&peer->pending_cred, cred, sizeof(struct ucred));
-    peer->has_pending_cred = true;
-    socket_notify_sock(peer, EPOLLIN);
 }
 
 vfs_node_t *unix_socket_create_node(socket_t *sock) {
@@ -1297,7 +1492,7 @@ size_t unix_socket_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
 
 done:
     size_t ret =
-        unix_socket_send_to_peer(sock, peer, in, limit, flags, caller_fd);
+        unix_socket_send_to_peer(sock, peer, in, limit, flags, caller_fd, NULL);
     if (peer_needs_unref)
         unix_socket_release_lookup_ref(peer);
     return ret;
@@ -1352,81 +1547,43 @@ size_t unix_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
     }
 
 done:
-    // 处理控制消息
-    if (msg->msg_control && msg->msg_controllen > 0) {
-        struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
-
-        mutex_lock(&peer->lock);
-
-        for (; cmsg != NULL; cmsg = CMSG_NXTHDR((struct msghdr *)msg, cmsg)) {
-            if (cmsg->cmsg_level != SOL_SOCKET)
-                continue;
-
-            if (cmsg->cmsg_type == SCM_RIGHTS) {
-                if (cmsg->cmsg_len < CMSG_LEN(sizeof(int))) {
-                    mutex_unlock(&peer->lock);
-                    if (peer_needs_unref)
-                        unix_socket_release_lookup_ref(peer);
-                    return (size_t)-EINVAL;
-                }
-                size_t rights_len = cmsg->cmsg_len - CMSG_LEN(0);
-                if ((rights_len % sizeof(int)) != 0) {
-                    mutex_unlock(&peer->lock);
-                    if (peer_needs_unref)
-                        unix_socket_release_lookup_ref(peer);
-                    return (size_t)-EINVAL;
-                }
-                int *fds = (int *)CMSG_DATA(cmsg);
-                int num_fds = rights_len / sizeof(int);
-                int send_fds_ret =
-                    unix_socket_send_files_to_peer(peer, fds, num_fds);
-                if (send_fds_ret < 0) {
-                    mutex_unlock(&peer->lock);
-                    if (peer_needs_unref)
-                        unix_socket_release_lookup_ref(peer);
-                    return (size_t)send_fds_ret;
-                }
-            } else if (cmsg->cmsg_type == SCM_CREDENTIALS) {
-                if (cmsg->cmsg_len < CMSG_LEN(sizeof(struct ucred))) {
-                    mutex_unlock(&peer->lock);
-                    if (peer_needs_unref)
-                        unix_socket_release_lookup_ref(peer);
-                    return (size_t)-EINVAL;
-                }
-
-                struct ucred *cred = (struct ucred *)CMSG_DATA(cmsg);
-
-                // 验证凭据（非 root 只能发送自己的凭据）
-                if (current_task->euid != 0) {
-                    if (cred->pid !=
-                            unix_socket_cred_pid_for_task(current_task) ||
-                        cred->uid != current_task->uid ||
-                        cred->gid != current_task->gid) {
-                        mutex_unlock(&peer->lock);
-                        if (peer_needs_unref)
-                            unix_socket_release_lookup_ref(peer);
-                        return (size_t)-EPERM;
-                    }
-                }
-
-                unix_socket_send_cred_to_peer(peer, cred);
-            }
-        }
-
-        mutex_unlock(&peer->lock);
+    size_t total_len = unix_socket_iov_total_len(msg->msg_iov, msg->msg_iovlen);
+    unix_socket_ancillary_t *ancillary = NULL;
+    int ancillary_ret = unix_socket_prepare_ancillary(msg, &ancillary);
+    if (ancillary_ret < 0) {
+        if (peer_needs_unref)
+            unix_socket_release_lookup_ref(peer);
+        return (size_t)ancillary_ret;
     }
 
     if (sock->passcred || peer->passcred) {
-        struct ucred cred;
-        cred.pid = unix_socket_cred_pid_for_task(current_task);
-        cred.uid = current_task->uid;
-        cred.gid = current_task->gid;
-        unix_socket_send_cred_to_peer(peer, &cred);
+        if (!ancillary) {
+            ancillary = calloc(1, sizeof(*ancillary));
+            if (!ancillary) {
+                if (peer_needs_unref)
+                    unix_socket_release_lookup_ref(peer);
+                return (size_t)-ENOMEM;
+            }
+        }
+        if (!ancillary->has_cred) {
+            ancillary->cred.pid = unix_socket_cred_pid_for_task(current_task);
+            ancillary->cred.uid = current_task->uid;
+            ancillary->cred.gid = current_task->gid;
+            ancillary->has_cred = true;
+        }
+    }
+
+    if (ancillary && total_len == 0) {
+        unix_socket_ancillary_free(ancillary);
+        if (peer_needs_unref)
+            unix_socket_release_lookup_ref(peer);
+        return (size_t)-EINVAL;
     }
 
     // 发送数据
     size_t cnt = 0;
     bool noblock = !!(flags & MSG_DONTWAIT);
+    unix_socket_ancillary_t *ancillary_to_attach = ancillary;
 
     for (int i = 0; i < msg->msg_iovlen; i++) {
         struct iovec *curr = &((struct iovec *)msg->msg_iov)[i];
@@ -1435,10 +1592,13 @@ done:
             const uint8_t *base = (const uint8_t *)curr->iov_base;
             size_t ret = unix_socket_send_to_peer(
                 sock, peer, base + sent, curr->len - sent,
-                noblock ? (flags | MSG_DONTWAIT) : flags, caller_fd);
+                noblock ? (flags | MSG_DONTWAIT) : flags, caller_fd,
+                &ancillary_to_attach);
             if ((int64_t)ret < 0) {
                 if (peer_needs_unref)
                     unix_socket_release_lookup_ref(peer);
+                if (ancillary_to_attach)
+                    unix_socket_ancillary_free(ancillary_to_attach);
                 if (cnt > 0) {
                     return cnt;
                 }
@@ -1447,6 +1607,8 @@ done:
             if (ret == 0) {
                 if (peer_needs_unref)
                     unix_socket_release_lookup_ref(peer);
+                if (ancillary_to_attach)
+                    unix_socket_ancillary_free(ancillary_to_attach);
                 return cnt;
             }
             sent += ret;
@@ -1456,6 +1618,8 @@ done:
 
     if (peer_needs_unref)
         unix_socket_release_lookup_ref(peer);
+    if (ancillary_to_attach)
+        unix_socket_ancillary_free(ancillary_to_attach);
     return cnt;
 }
 
@@ -1468,88 +1632,73 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
         return (size_t)-ENOTCONN;
 
     msg->msg_flags = 0;
-    size_t cnt =
-        unix_socket_recvmsg_from_self(sock, NULL, msg, flags, caller_fd);
+    uint64_t start_seq = 0;
+    size_t cnt = unix_socket_recvmsg_from_self(sock, NULL, msg, flags,
+                                               caller_fd, &start_seq);
     if ((int64_t)cnt < 0)
         return cnt;
 
-    // 处理控制消息
-    if (msg->msg_control && msg->msg_controllen >= sizeof(struct cmsghdr)) {
+    uint64_t end_seq = start_seq + cnt;
+    unix_socket_ancillary_t *ancillary_list = NULL;
+    mutex_lock(&sock->lock);
+    int ancillary_ret = unix_socket_collect_ancillary_locked(
+        sock, end_seq, !!(flags & MSG_PEEK), &ancillary_list);
+    mutex_unlock(&sock->lock);
+    if (ancillary_ret < 0)
+        return (size_t)ancillary_ret;
+
+    if (ancillary_list && msg->msg_control &&
+        msg->msg_controllen >= sizeof(struct cmsghdr)) {
         size_t controllen_used = 0;
         struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
-        fd_t *detached_pending_files[MAX_PENDING_FILES_COUNT] = {0};
-        size_t detached_pending_count = 0;
-        bool should_send_cred = false;
-        struct ucred cred_to_send = {0};
 
-        mutex_lock(&sock->lock);
+        for (unix_socket_ancillary_t *anc = ancillary_list; anc != NULL;
+             anc = anc->next) {
+            if (anc->file_count > 0) {
+                size_t space_left = msg->msg_controllen - controllen_used;
+                if (cmsg &&
+                    space_left >= CMSG_SPACE(anc->file_count * sizeof(int))) {
+                    int *fds_out = (int *)CMSG_DATA(cmsg);
+                    size_t installed = unix_socket_install_pending_files(
+                        anc->files, anc->file_count, fds_out, &msg->msg_flags,
+                        flags);
+                    anc->file_count = 0;
 
-        // 先在 socket 锁下摘取 pending files，避免后续与 fd table 锁交叉
-        bool has_pending_fds = false;
-        for (int i = 0; i < MAX_PENDING_FILES_COUNT; i++) {
-            if (sock->pending_files[i] != NULL) {
-                has_pending_fds = true;
-                break;
+                    if (installed > 0) {
+                        cmsg->cmsg_level = SOL_SOCKET;
+                        cmsg->cmsg_type = SCM_RIGHTS;
+                        cmsg->cmsg_len = CMSG_LEN(installed * sizeof(int));
+                        controllen_used += CMSG_SPACE(installed * sizeof(int));
+                        cmsg = CMSG_NXTHDR(msg, cmsg);
+                    }
+                } else {
+                    msg->msg_flags |= MSG_CTRUNC;
+                }
             }
-        }
 
-        if (has_pending_fds && cmsg) {
-            size_t space_left = msg->msg_controllen - controllen_used;
-            if (space_left >= CMSG_SPACE(sizeof(int))) {
-                size_t max_fds =
-                    (space_left - sizeof(struct cmsghdr)) / sizeof(int);
-                detached_pending_count = unix_socket_take_pending_files_locked(
-                    sock, detached_pending_files, max_fds);
-            } else {
-                msg->msg_flags |= MSG_CTRUNC;
-            }
-        }
-
-        // 快照 credential，锁外再写入 cmsg，避免持锁路径变长
-        if (sock->has_pending_cred) {
-            cred_to_send = sock->pending_cred;
-            sock->has_pending_cred = false;
-            should_send_cred = true;
-        } else if (sock->passcred && sock->peer) {
-            cred_to_send = sock->peer->cred;
-            should_send_cred = true;
-        }
-
-        mutex_unlock(&sock->lock);
-
-        if (detached_pending_count > 0 && cmsg) {
-            int *fds_out = (int *)CMSG_DATA(cmsg);
-            size_t received_fds = unix_socket_install_pending_files(
-                detached_pending_files, detached_pending_count, fds_out,
-                &msg->msg_flags, flags);
-
-            if (received_fds > 0) {
-                cmsg->cmsg_level = SOL_SOCKET;
-                cmsg->cmsg_type = SCM_RIGHTS;
-                cmsg->cmsg_len = CMSG_LEN(received_fds * sizeof(int));
-                controllen_used += CMSG_SPACE(received_fds * sizeof(int));
-                cmsg = CMSG_NXTHDR(msg, cmsg);
-            }
-        }
-
-        if (should_send_cred && cmsg) {
-            size_t space_left = msg->msg_controllen - controllen_used;
-            if (space_left >= CMSG_SPACE(sizeof(struct ucred))) {
-                cmsg->cmsg_level = SOL_SOCKET;
-                cmsg->cmsg_type = SCM_CREDENTIALS;
-                cmsg->cmsg_len = CMSG_LEN(sizeof(struct ucred));
-                memcpy(CMSG_DATA(cmsg), &cred_to_send, sizeof(struct ucred));
-                controllen_used += CMSG_SPACE(sizeof(struct ucred));
-            } else {
-                msg->msg_flags |= MSG_CTRUNC;
+            if (anc->has_cred) {
+                size_t space_left = msg->msg_controllen - controllen_used;
+                if (cmsg && space_left >= CMSG_SPACE(sizeof(struct ucred))) {
+                    cmsg->cmsg_level = SOL_SOCKET;
+                    cmsg->cmsg_type = SCM_CREDENTIALS;
+                    cmsg->cmsg_len = CMSG_LEN(sizeof(struct ucred));
+                    memcpy(CMSG_DATA(cmsg), &anc->cred, sizeof(struct ucred));
+                    controllen_used += CMSG_SPACE(sizeof(struct ucred));
+                    cmsg = CMSG_NXTHDR(msg, cmsg);
+                } else {
+                    msg->msg_flags |= MSG_CTRUNC;
+                }
             }
         }
 
         msg->msg_controllen = controllen_used;
     } else {
+        if (ancillary_list)
+            msg->msg_flags |= MSG_CTRUNC;
         msg->msg_controllen = 0;
     }
 
+    unix_socket_ancillary_free_list(ancillary_list);
     return cnt;
 }
 
@@ -1726,7 +1875,7 @@ ssize_t socket_write(fd_t *fd, const void *buf, size_t offset, size_t limit) {
         return -(ENOTCONN);
     }
 
-    return unix_socket_send_to_peer(sock, sock->peer, buf, limit, 0, fd);
+    return unix_socket_send_to_peer(sock, sock->peer, buf, limit, 0, fd, NULL);
 }
 
 int unix_socket_pair(int domain, int type, int protocol, int *sv) {

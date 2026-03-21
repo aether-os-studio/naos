@@ -244,6 +244,8 @@ typedef struct spinlock {
 #define SPIN_INIT (spinlock_t){0}
 
 void spin_init(spinlock_t *lock);
+void raw_spin_lock(spinlock_t *lock);
+void raw_spin_unlock(spinlock_t *lock);
 void spin_lock(spinlock_t *lock);
 void spin_unlock(spinlock_t *lock);
 

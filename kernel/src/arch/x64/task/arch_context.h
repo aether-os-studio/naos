@@ -98,8 +98,10 @@ void x64_fpu_restore(fpu_context_t *fpu_ctx);
 
 #define switch_mm(prev, next)                                                  \
     do {                                                                       \
-        asm volatile("movq %0, %%cr3" ::"r"((next)->mm->page_table_addr)       \
-                     : "memory");                                              \
+        if ((prev)->mm != (next)->mm) {                                        \
+            asm volatile("movq %0, %%cr3" ::"r"((next)->mm->page_table_addr)   \
+                         : "memory");                                          \
+        }                                                                      \
     } while (0)
 
 #define switch_to(prev, next)                                                  \
@@ -149,3 +151,5 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack);
 uint64_t sys_arch_prctl(uint64_t cmd, uint64_t arg);
 
 bool arch_check_elf(const Elf64_Ehdr *elf);
+
+bool arch_cpu_schedule_allowed();
