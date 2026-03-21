@@ -1240,14 +1240,24 @@ static int mremap_isolate_source_vma_locked(vma_manager_t *mgr, uint64_t addr,
     if (!out_vma)
         return -EINVAL;
 
-    if (!mremap_find_single_vma_locked(mgr, addr, size))
-        return -EFAULT;
+    uint64_t end = addr + size;
 
     if (split_vma_boundaries_locked(mgr, addr, addr + size) != 0)
         return -ENOMEM;
 
     vma_t *vma = vma_find(mgr, addr);
-    if (!vma || vma->vm_start != addr || vma->vm_end != addr + size)
+    if (!vma || vma->vm_start != addr)
+        return -EFAULT;
+
+    while (vma->vm_end < end) {
+        vma_t *next = vma_find(mgr, vma->vm_end);
+        if (!next || next->vm_start != vma->vm_end)
+            return -EFAULT;
+        if (vma_merge(mgr, vma, next) != 0)
+            return -EFAULT;
+    }
+
+    if (vma->vm_end != end)
         return -EFAULT;
 
     *out_vma = vma;
@@ -1423,9 +1433,7 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
                           new_size_aligned < old_size_aligned;
     spin_lock(&mgr->lock);
 
-    uint64_t source_size = shrink_inplace ? new_size_aligned : old_size_aligned;
-    vma_t *vma =
-        mremap_find_single_vma_locked(mgr, old_addr_aligned, source_size);
+    vma_t *vma = vma_find(mgr, old_addr_aligned);
     if (!vma) {
         spin_unlock(&mgr->lock);
         return (uint64_t)-EFAULT;
@@ -1444,6 +1452,11 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
     uint64_t ret;
     if (new_size_aligned == old_size_aligned && !(flags & MREMAP_FIXED) &&
         !(flags & MREMAP_DONTUNMAP)) {
+        if (!mremap_find_single_vma_locked(mgr, old_addr_aligned,
+                                           old_size_aligned)) {
+            spin_unlock(&mgr->lock);
+            return (uint64_t)-EFAULT;
+        }
         ret = old_addr_aligned;
     } else if (shrink_inplace) {
         ret = mremap_shrink_locked(old_addr_aligned, old_size_aligned,
