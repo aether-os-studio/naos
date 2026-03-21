@@ -429,6 +429,7 @@ uint64_t general_ap_entry() {
     }
 
     arch_set_current(idle_tasks[current_cpu_id]);
+    task_mm_mark_cpu_active(idle_tasks[current_cpu_id]->mm, current_cpu_id);
 
     while (1) {
         arch_enable_interrupt();
@@ -517,6 +518,8 @@ void apic_ipi_init() {
                    apic_send_ipi);
     irq_set_sched_ipi(APIC_RESCHED_IPI_VECTOR);
 }
+
+void arch_tlb_shootdown_mm(task_mm_info_t *mm) {}
 
 irq_controller_t apic_controller = {
     .mask = apic_mask,

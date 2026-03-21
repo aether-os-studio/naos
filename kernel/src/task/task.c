@@ -690,6 +690,7 @@ task_t *get_free_task() {
             llist_init_head(&task->parent_node);
             llist_init_head(&task->pgid_node);
             llist_init_head(&task->tick_work_node);
+            spin_init(&task->block_lock);
             task->tick_work_queue_id = UINT32_MAX;
             task->state = TASK_CREATING;
             task->pid = 0;
@@ -714,6 +715,7 @@ task_t *get_free_task() {
     llist_init_head(&task->parent_node);
     llist_init_head(&task->pgid_node);
     llist_init_head(&task->tick_work_node);
+    spin_init(&task->block_lock);
     task->tick_work_queue_id = UINT32_MAX;
     task->state = TASK_CREATING;
     task->pid = pid;
@@ -910,6 +912,7 @@ void task_init() {
     }
 
     arch_set_current(idle_tasks[current_cpu_id]);
+    task_mm_mark_cpu_active(idle_tasks[current_cpu_id]->mm, current_cpu_id);
 
     task_initialized = true;
 
@@ -924,18 +927,23 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
         return -EINVAL;
     }
 
-    if (__atomic_exchange_n(&task->wake_pending, false, __ATOMIC_ACQ_REL)) {
-        return task->status;
+    bool irq_state = arch_interrupt_enabled();
+    bool should_sleep = false;
+    int result = EOK;
+    uint32_t target_cpu = task->cpu_id;
+    bool should_trigger_sched_ipi = false;
+
+    spin_lock(&task->block_lock);
+
+    if (task->wake_pending) {
+        task->wake_pending = false;
+        result = task->status;
+        spin_unlock(&task->block_lock);
+        goto ret;
     }
 
     task->status = EOK;
 
-    bool irq_state = arch_interrupt_enabled();
-
-    arch_disable_interrupt();
-
-    uint32_t target_cpu = task->cpu_id;
-    bool should_trigger_sched_ipi = false;
     if (target_cpu != current_task->cpu_id && task->sched_info &&
         schedulers[target_cpu]) {
         spin_lock(&schedulers[target_cpu]->lock);
@@ -945,37 +953,33 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
     }
 
     task->state = state;
-    if (timeout_ns > 0)
-        task->force_wakeup_ns = nano_time() + timeout_ns;
-    else
-        task->force_wakeup_ns = UINT64_MAX;
+    task->force_wakeup_ns =
+        (timeout_ns > 0) ? (nano_time() + timeout_ns) : UINT64_MAX;
+    task->blocking_reason = blocking_reason;
 
     if (timeout_ns > 0)
         task_timeout_arm(task);
     else
         task_timeout_cancel(task);
 
-    task->blocking_reason = blocking_reason;
-
     remove_sched_entity(task, schedulers[task->cpu_id]);
 
-    if (task->state != state) {
-        task_timeout_cancel(task);
-        task->force_wakeup_ns = UINT64_MAX;
-        task->blocking_reason = NULL;
-        if (task->state == TASK_READY)
-            add_sched_entity(task, schedulers[task->cpu_id]);
-        goto ret;
-    }
-
-    if (__atomic_exchange_n(&task->wake_pending, false, __ATOMIC_ACQ_REL)) {
+    if (task->wake_pending) {
+        task->wake_pending = false;
         task_timeout_cancel(task);
         task->state = TASK_READY;
         task->force_wakeup_ns = UINT64_MAX;
         task->blocking_reason = NULL;
         add_sched_entity(task, schedulers[task->cpu_id]);
-        goto ret;
+        result = task->status;
+    } else {
+        should_sleep = true;
     }
+
+    spin_unlock(&task->block_lock);
+
+    if (!should_sleep)
+        goto ret;
 
     arch_enable_interrupt();
 
@@ -985,6 +989,7 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
     }
 
     schedule(SCHED_FLAG_YIELD);
+    result = task->status;
 
 ret:
     if (irq_state) {
@@ -993,7 +998,7 @@ ret:
         arch_disable_interrupt();
     }
 
-    return task->status;
+    return result;
 }
 
 void task_unblock(task_t *task, int reason) {
@@ -1002,8 +1007,9 @@ void task_unblock(task_t *task, int reason) {
     }
 
     bool irq_state = arch_interrupt_enabled();
+    bool should_trigger_sched_ipi = false;
 
-    arch_disable_interrupt();
+    spin_lock(&task->block_lock);
 
     task_timeout_cancel(task);
 
@@ -1011,7 +1017,8 @@ void task_unblock(task_t *task, int reason) {
         task->state != TASK_UNINTERRUPTABLE) {
         task->status = reason;
         task->force_wakeup_ns = UINT64_MAX;
-        __atomic_store_n(&task->wake_pending, true, __ATOMIC_RELEASE);
+        task->wake_pending = true;
+        spin_unlock(&task->block_lock);
         goto ret;
     }
 
@@ -1020,9 +1027,16 @@ void task_unblock(task_t *task, int reason) {
 
     task->blocking_reason = NULL;
     task->force_wakeup_ns = UINT64_MAX;
-    __atomic_store_n(&task->wake_pending, false, __ATOMIC_RELEASE);
+    task->wake_pending = false;
 
     add_sched_entity(task, schedulers[task->cpu_id]);
+    should_trigger_sched_ipi =
+        task->cpu_id != current_task->cpu_id && task->cpu_id < cpu_count;
+
+    spin_unlock(&task->block_lock);
+
+    if (should_trigger_sched_ipi)
+        irq_trigger_sched_ipi(task->cpu_id);
 
 ret:
     if (irq_state) {
@@ -1366,6 +1380,11 @@ void schedule(uint64_t sched_flags) {
     prev->current_state = prev->state;
     next->current_state = TASK_RUNNING;
     next->last_sched_in_ns = now_ns;
+
+    if (prev->mm != next->mm) {
+        task_mm_mark_cpu_inactive(prev->mm, cpu_id);
+        task_mm_mark_cpu_active(next->mm, cpu_id);
+    }
 
     arch_set_current(next);
     switch_mm(prev, next);

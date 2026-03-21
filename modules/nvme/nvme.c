@@ -644,7 +644,8 @@ static int nvme_prepare_prp_list(nvme_request_t *req) {
 }
 
 static inline uint64_t nvme_translate_page_phys(uint64_t page_va) {
-    uint64_t *pgdir = get_current_page_dir(true);
+    uint64_t *pgdir =
+        (uint64_t *)phys_to_virt(current_task->mm->page_table_addr);
     uint64_t pa = translate_address(pgdir, page_va);
     if (!pa) {
         pgdir = get_current_page_dir(false);

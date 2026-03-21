@@ -15,10 +15,13 @@
 #define PROT_WRITE 0x02
 #define PROT_EXEC 0x04
 
+#define MM_ACTIVE_CPU_WORDS ((MAX_CPU_NUM + 63) / 64)
+
 typedef struct task_mm_info {
     uint64_t page_table_addr;
     int ref_count;
     spinlock_t lock;
+    uint64_t active_cpu_mask[MM_ACTIVE_CPU_WORDS];
     vma_manager_t task_vma_mgr;
     uint64_t brk_start;
     uint64_t brk_current;
@@ -36,6 +39,30 @@ uintptr_t alloc_frames_dma32(size_t count);
 void free_frames_dma32(uintptr_t addr, size_t count);
 void free_frames_released(uintptr_t addr, size_t count);
 
+static inline uint64_t *task_mm_pgdir(task_mm_info_t *mm) {
+    return mm ? (uint64_t *)phys_to_virt(mm->page_table_addr) : NULL;
+}
+
+static inline void task_mm_mark_cpu_active(task_mm_info_t *mm,
+                                           uint32_t cpu_id) {
+    if (!mm || cpu_id >= MAX_CPU_NUM)
+        return;
+
+    size_t word = cpu_id / 64;
+    uint64_t bit = 1ULL << (cpu_id % 64);
+    __atomic_or_fetch(&mm->active_cpu_mask[word], bit, __ATOMIC_RELEASE);
+}
+
+static inline void task_mm_mark_cpu_inactive(task_mm_info_t *mm,
+                                             uint32_t cpu_id) {
+    if (!mm || cpu_id >= MAX_CPU_NUM)
+        return;
+
+    size_t word = cpu_id / 64;
+    uint64_t bit = 1ULL << (cpu_id % 64);
+    __atomic_and_fetch(&mm->active_cpu_mask[word], ~bit, __ATOMIC_RELEASE);
+}
+
 void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                     uint64_t size, uint64_t flags);
 void map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
@@ -44,6 +71,17 @@ void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size);
 uint64_t map_change_attribute(uint64_t *pml4, uint64_t vaddr, uint64_t flags);
 uint64_t map_change_attribute_range(uint64_t *pgdir, uint64_t vaddr,
                                     uint64_t len, uint64_t flags);
+void map_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t paddr,
+                       uint64_t size, uint64_t flags);
+void map_page_range_unforce_mm(task_mm_info_t *mm, uint64_t vaddr,
+                               uint64_t paddr, uint64_t size, uint64_t flags);
+void unmap_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t size);
+uint64_t map_change_attribute_range_mm(task_mm_info_t *mm, uint64_t vaddr,
+                                       uint64_t len, uint64_t flags);
+
+#if !defined(__x86_64__)
+static inline void arch_tlb_shootdown_mm(task_mm_info_t *mm) { (void)mm; }
+#endif
 
 typedef struct {
     uintptr_t addr;

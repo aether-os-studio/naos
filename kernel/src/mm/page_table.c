@@ -39,6 +39,34 @@ uint64_t *kernel_page_dir = NULL;
 
 uint64_t *get_kernel_page_dir() { return kernel_page_dir; }
 
+static inline void unmap_release_page(uint64_t paddr) {
+    if (paddr)
+        address_release(paddr);
+}
+
+static inline void unmap_release_table(uint64_t table_phys_addr) {
+    if (table_phys_addr)
+        free_frames(table_phys_addr, 1);
+}
+
+static inline void unmap_batch_queue_page(unmap_release_batch_t *batch,
+                                          uint64_t paddr) {
+    if (!batch || !paddr)
+        return;
+
+    ASSERT(batch->page_count < UNMAP_RELEASE_BATCH_MAX);
+    batch->page_addrs[batch->page_count++] = paddr;
+}
+
+static inline void unmap_batch_queue_table(unmap_release_batch_t *batch,
+                                           uint64_t table_phys_addr) {
+    if (!batch || !table_phys_addr)
+        return;
+
+    ASSERT(batch->table_count < UNMAP_RELEASE_TABLE_BATCH_MAX);
+    batch->table_addrs[batch->table_count++] = table_phys_addr;
+}
+
 uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
                   uint64_t flags, bool force) {
     ASSERT((vaddr & 0xfff) == 0);
@@ -115,7 +143,8 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
     return 0;
 }
 
-uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr) {
+uint64_t unmap_page_defer_release(uint64_t *pgdir, uint64_t vaddr,
+                                  unmap_release_batch_t *batch) {
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
     uint64_t *table_ptrs[ARCH_MAX_PT_LEVEL];
     uint64_t table_indices[ARCH_MAX_PT_LEVEL];
@@ -150,7 +179,11 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr) {
     if (paddr != 0) {
         table_ptrs[ARCH_MAX_PT_LEVEL - 1][index] = 0;
         arch_flush_tlb(vaddr);
-        address_release(paddr);
+        if (batch) {
+            unmap_batch_queue_page(batch, paddr);
+        } else {
+            unmap_release_page(paddr);
+        }
 
         // 从底层向上检查并释放空页表
         for (int level = ARCH_MAX_PT_LEVEL - 1; level > 0; level--) {
@@ -168,7 +201,11 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr) {
                 // 释放空页表
                 uint64_t table_phys_addr =
                     virt_to_phys((uint64_t)current_table);
-                free_frames(table_phys_addr, 1);
+                if (batch) {
+                    unmap_batch_queue_table(batch, table_phys_addr);
+                } else {
+                    unmap_release_table(table_phys_addr);
+                }
 
                 // 清除上级页表中的对应条目
                 uint64_t *parent_table = table_ptrs[level - 1];
@@ -182,6 +219,10 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr) {
     }
 
     return paddr;
+}
+
+uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr) {
+    return unmap_page_defer_release(pgdir, vaddr, NULL);
 }
 
 uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
@@ -459,4 +500,20 @@ void page_table_init() {
     memset(get_current_page_dir(false), 0, DEFAULT_PAGE_SIZE / 2);
 #endif
     kernel_page_dir = get_current_page_dir(false);
+}
+
+void unmap_release_batch_commit(unmap_release_batch_t *batch) {
+    if (!batch)
+        return;
+
+    for (size_t i = 0; i < batch->page_count; i++) {
+        unmap_release_page(batch->page_addrs[i]);
+    }
+
+    for (size_t i = 0; i < batch->table_count; i++) {
+        unmap_release_table(batch->table_addrs[i]);
+    }
+
+    batch->page_count = 0;
+    batch->table_count = 0;
 }

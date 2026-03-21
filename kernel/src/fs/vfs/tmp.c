@@ -4,6 +4,7 @@
 #include <drivers/kernel_logger.h>
 #include <drivers/bus/pci.h>
 #include <fs/vfs/tmpfs_limit.h>
+#include <task/task.h>
 
 #define MAX_TMPFS_FILE_SIZE (64 * 1024 * 1024) // 64MB
 
@@ -422,7 +423,8 @@ void *tmpfs_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
     if (!(pt_flags & (PT_FLAG_R | PT_FLAG_W | PT_FLAG_X)))
         pt_flags |= PT_FLAG_R;
 
-    map_page_range(get_current_page_dir(true), (uint64_t)addr,
+    map_page_range((uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
+                   (uint64_t)addr,
                    virt_to_phys((uint64_t)handle->content + offset), size,
                    pt_flags);
 

@@ -191,8 +191,8 @@ static int map_task_elf_segment(task_t *task, vfs_node_t *node,
         return -EINVAL;
     }
 
-    map_page_range(get_current_page_dir(true), aligned_addr, (uint64_t)-1,
-                   alloc_size, load_flags);
+    map_page_range((uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
+                   aligned_addr, (uint64_t)-1, alloc_size, load_flags);
 
     int ret = read_task_file_into_user_memory(task, node, aligned_addr,
                                               aligned_offset, file_map_size);
@@ -207,8 +207,9 @@ static int map_task_elf_segment(task_t *task, vfs_node_t *node,
     }
 
     if (load_flags != final_flags) {
-        map_change_attribute_range(get_current_page_dir(true), aligned_addr,
-                                   alloc_size, final_flags);
+        map_change_attribute_range(
+            (uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
+            aligned_addr, alloc_size, final_flags);
     }
 
     return 0;
@@ -680,22 +681,26 @@ uint64_t task_execve(const char *path_user, const char **argv,
     int argv_count = 0;
     int envp_count = 0;
 
-    if (argv &&
-        (translate_address(get_current_page_dir(true), (uint64_t)argv) != 0)) {
+    if (argv && (translate_address((uint64_t *)phys_to_virt(
+                                       current_task->mm->page_table_addr),
+                                   (uint64_t)argv) != 0)) {
         for (argv_count = 0;
              argv[argv_count] != NULL &&
-             (translate_address(get_current_page_dir(true),
-                                (uint64_t)argv[argv_count]) != 0);
+             (translate_address(
+                  (uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
+                  (uint64_t)argv[argv_count]) != 0);
              argv_count++) {
         }
     }
 
-    if (envp &&
-        (translate_address(get_current_page_dir(true), (uint64_t)envp) != 0)) {
+    if (envp && (translate_address((uint64_t *)phys_to_virt(
+                                       current_task->mm->page_table_addr),
+                                   (uint64_t)envp) != 0)) {
         for (envp_count = 0;
              envp[envp_count] != NULL &&
-             (translate_address(get_current_page_dir(true),
-                                (uint64_t)envp[envp_count]) != 0);
+             (translate_address(
+                  (uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
+                  (uint64_t)envp[envp_count]) != 0);
              envp_count++) {
         }
     }
@@ -708,24 +713,28 @@ uint64_t task_execve(const char *path_user, const char **argv,
     argv_count = 0;
     envp_count = 0;
 
-    if (argv &&
-        (translate_address(get_current_page_dir(true), (uint64_t)argv) != 0)) {
+    if (argv && (translate_address((uint64_t *)phys_to_virt(
+                                       current_task->mm->page_table_addr),
+                                   (uint64_t)argv) != 0)) {
         for (argv_count = 0;
              argv[argv_count] != NULL &&
-             (translate_address(get_current_page_dir(true),
-                                (uint64_t)argv[argv_count]) != 0);
+             (translate_address(
+                  (uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
+                  (uint64_t)argv[argv_count]) != 0);
              argv_count++) {
             new_argv[argv_count] = strdup(argv[argv_count]);
         }
     }
     new_argv[argv_count] = NULL;
 
-    if (envp &&
-        (translate_address(get_current_page_dir(true), (uint64_t)envp) != 0)) {
+    if (envp && (translate_address((uint64_t *)phys_to_virt(
+                                       current_task->mm->page_table_addr),
+                                   (uint64_t)envp) != 0)) {
         for (envp_count = 0;
              envp[envp_count] != NULL &&
-             (translate_address(get_current_page_dir(true),
-                                (uint64_t)envp[envp_count]) != 0);
+             (translate_address(
+                  (uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
+                  (uint64_t)envp[envp_count]) != 0);
              envp_count++) {
             new_envp[envp_count] = strdup(envp[envp_count]);
         }
@@ -1091,7 +1100,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     vfs_node_ref_get(node);
     self->exec_node = node;
 
-    map_page_range(get_current_page_dir(true),
+    map_page_range((uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
                    USER_STACK_END - DEFAULT_PAGE_SIZE * 8, (uint64_t)-1,
                    DEFAULT_PAGE_SIZE * 8, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
@@ -1626,7 +1635,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         return (uint64_t)-ENOMEM;
     }
 
-    child->cpu_id = alloc_cpu_id();
+    child->cpu_id = (flags & CLONE_VM) ? self->cpu_id : alloc_cpu_id();
 
     child->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     child->syscall_stack =

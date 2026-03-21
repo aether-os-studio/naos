@@ -2287,7 +2287,8 @@ int nvidia_drm_mmap(drm_device_t *drm_dev, uint64_t addr, uint64_t offset,
         return -ENOSYS;
     }
 
-    uint64_t *pgdir = get_current_page_dir(true);
+    uint64_t *pgdir =
+        (uint64_t *)phys_to_virt(current_task->mm->page_table_addr);
     uint64_t pages = (len + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
     uint64_t mapped = 0;
     int ret = 0;

@@ -2575,7 +2575,8 @@ static int virtio_gpu_mmap(drm_device_t *drm_dev, uint64_t addr,
         return -ENOSYS;
     }
 
-    map_page_range(get_current_page_dir(true), addr, offset, len,
+    map_page_range((uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
+                   addr, offset, len,
                    virtio_gpu_host_visible_pt_flags(bo->blob_map_info));
     return 0;
 }

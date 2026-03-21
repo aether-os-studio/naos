@@ -99,10 +99,6 @@ static page_fault_result_t map_anon_fault_page(task_t *task, vma_t *vma,
     }
 
     map_page(pgdir, aligned_vaddr, (uint64_t)-1, arch_flags, true);
-    if (!translate_address(pgdir, aligned_vaddr)) {
-        spin_unlock(&task->mm->lock);
-        return PF_RES_NOMEM;
-    }
 
     spin_unlock(&task->mm->lock);
 
@@ -201,12 +197,6 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
     }
 
     map_page(pgdir, aligned_vaddr, page_paddr, final_arch_flags, false);
-    if (!translate_address(pgdir, aligned_vaddr)) {
-        spin_unlock(&task->mm->lock);
-        spin_unlock(&mgr->lock);
-        address_release(page_paddr);
-        return PF_RES_NOMEM;
-    }
 
     spin_unlock(&task->mm->lock);
     spin_unlock(&mgr->lock);

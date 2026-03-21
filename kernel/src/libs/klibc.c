@@ -50,7 +50,8 @@ bool check_unmapped(uint64_t addr, uint64_t len) {
     }
 
     uint64_t end = addr + len;
-    uint64_t *pgdir = get_current_page_dir(true);
+    uint64_t *pgdir =
+        (uint64_t *)phys_to_virt(current_task->mm->page_table_addr);
     vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
     uint64_t cursor = addr;
 

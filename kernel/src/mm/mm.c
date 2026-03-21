@@ -266,6 +266,11 @@ void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
     }
 }
 
+void map_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t paddr,
+                       uint64_t size, uint64_t flags) {
+    map_page_range(task_mm_pgdir(mm), vaddr, paddr, size, flags);
+}
+
 void map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                             uint64_t size, uint64_t flags) {
     ASSERT((vaddr & 0xfff) == 0);
@@ -282,10 +287,39 @@ void map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
     }
 }
 
+void map_page_range_unforce_mm(task_mm_info_t *mm, uint64_t vaddr,
+                               uint64_t paddr, uint64_t size, uint64_t flags) {
+    map_page_range_unforce(task_mm_pgdir(mm), vaddr, paddr, size, flags);
+}
+
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size) {
     for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
         unmap_page(pml4, va);
     }
+}
+
+void unmap_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t size) {
+    if (!mm)
+        return;
+
+    unmap_release_batch_t batch = {0};
+    bool changed = false;
+
+    for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
+        if (batch.page_count == UNMAP_RELEASE_BATCH_MAX) {
+            if (changed)
+                arch_tlb_shootdown_mm(mm);
+            unmap_release_batch_commit(&batch);
+            changed = false;
+        }
+
+        if (unmap_page_defer_release(task_mm_pgdir(mm), va, &batch) != 0)
+            changed = true;
+    }
+
+    if (changed)
+        arch_tlb_shootdown_mm(mm);
+    unmap_release_batch_commit(&batch);
 }
 
 uint64_t map_change_attribute_range(uint64_t *pgdir, uint64_t vaddr,
@@ -295,4 +329,13 @@ uint64_t map_change_attribute_range(uint64_t *pgdir, uint64_t vaddr,
     }
 
     return 0;
+}
+
+uint64_t map_change_attribute_range_mm(task_mm_info_t *mm, uint64_t vaddr,
+                                       uint64_t len, uint64_t flags) {
+    uint64_t ret =
+        map_change_attribute_range(task_mm_pgdir(mm), vaddr, len, flags);
+    if (len != 0)
+        arch_tlb_shootdown_mm(mm);
+    return ret;
 }

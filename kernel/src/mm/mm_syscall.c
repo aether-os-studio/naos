@@ -67,6 +67,23 @@ static bool user_mmap_range_valid(uint64_t addr, uint64_t len) {
     return true;
 }
 
+static uint64_t vm_flags_access_bits(uint64_t vm_flags) {
+    return vm_flags & (VMA_READ | VMA_WRITE | VMA_EXEC);
+}
+
+static uint64_t vma_guard_saved_access(uint64_t vm_flags) {
+    return (vm_flags & VMA_GUARD_SAVED_MASK) >> VMA_GUARD_SAVED_SHIFT;
+}
+
+static void vma_guard_set_saved_access(vma_t *vma, uint64_t access) {
+    if (!vma)
+        return;
+
+    vma->vm_flags &= ~VMA_GUARD_SAVED_MASK;
+    vma->vm_flags |= (access & (VMA_READ | VMA_WRITE | VMA_EXEC))
+                     << VMA_GUARD_SAVED_SHIFT;
+}
+
 static uint64_t prot_to_vma_access_flags(uint64_t prot) {
     uint64_t vm_flags = 0;
 
@@ -177,6 +194,10 @@ static const char *madvise_behavior_name(int behavior) {
         return "MADV_POPULATE_READ";
     case MADV_POPULATE_WRITE:
         return "MADV_POPULATE_WRITE";
+    case MADV_GUARD_INSTALL:
+        return "MADV_GUARD_INSTALL";
+    case MADV_GUARD_REMOVE:
+        return "MADV_GUARD_REMOVE";
     default:
         return "MADV_UNKNOWN";
     }
@@ -289,15 +310,16 @@ static int mmap_check_file_access(fd_t *file, uint64_t prot,
         return -EBADF;
     uint64_t accmode = flags & O_ACCMODE_FLAGS;
 
-    if ((prot & PROT_READ) && accmode == O_WRONLY)
+    if (accmode == O_WRONLY)
+        return -EACCES;
+
+    if ((prot & PROT_WRITE) && (flags & O_APPEND))
         return -EACCES;
 
     if (prot & PROT_WRITE) {
         if (map_type == MAP_SHARED || map_type == MAP_SHARED_VALIDATE) {
             if (accmode != O_RDWR)
                 return -EACCES;
-        } else if (accmode == O_WRONLY) {
-            return -EACCES;
         }
     }
 
@@ -512,7 +534,7 @@ static uint64_t populate_anon_vma(uint64_t vm_flags, uint64_t addr,
         pt_flags |= PT_FLAG_W;
 
     spin_lock(&mm->lock);
-    map_page_range(mm_pgdir(mm), addr, (uint64_t)-1, len, pt_flags);
+    map_page_range_mm(mm, addr, (uint64_t)-1, len, pt_flags);
     spin_unlock(&mm->lock);
     return addr;
 }
@@ -767,7 +789,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
 
     if ((int64_t)ret < 0) {
         spin_lock(&mm_info->lock);
-        unmap_page_range(mm_pgdir(mm_info), start_addr, aligned_len);
+        unmap_page_range_mm(mm_info, start_addr, aligned_len);
         spin_unlock(&mm_info->lock);
         spin_lock(&mgr->lock);
         vma_remove(mgr, vma);
@@ -836,7 +858,7 @@ static uint64_t do_munmap_locked(uint64_t addr, uint64_t size) {
             return (uint64_t)-ENOMEM;
         vma_free(vma);
         spin_lock(&mm->lock);
-        unmap_page_range(mm_pgdir(mm), unmap_start, unmap_len);
+        unmap_page_range_mm(mm, unmap_start, unmap_len);
         spin_unlock(&mm->lock);
     }
 
@@ -890,14 +912,34 @@ uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
             return (uint64_t)-ENOMEM;
         }
 
-        vma->vm_flags &= ~(VMA_READ | VMA_WRITE | VMA_EXEC);
-        vma->vm_flags |= new_vm_access;
+        if (vma->vm_flags & VMA_GUARD) {
+            vma_guard_set_saved_access(vma, new_vm_access);
+            vma->vm_flags &= ~(VMA_READ | VMA_WRITE | VMA_EXEC);
+        } else {
+            vma->vm_flags &= ~(VMA_READ | VMA_WRITE | VMA_EXEC);
+            vma->vm_flags |= new_vm_access;
+        }
         cursor = vma->vm_end;
     }
 
     spin_lock(&mm->lock);
-    map_change_attribute_range(mm_pgdir(mm), addr, len,
-                               vm_flags_to_pt_flags(new_vm_access));
+    cursor = addr;
+    while (cursor < end) {
+        vma_t *vma = vma_find(mgr, cursor);
+        if (!vma) {
+            spin_unlock(&mm->lock);
+            spin_unlock(&mgr->lock);
+            return (uint64_t)-ENOMEM;
+        }
+
+        uint64_t next_cursor = MIN(vma->vm_end, end);
+        uint64_t effective_access = (vma->vm_flags & VMA_GUARD)
+                                        ? 0
+                                        : vm_flags_access_bits(vma->vm_flags);
+        map_change_attribute_range_mm(mm, cursor, next_cursor - cursor,
+                                      vm_flags_to_pt_flags(effective_access));
+        cursor = next_cursor;
+    }
     spin_unlock(&mm->lock);
 
     cursor = addr;
@@ -909,6 +951,148 @@ uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
         }
 
         uint64_t next_cursor = vma->vm_end;
+        vma_try_merge_around(mgr, &vma);
+        if (vma->vm_end > next_cursor)
+            next_cursor = vma->vm_end;
+        cursor = next_cursor;
+    }
+
+    spin_unlock(&mgr->lock);
+    return 0;
+}
+
+static int madvise_guard_validate_vmas(uint64_t addr, uint64_t end) {
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+    spin_lock(&mgr->lock);
+
+    for (uint64_t cursor = addr; cursor < end;) {
+        vma_t *vma = vma_find(mgr, cursor);
+        if (!vma) {
+            spin_unlock(&mgr->lock);
+            return -ENOMEM;
+        }
+        if (vma->vm_type != VMA_TYPE_ANON ||
+            (vma->vm_flags & (VMA_SHARED | VMA_SHM | VMA_DEVICE))) {
+            spin_unlock(&mgr->lock);
+            return -EINVAL;
+        }
+        cursor = MIN(vma->vm_end, end);
+    }
+
+    spin_unlock(&mgr->lock);
+    return 0;
+}
+
+static uint64_t madvise_guard_install_range(uint64_t addr, uint64_t len) {
+    int check_ret = madvise_guard_validate_vmas(addr, addr + len);
+    if (check_ret < 0)
+        return (uint64_t)check_ret;
+
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+    task_mm_info_t *mm = current_task->mm;
+    uint64_t end = addr + len;
+    uint64_t cursor = addr;
+
+    spin_lock(&mgr->lock);
+    if (split_vma_boundaries_locked(mgr, addr, end) != 0) {
+        spin_unlock(&mgr->lock);
+        return (uint64_t)-ENOMEM;
+    }
+
+    while (cursor < end) {
+        vma_t *vma = vma_find(mgr, cursor);
+        if (!vma) {
+            spin_unlock(&mgr->lock);
+            return (uint64_t)-ENOMEM;
+        }
+
+        if (!(vma->vm_flags & VMA_GUARD)) {
+            vma_guard_set_saved_access(vma,
+                                       vm_flags_access_bits(vma->vm_flags));
+            vma->vm_flags |= VMA_GUARD;
+        }
+        vma->vm_flags &= ~(VMA_READ | VMA_WRITE | VMA_EXEC);
+        cursor = MIN(vma->vm_end, end);
+    }
+
+    spin_lock(&mm->lock);
+    map_change_attribute_range_mm(mm, addr, len, 0);
+    spin_unlock(&mm->lock);
+
+    cursor = addr;
+    while (cursor < end) {
+        vma_t *vma = vma_find(mgr, cursor);
+        if (!vma) {
+            spin_unlock(&mgr->lock);
+            return (uint64_t)-ENOMEM;
+        }
+
+        uint64_t next_cursor = MIN(vma->vm_end, end);
+        vma_try_merge_around(mgr, &vma);
+        if (vma->vm_end > next_cursor)
+            next_cursor = vma->vm_end;
+        cursor = next_cursor;
+    }
+
+    spin_unlock(&mgr->lock);
+    return 0;
+}
+
+static uint64_t madvise_guard_remove_range(uint64_t addr, uint64_t len) {
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+    task_mm_info_t *mm = current_task->mm;
+    uint64_t end = addr + len;
+    uint64_t cursor = addr;
+
+    spin_lock(&mgr->lock);
+    if (split_vma_boundaries_locked(mgr, addr, end) != 0) {
+        spin_unlock(&mgr->lock);
+        return (uint64_t)-ENOMEM;
+    }
+
+    while (cursor < end) {
+        vma_t *vma = vma_find(mgr, cursor);
+        if (!vma) {
+            spin_unlock(&mgr->lock);
+            return (uint64_t)-ENOMEM;
+        }
+
+        if (vma->vm_flags & VMA_GUARD) {
+            uint64_t saved_access = vma_guard_saved_access(vma->vm_flags);
+            vma->vm_flags &= ~(VMA_READ | VMA_WRITE | VMA_EXEC | VMA_GUARD |
+                               VMA_GUARD_SAVED_MASK);
+            vma->vm_flags |= saved_access;
+        }
+        cursor = MIN(vma->vm_end, end);
+    }
+
+    spin_lock(&mm->lock);
+    cursor = addr;
+    while (cursor < end) {
+        vma_t *vma = vma_find(mgr, cursor);
+        if (!vma) {
+            spin_unlock(&mm->lock);
+            spin_unlock(&mgr->lock);
+            return (uint64_t)-ENOMEM;
+        }
+
+        uint64_t next_cursor = MIN(vma->vm_end, end);
+        map_change_attribute_range_mm(
+            mm, cursor, next_cursor - cursor,
+            vm_flags_to_pt_flags(vm_flags_access_bits(vma->vm_flags)));
+        cursor = next_cursor;
+    }
+    spin_unlock(&mm->lock);
+
+    cursor = addr;
+    while (cursor < end) {
+        vma_t *vma = vma_find(mgr, cursor);
+        if (!vma) {
+            spin_unlock(&mgr->lock);
+            return (uint64_t)-ENOMEM;
+        }
+
+        uint64_t next_cursor = MIN(vma->vm_end, end);
         vma_try_merge_around(mgr, &vma);
         if (vma->vm_end > next_cursor)
             next_cursor = vma->vm_end;
@@ -977,7 +1161,7 @@ static uint64_t prepare_copy_target(vma_t *vma, uint64_t addr, uint64_t size) {
     uint64_t pt_flags = vm_flags_to_pt_flags(vma->vm_flags) | PT_FLAG_W;
     task_mm_info_t *mm = current_task->mm;
     spin_lock(&mm->lock);
-    map_change_attribute_range(mm_pgdir(mm), addr, size, pt_flags);
+    map_change_attribute_range_mm(mm, addr, size, pt_flags);
     spin_unlock(&mm->lock);
     return 0;
 }
@@ -989,8 +1173,8 @@ static void restore_copy_target_permissions(vma_t *vma, uint64_t addr,
 
     task_mm_info_t *mm = current_task->mm;
     spin_lock(&mm->lock);
-    map_change_attribute_range(mm_pgdir(mm), addr, size,
-                               vm_flags_to_pt_flags(vma->vm_flags));
+    map_change_attribute_range_mm(mm, addr, size,
+                                  vm_flags_to_pt_flags(vma->vm_flags));
     spin_unlock(&mm->lock);
 }
 
@@ -1057,7 +1241,7 @@ static uint64_t mremap_shrink_locked(vma_manager_t *mgr, vma_t *vma,
 
     task_mm_info_t *mm = current_task->mm;
     spin_lock(&mm->lock);
-    unmap_page_range(mm_pgdir(mm), shrink_start, shrink_size);
+    unmap_page_range_mm(mm, shrink_start, shrink_size);
     spin_unlock(&mm->lock);
     vma->vm_end = shrink_start;
     mgr->vm_used -= shrink_size;
@@ -1148,7 +1332,7 @@ static uint64_t mremap_move_locked(vma_manager_t *mgr, vma_t *old_vma,
     if ((int64_t)map_ret < 0) {
         task_mm_info_t *mm = current_task->mm;
         spin_lock(&mm->lock);
-        unmap_page_range(mm_pgdir(mm), target, new_size);
+        unmap_page_range_mm(mm, target, new_size);
         spin_unlock(&mm->lock);
         vma_remove(mgr, new_vma);
         vma_free(new_vma);
@@ -1162,7 +1346,7 @@ static uint64_t mremap_move_locked(vma_manager_t *mgr, vma_t *old_vma,
             if (copy_user_range_mapped(target, old_addr, copy_len) != 0) {
                 task_mm_info_t *mm = current_task->mm;
                 spin_lock(&mm->lock);
-                unmap_page_range(mm_pgdir(mm), target, new_size);
+                unmap_page_range_mm(mm, target, new_size);
                 spin_unlock(&mm->lock);
                 vma_remove(mgr, new_vma);
                 vma_free(new_vma);
@@ -1300,7 +1484,7 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
     uint64_t *pgdir = mm_pgdir(mm);
 
     spin_lock(&mm->lock);
-    map_page_range(pgdir, map_addr, (uint64_t)-1, map_len, load_pt_flags);
+    map_page_range_mm(mm, map_addr, (uint64_t)-1, map_len, load_pt_flags);
     spin_unlock(&mm->lock);
 
     uint64_t remaining = len;
@@ -1311,7 +1495,7 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
                                   file_off, remaining);
         if (ret < 0) {
             spin_lock(&mm->lock);
-            unmap_page_range(pgdir, map_addr, map_len);
+            unmap_page_range_mm(mm, map_addr, map_len);
             spin_unlock(&mm->lock);
             printk("Failed read file for mmap: node=%s file_off=%lu req=%lu "
                    "ret=%ld\n",
@@ -1328,7 +1512,7 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
 
     if (load_pt_flags != final_pt_flags) {
         spin_lock(&mm->lock);
-        map_change_attribute_range(pgdir, map_addr, map_len, final_pt_flags);
+        map_change_attribute_range_mm(mm, map_addr, map_len, final_pt_flags);
         spin_unlock(&mm->lock);
     }
 
@@ -1607,7 +1791,7 @@ static uint64_t madvise_dontneed_range(uint64_t addr, uint64_t len) {
 
     task_mm_info_t *mm = current_task->mm;
     spin_lock(&mm->lock);
-    unmap_page_range(mm_pgdir(mm), addr, len);
+    unmap_page_range_mm(mm, addr, len);
     spin_unlock(&mm->lock);
     return 0;
 }
@@ -1645,6 +1829,10 @@ uint64_t sys_madvise(uint64_t addr, uint64_t len, int behavior) {
         return madvise_prefault_range(addr, aligned_len, PF_ACCESS_WRITE);
     case MADV_DONTNEED:
         return madvise_dontneed_range(addr, aligned_len);
+    case MADV_GUARD_INSTALL:
+        return madvise_guard_install_range(addr, aligned_len);
+    case MADV_GUARD_REMOVE:
+        return madvise_guard_remove_range(addr, aligned_len);
     case MADV_FREE:
     case MADV_REMOVE:
         printk("madvise unsupported behavior=%s(%d) addr=%#018lx "

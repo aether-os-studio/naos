@@ -172,6 +172,30 @@ static uint64_t futex_build_key(int *uaddr, bool is_private, futex_key_t *key) {
     return futex_build_key_for_task(current_task, uaddr, is_private, key);
 }
 
+static bool futex_prefault_user_word(int *uaddr, bool write) {
+    if (!uaddr || !current_task || !current_task->mm)
+        return false;
+
+    uint64_t *pgdir = get_current_page_dir(true);
+    return user_translate_or_fault(pgdir, (uint64_t)uaddr, write) != 0;
+}
+
+static bool futex_read_user_word(int *uaddr, int *value) {
+    if (!uaddr || !value)
+        return false;
+
+    return read_task_user_memory(current_task, (uint64_t)uaddr, value,
+                                 sizeof(*value)) == 0;
+}
+
+static bool futex_write_user_word(int *uaddr, int value) {
+    if (!uaddr)
+        return false;
+
+    return write_task_user_memory(current_task, (uint64_t)uaddr, &value,
+                                  sizeof(value)) == 0;
+}
+
 static void futex_enqueue_locked(struct futex_wait *wait) {
     struct futex_wait *curr = &futex_wait_list;
     while (curr->next)
@@ -275,7 +299,8 @@ static uint64_t sys_futex_wait(int *uaddr, const futex_key_t *key, int val,
 
     spin_lock(&futex_lock);
     int uval;
-    if (copy_from_user(&uval, uaddr, sizeof(int))) {
+    if (!futex_read_user_word(uaddr, &uval)) {
+        spin_unlock(&futex_lock);
         return (uint64_t)-EFAULT;
     }
     if (uval != val) {
@@ -342,6 +367,8 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 
     switch (op & FUTEX_CMD_MASK) {
     case FUTEX_WAIT: {
+        if (!futex_prefault_user_word(uaddr, false))
+            return (uint64_t)-EFAULT;
         futex_key_t key;
         uint64_t ret = futex_build_key(uaddr, is_private, &key);
         if ((int64_t)ret < 0)
@@ -350,6 +377,8 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
                               false);
     }
     case FUTEX_WAKE: {
+        if (!futex_prefault_user_word(uaddr, false))
+            return (uint64_t)-EFAULT;
         futex_key_t key;
         uint64_t ret = futex_build_key(uaddr, is_private, &key);
         if ((int64_t)ret < 0)
@@ -357,6 +386,8 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
         return sys_futex_wake_key(&key, val, 0xFFFFFFFF);
     }
     case FUTEX_WAIT_BITSET: {
+        if (!futex_prefault_user_word(uaddr, false))
+            return (uint64_t)-EFAULT;
         futex_key_t key;
         uint64_t ret = futex_build_key(uaddr, is_private, &key);
         if ((int64_t)ret < 0)
@@ -365,6 +396,8 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
                               (op & FUTEX_CLOCK_REALTIME) != 0);
     }
     case FUTEX_WAKE_BITSET: {
+        if (!futex_prefault_user_word(uaddr, false))
+            return (uint64_t)-EFAULT;
         futex_key_t key;
         uint64_t ret = futex_build_key(uaddr, is_private, &key);
         if ((int64_t)ret < 0)
@@ -390,6 +423,9 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
         if (!uaddr2 || check_user_overflow((uint64_t)uaddr2, sizeof(int)) ||
             check_unmapped((uint64_t)uaddr2, sizeof(int)))
             return (uint64_t)-EFAULT;
+        if (!futex_prefault_user_word(uaddr, false) ||
+            !futex_prefault_user_word(uaddr2, true))
+            return (uint64_t)-EFAULT;
 
         futex_key_t key1;
         futex_key_t key2;
@@ -402,7 +438,11 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 
         spin_lock(&futex_lock);
 
-        int oldval = *uaddr2;
+        int oldval = 0;
+        if (!futex_read_user_word(uaddr2, &oldval)) {
+            spin_unlock(&futex_lock);
+            return (uint64_t)-EFAULT;
+        }
         int newval;
 
         switch (op_type) {
@@ -425,7 +465,11 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             spin_unlock(&futex_lock);
             return (uint64_t)-ENOSYS;
         }
-        *uaddr2 = newval;
+
+        if (!futex_write_user_word(uaddr2, newval)) {
+            spin_unlock(&futex_lock);
+            return (uint64_t)-EFAULT;
+        }
 
         int ret_count = futex_wake_locked(&key1, val, 0xFFFFFFFF);
 
@@ -462,6 +506,8 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
         return ret_count;
     }
     case FUTEX_LOCK_PI: {
+        if (!futex_prefault_user_word(uaddr, true))
+            return (uint64_t)-EFAULT;
         futex_key_t key;
         uint64_t ret = futex_build_key(uaddr, is_private, &key);
         if ((int64_t)ret < 0)
@@ -486,8 +532,17 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 
     retry:
         spin_lock(&futex_lock);
-        if ((*uaddr & INT32_MAX) == 0) {
-            *uaddr = current_task->pid;
+        int owner = 0;
+        if (!futex_read_user_word(uaddr, &owner)) {
+            spin_unlock(&futex_lock);
+            return (uint64_t)-EFAULT;
+        }
+
+        if ((owner & INT32_MAX) == 0) {
+            if (!futex_write_user_word(uaddr, (int)current_task->pid)) {
+                spin_unlock(&futex_lock);
+                return (uint64_t)-EFAULT;
+            }
             spin_unlock(&futex_lock);
             return 0;
         } else {
@@ -518,17 +573,27 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
         }
     }
     case FUTEX_UNLOCK_PI: {
+        if (!futex_prefault_user_word(uaddr, true))
+            return (uint64_t)-EFAULT;
         futex_key_t key;
         uint64_t ret = futex_build_key(uaddr, is_private, &key);
         if ((int64_t)ret < 0)
             return ret;
 
         spin_lock(&futex_lock);
-        if ((*uaddr & INT32_MAX) != current_task->pid) {
+        int owner = 0;
+        if (!futex_read_user_word(uaddr, &owner)) {
+            spin_unlock(&futex_lock);
+            return (uint64_t)-EFAULT;
+        }
+        if ((owner & INT32_MAX) != (int)current_task->pid) {
             spin_unlock(&futex_lock);
             return (uint64_t)-EPERM;
         }
-        *uaddr = 0;
+        if (!futex_write_user_word(uaddr, 0)) {
+            spin_unlock(&futex_lock);
+            return (uint64_t)-EFAULT;
+        }
         futex_wake_locked(&key, 1, 0xFFFFFFFF);
         spin_unlock(&futex_lock);
         return 0;
@@ -537,6 +602,9 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
     case FUTEX_CMP_REQUEUE: {
         if (!uaddr2 || check_user_overflow((uint64_t)uaddr2, sizeof(int)) ||
             check_unmapped((uint64_t)uaddr2, sizeof(int)))
+            return (uint64_t)-EFAULT;
+        if (!futex_prefault_user_word(uaddr, false) ||
+            !futex_prefault_user_word(uaddr2, false))
             return (uint64_t)-EFAULT;
 
         int nr_requeue = (int)(uintptr_t)timeout;
@@ -555,7 +623,8 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
         spin_lock(&futex_lock);
 
         int uval3;
-        if (copy_from_user(&uval3, uaddr, sizeof(int))) {
+        if (!futex_read_user_word(uaddr, &uval3)) {
+            spin_unlock(&futex_lock);
             return (uint64_t)-EFAULT;
         }
         if ((op & FUTEX_CMD_MASK) == FUTEX_CMP_REQUEUE && uval3 != val3) {

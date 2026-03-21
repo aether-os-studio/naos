@@ -37,3 +37,4 @@
 uint64_t get_arch_page_table_flags(uint64_t flags);
 void arch_flush_tlb(uint64_t vaddr);
 void arch_flush_tlb_all();
+void arch_tlb_shootdown_mm(task_mm_info_t *mm);

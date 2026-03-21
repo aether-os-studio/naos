@@ -335,7 +335,8 @@ void *drm_map(void *data, void *addr, uint64_t offset, uint64_t len) {
         return (void *)-EINVAL;
     }
 
-    map_page_range(get_current_page_dir(true), (uint64_t)addr, offset, len,
+    map_page_range((uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
+                   (uint64_t)addr, offset, len,
                    PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     return addr;

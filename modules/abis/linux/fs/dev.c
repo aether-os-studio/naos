@@ -429,7 +429,8 @@ void *devtmpfs_map(fd_t *file, void *addr, size_t offset, size_t size,
     if (!(pt_flags & (PT_FLAG_R | PT_FLAG_W | PT_FLAG_X)))
         pt_flags |= PT_FLAG_R;
 
-    map_page_range(get_current_page_dir(true), (uint64_t)addr,
+    map_page_range((uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
+                   (uint64_t)addr,
                    virt_to_phys((uint64_t)handle->content + offset), size,
                    pt_flags);
 

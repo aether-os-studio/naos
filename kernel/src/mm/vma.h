@@ -13,6 +13,9 @@
 #define VMA_SHM 0x20
 #define VMA_DEVICE 0x40
 #define VMA_STACK 0x80
+#define VMA_GUARD 0x100
+#define VMA_GUARD_SAVED_SHIFT 9
+#define VMA_GUARD_SAVED_MASK (0x7UL << VMA_GUARD_SAVED_SHIFT)
 
 // VMA类型
 typedef enum {

@@ -98,10 +98,8 @@ void x64_fpu_restore(fpu_context_t *fpu_ctx);
 
 #define switch_mm(prev, next)                                                  \
     do {                                                                       \
-        if ((prev)->mm != (next)->mm) {                                        \
-            asm volatile("movq %0, %%cr3" ::"r"((next)->mm->page_table_addr)   \
-                         : "memory");                                          \
-        }                                                                      \
+        asm volatile("movq %0, %%cr3" ::"r"((next)->mm->page_table_addr)       \
+                     : "memory");                                              \
     } while (0)
 
 #define switch_to(prev, next)                                                  \

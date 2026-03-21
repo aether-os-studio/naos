@@ -105,10 +105,11 @@ void *fb_map(void *data, void *addr, uint64_t offset, uint64_t len) {
                                          (uint64_t)framebuffer->address) +
                        offset;
 
-    map_page_range(
-        get_current_page_dir(true), (uint64_t)addr, (uint64_t)fb_addr,
-        framebuffer->width * framebuffer->height * framebuffer->bpp / 8,
-        PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+    map_page_range((uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
+                   (uint64_t)addr, (uint64_t)fb_addr,
+                   framebuffer->width * framebuffer->height * framebuffer->bpp /
+                       8,
+                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     return addr;
 }

@@ -229,8 +229,8 @@ static void do_shmdt_one(task_t *task, shm_mapping_t *m) {
     vma_t *vma = vma_find(mgr, m->uaddr);
     if (vma && vma->vm_type == VMA_TYPE_SHM && vma->vm_start == m->uaddr) {
         spin_lock(&task->mm->lock);
-        unmap_page_range((uint64_t *)phys_to_virt(task->mm->page_table_addr),
-                         vma->vm_start, vma->vm_end - vma->vm_start);
+        unmap_page_range_mm(task->mm, vma->vm_start,
+                            vma->vm_end - vma->vm_start);
         spin_unlock(&task->mm->lock);
         vma_remove(mgr, vma);
         vma_free(vma);
@@ -372,8 +372,9 @@ static void *shmfs_map(fd_t *file, void *addr, size_t offset, size_t size,
     if (!(pt_flags & (PT_FLAG_R | PT_FLAG_W | PT_FLAG_X)))
         pt_flags |= PT_FLAG_R;
 
-    map_page_range(get_current_page_dir(true), (uint64_t)addr,
-                   virt_to_phys((uint64_t)shm->addr + offset), size, pt_flags);
+    map_page_range_mm(current_task->mm, (uint64_t)addr,
+                      virt_to_phys((uint64_t)shm->addr + offset), size,
+                      pt_flags);
 
     spin_unlock(&shm_op_lock);
     return addr;
@@ -544,16 +545,14 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
         flags |= PT_FLAG_X;
 
     spin_lock(&current_task->mm->lock);
-    map_page_range((uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
-                   addr, virt_to_phys((uint64_t)shm->addr), shm->size, flags);
+    map_page_range_mm(current_task->mm, addr, virt_to_phys((uint64_t)shm->addr),
+                      shm->size, flags);
     spin_unlock(&current_task->mm->lock);
 
     vma_t *vma = vma_alloc();
     if (!vma) {
         spin_lock(&current_task->mm->lock);
-        unmap_page_range(
-            (uint64_t *)phys_to_virt(current_task->mm->page_table_addr), addr,
-            shm->size);
+        unmap_page_range_mm(current_task->mm, addr, shm->size);
         spin_unlock(&current_task->mm->lock);
         err = -ENOMEM;
         goto out_unlock;
@@ -574,9 +573,7 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
     if (vma_insert(mgr, vma) != 0) {
         vma_free(vma);
         spin_lock(&current_task->mm->lock);
-        unmap_page_range(
-            (uint64_t *)phys_to_virt(current_task->mm->page_table_addr), addr,
-            shm->size);
+        unmap_page_range_mm(current_task->mm, addr, shm->size);
         spin_unlock(&current_task->mm->lock);
         err = -ENOMEM;
         goto out_unlock;
@@ -586,9 +583,7 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
         vma_remove(mgr, vma);
         vma_free(vma);
         spin_lock(&current_task->mm->lock);
-        unmap_page_range(
-            (uint64_t *)phys_to_virt(current_task->mm->page_table_addr), addr,
-            shm->size);
+        unmap_page_range_mm(current_task->mm, addr, shm->size);
         spin_unlock(&current_task->mm->lock);
         err = -ENOMEM;
         goto out_unlock;
