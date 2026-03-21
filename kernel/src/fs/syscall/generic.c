@@ -343,6 +343,9 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
         return 0;
     }
 
+    if (dir == dir->root)
+        return -EBUSY;
+
     uint64_t dev_nr = 0;
     vfs_node_t *dev = vfs_open((const char *)devname, 0);
     if (dev) {
@@ -863,17 +866,20 @@ uint64_t sys_copy_file_range(uint64_t fd_in, int *offset_in_user,
     if (fd_get_flags(out_fd) & O_APPEND)
         dst_offset = out_fd->node->size;
 
-    uint64_t length = in_fd->node->size > len ? len : in_fd->node->size;
+    vfs_node_t *in_node = vfs_get_real_node(in_fd->node);
+    vfs_node_t *out_node = vfs_get_real_node(out_fd->node);
+
+    uint64_t length = MIN(len, in_node->size);
     uint8_t *buffer = (uint8_t *)alloc_frames_bytes(length);
     size_t copy_total = 0;
 
-    ssize_t ret = vfs_read_fd(in_fd, buffer, src_offset, length);
+    ssize_t ret = vfs_read(in_node, buffer, src_offset, length);
     if (ret < 0) {
         free_frames_bytes(buffer, length);
         return (uint64_t)-EIO;
     }
 
-    if ((copy_total = vfs_write_fd(out_fd, buffer, dst_offset, length)) ==
+    if ((copy_total = vfs_write(out_node, buffer, dst_offset, ret)) ==
         (ssize_t)-1) {
         free_frames_bytes(buffer, length);
         return (uint64_t)-EIO;

@@ -1662,6 +1662,94 @@ static int ext_dir_is_empty_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
     return 1;
 }
 
+static int ext_drop_link_locked(ext_mount_ctx_t *fs, uint32_t ino,
+                                ext_inode_disk_t *inode,
+                                vfs_node_t *cached_node);
+
+static int ext_delete_directory_contents_locked(ext_mount_ctx_t *fs,
+                                                uint32_t dir_ino,
+                                                ext_inode_disk_t *dir_inode) {
+    uint64_t dir_size = ext_inode_size_get(dir_inode);
+    uint32_t blocks =
+        (uint32_t)((dir_size + fs->block_size - 1) / fs->block_size);
+    uint8_t *buf = calloc(1, fs->block_size);
+    if (!buf)
+        return -ENOMEM;
+
+    for (uint32_t lblock = 0; lblock < blocks; lblock++) {
+        uint32_t pblock = 0;
+        int ret = ext_inode_get_block_locked(fs, dir_ino, dir_inode, lblock,
+                                             false, &pblock);
+        if (ret) {
+            free(buf);
+            return ret;
+        }
+        if (!pblock)
+            continue;
+        ret = ext_read_block(fs, pblock, buf);
+        if (ret) {
+            free(buf);
+            return ret;
+        }
+        for (uint32_t off = 0;
+             off + sizeof(ext_dir_entry_t) <= fs->block_size;) {
+            ext_dir_entry_t *entry = (ext_dir_entry_t *)(buf + off);
+            if (entry->rec_len < 8 || (entry->rec_len & 3) ||
+                off + entry->rec_len > fs->block_size) {
+                free(buf);
+                return -EIO;
+            }
+            if (entry->inode) {
+                bool is_dot = entry->name_len == 1 && entry->name[0] == '.';
+                bool is_dotdot = entry->name_len == 2 &&
+                                 entry->name[0] == '.' && entry->name[1] == '.';
+                if (!is_dot && !is_dotdot) {
+                    char name[256];
+                    size_t name_len = MIN(entry->name_len, 255);
+                    memcpy(name, entry->name, name_len);
+                    name[name_len] = '\0';
+
+                    ext_inode_disk_t child_inode = {0};
+                    ret = ext_read_inode(fs, entry->inode, &child_inode);
+                    if (ret) {
+                        free(buf);
+                        return ret;
+                    }
+
+                    if ((child_inode.i_mode & S_IFMT) == EXT2_S_IFDIR) {
+                        ret = ext_delete_directory_contents_locked(
+                            fs, entry->inode, &child_inode);
+                        if (ret) {
+                            free(buf);
+                            return ret;
+                        }
+                    }
+
+                    uint32_t child_ino = entry->inode;
+                    ret = ext_dir_remove_entry_locked(fs, dir_ino, dir_inode,
+                                                      name, NULL);
+                    if (ret) {
+                        free(buf);
+                        return ret;
+                    }
+                    entry->inode = 0;
+
+                    ret =
+                        ext_drop_link_locked(fs, child_ino, &child_inode, NULL);
+                    if (ret) {
+                        free(buf);
+                        return ret;
+                    }
+                }
+            }
+            off += entry->rec_len;
+        }
+    }
+
+    free(buf);
+    return 0;
+}
+
 static int ext_dir_set_dotdot_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
                                      ext_inode_disk_t *dir_inode,
                                      uint32_t new_parent_ino) {
@@ -2697,14 +2785,10 @@ int ext_delete(vfs_node_t *parent, vfs_node_t *node) {
     }
 
     if ((inode.i_mode & S_IFMT) == EXT2_S_IFDIR) {
-        ret = ext_dir_is_empty_locked(fs, node->inode, &inode);
-        if (ret < 0) {
+        ret = ext_delete_directory_contents_locked(fs, node->inode, &inode);
+        if (ret) {
             spin_unlock(&rwlock);
             return ret;
-        }
-        if (!ret) {
-            spin_unlock(&rwlock);
-            return -ENOTEMPTY;
         }
     }
 
