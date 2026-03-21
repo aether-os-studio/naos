@@ -104,7 +104,7 @@ static int tmpfs_replace_content(tmpfs_node_t *handle, size_t new_capability,
 
 static void tmpfs_sync_node_from_handle(vfs_node_t *node,
                                         tmpfs_node_t *handle) {
-    if (!node || !handle)
+    if (!node || !handle || node == node->root)
         return;
 
     node->inode = handle->inode;
@@ -347,6 +347,9 @@ void tmpfs_unmount(vfs_node_t *root) {
     for (uint64_t i = 0; i < idx; i++) {
         vfs_free(nodes[i]);
     }
+
+    root->root = root->parent ? root->parent->root : root;
+
     free(nodes);
 }
 
@@ -474,6 +477,15 @@ int tmpfs_stat(vfs_node_t *node) {
     return 0;
 }
 
+int tmpfs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
+    if (!fd->node || !fd->node->handle)
+        return -EBADF;
+    if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
+        return device_ioctl(fd->node->rdev, cmd, (void *)arg, fd);
+    }
+    return -ENOSYS;
+}
+
 void tmpfs_free_handle(vfs_node_t *node) {
     tmpfs_node_t *tnode = node ? node->handle : NULL;
     if (!tnode)
@@ -510,6 +522,7 @@ static vfs_operations_t callbacks = {
     .close = tmpfs_close,
     .read = tmpfs_read,
     .write = tmpfs_write,
+    .ioctl = tmpfs_ioctl,
     .readlink = tmpfs_readlink,
     .mkdir = tmpfs_mkdir,
     .mkfile = tmpfs_mkfile,

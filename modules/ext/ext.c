@@ -1853,7 +1853,7 @@ static void ext_resolve_children_conflict(vfs_node_t *parent,
 
     vfs_node_t *keep = NULL;
     for (uint64_t i = 0; i < idx; i++) {
-        if (nodes[i] == nodes[i]->root && vfs_is_mount_point(nodes[i])) {
+        if (nodes[i] == nodes[i]->root) {
             keep = nodes[i];
             break;
         }

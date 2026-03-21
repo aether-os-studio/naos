@@ -65,7 +65,7 @@ static int devtmpfs_replace_content(devtmpfs_node_t *handle,
 
 static void devtmpfs_sync_node_from_handle(vfs_node_t *node,
                                            devtmpfs_node_t *handle) {
-    if (!node || !handle)
+    if (!node || !handle || node == node->root)
         return;
 
     node->inode = handle->inode;
@@ -181,25 +181,8 @@ ssize_t devtmpfs_readlink(vfs_node_t *node, void *addr, size_t offset,
     devtmpfs_node_t *handle = node->handle;
     if (offset >= handle->size)
         return 0;
-    char tmp[1024];
-    memset(tmp, 0, sizeof(tmp));
-    memcpy(tmp, handle->content, MIN(handle->size, sizeof(tmp)));
-
-    vfs_node_t *to_node = vfs_open_at(node->parent, (const char *)tmp, 0);
-    if (!to_node)
-        return -ENOENT;
-
-    char *from_path = vfs_get_fullpath(node);
-    char *to_path = vfs_get_fullpath(to_node);
-
-    char output[1024];
-    memset(output, 0, sizeof(output));
-    calculate_relative_path(output, from_path, to_path, size);
-    free(from_path);
-    free(to_path);
-
-    ssize_t to_copy = MIN(size, strlen(output));
-    memcpy(addr, output, to_copy);
+    ssize_t to_copy = MIN(handle->size - offset, size);
+    memcpy(addr, handle->content + offset, to_copy);
     return to_copy;
 }
 
@@ -342,6 +325,8 @@ void devtmpfs_unmount(vfs_node_t *root) {
     root->rdev = root->parent ? root->parent->rdev : 0;
 
     devtmpfs_root = fake_devtmpfs_root;
+
+    root->root = root->parent ? root->parent->root : root;
 
     spin_unlock(&devtmpfs_oplock);
 }
@@ -835,7 +820,12 @@ bool devfs_initialized = false;
 void devtmpfs_init() {
     devtmpfs_fsid = vfs_regist(&devtmpfs);
 
-    fake_devtmpfs_root = vfs_child_append(rootdir, "dev", NULL);
+    vfs_node_t *exist = vfs_open("/dev", O_NOFOLLOW);
+    if (exist) {
+        vfs_free(exist);
+    }
+
+    fake_devtmpfs_root = vfs_node_alloc(rootdir, "dev");
     fake_devtmpfs_root->mode = 0600;
     fake_devtmpfs_root->type = file_dir;
     fake_devtmpfs_root->fsid = devtmpfs_fsid;

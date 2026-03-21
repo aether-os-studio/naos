@@ -302,12 +302,45 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
         if (flags & (MS_REMOUNT | MS_BIND)) {
             return (uint64_t)-EINVAL;
         }
+        if (!current_task || !current_task->nsproxy ||
+            !current_task->nsproxy->mnt_ns) {
+            return (uint64_t)-EINVAL;
+        }
 
         vfs_node_t *old_mount = vfs_open((const char *)devname, 0);
         if (!old_mount)
             return (uint64_t)-EINVAL;
+        if (!(old_mount->type & file_dir))
+            return (uint64_t)-ENOTDIR;
 
-        return vfs_remount(old_mount, dir);
+        struct mount_point *mnt = task_mnt_namespace_find_mount(
+            current_task->nsproxy->mnt_ns, old_mount);
+        if (!mnt)
+            mnt = task_mnt_namespace_find_mount_by_root(
+                current_task->nsproxy->mnt_ns, old_mount);
+        if (!mnt)
+            return (uint64_t)-EINVAL;
+        if (mnt->dir == dir)
+            return 0;
+        if (vfs_is_ancestor(mnt->root_node, dir))
+            return (uint64_t)-EINVAL;
+
+        if (!(dir->type & file_dir))
+            return (uint64_t)-ENOTDIR;
+
+        return task_mnt_namespace_move_mount(current_task->nsproxy->mnt_ns,
+                                             mnt->dir, dir);
+    }
+
+    if (flags & MS_REMOUNT) {
+        if (flags & (MS_MOVE | MS_BIND))
+            return (uint64_t)-EINVAL;
+        if (!current_task || !current_task->nsproxy ||
+            !current_task->nsproxy->mnt_ns)
+            return (uint64_t)-EINVAL;
+        if (!task_mnt_namespace_find_mount(current_task->nsproxy->mnt_ns, dir))
+            return (uint64_t)-EINVAL;
+        return 0;
     }
 
     uint64_t dev_nr = 0;
@@ -316,25 +349,12 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
         dev_nr = dev->rdev;
     }
 
-    // int child_count = 0;
-    // vfs_node_t *pos, tmp;
-    // llist_for_each(pos, tmp, &dir->childs, node_for_childs) { child_count++;
-    // } vfs_node_t **childs = calloc(child_count, sizeof(vfs_node_t *)); int i
-    // = 0; llist_for_each(pos, tmp, &dir->childs, node_for_childs) {
-    //     childs[i++] = pos;
-    // }
-    // for (i = 0; i < child_count; i++) {
-    //     vfs_node_t *node = childs[i];
-    //     if (node == node->root)
-    //         continue;
-    //     vfs_free(node);
-    // }
-    // free(childs);
-
     int ret = vfs_mount(dev_nr, dir, (const char *)type);
     if (ret < 0)
         return ret;
-    vfs_add_mount_point(dir, devname);
+    if (current_task && current_task->nsproxy && current_task->nsproxy->mnt_ns)
+        task_mnt_namespace_add_mount(current_task->nsproxy->mnt_ns,
+                                     all_fs[dir->fsid], dir, dir, devname);
     return ret;
 }
 
@@ -343,8 +363,47 @@ uint64_t sys_umount2(const char *target, uint64_t flags) {
     if (copy_from_user_str(target_k, target, sizeof(target_k)))
         return (uint64_t)-EFAULT;
 
-    vfs_unmount(target_k);
+    vfs_node_t *node = vfs_open(target_k, 0);
+    if (!node)
+        return (uint64_t)-ENOENT;
+
+    struct mount_point *mnt = NULL;
+    if (current_task && current_task->nsproxy &&
+        current_task->nsproxy->mnt_ns) {
+        mnt =
+            task_mnt_namespace_find_mount(current_task->nsproxy->mnt_ns, node);
+        if (!mnt)
+            mnt = task_mnt_namespace_find_mount_by_root(
+                current_task->nsproxy->mnt_ns, node);
+    }
+
+    int ret = 0;
+    if (mnt && mnt->root_node && mnt->root_node != node) {
+        if (!mnt->fs || !mnt->fs->ops || !mnt->fs->ops->unmount)
+            return (uint64_t)-EINVAL;
+        mnt->fs->ops->unmount(mnt->root_node);
+        vfs_close(mnt->root_node);
+    } else {
+        ret = vfs_unmount(target_k);
+        if (ret < 0)
+            return (uint64_t)ret;
+    }
+
+    if (current_task && current_task->nsproxy && current_task->nsproxy->mnt_ns)
+        task_mnt_namespace_remove_mount(current_task->nsproxy->mnt_ns, node);
     return 0;
+}
+
+uint64_t sys_umask(uint64_t mask) {
+    task_t *self = current_task;
+    uint16_t old = 0022;
+
+    if (!self || !self->fs)
+        return old;
+
+    old = self->fs->umask & 0777;
+    self->fs->umask = mask & 0777;
+    return old;
 }
 
 uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
@@ -383,8 +442,12 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
         node = vfs_open(name, flags & O_NOFOLLOW);
         if (!node)
             return (uint64_t)-ENOENT;
-        if (mode)
-            vfs_chmod(name, mode ? (mode & 0777) : 0777);
+        if (mode) {
+            uint16_t file_mode = mode & 0777;
+            if (self && self->fs)
+                file_mode &= ~self->fs->umask;
+            vfs_chmod(name, file_mode);
+        }
     }
 
 have_node:
@@ -460,8 +523,12 @@ static uint64_t do_sys_open_tmpfile(const char *dir_path, uint64_t flags,
         if (mkret < 0)
             return (uint64_t)mkret;
 
-        if (mode)
-            vfs_chmod(tmp_path, mode ? (mode & 0777) : 0777);
+        if (mode) {
+            uint16_t file_mode = mode & 0777;
+            if (current_task && current_task->fs)
+                file_mode &= ~current_task->fs->umask;
+            vfs_chmod(tmp_path, file_mode);
+        }
 
         uint64_t open_flags =
             flags & ~((uint64_t)O_TMPFILE | (uint64_t)O_DIRECTORY);
@@ -1292,15 +1359,37 @@ uint64_t sys_chdir(const char *dname) {
     if (!(new_cwd->type & file_dir))
         return (uint64_t)-ENOTDIR;
 
-    current_task->cwd = new_cwd;
+    return task_fs_chdir(current_task, new_cwd);
+}
+
+uint64_t sys_chroot(const char *dname) {
+    char dirname[512];
+
+    if (copy_from_user_str(dirname, dname, sizeof(dirname)))
+        return (uint64_t)-EFAULT;
+
+    vfs_node_t *new_root = vfs_open(dirname, 0);
+    if (!new_root)
+        return (uint64_t)-ENOENT;
+    if (new_root->type & file_symlink)
+        new_root = vfs_get_real_node(new_root);
+    if (!(new_root->type & file_dir))
+        return (uint64_t)-ENOTDIR;
+
+    int ret = task_fs_chroot(current_task, new_root);
+    if (ret < 0)
+        return (uint64_t)ret;
+
+    if (!vfs_is_ancestor(new_root, task_fs_cwd(current_task))) {
+        task_fs_chdir(current_task, new_root);
+    }
 
     return 0;
 }
 
-uint64_t sys_chroot(const char *dname) { return 0; }
-
 uint64_t sys_getcwd(char *cwd, uint64_t size) {
-    char *str = vfs_get_fullpath(current_task->cwd);
+    char *str = vfs_get_fullpath_at(task_fs_cwd(current_task),
+                                    task_fs_root(current_task));
     if (size < (uint64_t)strlen(str)) {
         return (uint64_t)-ERANGE;
     }
@@ -1815,17 +1904,6 @@ uint64_t do_readlink(char *path, char *buf, uint64_t size) {
     }
 
     if (!(node->type & file_symlink)) {
-        // char *p = vfs_get_fullpath(node);
-        // int str_len = strlen(p);
-        // int node_name_len = strlen(node->name);
-        // char *ptr = p + str_len - node_name_len;
-        // char tmp[256];
-        // sprintf(tmp, "%s", ptr);
-        // uint64_t len = strnlen(tmp, size);
-        // memcpy(buf, tmp, len);
-        // buf[len] = 0;
-        // free(p);
-        // return len;
         return (uint64_t)-EINVAL;
     }
 
@@ -2048,9 +2126,7 @@ uint64_t sys_fchdir(uint64_t fd) {
     if (!(node->type & file_dir))
         return -ENOTDIR;
 
-    self->cwd = node;
-
-    return 0;
+    return task_fs_chdir(self, node);
 }
 
 uint64_t do_mkdir(const char *name, uint64_t mode) {
@@ -2058,7 +2134,10 @@ uint64_t do_mkdir(const char *name, uint64_t mode) {
     if (ret < 0) {
         return (uint64_t)ret;
     }
-    vfs_chmod(name, mode);
+    uint16_t dir_mode = mode & 0777;
+    if (current_task && current_task->fs)
+        dir_mode &= ~current_task->fs->umask;
+    vfs_chmod(name, dir_mode);
 
     return 0;
 }
@@ -2252,7 +2331,12 @@ uint64_t sys_mknod(const char *name_user, uint16_t umode, int dev) {
     if (copy_from_user_str(name, name_user, sizeof(name)))
         return (uint64_t)-EFAULT;
 
-    int ret = vfs_mknod(name, umode, dev);
+    uint16_t masked_mode = (umode & S_IFMT) | (umode & 0777);
+    if (current_task && current_task->fs)
+        masked_mode =
+            (umode & S_IFMT) | ((umode & 0777) & ~current_task->fs->umask);
+
+    int ret = vfs_mknod(name, masked_mode, dev);
     if (ret < 0)
         return (uint64_t)-EINVAL;
 
@@ -2266,7 +2350,12 @@ uint64_t sys_mknodat(uint64_t fd, const char *path_user, uint16_t umode,
         return (uint64_t)-EFAULT;
 
     char *fullpath = at_resolve_pathname(fd, path);
-    int ret = vfs_mknod(fullpath, umode, dev);
+    uint16_t masked_mode = (umode & S_IFMT) | (umode & 0777);
+    if (current_task && current_task->fs)
+        masked_mode =
+            (umode & S_IFMT) | ((umode & 0777) & ~current_task->fs->umask);
+
+    int ret = vfs_mknod(fullpath, masked_mode, dev);
     free(fullpath);
     if (ret < 0)
         return (uint64_t)-EINVAL;
@@ -2332,7 +2421,7 @@ uint64_t sys_fchown(int fd, uint64_t uid, uint64_t gid) {
 
     vfs_node_t *node = self->fd_info->fds[fd]->node;
 
-    char *fullpath = vfs_get_fullpath(node);
+    char *fullpath = vfs_get_fullpath_at(node, self->fs->root);
     int ret = vfs_chown(fullpath, uid, gid);
     free(fullpath);
     return ret;

@@ -35,8 +35,10 @@ char *at_resolve_pathname(int dirfd, char *pathname) {
         return strdup(pathname);
     } else if (pathname[0] != '/') {
         if (dirfd == (int)AT_FDCWD) { // relative to cwd
-            char *cwd = current_task->cwd ? vfs_get_fullpath(current_task->cwd)
-                                          : strdup("/");
+            char *cwd = current_task && current_task->fs
+                            ? vfs_get_fullpath_at(current_task->fs->cwd,
+                                                  current_task->fs->root)
+                            : strdup("/");
             if (!cwd)
                 return NULL;
 
@@ -51,7 +53,7 @@ char *at_resolve_pathname(int dirfd, char *pathname) {
 
             vfs_node_t *node = current_task->fd_info->fds[dirfd]->node;
 
-            char *dirname = vfs_get_fullpath(node);
+            char *dirname = vfs_get_fullpath_at(node, current_task->fs->root);
             char *out = join_pathname(dirname, pathname);
             free(dirname);
 

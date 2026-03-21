@@ -2,21 +2,26 @@
 #include <task/task.h>
 #include <libs/string_builder.h>
 
-extern struct llist_header mount_points;
-
 extern int procfs_mount_point_count;
 
 char *proc_gen_mountinfo_file(task_t *task, size_t *context_len) {
-    // TODO: namespace
     string_builder_t *builder = create_string_builder(1024);
+    task_mount_namespace_t *mnt_ns =
+        (task && task->nsproxy) ? task->nsproxy->mnt_ns : NULL;
+    if (!mnt_ns) {
+        char *data = builder->data;
+        *context_len = builder->size;
+        free(builder);
+        return data;
+    }
     struct mount_point *mnt, *tmp;
-    llist_for_each(mnt, tmp, &mount_points, node) {
+    llist_for_each(mnt, tmp, &mnt_ns->mount_points, node) {
         vfs_node_t *node = mnt->dir;
         if (!node || !node->name || !mnt->fs || !mnt->devname ||
             !mnt->fs->name) {
             continue;
         }
-        char *mount_path = vfs_get_fullpath(node);
+        char *mount_path = vfs_get_fullpath_at(node, task_fs_root(task));
         string_builder_append(builder, "%d %d %d:%d %s %s rw - %s %s rw\n",
                               node->fsid,
                               node->parent ? node->parent->fsid : node->fsid,

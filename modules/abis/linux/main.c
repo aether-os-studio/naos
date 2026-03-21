@@ -15,13 +15,6 @@
 #include <libs/keys.h>
 #include <task/task.h>
 
-// Beware the 65 character limit!
-char sysname[] = "NeoAetherOS";
-char nodename[] = "aether";
-char release[] = BUILD_VERSION;
-char version[] = BUILD_VERSION;
-char machine[] = "x86_64";
-
 extern void sys_yield(void);
 
 static uint64_t copy_timespec_to_user(uint64_t user_addr, uint64_t sec,
@@ -310,6 +303,14 @@ uint64_t sys_uname(uint64_t arg1) {
 
     struct utsname utsname;
     memset(&utsname, 0, sizeof(utsname));
+    task_uts_namespace_t *uts_ns =
+        (task && task->nsproxy) ? task->nsproxy->uts_ns : NULL;
+    const char *nodename = uts_ns ? uts_ns->nodename : "aether";
+    const char *machine = uts_ns ? uts_ns->machine : "x86_64";
+    const char *sysname = uts_ns ? uts_ns->sysname : "NeoAetherOS";
+    const char *release = uts_ns ? uts_ns->release : BUILD_VERSION;
+    const char *version = uts_ns ? uts_ns->version : BUILD_VERSION;
+
     strcpy(utsname.nodename, nodename);
     strcpy(utsname.machine, machine);
     if (fake_linux) {
@@ -640,7 +641,7 @@ __attribute__((visibility("default"))) int dlmain() {
     regist_syscall_handler(SYS_CHOWN, (syscall_handle_t)sys_chown);
     regist_syscall_handler(SYS_FCHOWN, (syscall_handle_t)sys_fchown);
     regist_syscall_handler(SYS_LCHOWN, (syscall_handle_t)sys_chown);
-    regist_syscall_handler(SYS_UMASK, (syscall_handle_t)dummy_syscall_handler);
+    regist_syscall_handler(SYS_UMASK, (syscall_handle_t)sys_umask);
     regist_syscall_handler(SYS_GETTIMEOFDAY,
                            (syscall_handle_t)sys_gettimeofday);
     regist_syscall_handler(SYS_GETRLIMIT, (syscall_handle_t)sys_get_rlimit);

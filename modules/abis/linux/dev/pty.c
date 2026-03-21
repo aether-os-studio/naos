@@ -1152,7 +1152,7 @@ fs_t ptmxfs = {
 void ptmx_init() {
     ptmx_fsid = vfs_regist(&ptmxfs);
 
-    vfs_node_t *ptmx = vfs_child_append(devtmpfs_root, "ptmx", NULL);
+    vfs_node_t *ptmx = vfs_node_alloc(devtmpfs_root, "ptmx");
     ptmx->type = file_stream;
     ptmx->mode = 0700;
     ptmx->fsid = ptmx_fsid;
@@ -1172,7 +1172,7 @@ void pts_init() {
 
     first_pair.id = 0xffffffff;
 
-    vfs_node_t *pts_node = vfs_child_append(devtmpfs_root, "pts", NULL);
+    vfs_node_t *pts_node = vfs_node_alloc(devtmpfs_root, "pts");
     pts_node->fsid = pts_fsid;
     pts_node->type = file_dir;
     pts_node->mode = 0644;

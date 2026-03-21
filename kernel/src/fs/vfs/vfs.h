@@ -426,6 +426,8 @@ struct mount_point {
     struct llist_header node;
     fs_t *fs;
     vfs_node_t *dir;
+    vfs_node_t *original_dir_root;
+    vfs_node_t *root_node;
     char *devname;
 };
 
@@ -513,13 +515,10 @@ extern vfs_node_t *rootdir; // vfs 根目录
 
 vfs_node_t *vfs_node_alloc(vfs_node_t *parent, const char *name);
 void vfs_free(vfs_node_t *vfs);
-void vfs_free_child(vfs_node_t *vfs);
 void vfs_detach_child(vfs_node_t *node);
 void vfs_attach_child(vfs_node_t *parent, vfs_node_t *child);
 // 一定要记得手动设置一下child的type
 vfs_node_t *vfs_child_find(vfs_node_t *parent, const char *name);
-vfs_node_t *vfs_child_append(vfs_node_t *parent, const char *name,
-                             void *handle);
 
 bool vfs_init();
 
@@ -617,8 +616,8 @@ int vfs_mount(uint64_t dev, vfs_node_t *node, const char *type);
  *\return 0 成功，-1 失败
  */
 int vfs_unmount(const char *path);
-int vfs_remount(vfs_node_t *old, vfs_node_t *node);
-bool vfs_is_mount_point(vfs_node_t *node);
+
+int vfs_remount(vfs_node_t *old, vfs_node_t *dir);
 
 /**
  *\brief 关闭文件
@@ -685,6 +684,8 @@ void vfs_resize(vfs_node_t *node, uint64_t size);
  *\param node     文件节点
  */
 char *vfs_get_fullpath(vfs_node_t *node);
+char *vfs_get_fullpath_at(vfs_node_t *node, vfs_node_t *root);
+bool vfs_is_ancestor(vfs_node_t *ancestor, vfs_node_t *node);
 
 /**
  *\brief 轮询等待

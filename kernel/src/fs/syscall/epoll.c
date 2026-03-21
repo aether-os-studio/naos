@@ -255,8 +255,6 @@ uint64_t epoll_wait(vfs_node_t *epollFd, struct epoll_event *events,
             break;
         }
 
-        arch_enable_interrupt();
-
         int64_t wait_ns = -1;
         if (!infinite_timeout) {
             uint64_t elapsed = nano_time() - start;
@@ -275,6 +273,8 @@ uint64_t epoll_wait(vfs_node_t *epollFd, struct epoll_event *events,
         int block_reason =
             task_block(current_task, TASK_BLOCKING, block_ns, "epoll_wait");
         epoll_disarm_waiters(waits, waits_count);
+
+        arch_enable_interrupt();
 
         if (block_reason == ETIMEDOUT) {
             if (infinite_timeout) {

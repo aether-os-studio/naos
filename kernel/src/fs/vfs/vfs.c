@@ -33,6 +33,42 @@ static inline const vfs_operations_t *vfs_ops_of(vfs_node_t *node) {
     return fs->ops;
 }
 
+static inline vfs_node_t *vfs_task_root(void) {
+    return task_fs_root(current_task);
+}
+
+static inline vfs_node_t *vfs_task_cwd(void) {
+    return task_fs_cwd(current_task);
+}
+
+static inline task_mount_namespace_t *vfs_task_mnt_ns(void) {
+    return (current_task && current_task->nsproxy)
+               ? current_task->nsproxy->mnt_ns
+               : NULL;
+}
+
+static inline vfs_node_t *vfs_namespace_enter_mount(vfs_node_t *node) {
+    task_mount_namespace_t *mnt_ns = vfs_task_mnt_ns();
+    if (!mnt_ns || !node)
+        return node;
+
+    struct mount_point *mnt = task_mnt_namespace_find_mount(mnt_ns, node);
+    return mnt ? mnt->root_node : node;
+}
+
+static inline vfs_node_t *vfs_namespace_parent(vfs_node_t *root,
+                                               vfs_node_t *current) {
+    task_mount_namespace_t *mnt_ns = vfs_task_mnt_ns();
+    if (mnt_ns && current) {
+        struct mount_point *mnt =
+            task_mnt_namespace_find_mount_by_root(mnt_ns, current);
+        if (mnt && mnt->dir != current)
+            return mnt->dir->parent ? mnt->dir->parent : root;
+    }
+
+    return current ? current->parent : NULL;
+}
+
 typedef struct vfs_child_bucket {
     uint64_t hash;
     size_t count;
@@ -209,6 +245,8 @@ void vfs_free(vfs_node_t *vfs) {
     if (vfs == NULL)
         return;
     vfs_detach_child(vfs);
+    if (vfs == vfs->root)
+        return;
     if (--vfs->refcount > 0) {
         vfs->flags |= VFS_NODE_FLAGS_FREE_AFTER_USE;
         return;
@@ -230,15 +268,6 @@ void vfs_free(vfs_node_t *vfs) {
     free(vfs);
 }
 
-void vfs_free_child(vfs_node_t *vfs) {
-    if (vfs == NULL)
-        return;
-    vfs_node_t *child, *tmp;
-    llist_for_each(child, tmp, &vfs->childs, node_for_childs) {
-        vfs_free(child);
-    }
-}
-
 void vfs_merge_nodes_to(vfs_node_t *dest, vfs_node_t *source) {
     if (dest == source)
         return;
@@ -254,6 +283,12 @@ void vfs_merge_nodes_to(vfs_node_t *dest, vfs_node_t *source) {
     }
     for (uint64_t i = 0; i < idx; i++) {
         vfs_detach_child(nodes[i]);
+        if (nodes[i]->name) {
+            vfs_node_t *exist = vfs_child_find(dest, nodes[i]->name);
+            if (exist) {
+                vfs_free(exist);
+            }
+        }
         vfs_attach_child(dest, nodes[i]);
     }
     free(nodes);
@@ -268,11 +303,13 @@ vfs_node_t *vfs_get_real_node(vfs_node_t *node) {
     char target_path[512];
     memset(target_path, 0, sizeof(target_path));
     int len = vfs_readlink(node, target_path, sizeof(target_path));
+    if (len < 0)
+        return NULL;
     target_path[len] = '\0';
     vfs_node_t *target_node =
         vfs_open_at(node->parent, (const char *)target_path, 0);
 
-    return target_node ?: node;
+    return target_node;
 }
 
 static inline void do_open(vfs_node_t *file) {
@@ -375,18 +412,6 @@ vfs_node_t *vfs_child_find(vfs_node_t *parent, const char *name) {
     }
 
     return NULL;
-}
-
-vfs_node_t *vfs_child_append(vfs_node_t *parent, const char *name,
-                             void *handle) {
-    vfs_node_t *exist = vfs_child_find(parent, name);
-    if (exist)
-        vfs_free(exist);
-    vfs_node_t *node = vfs_node_alloc(parent, name);
-    if (node == NULL)
-        return NULL;
-    node->handle = handle;
-    return node;
 }
 
 static void vfs_forget_cached_node(vfs_node_t *node) {
@@ -608,10 +633,11 @@ void vfs_poll_notify(vfs_node_t *node, uint32_t events) {
 int vfs_mkdir(const char *name) {
     int ret = -ENOENT;
 
-    vfs_node_t *current = rootdir;
+    vfs_node_t *root = vfs_task_root();
+    vfs_node_t *current = root;
     char *path;
     if (name[0] != '/') {
-        current = current_task ? current_task->cwd : rootdir;
+        current = vfs_task_cwd();
         path = strdup(name);
     } else {
         path = strdup(name + 1);
@@ -644,9 +670,9 @@ int vfs_mkdir(const char *name) {
         if (streq(buf, "."))
             continue;
         if (streq(buf, "..")) {
-            if (current == rootdir)
+            if (current == root)
                 continue;
-            vfs_node_t *parent = current->parent;
+            vfs_node_t *parent = vfs_namespace_parent(root, current);
             if (!parent || !(current->type & file_dir)) {
                 ret = -ENOTDIR;
                 goto err;
@@ -674,7 +700,7 @@ int vfs_mkdir(const char *name) {
             }
             vfs_on_child_event(current, new_current, IN_CREATE, 0);
         }
-        current = new_current;
+        current = vfs_namespace_enter_mount(new_current);
         do_update(current);
 
         if (!(current->type & file_dir)) {
@@ -699,7 +725,7 @@ create:
         goto err;
     }
 
-    vfs_node_t *node = vfs_child_append(current, filename, NULL);
+    vfs_node_t *node = vfs_node_alloc(current, filename);
     if (!node) {
         ret = -ENOMEM;
         goto err;
@@ -724,10 +750,11 @@ err:
 
 int vfs_mkfile(const char *name) {
     int ret = -ENOENT;
-    vfs_node_t *current = rootdir;
+    vfs_node_t *root = vfs_task_root();
+    vfs_node_t *current = root;
     char *path;
     if (name[0] != '/') {
-        current = current_task ? current_task->cwd : rootdir;
+        current = vfs_task_cwd();
         path = strdup(name);
     } else {
         path = strdup(name + 1);
@@ -760,9 +787,9 @@ int vfs_mkfile(const char *name) {
         if (streq(buf, "."))
             continue;
         if (streq(buf, "..")) {
-            if (current == rootdir)
+            if (current == root)
                 continue;
-            vfs_node_t *parent = current->parent;
+            vfs_node_t *parent = vfs_namespace_parent(root, current);
             if (!parent || !(current->type & file_dir)) {
                 ret = -ENOTDIR;
                 goto err;
@@ -777,7 +804,7 @@ int vfs_mkfile(const char *name) {
         do_update(current);
         vfs_node_t *new_current = vfs_child_find(current, buf);
         if (new_current == NULL) {
-            new_current = vfs_child_append(current, buf, NULL);
+            new_current = vfs_node_alloc(current, buf);
             if (!new_current) {
                 free(path);
                 return -ENOMEM;
@@ -791,7 +818,7 @@ int vfs_mkfile(const char *name) {
             }
             vfs_on_child_event(current, new_current, IN_CREATE, 0);
         }
-        current = new_current;
+        current = vfs_namespace_enter_mount(new_current);
         do_update(current);
 
         if (!(current->type & file_dir)) {
@@ -816,7 +843,7 @@ create:
         return -EEXIST;
     }
 
-    vfs_node_t *node = vfs_child_append(current, filename, NULL);
+    vfs_node_t *node = vfs_node_alloc(current, filename);
     if (!node) {
         free(path);
         return -ENOMEM;
@@ -849,10 +876,11 @@ err:
 static int vfs_link_internal(const char *name, const char *target_name,
                              vfs_node_t *target_node) {
     int ret = -ENOENT;
-    vfs_node_t *current = rootdir;
+    vfs_node_t *root = vfs_task_root();
+    vfs_node_t *current = root;
     char *path;
     if (name[0] != '/') {
-        current = current_task ? current_task->cwd : rootdir;
+        current = vfs_task_cwd();
         path = strdup(name);
     } else {
         path = strdup(name + 1);
@@ -885,9 +913,9 @@ static int vfs_link_internal(const char *name, const char *target_name,
         if (streq(buf, "."))
             continue;
         if (streq(buf, "..")) {
-            if (current == rootdir)
+            if (current == root)
                 continue;
-            vfs_node_t *parent = current->parent;
+            vfs_node_t *parent = vfs_namespace_parent(root, current);
             if (!parent || !(current->type & file_dir)) {
                 ret = -ENOTDIR;
                 goto err;
@@ -916,7 +944,7 @@ static int vfs_link_internal(const char *name, const char *target_name,
             }
             vfs_on_child_event(current, new_current, IN_CREATE, 0);
         }
-        current = new_current;
+        current = vfs_namespace_enter_mount(new_current);
         do_update(current);
 
         if (!(current->type & file_dir)) {
@@ -941,7 +969,7 @@ create:
         return -EEXIST;
     }
 
-    vfs_node_t *node = vfs_child_append(current, filename, NULL);
+    vfs_node_t *node = vfs_node_alloc(current, filename);
     if (!node) {
         free(path);
         return -ENOMEM;
@@ -986,10 +1014,11 @@ int vfs_link_existing(const char *name, vfs_node_t *target) {
  */
 int vfs_symlink(const char *name, const char *target_name) {
     int ret = -ENOENT;
-    vfs_node_t *current = rootdir;
+    vfs_node_t *root = vfs_task_root();
+    vfs_node_t *current = root;
     char *path;
     if (name[0] != '/') {
-        current = current_task ? current_task->cwd : rootdir;
+        current = vfs_task_cwd();
         path = strdup(name);
     } else {
         path = strdup(name + 1);
@@ -1022,9 +1051,9 @@ int vfs_symlink(const char *name, const char *target_name) {
         if (streq(buf, "."))
             continue;
         if (streq(buf, "..")) {
-            if (current == rootdir)
+            if (current == root)
                 continue;
-            vfs_node_t *parent = current->parent;
+            vfs_node_t *parent = vfs_namespace_parent(root, current);
             if (!parent || !(current->type & file_dir)) {
                 ret = -ENOTDIR;
                 goto err;
@@ -1053,7 +1082,7 @@ int vfs_symlink(const char *name, const char *target_name) {
             }
             vfs_on_child_event(current, new_current, IN_CREATE, 0);
         }
-        current = new_current;
+        current = vfs_namespace_enter_mount(new_current);
         do_update(current);
 
         if (!(current->type & file_dir)) {
@@ -1078,7 +1107,7 @@ create:
         return -EEXIST;
     }
 
-    vfs_node_t *node = vfs_child_append(current, filename, NULL);
+    vfs_node_t *node = vfs_node_alloc(current, filename);
     if (!node) {
         free(path);
         return -ENOMEM;
@@ -1104,10 +1133,11 @@ err:
 
 int vfs_mknod(const char *name, uint16_t umode, int dev) {
     int ret = -ENOENT;
-    vfs_node_t *current = rootdir;
+    vfs_node_t *root = vfs_task_root();
+    vfs_node_t *current = root;
     char *path;
     if (name[0] != '/') {
-        current = current_task ? current_task->cwd : rootdir;
+        current = vfs_task_cwd();
         path = strdup(name);
     } else {
         path = strdup(name + 1);
@@ -1140,9 +1170,9 @@ int vfs_mknod(const char *name, uint16_t umode, int dev) {
         if (streq(buf, "."))
             continue;
         if (streq(buf, "..")) {
-            if (current == rootdir)
+            if (current == root)
                 continue;
-            vfs_node_t *parent = current->parent;
+            vfs_node_t *parent = vfs_namespace_parent(root, current);
             if (!parent || !(current->type & file_dir)) {
                 ret = -ENOTDIR;
                 goto err;
@@ -1171,7 +1201,7 @@ int vfs_mknod(const char *name, uint16_t umode, int dev) {
             }
             vfs_on_child_event(current, new_current, IN_CREATE, 0);
         }
-        current = new_current;
+        current = vfs_namespace_enter_mount(new_current);
         do_update(current);
 
         if (!(current->type & file_dir)) {
@@ -1196,7 +1226,7 @@ create:
         return -EEXIST;
     }
 
-    vfs_node_t *node = vfs_child_append(current, filename, NULL);
+    vfs_node_t *node = vfs_node_alloc(current, filename);
     if (!node) {
         free(path);
         return -ENOMEM;
@@ -1292,12 +1322,18 @@ vfs_node_t *vfs_open_at(vfs_node_t *start, const char *_path, uint64_t flags) {
     if (_path == NULL)
         return NULL;
     vfs_node_t *current = start;
+    vfs_node_t *root = vfs_task_root();
+    task_mount_namespace_t *mnt_ns = vfs_task_mnt_ns();
+    struct mount_point *mount_stack[64] = {0};
+    size_t mount_depth = 0;
+    struct mount_point *current_mount =
+        mnt_ns ? task_mnt_namespace_find_mount_by_root(mnt_ns, current) : NULL;
     char *path;
     if (_path[0] == '/') {
         if (_path[1] == '\0') {
-            return rootdir;
+            return root;
         }
-        current = rootdir;
+        current = root;
         path = strdup(_path + 1);
     } else {
         path = strdup(_path);
@@ -1309,7 +1345,14 @@ vfs_node_t *vfs_open_at(vfs_node_t *start, const char *_path, uint64_t flags) {
         if (streq(buf, "."))
             continue;
         if (streq(buf, "..")) {
-            if (current == rootdir)
+            if (current_mount && current == current_mount->root_node) {
+                current = current_mount->dir->parent
+                              ? current_mount->dir->parent
+                              : root;
+                current_mount = mount_depth ? mount_stack[--mount_depth] : NULL;
+                continue;
+            }
+            if (current == root)
                 continue;
             vfs_node_t *parent = current->parent;
             if (!parent || !(current->type & file_dir))
@@ -1325,16 +1368,37 @@ vfs_node_t *vfs_open_at(vfs_node_t *start, const char *_path, uint64_t flags) {
             goto err;
         do_update(current);
 
+        struct mount_point *next_mount =
+            mnt_ns ? task_mnt_namespace_find_mount(mnt_ns, current) : NULL;
+        if (next_mount) {
+            if (mount_depth < sizeof(mount_stack) / sizeof(mount_stack[0]))
+                mount_stack[mount_depth++] = current_mount;
+            current_mount = next_mount;
+            current = next_mount->root_node;
+            do_update(current);
+        } else {
+            struct mount_point *root_mount =
+                mnt_ns ? task_mnt_namespace_find_mount_by_root(mnt_ns, current)
+                       : NULL;
+            if (root_mount && root_mount->dir != current &&
+                (!current_mount || current_mount->root_node != current)) {
+                goto err;
+            }
+        }
+
         if (current->type & file_symlink) {
             vfs_node_t *symlink_node = current;
+            vfs_node_ref_get(symlink_node);
             char target_path[512];
             int len = vfs_readlink(current, target_path, sizeof(target_path));
+            if (len < 0)
+                goto err;
             target_path[len] = '\0';
             vfs_node_t *target_node =
                 vfs_open_at(current->parent, (const char *)target_path, 0);
 
             if (!target_node)
-                goto done;
+                goto err;
 
             vfs_node_t *target = target_node;
             if (!target)
@@ -1394,10 +1458,10 @@ err:
 vfs_node_t *vfs_open(const char *_path, uint64_t flags) {
     vfs_node_t *node = NULL;
 
-    if (current_task && current_task->cwd) {
-        node = vfs_open_at(current_task->cwd, _path, flags);
+    if (current_task && current_task->fs && current_task->fs->cwd) {
+        node = vfs_open_at(current_task->fs->cwd, _path, flags);
     } else {
-        node = vfs_open_at(rootdir, _path, flags);
+        node = vfs_open_at(vfs_task_root(), _path, flags);
     }
 
     return node;
@@ -1495,45 +1559,14 @@ int vfs_mount(uint64_t dev, vfs_node_t *node, const char *type) {
     return -ENOENT;
 }
 
-int vfs_remount(vfs_node_t *old, vfs_node_t *dir) {
-    int ret = vfs_ops_of(old)->remount(old, dir);
-    if (ret < 0) {
-        return ret;
-    }
-    struct mount_point *target = NULL;
-    struct mount_point *mnt, *tmp;
-    llist_for_each(mnt, tmp, &mount_points, node) {
-        if (mnt->dir == old) {
-            target = mnt;
-            break;
-        }
-    }
-    if (!target)
-        return -ENOENT;
-    char *devname = strdup(target->devname);
-    vfs_delete_mount_point_by_dir(old);
-    vfs_add_mount_point(dir, devname);
-    free(devname);
-    return 0;
-}
-
-bool vfs_is_mount_point(vfs_node_t *node) {
-    if (!node)
-        return false;
-
-    struct mount_point *mnt, *tmp;
-    llist_for_each(mnt, tmp, &mount_points, node) {
-        if (mnt->dir == node)
-            return true;
-    }
-
-    return false;
-}
-
 void vfs_add_mount_point(vfs_node_t *dir, char *devname) {
     struct mount_point *mnt = malloc(sizeof(struct mount_point));
     mnt->fs = all_fs[dir->fsid];
     mnt->dir = dir;
+    mnt->root_node = dir;
+    mnt->original_dir_root = dir->root;
+    vfs_node_ref_get(dir);
+    vfs_node_ref_get(dir);
     mnt->devname = strdup(devname);
     llist_init_head(&mnt->node);
     llist_prepend(&mount_points, &mnt->node);
@@ -1553,6 +1586,8 @@ void vfs_delete_mount_point_by_dir(vfs_node_t *dir) {
         return;
 
     llist_delete(&target->node);
+    vfs_close(target->dir);
+    vfs_close(target->root_node);
     free(target->devname);
     free(target);
 }
@@ -1709,16 +1744,16 @@ int vfs_unmount(const char *path) {
     fsid = node->fsid;
     if (fsid == 0)
         return -EINVAL;
-    // list_foreach(node->child, i) {
-    //     vfs_node_t *child = i->data;
-    //     if (child == child->root) {
-    //         char *child_path = vfs_get_fullpath(child);
-    //         vfs_unmount((const char *)child_path);
-    //         free(child_path);
-    //     }
-    // }
     vfs_ops_of(node)->unmount(node);
     vfs_delete_mount_point_by_dir(node);
+    return 0;
+}
+
+int vfs_remount(vfs_node_t *old, vfs_node_t *dir) {
+    int ret = vfs_ops_of(old)->remount(old, dir);
+    if (ret < 0) {
+        return ret;
+    }
     return 0;
 }
 
@@ -1737,10 +1772,23 @@ int vfs_poll(vfs_node_t *node, size_t event) {
     return ret;
 }
 
-// 使用请记得free掉返回的buff
-char *vfs_get_fullpath(vfs_node_t *node) {
+bool vfs_is_ancestor(vfs_node_t *ancestor, vfs_node_t *node) {
+    for (vfs_node_t *cur = node; cur;) {
+        if (cur == ancestor)
+            return true;
+        if (!cur->parent || cur == cur->parent)
+            break;
+        cur = cur->parent;
+    }
+    return false;
+}
+
+// 使用记得free掉返回的buff
+char *vfs_get_fullpath_at(vfs_node_t *node, vfs_node_t *root) {
     if (node == NULL)
         return NULL;
+    if (!root)
+        root = rootdir;
 
     int inital = 32;
     vfs_node_t **nodes = (vfs_node_t **)malloc(sizeof(vfs_node_t *) * inital);
@@ -1753,7 +1801,7 @@ char *vfs_get_fullpath(vfs_node_t *node) {
         }
         nodes[count++] = cur;
         vfs_node_t *parent = cur->parent;
-        if (!parent || cur == parent)
+        if (cur == root || !parent || cur == parent)
             break;
         cur = parent;
     }
@@ -1762,10 +1810,10 @@ char *vfs_get_fullpath(vfs_node_t *node) {
     for (int j = count - 1; j >= 0; j--) {
         size_t name_len = 0;
 
-        if (nodes[j] != rootdir && nodes[j]->name)
+        if (nodes[j] != root && nodes[j]->name)
             name_len = strlen(nodes[j]->name);
 
-        if (nodes[j] == rootdir || !name_len)
+        if (nodes[j] == root || !name_len)
             continue;
         total_len += name_len + 1;
     }
@@ -1780,7 +1828,7 @@ char *vfs_get_fullpath(vfs_node_t *node) {
     buff[cursor++] = '/';
     buff[cursor] = '\0';
     for (int j = count - 1; j >= 0; j--) {
-        if (nodes[j] == rootdir)
+        if (nodes[j] == root)
             continue;
 
         size_t name_len = 0;
@@ -1806,9 +1854,15 @@ char *vfs_get_fullpath(vfs_node_t *node) {
     return buff;
 }
 
+char *vfs_get_fullpath(vfs_node_t *node) {
+    return vfs_get_fullpath_at(node, rootdir);
+}
+
 int vfs_delete(vfs_node_t *node) {
     if (node == rootdir)
         return -EOPNOTSUPP;
+    if (node == node->root)
+        return -EBUSY;
     vfs_node_t *parent = node->parent;
     int res = vfs_ops_of(node)->delete(node->parent, node);
     if (res < 0) {
@@ -1817,12 +1871,8 @@ int vfs_delete(vfs_node_t *node) {
     if (parent)
         vfs_on_child_event(parent, node, IN_DELETE, 0);
     vfs_on_new_event(node, IN_DELETE_SELF);
-    node->flags |= VFS_NODE_FLAGS_DELETED;
-    vfs_detach_child(node);
-    if (node->refcount <= 0) {
-        vfs_free_handle(node);
-        vfs_free(node);
-    }
+
+    vfs_free(node);
 
     return 0;
 }

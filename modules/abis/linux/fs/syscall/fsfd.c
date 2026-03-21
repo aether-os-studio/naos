@@ -24,12 +24,37 @@ typedef struct fs_context {
 } fs_context_t;
 
 typedef struct mount_handle {
-    fs_t *fs;             /* Filesystem type */
-    char *source;         /* Source device/path (copied) */
-    uint64_t mount_flags; /* Mount flags */
-    uint64_t dev;         /* Device number */
-    bool attached;        /* Whether this mount has been attached */
+    fs_t *fs;              /* Filesystem type */
+    char *source;          /* Source device/path (copied) */
+    uint64_t mount_flags;  /* Mount flags */
+    uint64_t dev;          /* Device number */
+    vfs_node_t *root_node; /* Detached mount root */
+    bool attached;         /* Whether this mount has been attached */
 } mount_handle_t;
+
+static int mount_handle_create_root(mount_handle_t *mnt_handle) {
+    if (!mnt_handle || !mnt_handle->fs || !mnt_handle->fs->ops)
+        return -EINVAL;
+    if (mnt_handle->root_node)
+        return 0;
+
+    vfs_node_t *root = vfs_node_alloc(NULL, NULL);
+    if (!root)
+        return -ENOMEM;
+
+    root->type = file_dir;
+    root->root = root;
+    vfs_node_ref_get(root);
+
+    int ret = mnt_handle->fs->ops->mount(mnt_handle->dev, root);
+    if (ret < 0) {
+        vfs_free(root);
+        return ret;
+    }
+
+    mnt_handle->root_node = root;
+    return 0;
+}
 
 /* Convert MOUNT_ATTR_* to MS_* flags */
 static uint64_t attr_flags_to_ms_flags(uint64_t attr_flags) {
@@ -555,7 +580,16 @@ uint64_t sys_fsmount(int fd, uint32_t flags, uint32_t attr_flags) {
     mnt_handle->source = ctx->source ? strdup(ctx->source) : NULL;
     mnt_handle->mount_flags = combined_flags;
     mnt_handle->dev = ctx->source_dev;
+    mnt_handle->root_node = NULL;
     mnt_handle->attached = false;
+
+    int ret = mount_handle_create_root(mnt_handle);
+    if (ret < 0) {
+        if (mnt_handle->source)
+            free(mnt_handle->source);
+        free(mnt_handle);
+        return ret;
+    }
 
     /* Create vfs node for mount fd */
     vfs_node_t *mnt_node = vfs_node_alloc(NULL, NULL);
@@ -573,7 +607,7 @@ uint64_t sys_fsmount(int fd, uint32_t flags, uint32_t attr_flags) {
     mnt_node->handle = mnt_handle;
 
     int mnt_fd = -1;
-    int ret = -EMFILE;
+    ret = -EMFILE;
     with_fd_info_lock(current_task->fd_info, {
         for (int i = 0; i < MAX_FD_NUM; i++) {
             if (!current_task->fd_info->fds[i]) {
@@ -697,7 +731,19 @@ uint64_t sys_move_mount(int from_dfd, const char *from_pathname_user,
      * This is where we actually call vfs_mount()
      */
     if (mnt_handle) {
-        int ret = vfs_mount(mnt_handle->dev, target_dir, mnt_handle->fs->name);
+        if (!current_task || !current_task->nsproxy ||
+            !current_task->nsproxy->mnt_ns)
+            return -EINVAL;
+        if (!mnt_handle->root_node)
+            return -EINVAL;
+        if (vfs_is_ancestor(mnt_handle->root_node, target_dir))
+            return -EINVAL;
+
+        int ret = 0;
+        task_mnt_namespace_add_mount(
+            current_task->nsproxy->mnt_ns, mnt_handle->fs, target_dir,
+            mnt_handle->root_node,
+            mnt_handle->source ? mnt_handle->source : "none");
         if (ret < 0)
             return ret;
 
@@ -710,8 +756,24 @@ uint64_t sys_move_mount(int from_dfd, const char *from_pathname_user,
      * Similar to MS_MOVE in sys_mount
      */
     if (source_mount) {
-        int ret = vfs_remount(source_mount, target_dir);
-        return ret;
+        if (!current_task || !current_task->nsproxy ||
+            !current_task->nsproxy->mnt_ns)
+            return -EINVAL;
+
+        struct mount_point *mnt = task_mnt_namespace_find_mount(
+            current_task->nsproxy->mnt_ns, source_mount);
+        if (!mnt)
+            mnt = task_mnt_namespace_find_mount_by_root(
+                current_task->nsproxy->mnt_ns, source_mount);
+        if (!mnt)
+            return -EINVAL;
+        if (mnt->dir == target_dir)
+            return 0;
+        if (vfs_is_ancestor(mnt->root_node, target_dir))
+            return -EINVAL;
+
+        return task_mnt_namespace_move_mount(current_task->nsproxy->mnt_ns,
+                                             mnt->dir, target_dir);
     }
 
     return -EINVAL;
@@ -743,6 +805,14 @@ bool mntfd_close(vfs_node_t *node) {
     /* Free source string if allocated */
     if (mnt->source)
         free(mnt->source);
+
+    if (mnt->root_node) {
+        if (!mnt->attached) {
+            if (mnt->fs && mnt->fs->ops && mnt->fs->ops->unmount)
+                mnt->fs->ops->unmount(mnt->root_node);
+        }
+        vfs_close(mnt->root_node);
+    }
 
     free(mnt);
     return true;

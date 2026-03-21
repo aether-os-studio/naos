@@ -119,7 +119,7 @@ ssize_t device_open(uint64_t dev, void *arg) {
     if (device->open) {
         return device->open(device->ptr, arg);
     }
-    return -ENOSYS;
+    return 0;
 }
 
 ssize_t device_close(uint64_t dev) {
@@ -129,7 +129,7 @@ ssize_t device_close(uint64_t dev) {
     if (device->close) {
         return device->close(device->ptr);
     }
-    return -ENOSYS;
+    return 0;
 }
 
 ssize_t device_ioctl(uint64_t dev, int cmd, void *args, fd_t *fd) {

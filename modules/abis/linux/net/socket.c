@@ -1725,7 +1725,8 @@ int socket_poll(vfs_node_t *node, size_t events) {
             sock->recv_pos < sock->recv_size)
             revents |= EPOLLOUT;
 
-        if ((events & EPOLLIN) && sock->recv_pos > 0)
+        if ((events & EPOLLIN) &&
+            (sock->recv_pos > 0 || sock->ancillary_head != NULL))
             revents |= EPOLLIN;
         if (sock->closed || sock->shut_rd)
             revents |= EPOLLERR | EPOLLHUP;
@@ -1745,9 +1746,10 @@ int socket_poll(vfs_node_t *node, size_t events) {
                 peer->recv_pos < peer->recv_size)
                 revents |= EPOLLOUT;
 
-            // 可读：自己有数据
-            if ((events & EPOLLIN) && (sock->recv_pos > 0 || sock->shut_rd ||
-                                       peer->shut_wr || peer->closed))
+            // 可读：自己有数据或辅助数据
+            if ((events & EPOLLIN) &&
+                (sock->recv_pos > 0 || sock->ancillary_head != NULL ||
+                 sock->shut_rd || peer->shut_wr || peer->closed))
                 revents |= EPOLLIN;
         } else {
             if ((events & EPOLLIN) && sock->established)

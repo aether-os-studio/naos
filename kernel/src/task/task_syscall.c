@@ -981,8 +981,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
     new_mm->brk_current = new_mm->brk_start;
     new_mm->brk_end = USER_BRK_END;
 
-    arch_disable_interrupt();
-
 #if defined(__x86_64__)
     asm volatile("movq %0, %%cr3" ::"r"(new_mm->page_table_addr));
 #elif defined(__aarch64__)
@@ -999,8 +997,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
 #endif
 
     self->mm = new_mm;
-
-    arch_enable_interrupt();
 
     if (!self->is_kernel) {
         free_page_table(old_mm);
@@ -1594,6 +1590,10 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         return (uint64_t)-EINVAL;
     }
 
+    if ((flags & CLONE_NEWNS) && (flags & CLONE_FS)) {
+        return (uint64_t)-EINVAL;
+    }
+
     if ((flags & CLONE_CLEAR_SIGHAND) && (flags & CLONE_SIGHAND)) {
         return (uint64_t)-EINVAL;
     }
@@ -1633,6 +1633,29 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     child->signal = task_signal_clone(self, flags);
     if (!child->signal) {
         return (uint64_t)-ENOMEM;
+    }
+
+    child->nsproxy = task_ns_proxy_clone(self, flags);
+    if (!child->nsproxy) {
+        task_signal_free(child->signal);
+        child->signal = NULL;
+        return (uint64_t)-ENOMEM;
+    }
+
+    child->fs = task_fs_clone(self, flags);
+    if (!child->fs) {
+        task_ns_proxy_put(child->nsproxy);
+        child->nsproxy = NULL;
+        task_signal_free(child->signal);
+        child->signal = NULL;
+        return (uint64_t)-ENOMEM;
+    }
+
+    if ((flags & CLONE_NEWNS) && child->nsproxy->mnt_ns &&
+        child->fs->root != child->nsproxy->mnt_ns->root) {
+        vfs_node_ref_get(child->nsproxy->mnt_ns->root);
+        vfs_close(child->fs->root);
+        child->fs->root = child->nsproxy->mnt_ns->root;
     }
 
     child->cpu_id = (flags & CLONE_VM) ? self->cpu_id : alloc_cpu_id();
@@ -1710,7 +1733,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     child->priority = NORMAL_PRIORITY;
 
-    child->cwd = self->cwd;
     child->cmdline = self->cmdline ? strdup(self->cmdline) : NULL;
     child->arg_start = self->arg_start;
     child->arg_end = self->arg_end;

@@ -105,15 +105,16 @@ static void drm_notify_event_node(drm_device_t *dev) {
     }
 }
 
-extern vfs_node_t *devtmpfs_root;
-
 static void drm_event_node_register(drm_device_t *dev,
                                     const char *card_dev_name) {
     if (!dev || !card_dev_name) {
         return;
     }
 
-    vfs_node_t *node = vfs_open_at(devtmpfs_root, card_dev_name, 0);
+    char path[64];
+    snprintf(path, sizeof(path), "/dev/%s", card_dev_name);
+
+    vfs_node_t *node = vfs_open(path, 0);
     if (!node) {
         return;
     }
@@ -144,9 +145,6 @@ static void drm_event_node_register(drm_device_t *dev,
 
     if (old_node) {
         vfs_close(old_node);
-    }
-    if (node) {
-        vfs_close(node);
     }
 }
 

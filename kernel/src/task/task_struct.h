@@ -6,6 +6,7 @@
 #include <libs/rbtree.h>
 #include <fs/termios.h>
 #include <mm/shm.h>
+#include <task/ns.h>
 
 typedef enum task_state {
     TASK_CREATING = 1,
@@ -318,7 +319,7 @@ typedef struct task {
     task_mm_info_t *mm;
     arch_context_t *arch_context;
     task_signal_info_t *signal;
-    vfs_node_t *cwd;
+    task_fs_t *fs;
     fd_info_t *fd_info;
     shm_mapping_t *shm_ids;
     vfs_node_t *procfs_node;
@@ -339,6 +340,7 @@ typedef struct task {
     uint32_t seccomp_mode;
     seccomp_filter_t *seccomp_filter;
     uint64_t clone_flags;
+    task_ns_proxy_t *nsproxy;
     bool no_new_privs;
     bool is_kernel;
     bool is_clone;

@@ -53,7 +53,7 @@ ssize_t procfs_readlink(vfs_node_t *node, void *addr, size_t offset,
     }
 
     if (!strcmp(handle->name, "proc_exe") && task->exec_node) {
-        char *fullpath = vfs_get_fullpath(task->exec_node);
+        char *fullpath = vfs_get_fullpath_at(task->exec_node, task->fs->root);
         int len = strlen(fullpath);
         len = MIN(len, size);
         memcpy(addr, fullpath, len);
@@ -123,6 +123,8 @@ void procfs_unmount(vfs_node_t *root) {
 
     procfs_root = fake_procfs_root;
 
+    root->root = root->parent ? root->parent->root : root;
+
     mutex_unlock(&procfs_oplock);
 }
 
@@ -165,7 +167,7 @@ static vfs_node_t *procfs_append_task_entry(vfs_node_t *parent,
                                             const char *name, file_type_t type,
                                             uint16_t mode, task_t *task,
                                             const char *handle_name) {
-    vfs_node_t *node = vfs_child_append(parent, name, NULL);
+    vfs_node_t *node = vfs_node_alloc(parent, name);
     node->type = type;
     node->mode = mode;
     if (handle_name) {
@@ -195,7 +197,7 @@ static void procfs_populate_task_dir(vfs_node_t *node, task_t *task) {
                              "proc_oom_score_adj");
     procfs_append_task_entry(node, "exe", file_symlink, 0700, task, "proc_exe");
 
-    vfs_node_t *fd = vfs_child_append(node, "fd", NULL);
+    vfs_node_t *fd = vfs_node_alloc(node, "fd");
     fd->type = file_dir;
     fd->mode = 0700;
 }
@@ -267,8 +269,6 @@ fs_t procfs_self = {
     .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN,
 };
 
-extern struct llist_header mount_points;
-
 int procfs_mount_point_count = 0;
 
 void proc_init() {
@@ -282,23 +282,22 @@ void proc_init() {
 
     procfs_root = fake_procfs_root;
 
-    vfs_node_t *self_node = vfs_child_append(procfs_root, "self", NULL);
+    vfs_node_t *self_node = vfs_node_alloc(procfs_root, "self");
     procfs_init_self_symlink(self_node, false);
 
-    vfs_node_t *thread_self_node =
-        vfs_child_append(procfs_root, "thread-self", NULL);
+    vfs_node_t *thread_self_node = vfs_node_alloc(procfs_root, "thread-self");
     procfs_init_self_symlink(thread_self_node, true);
 
     procfs_nodes_init();
 
-    vfs_node_t *sys_node = vfs_child_append(procfs_root, "sys", NULL);
+    vfs_node_t *sys_node = vfs_node_alloc(procfs_root, "sys");
     sys_node->type = file_dir;
     sys_node->mode = 0644;
-    vfs_node_t *sys_kernel_node = vfs_child_append(sys_node, "kernel", NULL);
+    vfs_node_t *sys_kernel_node = vfs_node_alloc(sys_node, "kernel");
     sys_kernel_node->type = file_dir;
     sys_kernel_node->mode = 0644;
     vfs_node_t *sys_kernel_osrelease_node =
-        vfs_child_append(sys_kernel_node, "osrelease", NULL);
+        vfs_node_alloc(sys_kernel_node, "osrelease");
     sys_kernel_osrelease_node->type = file_none;
     sys_kernel_osrelease_node->mode = 0644;
     proc_handle_t *sys_kernel_osrelease_handle =
@@ -310,10 +309,10 @@ void proc_init() {
              sizeof(sys_kernel_osrelease_handle->name),
              "proc_sys_kernel_osrelease");
 
-    vfs_node_t *pressure = vfs_child_append(procfs_root, "pressure", NULL);
+    vfs_node_t *pressure = vfs_node_alloc(procfs_root, "pressure");
     pressure->type = file_dir;
     pressure->mode = 0644;
-    vfs_node_t *pressure_memory = vfs_child_append(pressure, "memory", NULL);
+    vfs_node_t *pressure_memory = vfs_node_alloc(pressure, "memory");
     pressure_memory->type = file_none;
     pressure_memory->mode = 0644;
     proc_handle_t *pressure_memory_handle = calloc(1, sizeof(proc_handle_t));
@@ -323,10 +322,7 @@ void proc_init() {
     snprintf(pressure_memory_handle->name, sizeof(pressure_memory_handle->name),
              "proc_pressure_memory");
 
-    struct mount_point *tmp1, *tmp2;
-    llist_for_each(tmp1, tmp2, &mount_points, node) {
-        procfs_mount_point_count++;
-    }
+    procfs_mount_point_count = 0;
 }
 
 void procfs_on_new_task(task_t *task) {
@@ -336,7 +332,7 @@ void procfs_on_new_task(task_t *task) {
     char name[MAX_PID_NAME_LEN];
     sprintf(name, "%d", task->pid);
 
-    vfs_node_t *node = vfs_child_append(procfs_root, name, NULL);
+    vfs_node_t *node = vfs_node_alloc(procfs_root, name);
     node->type = file_dir;
     node->mode = 0644;
     procfs_populate_task_dir(node, task);
@@ -357,12 +353,12 @@ void procfs_on_new_task(task_t *task) {
 
     vfs_node_t *task_root = vfs_open_at(proc_root, "task", 0);
     if (!task_root) {
-        task_root = vfs_child_append(proc_root, "task", NULL);
+        task_root = vfs_node_alloc(proc_root, "task");
         task_root->type = file_dir;
         task_root->mode = 0555;
     }
 
-    vfs_node_t *thread_node = vfs_child_append(task_root, name, NULL);
+    vfs_node_t *thread_node = vfs_node_alloc(task_root, name);
     thread_node->type = file_dir;
     thread_node->mode = 0644;
     procfs_populate_task_dir(thread_node, task);

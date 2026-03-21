@@ -13,6 +13,7 @@
 #include <irq/irq_manager.h>
 #include <irq/softirq.h>
 #include <init/abis.h>
+#include <task/ns.h>
 
 sched_rq_t *schedulers[MAX_CPU_NUM];
 
@@ -784,7 +785,18 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
 #endif
     task->signal->signal = 0;
     task->status = 0;
-    task->cwd = rootdir;
+    task->fs = task_fs_create(rootdir, rootdir);
+    if (!task->fs) {
+        can_schedule = true;
+        return NULL;
+    }
+    task->nsproxy = task_ns_proxy_create_initial();
+    if (!task->nsproxy) {
+        task_fs_put(task->fs);
+        task->fs = NULL;
+        can_schedule = true;
+        return NULL;
+    }
     task->fd_info = malloc(sizeof(fd_info_t));
     memset(task->fd_info, 0, sizeof(fd_info_t));
     memset(task->fd_info->fds, 0, sizeof(task->fd_info->fds));
@@ -1097,6 +1109,10 @@ void task_exit_inner(task_t *task, int64_t code) {
     vfs_close(task->exec_node);
 
     task_cleanup_fd_info(task);
+    task_fs_put(task->fs);
+    task->fs = NULL;
+    task_ns_proxy_put(task->nsproxy);
+    task->nsproxy = NULL;
 
     futex_on_exit_task(task);
     pidfd_on_task_exit(task);

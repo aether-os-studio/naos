@@ -158,7 +158,7 @@ static vfs_node_t *sysfs_mkfile_path(const char *path) {
 
     vfs_node_t *node = vfs_child_find(parent, leaf);
     if (!node) {
-        node = vfs_child_append(parent, leaf, NULL);
+        node = vfs_node_alloc(parent, leaf);
         if (!node) {
             free(leaf);
             return NULL;
@@ -193,7 +193,7 @@ int sysfs_symlink_path(const char *path, const char *target_path) {
         return -EEXIST;
     }
 
-    vfs_node_t *node = vfs_child_append(parent, leaf, NULL);
+    vfs_node_t *node = vfs_node_alloc(parent, leaf);
     if (!node) {
         free(leaf);
         return -ENOMEM;
@@ -241,6 +241,7 @@ ssize_t sysfs_readlink(vfs_node_t *node, void *addr, size_t offset,
     sysfs_node_t *handle = node->handle;
     if (offset >= handle->size)
         return 0;
+
     char tmp[1024];
     memset(tmp, 0, sizeof(tmp));
     memcpy(tmp, handle->content, MIN(handle->size, sizeof(tmp)));
@@ -260,6 +261,7 @@ ssize_t sysfs_readlink(vfs_node_t *node, void *addr, size_t offset,
 
     ssize_t to_copy = MIN(size, strlen(output));
     memcpy(addr, output, to_copy);
+
     return to_copy;
 }
 
@@ -331,6 +333,8 @@ void sysfs_unmount(vfs_node_t *root) {
 
     sysfs_root = fake_sysfs_root;
 
+    root->root = root->parent ? root->parent->root : root;
+
     spin_unlock(&sysfs_oplock);
 }
 
@@ -379,7 +383,7 @@ vfs_node_t *sysfs_ensure_dir(const char *path) {
 void sysfs_init() {
     sysfs_fsid = vfs_regist(&sysfs);
 
-    fake_sysfs_root = vfs_child_append(rootdir, "sys", NULL);
+    fake_sysfs_root = vfs_node_alloc(rootdir, "sys");
     fake_sysfs_root->type = file_dir;
     fake_sysfs_root->fsid = sysfs_fsid;
     sysfs_root = fake_sysfs_root;

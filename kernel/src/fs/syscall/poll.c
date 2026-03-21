@@ -124,6 +124,7 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
 
     do {
         arch_enable_interrupt();
+
         ready = poll_scan_ready(fds, nfds);
 
         if (ready > 0)

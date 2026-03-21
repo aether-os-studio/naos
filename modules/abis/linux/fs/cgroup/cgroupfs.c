@@ -64,7 +64,7 @@ static cgroupfs_node_t *cgroupfs_alloc_handle(vfs_node_t *node) {
 
 static int cgroupfs_init_file(vfs_node_t *parent, const char *name,
                               uint16_t mode, const char *content) {
-    vfs_node_t *node = vfs_child_append(parent, name, NULL);
+    vfs_node_t *node = vfs_node_alloc(parent, name);
     node->mode = mode;
     node->type = file_none;
 
@@ -138,6 +138,8 @@ void cgroupfs_unmount(vfs_node_t *root) {
     root->rdev = root->parent ? root->parent->rdev : 0;
 
     cgroupfs_root = fake_cgroupfs_root;
+
+    root->root = root->parent ? root->parent->root : root;
 
     spin_unlock(&cgroupfs_oplock);
 }

@@ -3,12 +3,7 @@ sudo rm -rf ${PROJECT_ROOT}/initramfs-${ARCH}/
 mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/bin/
 mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/dev/
 mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/mnt/
-mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/proc/
 mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/sbin/
-mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/run/
-mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/sys/
-mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/tmp/
-mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/var/
 mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/lib/modules/
 
 sudo cp -r ${PROJECT_ROOT}/user/initramfs-${ARCH}/bin/busybox ${PROJECT_ROOT}/initramfs-${ARCH}/bin

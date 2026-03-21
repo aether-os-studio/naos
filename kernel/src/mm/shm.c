@@ -18,7 +18,6 @@ static inline long shm_now_seconds(void) {
 
 static int shmfs_mount(uint64_t dev, vfs_node_t *node);
 static void shmfs_unmount(vfs_node_t *node);
-static int shmfs_remount(vfs_node_t *old, vfs_node_t *node);
 static void shmfs_open(vfs_node_t *parent, const char *name, vfs_node_t *node);
 static ssize_t shmfs_read(fd_t *fd, void *addr, size_t offset, size_t size);
 static ssize_t shmfs_write(fd_t *fd, const void *addr, size_t offset,
@@ -44,7 +43,6 @@ static void shmfs_free_handle(vfs_node_t *node);
 static vfs_operations_t shmfs_callbacks = {
     .mount = shmfs_mount,
     .unmount = shmfs_unmount,
-    .remount = shmfs_remount,
     .open = shmfs_open,
     .close = shmfs_close,
     .read = shmfs_read,
@@ -141,9 +139,10 @@ static int shm_create_dev_node_locked(shm_t *shm) {
     if (vfs_child_find(shm_dir, shm->node_name))
         return -EEXIST;
 
-    vfs_node_t *node = vfs_child_append(shm_dir, shm->node_name, shm);
+    vfs_node_t *node = vfs_node_alloc(shm_dir, shm->node_name);
     if (!node)
         return -ENOMEM;
+    node->handle = shm;
 
     node->type = file_none;
     node->fsid = shmfs_fsid;
@@ -248,8 +247,6 @@ static void do_shmdt_one(task_t *task, shm_mapping_t *m) {
 static int shmfs_mount(uint64_t dev, vfs_node_t *node) { return 0; }
 
 static void shmfs_unmount(vfs_node_t *node) {}
-
-static int shmfs_remount(vfs_node_t *old, vfs_node_t *node) { return 0; }
 
 static void shmfs_open(vfs_node_t *parent, const char *name, vfs_node_t *node) {
 }

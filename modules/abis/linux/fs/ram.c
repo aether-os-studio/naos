@@ -60,7 +60,7 @@ static int ramfs_replace_content(ramfs_node_t *handle, size_t new_capability,
 
 static void ramfs_sync_node_from_handle(vfs_node_t *node,
                                         ramfs_node_t *handle) {
-    if (!node || !handle)
+    if (!node || !handle || node == node->root)
         return;
 
     node->inode = handle->inode;
@@ -300,6 +300,9 @@ void ramfs_unmount(vfs_node_t *root) {
     for (uint64_t i = 0; i < idx; i++) {
         vfs_free(nodes[i]);
     }
+
+    root->root = root->parent ? root->parent->root : root;
+
     free(nodes);
 }
 
@@ -420,6 +423,15 @@ int ramfs_stat(vfs_node_t *node) {
     return 0;
 }
 
+int ramfs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
+    if (!fd->node || !fd->node->handle)
+        return -EBADF;
+    if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
+        return device_ioctl(fd->node->rdev, cmd, (void *)arg, fd);
+    }
+    return -ENOSYS;
+}
+
 void ramfs_free_handle(vfs_node_t *node) {
     ramfs_node_t *tnode = node ? node->handle : NULL;
     if (!tnode)
@@ -456,6 +468,7 @@ static vfs_operations_t callbacks = {
     .close = ramfs_close,
     .read = ramfs_read,
     .write = ramfs_write,
+    .ioctl = ramfs_ioctl,
     .readlink = ramfs_readlink,
     .mkdir = ramfs_mkdir,
     .mkfile = ramfs_mkfile,
