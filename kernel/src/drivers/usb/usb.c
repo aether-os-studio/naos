@@ -396,28 +396,6 @@ static int usb_find_endpoint(usb_device_t *usbdev, uint8_t epaddr,
     return ep_out && *ep_out ? 0 : -ENOENT;
 }
 
-static int usb_device_bulk_transfer(usb_device_t *usbdev, uint8_t epaddr,
-                                    void *data, size_t len,
-                                    uint32_t timeout_ms) {
-    usb_endpoint_descriptor_t *ep = NULL;
-    usb_super_speed_endpoint_descriptor_t *ss_ep = NULL;
-    usb_pipe_t *pipe;
-    int dir = (epaddr & USB_DIR_IN) ? USB_DIR_IN : USB_DIR_OUT;
-    int ret;
-
-    if (usb_find_endpoint(usbdev, epaddr, NULL, &ep, &ss_ep) != 0 || !ep)
-        return -ENOENT;
-
-    pipe = usb_alloc_pipe(usbdev, ep, ss_ep);
-    if (!pipe)
-        return -ENOMEM;
-
-    ret = usb_send_pipe(pipe, dir, NULL, data, (int)len,
-                        usb_timeout_ns(timeout_ms));
-    usb_free_pipe(usbdev, pipe);
-    return ret;
-}
-
 static size_t usb_descriptor_blob_size(usb_device_t *usbdev) {
     size_t size = sizeof(usbdev->device_desc);
     if (usbdev->is_root_hub)
