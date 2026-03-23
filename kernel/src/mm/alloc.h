@@ -120,7 +120,7 @@ size_t usable_size(void *ptr);
  * Caller is responsible for handling the returned pointer (e.g., checking for
  * null) and eventually freeing it with `free`.
  */
-void *malloc(size_t size);
+void *liballoc_malloc(size_t size);
 
 /**
  * Allocates memory for an array of `nmemb` elements of `size` bytes each
@@ -130,7 +130,7 @@ void *malloc(size_t size);
  * Caller is responsible for handling the returned pointer and freeing it.
  * Returns NULL on integer overflow or allocation failure.
  */
-void *calloc(size_t nmemb, size_t size);
+void *liballoc_calloc(size_t nmemb, size_t size);
 
 /**
  * Allocates memory with specified alignment.
@@ -142,7 +142,7 @@ void *calloc(size_t nmemb, size_t size);
  * per C standard `aligned_alloc`). Behavior is undefined if `size` is not a
  * multiple of `alignment` (C standard requirement).
  */
-void *aligned_alloc(size_t alignment, size_t size);
+void *liballoc_aligned_alloc(size_t alignment, size_t size);
 
 /**
  * Frees memory previously allocated by `malloc`, `realloc`, or `aligned_alloc`.
@@ -154,7 +154,7 @@ void *aligned_alloc(size_t alignment, size_t size);
  * double-free (UB).
  * - Using the pointer after `free` leads to use-after-free (UB).
  */
-void free(void *ptr);
+void liballoc_free(void *ptr);
 
 /**
  * Reallocates memory previously allocated by `malloc`, `realloc`, or
@@ -170,7 +170,7 @@ void free(void *ptr);
  * - If reallocation succeeds, the original `ptr` is invalidated and the new
  * pointer should be used.
  */
-void *realloc(void *ptr, size_t size);
+void *liballoc_realloc(void *ptr, size_t size);
 
 #ifdef __cplusplus
 } // extern "C"

@@ -6,7 +6,13 @@
 #include <mm/page_table.h>
 #include <arch/arch.h>
 #include <mm/vma.h>
-#include <mm/alloc.h>
+#include <mm/heap.h>
+
+void *malloc(size_t size);
+void *calloc(size_t nmemb, size_t size);
+void *realloc(void *ptr, size_t size);
+void *aligned_alloc(size_t alignment, size_t size);
+void free(void *ptr);
 
 #define MAX_USABLE_REGIONS_COUNT 128
 

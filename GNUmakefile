@@ -117,8 +117,12 @@ all: $(IMAGE_NAME).img rootfs-$(ARCH).img
 .PHONY: all
 all-single: single-$(IMAGE_NAME).img
 
-prepare: libgcc_$(ARCH).a
+prepare: libgcc_$(ARCH).a liballoc_$(ARCH).a
 	./kernel/get-deps
+
+liballoc_$(ARCH).a:
+	wget https://github.com/plos-clan/liballoc/releases/download/release/liballoc-$(ARCH).a -O liballoc_$(ARCH)_norenamed.a
+	objcopy --redefine-sym malloc=liballoc_malloc --redefine-sym realloc=liballoc_realloc --redefine-sym calloc=liballoc_calloc --redefine-sym aligned_alloc=liballoc_aligned_alloc --redefine-sym free=liballoc_free liballoc_$(ARCH)_norenamed.a liballoc_$(ARCH).a
 
 libgcc_$(ARCH).a:
 	wget https://github.com/osdev0/libgcc-binaries/releases/download/$(LIBGCC_VERSION)/libgcc-$(ARCH).a -O libgcc_$(ARCH).a
