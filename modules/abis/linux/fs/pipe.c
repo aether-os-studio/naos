@@ -13,56 +13,78 @@ void pipefs_open(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     (void)name;
 }
 
-ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
-    if (size > PIPE_BUFF)
-        size = PIPE_BUFF;
-
-    void *file = fd->node->handle;
-
+ssize_t pipe_read_inner(fd_t *fd, void *file, void *addr, size_t size,
+                        bool allow_wait) {
     pipe_specific_t *spec = (pipe_specific_t *)file;
     if (!spec)
         return -EINVAL;
+
     pipe_info_t *pipe = spec->info;
     if (!pipe)
         return -EINVAL;
-
-    if (!size)
-        return 0;
 
     while (true) {
         spin_lock(&pipe->lock);
 
         if (pipe->ptr > 0) {
-            // 实际读取量
-            uint32_t to_read = MIN(size, pipe->ptr);
+            size_t to_read = MIN(size, pipe->ptr);
             memcpy(addr, pipe->buf, to_read);
             memmove(pipe->buf, &pipe->buf[to_read], pipe->ptr - to_read);
             pipe->ptr -= to_read;
             spin_unlock(&pipe->lock);
+
             if (pipe->write_node)
                 vfs_poll_notify(pipe->write_node, EPOLLOUT);
+
             return to_read;
         }
 
         if (pipe->write_fds == 0) {
             spin_unlock(&pipe->lock);
-            return 0;
+            return 0; // EOF
         }
 
         spin_unlock(&pipe->lock);
 
-        if (fd_get_flags(fd) & O_NONBLOCK) {
+        if (!allow_wait)
+            return 0;
+
+        if (fd_get_flags(fd) & O_NONBLOCK)
             return -EWOULDBLOCK;
-        }
 
         vfs_poll_wait_t wait;
         vfs_poll_wait_init(&wait, current_task, EPOLLIN | EPOLLHUP | EPOLLERR);
         vfs_poll_wait_arm(fd->node, &wait);
         int reason = vfs_poll_wait_sleep(fd->node, &wait, -1, "pipe_read");
         vfs_poll_wait_disarm(&wait);
+
         if (reason != EOK)
             return -EINTR;
     }
+}
+
+ssize_t pipefs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
+    (void)offset;
+
+    void *file = fd->node->handle;
+    char *buf = (char *)addr;
+    size_t readn = 0;
+
+    if (!size)
+        return 0;
+
+    while (readn < size) {
+        ssize_t ret =
+            pipe_read_inner(fd, file, buf + readn, size - readn, readn == 0);
+        if (ret < 0)
+            return readn ? (ssize_t)readn : ret;
+        if (ret == 0)
+            break;
+
+        readn += ret;
+    }
+
+    return readn;
 }
 
 ssize_t pipe_write_inner(fd_t *fd, void *file, const void *addr, size_t size,

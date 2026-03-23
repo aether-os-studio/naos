@@ -270,11 +270,11 @@ uint64_t epoll_wait(vfs_node_t *epollFd, struct epoll_event *events,
             block_ns = 10000000LL;
         }
 
+        arch_enable_interrupt();
         int block_reason =
             task_block(current_task, TASK_BLOCKING, block_ns, "epoll_wait");
+        arch_disable_interrupt();
         epoll_disarm_waiters(waits, waits_count);
-
-        arch_enable_interrupt();
 
         if (block_reason == ETIMEDOUT) {
             if (infinite_timeout) {

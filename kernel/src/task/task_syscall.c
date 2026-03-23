@@ -1181,6 +1181,22 @@ uint64_t task_execve(const char *path_user, const char **argv,
     strncpy(self->name, path, TASK_NAME_MAX);
     self->name[TASK_NAME_MAX - 1] = '\0';
 
+    vma_t *stack_guard_vma = vma_alloc();
+
+    stack_guard_vma->vm_start = USER_STACK_START - DEFAULT_PAGE_SIZE;
+    stack_guard_vma->vm_end = USER_STACK_START;
+    stack_guard_vma->vm_flags |= VMA_ANON | VMA_STACK;
+
+    stack_guard_vma->vm_type = VMA_TYPE_ANON;
+    stack_guard_vma->vm_name = NULL;
+
+    vma_t *region = vma_find_intersection(&self->mm->task_vma_mgr,
+                                          USER_STACK_START - DEFAULT_PAGE_SIZE,
+                                          USER_STACK_START);
+    if (!region) {
+        vma_insert(&self->mm->task_vma_mgr, stack_guard_vma);
+    }
+
     vma_t *stack_vma = vma_alloc();
 
     stack_vma->vm_start = USER_STACK_START;
@@ -1190,8 +1206,8 @@ uint64_t task_execve(const char *path_user, const char **argv,
     stack_vma->vm_type = VMA_TYPE_ANON;
     stack_vma->vm_name = strdup("[stack]");
 
-    vma_t *region = vma_find_intersection(&self->mm->task_vma_mgr,
-                                          USER_STACK_START, USER_STACK_END);
+    region = vma_find_intersection(&self->mm->task_vma_mgr, USER_STACK_START,
+                                   USER_STACK_END);
     if (!region) {
         vma_insert(&self->mm->task_vma_mgr, stack_vma);
     }

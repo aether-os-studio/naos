@@ -310,8 +310,8 @@ typedef struct task {
     vfs_node_t *exec_node;
     int priority;
     void *sched_info;
-    task_state_t state;
-    task_state_t current_state;
+    volatile task_state_t state;
+    volatile task_state_t current_state;
     const char *blocking_reason;
     uint64_t force_wakeup_ns;
     uint64_t load_start;

@@ -1556,7 +1556,27 @@ done:
         return (size_t)ancillary_ret;
     }
 
-    if (sock->passcred || peer->passcred) {
+    mutex_lock(&sock->lock);
+    bool sock_passcred = sock->passcred;
+    mutex_unlock(&sock->lock);
+
+    bool peer_passcred = false;
+    if (peer) {
+        if (peer_needs_unref) {
+            if (mutex_trylock(&peer->lock)) {
+                peer_passcred = peer->passcred;
+                mutex_unlock(&peer->lock);
+            }
+        } else {
+            socket_t *p = sock->peer;
+            if (p && mutex_trylock(&p->lock)) {
+                peer_passcred = p->passcred;
+                mutex_unlock(&p->lock);
+            }
+        }
+    }
+
+    if (sock_passcred || peer_passcred) {
         if (!ancillary) {
             ancillary = calloc(1, sizeof(*ancillary));
             if (!ancillary) {
@@ -1736,21 +1756,27 @@ int socket_poll(vfs_node_t *node, size_t events) {
         mutex_lock(&sock->lock);
         socket_t *peer = sock->peer;
         if (peer) {
-            if (peer->closed)
-                revents |= EPOLLHUP;
-            if ((events & EPOLLRDHUP) && (peer->closed || peer->shut_wr))
-                revents |= EPOLLRDHUP;
+            if (mutex_trylock(&peer->lock)) {
+                if (peer->closed)
+                    revents |= EPOLLHUP;
+                if ((events & EPOLLRDHUP) && (peer->closed || peer->shut_wr))
+                    revents |= EPOLLRDHUP;
+                if ((events & EPOLLOUT) && !sock->shut_wr && !peer->closed &&
+                    peer->recv_pos < peer->recv_size)
+                    revents |= EPOLLOUT;
 
-            // 可写：对端有空间
-            if ((events & EPOLLOUT) && !sock->shut_wr && !peer->closed &&
-                peer->recv_pos < peer->recv_size)
-                revents |= EPOLLOUT;
-
-            // 可读：自己有数据或辅助数据
-            if ((events & EPOLLIN) &&
-                (sock->recv_pos > 0 || sock->ancillary_head != NULL ||
-                 sock->shut_rd || peer->shut_wr || peer->closed))
-                revents |= EPOLLIN;
+                if ((events & EPOLLIN) &&
+                    (sock->recv_pos > 0 || sock->ancillary_head != NULL ||
+                     sock->shut_rd || peer->shut_wr || peer->closed))
+                    revents |= EPOLLIN;
+                mutex_unlock(&peer->lock);
+            } else {
+                if ((events & EPOLLIN) && sock->recv_pos > 0)
+                    revents |= EPOLLIN;
+                if (sock->closed || peer->closed)
+                    revents |= EPOLLHUP | EPOLLERR;
+            }
+            mutex_unlock(&sock->lock);
         } else {
             if ((events & EPOLLIN) && sock->established)
                 revents |= EPOLLIN;
@@ -1761,8 +1787,8 @@ int socket_poll(vfs_node_t *node, size_t events) {
                 revents |= EPOLLHUP;
             if (sock->closed)
                 revents |= EPOLLERR;
+            mutex_unlock(&sock->lock);
         }
-        mutex_unlock(&sock->lock);
     }
 
     return revents;
@@ -1781,7 +1807,9 @@ int socket_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
         if (!arg)
             return -EFAULT;
         {
+            mutex_lock(&sock->lock);
             int value = (int)sock->recv_pos;
+            mutex_unlock(&sock->lock);
             if (copy_to_user((void *)arg, &value, sizeof(value)))
                 return -EFAULT;
             return 0;
@@ -1801,11 +1829,10 @@ bool socket_close(vfs_node_t *node) {
     socket_t *sock = handle->sock;
     socket_t *peer = NULL;
 
-    // 标记关闭
-    sock->closed = true;
-
     // 断开与对端的连接
     mutex_lock(&sock->lock);
+    // 标记关闭（在锁内设置）
+    sock->closed = true;
     if (sock->connMax > 0 && sock->backlog && sock->connCurr > 0) {
         int pending = sock->connCurr;
         for (int i = 0; i < pending; i++) {
@@ -1913,6 +1940,10 @@ int unix_socket_pair(int domain, int type, int protocol, int *sv) {
     vfs_node_t *node1 = unix_socket_create_node(sock1);
     vfs_node_t *node2 = unix_socket_create_node(sock2);
     if (!node1 || !node2) {
+        sock1->peer = NULL;
+        sock2->peer = NULL;
+        sock1->established = false;
+        sock2->established = false;
         if (node1)
             vfs_free(node1);
         if (node2)
