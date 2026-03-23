@@ -8,6 +8,7 @@
 #include <fs/proc.h>
 #include <net/real_socket.h>
 #include <bpf/socket_filter.h>
+#include <init/callbacks.h>
 
 static int netlink_socket_fsid = 0;
 
@@ -1058,7 +1059,7 @@ int netlink_socket(int domain, int type, int protocol) {
             break;
         }
         current_task->fd_info->fds[i] = new_fd;
-        procfs_on_open_file(current_task, i);
+        on_open_file_call(current_task, i);
         ret = (int)i;
     });
 

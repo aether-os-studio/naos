@@ -1,4 +1,5 @@
 #include <init/abis.h>
+#include <init/callbacks.h>
 #include <fs/fs_syscall.h>
 #include <fs/proc.h>
 #include <boot/boot.h>
@@ -482,7 +483,7 @@ have_node:
         }
         self->fd_info->fds[i] = new_fd;
         vfs_node_ref_get(node);
-        system_abi->on_open_file(self, i);
+        on_open_file_call(self, i);
         ret = i;
     });
 
@@ -678,7 +679,7 @@ uint64_t sys_open_by_handle_at(int mountdirfd, struct file_handle *handle,
         }
         self->fd_info->fds[i] = new_fd;
         vfs_node_ref_get(node);
-        system_abi->on_open_file(self, i);
+        on_open_file_call(self, i);
         ret = i;
     });
 
@@ -726,7 +727,7 @@ uint64_t sys_close(uint64_t fd) {
     if (ret)
         return ret;
 
-    system_abi->on_close_file(self, fd, entry);
+    on_close_file_call(self, fd, entry);
     fd_release(entry);
     return 0;
 }
@@ -823,7 +824,7 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
         fd_t *entry = to_close[fd_];
         if (!entry)
             continue;
-        system_abi->on_close_file(self, fd_, entry);
+        on_close_file_call(self, fd_, entry);
         fd_release(entry);
     }
 
@@ -1462,10 +1463,10 @@ static uint64_t dup_to_exact(task_t *self, uint64_t fd, uint64_t newfd,
 
     if ((int64_t)ret >= 0 && installed_new) {
         if (replaced_existing) {
-            system_abi->on_close_file(self, newfd, replaced_fd);
+            on_close_file_call(self, newfd, replaced_fd);
             fd_release(replaced_fd);
         }
-        system_abi->on_open_file(self, newfd);
+        on_open_file_call(self, newfd);
     }
 
     return ret;
@@ -1515,7 +1516,7 @@ static uint64_t dup_to_free_slot(task_t *self, uint64_t fd, uint64_t start,
         }
 
         self->fd_info->fds[i] = newf;
-        system_abi->on_open_file(self, i);
+        on_open_file_call(self, i);
         ret = i;
     });
 

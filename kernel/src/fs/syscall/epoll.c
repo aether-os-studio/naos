@@ -1,4 +1,5 @@
 #include <init/abis.h>
+#include <init/callbacks.h>
 #include <fs/fs_syscall.h>
 #include <fs/proc.h>
 #include <task/signal.h>
@@ -181,7 +182,7 @@ size_t epoll_create1(int flags) {
             break;
         }
         current_task->fd_info->fds[i] = new_fd;
-        system_abi->on_open_file(current_task, i);
+        on_open_file_call(current_task, i);
         ret = i;
     });
 

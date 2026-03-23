@@ -1,6 +1,7 @@
 #include <dev/pty.h>
 #include <task/task.h>
 #include <fs/proc.h>
+#include <init/callbacks.h>
 
 uint8_t *pty_bitmap = 0;
 spinlock_t pty_global_lock = SPIN_INIT;
@@ -83,7 +84,7 @@ static int pty_open_peer_fd(vfs_node_t *node, uint64_t flags) {
 
         peer_node->refcount++;
         current_task->fd_info->fds[fd_num] = new_fd;
-        procfs_on_open_file(current_task, (int)fd_num);
+        on_open_file_call(current_task, (int)fd_num);
         ret = (int)fd_num;
     });
 

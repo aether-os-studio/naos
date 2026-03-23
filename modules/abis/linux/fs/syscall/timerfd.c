@@ -7,6 +7,7 @@
 #include <libs/rbtree.h>
 #include <task/signal.h>
 #include <task/task_syscall.h>
+#include <init/callbacks.h>
 
 int timerfdfs_id = 0;
 static rb_root_t timerfd_mono_root = RB_ROOT_INIT;
@@ -286,7 +287,7 @@ uint64_t sys_timerfd_create(int clockid, int flags) {
         }
 
         current_task->fd_info->fds[fd] = new_fd;
-        procfs_on_open_file(current_task, fd);
+        on_open_file_call(current_task, fd);
         ret = 0;
     });
 

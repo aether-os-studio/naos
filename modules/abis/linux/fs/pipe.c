@@ -5,6 +5,7 @@
 #include <fs/pipe.h>
 #include <fs/dev.h>
 #include <fs/proc.h>
+#include <init/callbacks.h>
 
 int pipefs_id = 0;
 
@@ -342,8 +343,8 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
 
         current_task->fd_info->fds[i1] = fd_read;
         current_task->fd_info->fds[i2] = fd_write;
-        procfs_on_open_file(current_task, i1);
-        procfs_on_open_file(current_task, i2);
+        on_open_file_call(current_task, i1);
+        on_open_file_call(current_task, i2);
         ret = 0;
     });
 

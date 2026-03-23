@@ -14,6 +14,7 @@
 #include <fs/vfs/vfs.h>
 #include <mm/mm.h>
 #include <task/task.h>
+#include <init/callbacks.h>
 
 extern int eventfdfs_id;
 
@@ -715,7 +716,7 @@ static ssize_t drm_syncfd_create_fd(drm_syncfd_ctx_t *ctx, uint32_t flags) {
     with_fd_info_lock(current_task->fd_info, {
         if (!current_task->fd_info->fds[fd]) {
             current_task->fd_info->fds[fd] = fd_obj;
-            procfs_on_open_file(current_task, fd);
+            on_open_file_call(current_task, fd);
             installed = true;
         }
     });
@@ -855,7 +856,7 @@ ssize_t drm_primefd_create(drm_device_t *dev, uint32_t handle, uint64_t phys,
     with_fd_info_lock(current_task->fd_info, {
         if (!current_task->fd_info->fds[fd]) {
             current_task->fd_info->fds[fd] = fd_obj;
-            procfs_on_open_file(current_task, fd);
+            on_open_file_call(current_task, fd);
         } else {
             fd_release(fd_obj);
             fd_obj = NULL;

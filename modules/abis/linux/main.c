@@ -8,6 +8,7 @@
 #include <net/net_syscall.h>
 #include <net/rtnl.h>
 #include <init/abis.h>
+#include <init/callbacks.h>
 #include <fs/dev.h>
 #include <fs/proc.h>
 #include <dev/fb.h>
@@ -526,15 +527,7 @@ abi_t linux_abi = {
     .init_before_thread = linuxabi_init_before_thread,
     .init_after_thread = linuxabi_init_after_thread,
     .init_before_user = linuxabi_init_before_user,
-    .on_sched_update = linuxabi_on_sched_update,
-    .on_send_signal = linuxabi_on_send_signal,
     .run_user_init = linuxabi_run_user_init,
-    .on_new_task = linuxabi_on_new_task,
-    .on_exit_task = linuxabi_on_exit_task,
-    .on_open_file = linuxabi_on_open_file,
-    .on_close_file = linuxabi_on_close_file,
-    .on_new_device = linuxabi_on_new_device,
-    .on_remove_device = linuxabi_on_remove_device,
     .regist_input_dev = linuxabi_regist_input_dev,
     .handle_kb_scancode = handle_kb_scancode,
     .handle_mouse_event = handle_mouse_event,
@@ -542,6 +535,15 @@ abi_t linux_abi = {
 
 __attribute__((visibility("default"))) int dlmain() {
     system_abi = &linux_abi;
+
+    regist_on_sched_update_callback(linuxabi_on_sched_update);
+    regist_on_send_signal_callback(linuxabi_on_send_signal);
+    regist_on_new_task_callback(linuxabi_on_new_task);
+    regist_on_exit_task_callback(linuxabi_on_exit_task);
+    regist_on_open_file_callback(linuxabi_on_open_file);
+    regist_on_close_file_callback(linuxabi_on_close_file);
+    regist_on_new_device_callback(linuxabi_on_new_device);
+    regist_on_remove_device_callback(linuxabi_on_remove_device);
 
     regist_syscall_handler(SYS_READ, (syscall_handle_t)sys_read);
     regist_syscall_handler(SYS_WRITE, (syscall_handle_t)sys_write);

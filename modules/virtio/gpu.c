@@ -1525,31 +1525,6 @@ static void virtio_gpu_cleanup_owner(virtio_gpu_device_t *gpu_dev,
     }
 }
 
-// TODO: call it
-void virtio_gpu_on_close_file(fd_t *file) {
-    if (!file || !file->shared) {
-        return;
-    }
-
-    if (__atomic_load_n(&file->shared->ref_count, __ATOMIC_ACQUIRE) != 1) {
-        return;
-    }
-
-    uint64_t owner_file = virtio_gpu_owner_file(file);
-    if (owner_file == 0) {
-        return;
-    }
-
-    for (uint32_t i = 0; i < virtio_gpu_devices_count; i++) {
-        virtio_gpu_device_t *gpu_dev = virtio_gpu_devices[i];
-        if (!gpu_dev) {
-            continue;
-        }
-
-        virtio_gpu_cleanup_owner(gpu_dev, owner_file);
-    }
-}
-
 static uint32_t virtio_gpu_alloc_bo_handle(virtio_gpu_device_t *gpu_dev) {
     if (!gpu_dev) {
         return 0;
@@ -4351,6 +4326,32 @@ drm_device_op_t virtio_gpu_drm_device_op = {
     .get_planes = virtio_gpu_get_planes,
     .driver_ioctl = virtio_gpu_driver_ioctl,
 };
+
+int virtio_gpu_on_close_file(task_t *task, int fd, fd_t *file) {
+    if (!file || !file->shared) {
+        return 0;
+    }
+
+    if (__atomic_load_n(&file->shared->ref_count, __ATOMIC_ACQUIRE) != 1) {
+        return 0;
+    }
+
+    uint64_t owner_file = virtio_gpu_owner_file(file);
+    if (owner_file == 0) {
+        return 0;
+    }
+
+    for (uint32_t i = 0; i < virtio_gpu_devices_count; i++) {
+        virtio_gpu_device_t *gpu_dev = virtio_gpu_devices[i];
+        if (!gpu_dev) {
+            continue;
+        }
+
+        virtio_gpu_cleanup_owner(gpu_dev, owner_file);
+    }
+
+    return 0;
+}
 
 // Virtio GPU initialization
 int virtio_gpu_init(virtio_driver_t *driver) {

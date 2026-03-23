@@ -9,6 +9,7 @@
 #include <net/netlink.h>
 #include <libs/hashmap.h>
 #include <libs/strerror.h>
+#include <init/callbacks.h>
 
 extern socket_op_t socket_ops;
 
@@ -974,7 +975,7 @@ static size_t unix_socket_install_pending_files(fd_t **pending_files,
     for (size_t i = 0; i < installed; i++) {
         fd_release(pending_files[i]);
         pending_files[i] = NULL;
-        procfs_on_open_file(current_task, fds_out[i]);
+        on_open_file_call(current_task, fds_out[i]);
     }
 
     if (installed < pending_count) {
@@ -1054,7 +1055,7 @@ int socket_socket(int domain, int type, int protocol) {
         }
 
         current_task->fd_info->fds[i] = new_fd;
-        procfs_on_open_file(current_task, i);
+        on_open_file_call(current_task, i);
         ret = (int)i;
     });
 
@@ -1276,7 +1277,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
         }
         current_task->fd_info->fds[i] = new_fd;
         accepted_fd = new_fd;
-        procfs_on_open_file(current_task, i);
+        on_open_file_call(current_task, i);
         ret = (int)i;
     });
 
@@ -1990,8 +1991,8 @@ int unix_socket_pair(int domain, int type, int protocol, int *sv) {
 
         current_task->fd_info->fds[fd1] = entry1;
         current_task->fd_info->fds[fd2] = entry2;
-        procfs_on_open_file(current_task, fd1);
-        procfs_on_open_file(current_task, fd2);
+        on_open_file_call(current_task, fd1);
+        on_open_file_call(current_task, fd2);
 
         socket_handle_t *h1 = node1->handle;
         socket_handle_t *h2 = node2->handle;

@@ -1,6 +1,7 @@
 #include <dev/device.h>
 #include <mod/dlinker.h>
 #include <init/abis.h>
+#include <init/callbacks.h>
 
 static device_t devices[DEVICE_NR]; // 设备数组
 uint64_t devices_idxs[DEV_MAX];
@@ -84,8 +85,7 @@ static uint64_t device_install_internal(int type, int subtype, void *ptr,
     devnr = device->dev;
     spin_unlock(&device_lock);
 
-    if (system_abi && system_abi->on_new_device)
-        system_abi->on_new_device(device);
+    on_new_device_call(device);
 
     return devnr;
 }
@@ -221,8 +221,7 @@ int device_uninstall(uint64_t dev) {
 
     spin_unlock(&device_lock);
 
-    if (system_abi && system_abi->on_remove_device)
-        system_abi->on_remove_device(&removed);
+    on_remove_device_call(device);
 
     return ret;
 }

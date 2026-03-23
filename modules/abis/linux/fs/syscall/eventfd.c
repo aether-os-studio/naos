@@ -1,6 +1,7 @@
 #include <fs/fs_syscall.h>
 #include <fs/proc.h>
 #include <mod/dlinker.h>
+#include <init/callbacks.h>
 
 int eventfdfs_id = 0;
 
@@ -49,7 +50,7 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags) {
         }
 
         current_task->fd_info->fds[fd] = new_fd;
-        procfs_on_open_file(current_task, fd);
+        on_open_file_call(current_task, fd);
 
         ret = 0;
     });

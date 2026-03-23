@@ -13,6 +13,7 @@
 #include <irq/irq_manager.h>
 #include <irq/softirq.h>
 #include <init/abis.h>
+#include <init/callbacks.h>
 #include <task/ns.h>
 
 sched_rq_t *schedulers[MAX_CPU_NUM];
@@ -833,7 +834,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
 
     task->parent_death_sig = (uint64_t)-1;
 
-    system_abi->on_new_task(task);
+    on_new_task_call(task);
 
     task->state = TASK_READY;
     task->current_state = TASK_READY;
@@ -1073,7 +1074,7 @@ void task_cleanup_fd_info(task_t *task) {
                     if (task->fd_info->fds[i]) {
                         fd_t *entry = task->fd_info->fds[i];
                         task->fd_info->fds[i] = NULL;
-                        system_abi->on_close_file(task, i, entry);
+                        on_close_file_call(task, i, entry);
                         fd_release(entry);
                     }
                 }
@@ -1116,7 +1117,7 @@ void task_exit_inner(task_t *task, int64_t code) {
 
     futex_on_exit_task(task);
     pidfd_on_task_exit(task);
-    system_abi->on_exit_task(task);
+    on_exit_task_call(task);
 
     task->fd_info = NULL;
 

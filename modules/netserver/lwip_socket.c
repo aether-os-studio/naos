@@ -1,5 +1,6 @@
 #include "netserver_internal.h"
 #include <lwip/err.h>
+#include <init/callbacks.h>
 
 extern int err_to_errno(err_t err);
 
@@ -445,7 +446,7 @@ static int lwip_socket_install_fd(lwip_socket_state_t *sock, int open_type,
         }
 
         current_task->fd_info->fds[slot] = new_fd;
-        procfs_on_open_file(current_task, slot);
+        on_open_file_call(current_task, slot);
         ret = (int)slot;
     });
 

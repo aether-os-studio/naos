@@ -3,6 +3,7 @@
 #include <mm/mm_syscall.h>
 #include <mm/page.h>
 #include <task/task.h>
+#include <init/callbacks.h>
 
 static int memfd_fsid = 0;
 
@@ -169,7 +170,7 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags) {
         }
 
         current_task->fd_info->fds[fd] = new_fd;
-        procfs_on_open_file(current_task, fd);
+        on_open_file_call(current_task, fd);
 
         ret = 0;
     });

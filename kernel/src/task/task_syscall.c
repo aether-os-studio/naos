@@ -1,5 +1,6 @@
 #include <boot/boot.h>
 #include <init/abis.h>
+#include <init/callbacks.h>
 #include <libs/string_builder.h>
 #include <task/sched.h>
 #include <task/task_syscall.h>
@@ -1158,7 +1159,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
             if (self->fd_info->fds[i]->close_on_exec) {
                 fd_t *entry = self->fd_info->fds[i];
                 self->fd_info->fds[i] = NULL;
-                system_abi->on_close_file(self, i, entry);
+                on_close_file_call(self, i, entry);
                 fd_release(entry);
             }
         }
@@ -1804,10 +1805,10 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         child->tgid = child->pid;
     }
 
-    system_abi->on_new_task(child);
+    on_new_task_call(child);
     for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
         if (child->fd_info->fds[i]) {
-            system_abi->on_open_file(child, i);
+            on_open_file_call(child, i);
         }
     }
 

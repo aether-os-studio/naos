@@ -5,6 +5,7 @@
 #include <mm/bitmap.h>
 #include <irq/softirq.h>
 #include <init/abis.h>
+#include <init/callbacks.h>
 
 irq_action_t actions[ARCH_MAX_IRQ_NUM] = {0};
 irq_ipi_send_fn_t ipi_send_fns[ARCH_MAX_IRQ_NUM] = {0};
@@ -45,7 +46,7 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num) {
 
         if (self->cpu_id == 0) {
             sched_check_wakeup();
-            system_abi->on_sched_update();
+            on_sched_update_call();
         }
     }
 

@@ -5,6 +5,7 @@
 #include <task/task.h>
 
 #include <init/abis.h>
+#include <init/callbacks.h>
 
 #if defined(__x86_64__)
 #include <arch/x64/syscall/nr.h>
@@ -779,7 +780,7 @@ void task_commit_signal(task_t *task, int sig, siginfo_t *info) {
 
     spin_unlock(&task->signal->sighand->siglock);
 
-    system_abi->on_send_signal(task, sig, &kinfo);
+    on_send_signal_call(task, sig, &kinfo);
 
     signal_wake_interruptible_task(task, sig);
 }

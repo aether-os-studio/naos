@@ -2,6 +2,7 @@
 #include <fs/proc.h>
 #include <fs/fs_syscall.h>
 #include <task/task.h>
+#include <init/callbacks.h>
 
 static int fsfd_id = 0;
 static int mntfd_id = 0;
@@ -141,7 +142,7 @@ found:;
         }
 
         current_task->fd_info->fds[fd] = new_fd;
-        procfs_on_open_file(current_task, fd);
+        on_open_file_call(current_task, fd);
 
         ret = 0;
     });
@@ -627,7 +628,7 @@ uint64_t sys_fsmount(int fd, uint32_t flags, uint32_t attr_flags) {
         }
 
         current_task->fd_info->fds[mnt_fd] = new_fd;
-        procfs_on_open_file(current_task, mnt_fd);
+        on_open_file_call(current_task, mnt_fd);
         ret = 0;
     });
 

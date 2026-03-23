@@ -7,6 +7,8 @@
 #include "blk.h"
 #include "gpu.h"
 
+#include <init/callbacks.h>
+
 extern virtio_driver_op_t virtio_pci_driver_op;
 
 uint64_t virtio_begin_init(virtio_driver_t *driver,
@@ -180,7 +182,11 @@ fdt_driver_t virtio_mmio_driver = {
 };
 #endif
 
+extern int virtio_gpu_on_close_file(task_t *task, int fd, fd_t *file);
+
 __attribute__((visibility("default"))) int dlmain() {
+    regist_on_close_file_callback(virtio_gpu_on_close_file);
+
     regist_pci_driver(&virtio_pci_driver);
 
 #if !defined(__x86_64__)

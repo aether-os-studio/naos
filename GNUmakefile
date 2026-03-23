@@ -231,7 +231,9 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-device nvme,drive=rootdisk,serial=5678 \
 		-nic user,model=virtio-net-pci \
 		-rtc base=utc \
-		-display sdl \
+		-display sdl,gl=on \
+		-vga none \
+		-device virtio-gpu-gl-pci,hostmem=8G,blob=on \
 		$(QEMUFLAGS)
 
 .PHONY: run-x86_64-single

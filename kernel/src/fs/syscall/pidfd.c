@@ -1,4 +1,5 @@
 #include <init/abis.h>
+#include <init/callbacks.h>
 #include <fs/fs_syscall.h>
 #include <fs/proc.h>
 #include <libs/hashmap.h>
@@ -218,7 +219,7 @@ uint64_t pidfd_create_for_pid(uint64_t pid, uint64_t flags, bool cloexec) {
             break;
         }
         current_task->fd_info->fds[fd] = new_fd;
-        system_abi->on_open_file(current_task, fd);
+        on_open_file_call(current_task, fd);
 
         ret = 0;
     });

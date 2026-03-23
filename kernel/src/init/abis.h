@@ -12,15 +12,7 @@ typedef struct abi {
     void (*init_before_thread)(void);
     void (*init_after_thread)(void);
     void (*init_before_user)(void);
-    int (*on_sched_update)(void);
-    int (*on_send_signal)(task_t *task, int sig, const siginfo_t *info);
     int (*run_user_init)(const char *path);
-    int (*on_new_task)(task_t *task);
-    int (*on_exit_task)(task_t *task);
-    int (*on_open_file)(task_t *task, int fd);
-    int (*on_close_file)(task_t *task, int fd, fd_t *file);
-    int (*on_new_device)(device_t *dev);
-    int (*on_remove_device)(device_t *dev);
     void *(*regist_input_dev)(const char *device_name, void *arg);
     void (*handle_kb_scancode)(uint8_t scan_code, bool pressed,
                                bool is_extended);

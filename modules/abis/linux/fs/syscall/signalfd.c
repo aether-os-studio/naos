@@ -1,6 +1,7 @@
 #include <fs/fs_syscall.h>
 #include <fs/proc.h>
 #include <task/signal.h>
+#include <init/callbacks.h>
 
 static inline void signalfd_apply_flags(fd_t *fd, int flags) {
     uint64_t file_flags = fd_get_flags(fd);
@@ -170,7 +171,7 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask,
         }
 
         current_task->fd_info->fds[fd] = new_fd;
-        procfs_on_open_file(current_task, fd);
+        on_open_file_call(current_task, fd);
         ret = 0;
     });
 
