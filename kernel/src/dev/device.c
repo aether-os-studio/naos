@@ -3,7 +3,7 @@
 #include <init/abis.h>
 #include <init/callbacks.h>
 
-static device_t devices[DEVICE_NR]; // 设备数组
+DEFINE_LLIST(device_list);
 uint64_t devices_idxs[DEV_MAX];
 spinlock_t device_lock = SPIN_INIT;
 
@@ -11,13 +11,13 @@ static device_t *get_null_device();
 static void device_reset_entry(device_t *device);
 
 static bool device_minor_in_use(int subtype, uint64_t minor) {
-    for (size_t i = 1; i < DEVICE_NR; i++) {
-        device_t *device = &devices[i];
-        if (device->type == DEV_NULL || device->subtype != subtype) {
+    device_t *ptr, *tmp;
+    llist_for_each(ptr, tmp, &device_list, node) {
+        if (ptr->type == DEV_NULL || ptr->subtype != subtype) {
             continue;
         }
 
-        if ((device->dev & 0xFF) == minor) {
+        if ((ptr->dev & 0xFF) == minor) {
             return true;
         }
     }
@@ -72,8 +72,7 @@ static uint64_t device_install_internal(int type, int subtype, void *ptr,
     device->type = type;
     device->subtype = subtype;
     device->dev = (dev_major << 8) | dev_minor;
-    strncpy(device->name, name, NAMELEN);
-    device->name[NAMELEN - 1] = '\0';
+    device->name = strdup(name);
     device->open = open;
     device->close = close;
     device->ioctl = ioctl;
@@ -85,20 +84,15 @@ static uint64_t device_install_internal(int type, int subtype, void *ptr,
     devnr = device->dev;
     spin_unlock(&device_lock);
 
+    llist_append(&device_list, &device->node);
+
     on_new_device_call(device);
 
     return devnr;
 }
 
 // 获取空设备
-static device_t *get_null_device() {
-    for (size_t i = 1; i < DEVICE_NR; i++) {
-        device_t *device = &devices[i];
-        if (device->type == DEV_NULL)
-            return device;
-    }
-    return NULL;
-}
+static device_t *get_null_device() { return calloc(1, sizeof(device_t)); }
 
 static void device_reset_entry(device_t *device) {
     if (!device)
@@ -226,31 +220,26 @@ int device_uninstall(uint64_t dev) {
     return ret;
 }
 
-void device_init() {
-    memset(devices_idxs, 0, sizeof(devices_idxs));
-    for (size_t i = 0; i < DEVICE_NR; i++) {
-        device_reset_entry(&devices[i]);
-    }
-}
+void device_init() { memset(devices_idxs, 0, sizeof(devices_idxs)); }
 
 device_t *device_find(int subtype, uint64_t idx) {
     uint64_t nr = 0;
-    for (size_t i = 0; i < DEVICE_NR; i++) {
-        device_t *device = &devices[i];
-        if (device->subtype != subtype)
+    device_t *ptr, *tmp;
+    llist_for_each(ptr, tmp, &device_list, node) {
+        if (ptr->subtype != subtype)
             continue;
         if (nr == idx)
-            return device;
+            return ptr;
         nr++;
     }
     return NULL;
 }
 
 device_t *device_get(uint64_t dev) {
-    for (size_t i = 0; i < DEVICE_NR; i++) {
-        device_t *device = &devices[i];
-        if (device->dev == dev)
-            return device;
+    device_t *ptr, *tmp;
+    llist_for_each(ptr, tmp, &device_list, node) {
+        if (ptr->dev == dev)
+            return ptr;
     }
     return NULL;
 }

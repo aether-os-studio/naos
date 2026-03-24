@@ -15,7 +15,7 @@ kernel_thread_func:
     popq %rdi
     popq %rbp
     popq %rax
-    addq $0x40, %rsp
+    subq $0x80, %rsp
     movq %rdx, %rdi
     callq *%rbx
     movq $0, %rdi

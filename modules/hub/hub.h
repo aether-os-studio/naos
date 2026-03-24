@@ -1,7 +1,7 @@
 #pragma once
 
 #include <libs/klibc.h>
-#include <drivers/usb/usb.h>
+#include <drivers/bus/usb.h>
 #include <mm/mm.h>
 
 #define USB_DT_HUB (USB_TYPE_CLASS | 0x09)

@@ -342,7 +342,7 @@ uint64_t sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen) {
     socklen_t kaddrlen = user_len;
 
     socket_handle_t *handle = node->node->handle;
-    if (handle->op->getpeername) {
+    if (handle && handle->op && handle->op->getpeername) {
         uint64_t ret = handle->op->getpeername(fd, kaddr, &kaddrlen);
         if ((int64_t)ret < 0) {
             free(kaddr);
@@ -387,7 +387,7 @@ uint64_t sys_getsockname(int sockfd, struct sockaddr_un *addr,
     socklen_t kaddrlen = user_len;
 
     socket_handle_t *handle = node->node->handle;
-    if (handle->op->getsockname) {
+    if (handle && handle->op && handle->op->getsockname) {
         uint64_t ret = handle->op->getsockname(sockfd, kaddr, &kaddrlen);
         if ((int64_t)ret < 0) {
             free(kaddr);
@@ -422,7 +422,7 @@ uint64_t sys_setsockopt(int fd, int level, int optname, const void *optval,
         return -ENOTSOCK;
 
     socket_handle_t *handle = node->node->handle;
-    if (handle->op->setsockopt) {
+    if (handle && handle->op && handle->op->setsockopt) {
         void *koptval = NULL;
         int ret = socket_alloc_copy_from_user(optval, optlen, &koptval);
         if (ret < 0)
@@ -447,7 +447,7 @@ uint64_t sys_getsockopt(int fd, int level, int optname, void *optval,
         return -ENOTSOCK;
 
     socket_handle_t *handle = node->node->handle;
-    if (handle->op->getsockopt) {
+    if (handle && handle->op && handle->op->getsockopt) {
         socklen_t user_len = 0;
         if (copy_from_user(&user_len, optlen, sizeof(user_len)))
             return -EFAULT;
@@ -534,7 +534,7 @@ uint64_t sys_bind(int sockfd, const struct sockaddr_un *addr,
         return -ENOTSOCK;
 
     socket_handle_t *handle = node->node->handle;
-    if (handle->op->bind) {
+    if (handle && handle->op && handle->op->bind) {
         struct sockaddr_un *kaddr = NULL;
         int ret = socket_copy_sockaddr_from_user(addr, addrlen, &kaddr);
         if (ret < 0)
@@ -555,7 +555,7 @@ uint64_t sys_listen(int sockfd, int backlog) {
         return -ENOTSOCK;
 
     socket_handle_t *handle = node->node->handle;
-    if (handle->op->listen)
+    if (handle && handle->op && handle->op->listen)
         return handle->op->listen(sockfd, backlog);
     return 0;
 }
@@ -580,7 +580,7 @@ uint64_t sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen,
 
     socket_handle_t *handle = node->node->handle;
     uint64_t ret = 0;
-    if (handle->op->accept) {
+    if (handle && handle->op && handle->op->accept) {
         struct sockaddr_un *kaddr = NULL;
         socklen_t kaddrlen = 0;
         socklen_t *kaddrlenp = NULL;
@@ -631,7 +631,7 @@ uint64_t sys_connect(int sockfd, const struct sockaddr_un *addr,
         return -ENOTSOCK;
 
     socket_handle_t *handle = node->node->handle;
-    if (handle->op->connect) {
+    if (handle && handle->op && handle->op->connect) {
         struct sockaddr_un *kaddr = NULL;
         int ret = socket_copy_sockaddr_from_user(addr, addrlen, &kaddr);
         if (ret < 0)
@@ -658,7 +658,7 @@ int64_t sys_send(int sockfd, void *buff, size_t len, int flags,
         return -ENOTSOCK;
 
     socket_handle_t *handle = node->node->handle;
-    if (handle->op->sendto) {
+    if (handle && handle->op && handle->op->sendto) {
         void *kbuf = NULL;
         struct sockaddr_un *kaddr = NULL;
         int ret = socket_alloc_copy_from_user(buff, len, &kbuf);
@@ -696,7 +696,7 @@ int64_t sys_recv(int sockfd, void *buf, size_t len, int flags,
         return -ENOTSOCK;
 
     socket_handle_t *handle = node->node->handle;
-    if (handle->op->recvfrom) {
+    if (handle && handle->op && handle->op->recvfrom) {
         void *kbuf = NULL;
         struct sockaddr_un *kaddr = NULL;
         socklen_t user_addrlen = 0;
@@ -763,7 +763,7 @@ int64_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
         return -ENOTSOCK;
 
     socket_handle_t *handle = node->node->handle;
-    if (handle->op->sendmsg) {
+    if (handle && handle->op && handle->op->sendmsg) {
         socket_kmsg_t kmsg;
         int ret = socket_prepare_kmsg_from_user(msg, &kmsg, true);
         if (ret < 0) {
@@ -794,7 +794,7 @@ int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
         return -ENOTSOCK;
 
     socket_handle_t *handle = node->node->handle;
-    if (handle->op->recvmsg) {
+    if (handle && handle->op && handle->op->recvmsg) {
         socket_kmsg_t kmsg;
         int ret = socket_prepare_kmsg_from_user(msg, &kmsg, false);
         if (ret < 0) {

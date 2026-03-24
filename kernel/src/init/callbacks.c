@@ -1,4 +1,5 @@
 #include <init/callbacks.h>
+#include <dev/device.h>
 #include <mm/mm.h>
 
 spinlock_t callbacks_lock = SPIN_INIT;
@@ -8,6 +9,8 @@ callback_t *callbacks_on_open_file_head = NULL;
 callback_t *callbacks_on_close_file_head = NULL;
 callback_t *callbacks_on_new_device_head = NULL;
 callback_t *callbacks_on_remove_device_head = NULL;
+callback_t *callbacks_on_new_bus_device_head = NULL;
+callback_t *callbacks_on_remove_bus_device_head = NULL;
 callback_t *callbacks_on_sched_update_head = NULL;
 callback_t *callbacks_on_send_signal_head = NULL;
 
@@ -56,6 +59,14 @@ void regist_on_new_device_callback(on_new_device_t fn) {
 
 void regist_on_remove_device_callback(on_remove_device_t fn) {
     callback_insert(&callbacks_on_remove_device_head, callback_new(fn));
+}
+
+void regist_on_new_bus_device_callback(on_new_bus_device_t fn) {
+    callback_insert(&callbacks_on_new_bus_device_head, callback_new(fn));
+}
+
+void regist_on_remove_bus_device_callback(on_remove_bus_device_t fn) {
+    callback_insert(&callbacks_on_remove_bus_device_head, callback_new(fn));
 }
 
 void regist_on_sched_update_callback(on_sched_update_t fn) {
@@ -113,6 +124,24 @@ void on_remove_device_call(device_t *device) {
     callback_t *ptr = callbacks_on_remove_device_head;
     while (ptr) {
         on_remove_device_t fn = ptr->fn;
+        fn(device);
+        ptr = ptr->next;
+    }
+}
+
+void on_new_bus_device_call(bus_device_t *device) {
+    callback_t *ptr = callbacks_on_new_bus_device_head;
+    while (ptr) {
+        on_new_bus_device_t fn = ptr->fn;
+        fn(device);
+        ptr = ptr->next;
+    }
+}
+
+void on_remove_bus_device_call(bus_device_t *device) {
+    callback_t *ptr = callbacks_on_remove_bus_device_head;
+    while (ptr) {
+        on_remove_bus_device_t fn = ptr->fn;
         fn(device);
         ptr = ptr->next;
     }

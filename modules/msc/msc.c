@@ -504,7 +504,7 @@ usb_driver_t msc_driver = {
     .remove = usb_msc_remove,
 };
 
-__attribute__((visibility("default"))) int dlmain() {
+int dlmain() {
     regist_usb_driver(&msc_driver);
     return 0;
 }

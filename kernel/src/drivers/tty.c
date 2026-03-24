@@ -1,4 +1,5 @@
 #include <drivers/tty.h>
+#include <dev/device.h>
 #include <mm/mm.h>
 #include <boot/boot.h>
 

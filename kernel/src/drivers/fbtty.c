@@ -1,10 +1,12 @@
 #include <drivers/tty.h>
+#include <mm/mm.h>
 #include <task/signal.h>
 #include <drivers/fbtty.h>
-#include <mm/mm.h>
 #include <libs/keys.h>
 #include <libs/kbqueue.h>
 #include <task/task.h>
+#include <fs/termios.h>
+#include <fs/vfs/fcntl.h>
 #define FLANTERM_IN_FLANTERM
 #include <libs/flanterm/flanterm_private.h>
 #include <libs/flanterm/flanterm.h>

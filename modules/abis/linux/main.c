@@ -11,6 +11,7 @@
 #include <init/callbacks.h>
 #include <fs/dev.h>
 #include <fs/proc.h>
+#include <fs/sys.h>
 #include <dev/fb.h>
 #include <dev/drm/drm.h>
 #include <libs/keys.h>
@@ -342,7 +343,10 @@ extern void pipefs_init();
 extern void ramfs_init();
 extern void configfs_init();
 
-void linuxabi_init() { devtmpfs_init(); }
+void linuxabi_init() {
+    devtmpfs_init();
+    sysfs_init();
+}
 
 void linuxabi_init_before_thread() {
     devfs_nodes_init();
@@ -377,8 +381,6 @@ void linuxabi_init_after_thread() {
     fsfdfs_init();
     cgroupfs_init();
     notifyfs_init();
-
-    sysfs_init();
 }
 
 void linuxabi_init_before_user() {
@@ -509,10 +511,23 @@ int linuxabi_on_close_file(task_t *task, int fd, fd_t *file) {
     procfs_on_close_file(task, fd);
 }
 
-int linuxabi_on_new_device(device_t *dev) { devfs_register_device(dev); }
+int linuxabi_on_new_device(device_t *dev) {
+    devfs_register_device(dev);
+    return 0;
+}
 
 int linuxabi_on_remove_device(device_t *dev) {
     devfs_unregister_device(dev);
+    return 0;
+}
+
+int linuxabi_on_new_bus_device(bus_device_t *dev) {
+    sysfs_register_device(dev);
+    return 0;
+}
+
+int linuxabi_on_remove_bus_device(bus_device_t *dev) {
+    sysfs_unregister_device(dev);
     return 0;
 }
 
@@ -533,7 +548,7 @@ abi_t linux_abi = {
     .handle_mouse_event = handle_mouse_event,
 };
 
-__attribute__((visibility("default"))) int dlmain() {
+int dlmain() {
     system_abi = &linux_abi;
 
     regist_on_sched_update_callback(linuxabi_on_sched_update);
@@ -544,6 +559,8 @@ __attribute__((visibility("default"))) int dlmain() {
     regist_on_close_file_callback(linuxabi_on_close_file);
     regist_on_new_device_callback(linuxabi_on_new_device);
     regist_on_remove_device_callback(linuxabi_on_remove_device);
+    regist_on_new_bus_device_callback(linuxabi_on_new_bus_device);
+    regist_on_remove_bus_device_callback(linuxabi_on_remove_bus_device);
 
     regist_syscall_handler(SYS_READ, (syscall_handle_t)sys_read);
     regist_syscall_handler(SYS_WRITE, (syscall_handle_t)sys_write);
@@ -1034,4 +1051,6 @@ __attribute__((visibility("default"))) int dlmain() {
     // (syscall_handle_t)sys_set_mempolicy_home_node);
     // regist_syscall_handler(SYS_CACHESTAT, (syscall_handle_t)sys_cachestat);
     regist_syscall_handler(SYS_FCHMODAT2, (syscall_handle_t)sys_fchmodat2);
+
+    return 0;
 }

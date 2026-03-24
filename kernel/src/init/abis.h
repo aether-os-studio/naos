@@ -2,7 +2,7 @@
 
 #include <mm/mm.h>
 #include <task/task_struct.h>
-#include <dev/device.h>
+#include <drivers/bus/bus.h>
 
 struct fd;
 typedef struct fd fd_t;

@@ -1,6 +1,6 @@
 #include <libs/klibc.h>
 #include <libs/llist.h>
-#include <dev/device.h>
+#include <drivers/bus/bus.h>
 #include <fs/termios.h>
 
 enum tty_device_type {

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <drivers/usb/usb.h>
+#include <drivers/bus/usb.h>
 #include <mm/mm.h>
 
 typedef struct xhci_caps xhci_caps_t;

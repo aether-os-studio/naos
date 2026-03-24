@@ -1086,7 +1086,7 @@ pci_driver_t nvme_driver = {
     .flags = 0,
 };
 
-__attribute__((visibility("default"))) int dlmain() {
+int dlmain() {
     nvme_set_platform_ops(&naos_nvme_platform_ops);
 
     regist_pci_driver(&nvme_driver);

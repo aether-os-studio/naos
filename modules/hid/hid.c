@@ -6,7 +6,7 @@
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
 #include "hid.h"
-#include <drivers/usb/usb.h>
+#include <drivers/bus/usb.h>
 #include <dev/input.h>
 #include <libs/keys.h>
 #include <task/task.h>
@@ -372,7 +372,7 @@ usb_driver_t hid_driver = {
     .remove = usb_hid_remove,
 };
 
-__attribute__((visibility("default"))) int dlmain() {
+int dlmain() {
     regist_usb_driver(&hid_driver);
 
     return 0;

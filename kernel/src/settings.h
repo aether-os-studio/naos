@@ -9,7 +9,7 @@
 
 #define MAX_CPU_NUM 128
 #define MAX_WORKER_NUM MAX_CPU_NUM
-#define MAX_IO_CPU_NUM 8
+#define MAX_IO_CPU_NUM 4
 #define STACK_SIZE (256 * 1024)
 
 #define BUILD_VERSION "0.10.0"

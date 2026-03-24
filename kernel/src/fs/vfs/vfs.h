@@ -20,13 +20,6 @@
 #define CLOCK_SGI_CYCLE 10
 #define CLOCK_TAI 11
 
-struct winsize {
-    uint16_t ws_row;
-    uint16_t ws_col;
-    uint16_t ws_xpixel;
-    uint16_t ws_ypixel;
-};
-
 #define LOCK_SH 1
 #define LOCK_EX 2
 #define LOCK_NB 4
@@ -545,30 +538,20 @@ vfs_node_t *vfs_find_node_by_inode(uint64_t inode);
  *\param name     文件夹名
  *\return 0 成功，-1 失败
  */
+int vfs_mkdir_at(vfs_node_t *start, const char *name);
 int vfs_mkdir(const char *name);
-/**
- *\brief 创建文件
- *
- *\param name     文件名
- *\return 0 成功，-1 失败
- */
+int vfs_mkfile_at(vfs_node_t *start, const char *name);
 int vfs_mkfile(const char *name);
-/**
- *\brief 创建link文件
- *
- *\param name     文件名
- *\return 0 成功，-1 失败
- */
+int vfs_link_at(vfs_node_t *start, const char *name, const char *target_name);
+int vfs_link_existing_at(vfs_node_t *start, const char *name,
+                         vfs_node_t *target);
 int vfs_link(const char *name, const char *target_name);
 int vfs_link_existing(const char *name, vfs_node_t *target);
-/**
- *\brief 创建symlink文件
- *
- *\param name     文件名
- *\return 0 成功，-1 失败
- */
+int vfs_symlink_at(vfs_node_t *start, const char *name,
+                   const char *target_name);
 int vfs_symlink(const char *name, const char *target_name);
 
+int vfs_mknod_at(vfs_node_t *start, const char *name, uint16_t umode, int dev);
 int vfs_mknod(const char *name, uint16_t umode, int dev);
 
 int vfs_chmod(const char *path, uint16_t mode);

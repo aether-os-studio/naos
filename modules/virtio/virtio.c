@@ -184,7 +184,7 @@ fdt_driver_t virtio_mmio_driver = {
 
 extern int virtio_gpu_on_close_file(task_t *task, int fd, fd_t *file);
 
-__attribute__((visibility("default"))) int dlmain() {
+int dlmain() {
     regist_on_close_file_callback(virtio_gpu_on_close_file);
 
     regist_pci_driver(&virtio_pci_driver);

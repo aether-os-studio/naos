@@ -2,6 +2,13 @@
 
 #include <libs/klibc.h>
 
+struct winsize {
+    uint16_t ws_row;
+    uint16_t ws_col;
+    uint16_t ws_xpixel;
+    uint16_t ws_ypixel;
+};
+
 #define NCCS 19
 typedef struct termios {
     uint32_t c_iflag;   /* input mode flags */

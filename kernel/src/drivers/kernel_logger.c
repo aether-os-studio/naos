@@ -1,5 +1,6 @@
 #include <drivers/kernel_logger.h>
 #include <drivers/tty.h>
+#include <dev/device.h>
 #include <arch/arch.h>
 #include <mm/mm.h>
 #include <boot/boot.h>

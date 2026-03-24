@@ -1,6 +1,6 @@
 #pragma once
 
-#include "drivers/bus/pci.h"
+#include <drivers/bus/pci.h>
 
 /**
  * @brief msi消息内容结构体

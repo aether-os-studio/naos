@@ -355,6 +355,10 @@ static inline bool do_need_update(vfs_node_t *file) {
     uint64_t flags = 0;
     void *handle = NULL;
 
+    if (!file->fsid || file->fsid >= fs_nextid) {
+        return false;
+    }
+
     fs_t *fs = all_fs[file->fsid];
     flags = file->flags;
     handle = file->handle;
@@ -634,14 +638,13 @@ void vfs_poll_notify(vfs_node_t *node, uint32_t events) {
     spin_unlock(&node->poll_waiters_lock);
 }
 
-int vfs_mkdir(const char *name) {
+int vfs_mkdir_at(vfs_node_t *start, const char *name) {
     int ret = -ENOENT;
 
     vfs_node_t *root = vfs_task_root();
-    vfs_node_t *current = root;
+    vfs_node_t *current = start;
     char *path;
     if (name[0] != '/') {
-        current = vfs_task_cwd();
         path = strdup(name);
     } else {
         path = strdup(name + 1);
@@ -752,13 +755,14 @@ err:
     return ret;
 }
 
-int vfs_mkfile(const char *name) {
+int vfs_mkdir(const char *name) { return vfs_mkdir_at(vfs_task_cwd(), name); }
+
+int vfs_mkfile_at(vfs_node_t *start, const char *name) {
     int ret = -ENOENT;
     vfs_node_t *root = vfs_task_root();
-    vfs_node_t *current = root;
+    vfs_node_t *current = start;
     char *path;
     if (name[0] != '/') {
-        current = vfs_task_cwd();
         path = strdup(name);
     } else {
         path = strdup(name + 1);
@@ -871,20 +875,21 @@ err:
     return ret;
 }
 
+int vfs_mkfile(const char *name) { return vfs_mkfile_at(vfs_task_cwd(), name); }
+
 /**
  *\brief 创建link文件
  *
  *\param name     文件名
  *\return 0 成功，-1 失败
  */
-static int vfs_link_internal(const char *name, const char *target_name,
-                             vfs_node_t *target_node) {
+static int vfs_link_internal(vfs_node_t *start, const char *name,
+                             const char *target_name, vfs_node_t *target_node) {
     int ret = -ENOENT;
     vfs_node_t *root = vfs_task_root();
-    vfs_node_t *current = root;
+    vfs_node_t *current = start;
     char *path;
     if (name[0] != '/') {
-        current = vfs_task_cwd();
         path = strdup(name);
     } else {
         path = strdup(name + 1);
@@ -1000,14 +1005,25 @@ err:
     return ret;
 }
 
+int vfs_link_at(vfs_node_t *start, const char *name, const char *target_name) {
+    return vfs_link_internal(start, name, target_name, NULL);
+}
+
 int vfs_link(const char *name, const char *target_name) {
-    return vfs_link_internal(name, target_name, NULL);
+    return vfs_link_internal(vfs_task_root(), name, target_name, NULL);
+}
+
+int vfs_link_existing_at(vfs_node_t *start, const char *name,
+                         vfs_node_t *target) {
+    if (!target)
+        return -ENOENT;
+    return vfs_link_internal(start, name, NULL, target);
 }
 
 int vfs_link_existing(const char *name, vfs_node_t *target) {
     if (!target)
         return -ENOENT;
-    return vfs_link_internal(name, NULL, target);
+    return vfs_link_internal(vfs_task_root(), name, NULL, target);
 }
 
 /**
@@ -1016,13 +1032,13 @@ int vfs_link_existing(const char *name, vfs_node_t *target) {
  *\param name     文件名
  *\return 0 成功，-1 失败
  */
-int vfs_symlink(const char *name, const char *target_name) {
+int vfs_symlink_at(vfs_node_t *start, const char *name,
+                   const char *target_name) {
     int ret = -ENOENT;
     vfs_node_t *root = vfs_task_root();
-    vfs_node_t *current = root;
+    vfs_node_t *current = start;
     char *path;
     if (name[0] != '/') {
-        current = vfs_task_cwd();
         path = strdup(name);
     } else {
         path = strdup(name + 1);
@@ -1135,13 +1151,16 @@ err:
     return ret;
 }
 
-int vfs_mknod(const char *name, uint16_t umode, int dev) {
+int vfs_symlink(const char *name, const char *target_name) {
+    return vfs_symlink_at(vfs_task_cwd(), name, target_name);
+}
+
+int vfs_mknod_at(vfs_node_t *start, const char *name, uint16_t umode, int dev) {
     int ret = -ENOENT;
     vfs_node_t *root = vfs_task_root();
-    vfs_node_t *current = root;
+    vfs_node_t *current = start;
     char *path;
     if (name[0] != '/') {
-        current = vfs_task_cwd();
         path = strdup(name);
     } else {
         path = strdup(name + 1);
@@ -1272,6 +1291,10 @@ create:
 err:
     free(path);
     return ret;
+}
+
+int vfs_mknod(const char *name, uint16_t umode, int dev) {
+    return vfs_mknod_at(vfs_task_cwd(), name, umode, dev);
 }
 
 int vfs_chmod(const char *path, uint16_t mode) {
@@ -1465,7 +1488,7 @@ vfs_node_t *vfs_open(const char *_path, uint64_t flags) {
     if (current_task && current_task->fs && current_task->fs->cwd) {
         node = vfs_open_at(current_task->fs->cwd, _path, flags);
     } else {
-        node = vfs_open_at(vfs_task_root(), _path, flags);
+        node = vfs_open_at(vfs_task_cwd(), _path, flags);
     }
 
     return node;

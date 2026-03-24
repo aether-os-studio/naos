@@ -1,6 +1,5 @@
 #include <libs/keys.h>
 #include <fs/vfs/vfs.h>
-#include <fs/dev.h>
 #include <fs/sys.h>
 #include <fs/partition.h>
 #include <dev/device.h>

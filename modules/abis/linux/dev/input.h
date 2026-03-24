@@ -1,6 +1,6 @@
 #pragma once
 
-#include <dev/device.h>
+#include <drivers/bus/bus.h>
 
 typedef enum input_event_from {
     INPUT_FROM_PS2,

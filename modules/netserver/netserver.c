@@ -4,7 +4,7 @@
 extern void real_socket_v4_init();
 extern void real_socket_v6_init();
 
-__attribute__((visibility("default"))) int dlmain() {
+int dlmain() {
     real_socket_v4_init();
     real_socket_v6_init();
 

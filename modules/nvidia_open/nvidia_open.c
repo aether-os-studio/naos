@@ -3336,7 +3336,7 @@ pci_driver_t nvidia_pci_driver = {
     .flags = 0,
 };
 
-__attribute__((visibility("default"))) int dlmain() {
+int dlmain() {
     NvlStatus status = nvlink_lib_initialize();
     if (status != NVL_SUCCESS) {
         printk("Failed to initialize nvlink lib\n");

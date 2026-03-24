@@ -1,7 +1,7 @@
 #pragma once
 
 #include <block/block.h>
-#include <drivers/usb/usb.h>
+#include <drivers/bus/usb.h>
 
 // CBW/CSW结构体
 typedef struct {

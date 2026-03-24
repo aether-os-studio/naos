@@ -41,6 +41,34 @@ void spin_unlock(spinlock_t *sl) {
     }
 }
 
+void kref_ref(kref_t *ref);
+void kref_unref(kref_t *ref);
+
+void kref_ref(kref_t *ref) {
+    spin_lock(&ref->lock);
+    ref->ref_count++;
+    spin_unlock(&ref->lock);
+}
+
+void kref_unref(kref_t *ref) {
+    spin_lock(&ref->lock);
+    ref->ref_count--;
+    spin_unlock(&ref->lock);
+}
+
+int kref_get(kref_t *ref) {
+    spin_lock(&ref->lock);
+    int value = ref->ref_count;
+    spin_unlock(&ref->lock);
+    return value;
+}
+
+void kref_set(kref_t *ref, int value) {
+    spin_lock(&ref->lock);
+    ref->ref_count = value;
+    spin_unlock(&ref->lock);
+}
+
 bool check_user_overflow(uint64_t addr, uint64_t size) {
     uint64_t hhdm = get_physical_memory_offset();
     if (addr >= (UINT64_MAX - size) || (addr + size) >= hhdm) {
@@ -57,9 +85,6 @@ bool check_unmapped(uint64_t addr, uint64_t len) {
         return false;
     }
     if (!current_task || !current_task->mm) {
-        return true;
-    }
-    if (check_user_overflow(addr, len)) {
         return true;
     }
 

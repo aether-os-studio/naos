@@ -3138,6 +3138,7 @@ fs_t extfs = {
     .flags = 0,
 };
 
-__attribute__((visibility("default"))) void dlmain() {
+int dlmain() {
     ext_fsid = vfs_regist(&extfs);
+    return 0;
 }

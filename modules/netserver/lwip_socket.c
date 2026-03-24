@@ -1741,6 +1741,7 @@ static bool lwip_socket_close(vfs_node_t *node) {
     }
 
     sock->closed = true;
+    sock->node = NULL;
     lwip_socket_notify(sock, EPOLLIN | EPOLLHUP | EPOLLERR | EPOLLRDHUP);
     lwip_socket_release_conn(sock);
 

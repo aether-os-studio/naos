@@ -126,7 +126,7 @@ void fbdev_init() {
     device_install(DEV_CHAR, DEV_FB, framebuffer, name, 0, NULL, NULL, fb_ioctl,
                    NULL, fb_read, fb_write, fb_map);
 
-    vfs_node_t *graphics = sysfs_open_node("/sys/class/graphics", 0);
+    vfs_node_t *graphics = vfs_open("/sys/class/graphics", 0);
 
     sprintf(name, "fb%d", 0);
     vfs_node_t *node = sysfs_child_append(graphics, name, true);

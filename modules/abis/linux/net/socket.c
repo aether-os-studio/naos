@@ -1834,6 +1834,7 @@ bool socket_close(vfs_node_t *node) {
     mutex_lock(&sock->lock);
     // 标记关闭（在锁内设置）
     sock->closed = true;
+    sock->node = NULL;
     if (sock->connMax > 0 && sock->backlog && sock->connCurr > 0) {
         int pending = sock->connCurr;
         for (int i = 0; i < pending; i++) {

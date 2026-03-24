@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <libs/klibc.h>
+#include <drivers/bus/bus.h>
 
 #define PCI_CONF_VENDOR 0X0   // Vendor ID
 #define PCI_CONF_DEVICE 0X2   // Device ID
@@ -10,7 +11,7 @@
 #define PCI_CONF_STATUS 0x6   // Status
 #define PCI_CONF_REVISION 0x8 // revision ID
 
-#define PCI_DEVICE_MAX 256
+#define PCI_DEVICE_MAX 2048
 
 #define EXPORT_BYTE(target, first)                                             \
     ((first) ? ((target) & ~0xFF00) : (((target) & ~0x00FF) >> 8))
@@ -50,8 +51,9 @@ typedef struct {
 
 struct pcie_info;
 
-typedef struct {
+typedef struct pci_device {
     const char *name;
+    bus_device_t *device;
     uint32_t class_code;
     uint8_t header_type;
 

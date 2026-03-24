@@ -17,196 +17,27 @@ static int mount_node_old_fsid = 0;
 
 extern uint32_t device_number;
 
+DEFINE_LLIST(sysfs_bin_attributes);
+
+typedef struct sysfs_bin_attribute_bucket {
+    struct llist_header node;
+    bus_device_t *device;
+    bin_attribute_t *attr;
+} sysfs_bin_attribute_bucket_t;
+
+void sysfs_register_bin_attr(bus_device_t *device, bin_attribute_t *bin_attr) {
+    sysfs_bin_attribute_bucket_t *bucket =
+        calloc(1, sizeof(sysfs_bin_attribute_bucket_t));
+    llist_init_head(&bucket->node);
+    bucket->device = device;
+    bucket->attr = bin_attr;
+
+    llist_append(&sysfs_bin_attributes, &bucket->node);
+}
+
 int sysfs_mkdir(vfs_node_t *parent, const char *name, vfs_node_t *node);
 int sysfs_mkfile(vfs_node_t *parent, const char *name, vfs_node_t *node);
 int sysfs_symlink(vfs_node_t *parent, const char *name, vfs_node_t *node);
-
-static const char *sysfs_relative_path(const char *path) {
-    if (!path)
-        return NULL;
-
-    if (streq(path, "/sys") || streq(path, "/sys/"))
-        return "";
-
-    if (strncmp(path, "/sys/", 5) != 0)
-        return NULL;
-
-    return path + 5;
-}
-
-static vfs_node_t *sysfs_walk_dir_rel(const char *relpath, bool create) {
-    if (!sysfs_root)
-        return NULL;
-
-    vfs_node_t *current = sysfs_root;
-    if (!relpath || !relpath[0])
-        return current;
-
-    char *path = strdup(relpath);
-    if (!path)
-        return NULL;
-
-    char *save_ptr = path;
-    for (const char *component = pathtok(&save_ptr); component;
-         component = pathtok(&save_ptr)) {
-        if (streq(component, "."))
-            continue;
-
-        if (streq(component, "..")) {
-            if (current->parent)
-                current = current->parent;
-            continue;
-        }
-
-        if (!(current->type & file_dir)) {
-            current = NULL;
-            break;
-        }
-
-        vfs_node_t *next = vfs_child_find(current, component);
-        if (!next) {
-            if (!create) {
-                current = NULL;
-                break;
-            }
-
-            next = vfs_node_alloc(current, component);
-            if (!next) {
-                current = NULL;
-                break;
-            }
-
-            next->type = file_dir;
-            int ret = sysfs_mkdir(current, component, next);
-            if (ret < 0) {
-                vfs_free(next);
-                current = NULL;
-                break;
-            }
-        }
-
-        if (!(next->type & file_dir)) {
-            current = NULL;
-            break;
-        }
-
-        current = next;
-    }
-
-    free(path);
-    return current;
-}
-
-static vfs_node_t *sysfs_resolve_parent(const char *path, char **leaf_out,
-                                        bool create_dirs) {
-    const char *relpath = sysfs_relative_path(path);
-    if (!relpath)
-        return NULL;
-
-    char *dup = strdup(relpath);
-    if (!dup)
-        return NULL;
-
-    vfs_node_t *parent = sysfs_root;
-    char *leaf = dup;
-    char *slash = strrchr(dup, '/');
-    if (slash) {
-        *slash = '\0';
-        leaf = slash + 1;
-        parent = sysfs_walk_dir_rel(dup, create_dirs);
-    }
-
-    if (leaf_out)
-        *leaf_out = strdup(leaf);
-
-    free(dup);
-
-    if (leaf_out && !*leaf_out)
-        return NULL;
-
-    return parent;
-}
-
-vfs_node_t *sysfs_open_node(const char *path, uint64_t flags) {
-    const char *relpath = sysfs_relative_path(path);
-
-    if (!relpath || !sysfs_root)
-        return vfs_open(path, flags);
-
-    if (!relpath[0])
-        return sysfs_root;
-
-    return vfs_open_at(sysfs_root, relpath, flags);
-}
-
-static vfs_node_t *sysfs_mkfile_path(const char *path) {
-    const char *relpath = sysfs_relative_path(path);
-    if (!relpath) {
-        if (vfs_mkfile(path) < 0) {
-            vfs_node_t *node = vfs_open(path, 0);
-            return node;
-        }
-        return vfs_open(path, 0);
-    }
-
-    char *leaf = NULL;
-    vfs_node_t *parent = sysfs_resolve_parent(path, &leaf, true);
-    if (!parent || !leaf || !leaf[0]) {
-        free(leaf);
-        return NULL;
-    }
-
-    vfs_node_t *node = vfs_child_find(parent, leaf);
-    if (!node) {
-        node = vfs_node_alloc(parent, leaf);
-        if (!node) {
-            free(leaf);
-            return NULL;
-        }
-
-        node->type = file_none;
-        int ret = sysfs_mkfile(parent, leaf, node);
-        if (ret < 0) {
-            vfs_free(node);
-            node = NULL;
-        }
-    }
-
-    free(leaf);
-    return node;
-}
-
-int sysfs_symlink_path(const char *path, const char *target_path) {
-    const char *relpath = sysfs_relative_path(path);
-    if (!relpath)
-        return vfs_symlink(path, target_path);
-
-    char *leaf = NULL;
-    vfs_node_t *parent = sysfs_resolve_parent(path, &leaf, true);
-    if (!parent || !leaf || !leaf[0]) {
-        free(leaf);
-        return -EINVAL;
-    }
-
-    if (vfs_child_find(parent, leaf)) {
-        free(leaf);
-        return -EEXIST;
-    }
-
-    vfs_node_t *node = vfs_node_alloc(parent, leaf);
-    if (!node) {
-        free(leaf);
-        return -ENOMEM;
-    }
-
-    node->type = file_symlink;
-    int ret = sysfs_symlink(parent, target_path, node);
-    if (ret < 0)
-        vfs_free(node);
-
-    free(leaf);
-    return ret;
-}
 
 void sysfs_open(vfs_node_t *parent, const char *name, vfs_node_t *node) {}
 
@@ -214,6 +45,23 @@ bool sysfs_close(vfs_node_t *node) { return false; }
 
 ssize_t sysfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     sysfs_node_t *handle = fd->node->handle;
+    char *fullpath = vfs_get_fullpath(handle->node);
+    int fullpath_len = strlen(fullpath);
+    sysfs_bin_attribute_bucket_t *ptr, *tmp;
+    llist_for_each(ptr, tmp, &sysfs_bin_attributes, node) {
+        char name[128];
+        ptr->device->get_device_path(ptr->device, name, sizeof(name));
+        int prefix_len = strlen(ptr->device->bus->devices_path);
+        int name_len = strlen(name);
+        if (prefix_len + 1 + name_len + 1 >= fullpath_len)
+            continue;
+        if (strstr(fullpath + prefix_len + 1, name) &&
+            strstr(fullpath + prefix_len + 1 + name_len + 1, ptr->attr->name)) {
+            free(fullpath);
+            return ptr->attr->read(ptr->device, ptr->attr, addr, offset, size);
+        }
+    }
+    free(fullpath);
     if (offset >= handle->size)
         return 0;
     ssize_t to_copy = MIN(handle->size - offset, size);
@@ -223,6 +71,23 @@ ssize_t sysfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
 
 ssize_t sysfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     sysfs_node_t *handle = fd->node->handle;
+    char *fullpath = vfs_get_fullpath(handle->node);
+    int fullpath_len = strlen(fullpath);
+    sysfs_bin_attribute_bucket_t *ptr, *tmp;
+    llist_for_each(ptr, tmp, &sysfs_bin_attributes, node) {
+        char name[128];
+        ptr->device->get_device_path(ptr->device, name, sizeof(name));
+        int prefix_len = strlen(ptr->device->bus->devices_path);
+        int name_len = strlen(name);
+        if (prefix_len + 1 + name_len + 1 >= fullpath_len)
+            continue;
+        if (strstr(fullpath + prefix_len + 1, name) &&
+            strstr(fullpath + prefix_len + 1 + name_len + 1, ptr->attr->name)) {
+            free(fullpath);
+            return ptr->attr->write(ptr->device, ptr->attr, addr, offset, size);
+        }
+    }
+    free(fullpath);
     if (offset + size > handle->capability) {
         size_t new_capability = offset + size;
         void *new_content = alloc_frames_bytes(new_capability);
@@ -368,16 +233,41 @@ fs_t sysfs = {
     .flags = FS_FLAGS_VIRTUAL,
 };
 
-vfs_node_t *sysfs_ensure_dir(const char *path) {
-    const char *relpath = sysfs_relative_path(path);
-    if (relpath)
-        return sysfs_walk_dir_rel(relpath, true);
-
-    vfs_node_t *node = vfs_open(path, 0);
+vfs_node_t *sysfs_ensure_symlink_at(vfs_node_t *start, const char *path,
+                                    const char *target) {
+    vfs_node_t *node = vfs_open_at(start, path, 0);
     if (node)
         return node;
-    vfs_mkdir(path);
-    return vfs_open(path, 0);
+    vfs_symlink_at(start, path, target);
+    return vfs_open_at(start, path, 0);
+}
+
+vfs_node_t *sysfs_ensure_symlink(const char *path, const char *target) {
+    return sysfs_ensure_symlink_at(rootdir, path, target);
+}
+
+vfs_node_t *sysfs_ensure_file_at(vfs_node_t *start, const char *path) {
+    vfs_node_t *node = vfs_open_at(start, path, 0);
+    if (node)
+        return node;
+    vfs_mkfile_at(start, path);
+    return vfs_open_at(start, path, 0);
+}
+
+vfs_node_t *sysfs_ensure_file(const char *path) {
+    return sysfs_ensure_file_at(rootdir, path);
+}
+
+vfs_node_t *sysfs_ensure_dir_at(vfs_node_t *start, const char *path) {
+    vfs_node_t *node = vfs_open_at(start, path, 0);
+    if (node)
+        return node;
+    vfs_mkdir_at(start, path);
+    return vfs_open_at(start, path, 0);
+}
+
+vfs_node_t *sysfs_ensure_dir(const char *path) {
+    return sysfs_ensure_dir_at(rootdir, path);
 }
 
 void sysfs_init() {
@@ -415,76 +305,41 @@ void sysfs_init() {
     sysfs_ensure_dir("/sys/class/graphics");
     sysfs_ensure_dir("/sys/class/input");
     sysfs_ensure_dir("/sys/class/drm");
+}
 
-    usb_sysfs_init();
+void sysfs_register_device(bus_device_t *device) {
+    if (!device->bus)
+        return;
 
-    for (uint32_t i = 0; i < pci_device_number; i++) {
-        pci_device_t *dev = pci_devices[i];
-        if (dev == NULL)
-            continue;
+    vfs_node_t *devices_root = sysfs_ensure_dir(device->bus->devices_path);
+    vfs_node_t *drivers_root = sysfs_ensure_dir(device->bus->drivers_path);
 
-        char name[128];
-        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%d", dev->segment,
-                dev->bus, dev->slot, dev->func);
+    char name[128];
+    device->get_device_path(device, name, sizeof(name));
+    vfs_node_t *device_root = sysfs_ensure_dir_at(devices_root, name);
 
-        sysfs_ensure_dir(name);
+    char path[32];
+    snprintf(path, sizeof(path), "/sys/bus/%s", device->bus->name);
+    sysfs_ensure_symlink_at(device_root, "subsystem", path);
 
-        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%d/class",
-                dev->segment, dev->bus, dev->slot, dev->func);
-        sysfs_mkfile_path(name);
+    for (int i = 0; i < device->bin_attrs_count; i++) {
+        bin_attribute_t *bin_attr = device->bin_attrs[i];
+        sysfs_ensure_file_at(device_root, bin_attr->name);
+        sysfs_register_bin_attr(device, bin_attr);
+    }
 
-        char content[64];
-        sprintf(content, "0x%x", dev->class_code);
-        vfs_write(sysfs_open_node(name, 0), content, 0, strlen(content));
-
-        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%d/revision",
-                dev->segment, dev->bus, dev->slot, dev->func);
-        sysfs_mkfile_path(name);
-
-        sprintf(content, "0x%02x", dev->revision_id);
-        vfs_write(sysfs_open_node(name, 0), content, 0, strlen(content));
-
-        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%d/vendor",
-                dev->segment, dev->bus, dev->slot, dev->func);
-        sysfs_mkfile_path(name);
-
-        sprintf(content, "0x%04x", dev->vendor_id);
-        vfs_write(sysfs_open_node(name, 0), content, 0, strlen(content));
-
-        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%d/device",
-                dev->segment, dev->bus, dev->slot, dev->func);
-        sysfs_mkfile_path(name);
-
-        sprintf(content, "0x%04x", dev->device_id);
-        vfs_write(sysfs_open_node(name, 0), content, 0, strlen(content));
-
-        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%d/subsystem_vendor",
-                dev->segment, dev->bus, dev->slot, dev->func);
-        sysfs_mkfile_path(name);
-
-        sprintf(content, "0x%04x", dev->subsystem_vendor_id);
-        vfs_write(sysfs_open_node(name, 0), content, 0, strlen(content));
-
-        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%d/subsystem_device",
-                dev->segment, dev->bus, dev->slot, dev->func);
-        sysfs_mkfile_path(name);
-
-        sprintf(content, "0x%04x", dev->subsystem_device_id);
-        vfs_write(sysfs_open_node(name, 0), content, 0, strlen(content));
-
-        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%d/uevent",
-                dev->segment, dev->bus, dev->slot, dev->func);
-        sysfs_mkfile_path(name);
-
-        sprintf(content, "PCI_SLOT_NAME=%04x:%02x:%02x.%d\n", dev->segment,
-                dev->bus, dev->slot, dev->func);
-        vfs_write(sysfs_open_node(name, 0), content, 0, strlen(content));
-
-        sprintf(name, "/sys/bus/pci/devices/%04x:%02x:%02x.%d/subsystem",
-                dev->segment, dev->bus, dev->slot, dev->func);
-        sysfs_symlink_path(name, "/sys/bus/pci");
+    vfs_node_t *uevent_node = sysfs_ensure_file_at(device_root, "uevent");
+    uint64_t offset = 0;
+    for (int i = 0; i < device->attrs_count; i++) {
+        attribute_t *attr = device->attrs[i];
+        char content[128];
+        int len = snprintf(content, sizeof(content), "%s=%s\n", attr->name,
+                           attr->value);
+        offset += vfs_write(uevent_node, content, offset, len);
     }
 }
+
+void sysfs_unregister_device(bus_device_t *device) {}
 
 void sysfs_init_umount() {
     vfs_detach_child(sysfs_root);
@@ -508,11 +363,11 @@ vfs_node_t *sysfs_regist_dev(char t, int major, int minor,
     vfs_node_t *real_device_node = NULL;
     if (dev_root_is_real) {
         sysfs_ensure_dir(dev_root_path);
-        real_device_node = sysfs_open_node(dev_root_path, 0);
+        real_device_node = vfs_open(dev_root_path, 0);
     } else {
         sysfs_ensure_dir(real_device_path);
-        sysfs_symlink_path(dev_root_path, real_device_path);
-        real_device_node = sysfs_open_node(real_device_path, 0);
+        sysfs_ensure_symlink(dev_root_path, real_device_path);
+        real_device_node = vfs_open(real_device_path, 0);
     }
 
     char *fullpath = vfs_get_fullpath(real_device_node);
@@ -520,7 +375,9 @@ vfs_node_t *sysfs_regist_dev(char t, int major, int minor,
     char uevent_path[256];
     sprintf(uevent_path, "%s/uevent", fullpath);
 
-    vfs_node_t *uevent_node = sysfs_mkfile_path(uevent_path);
+    vfs_mkfile(uevent_path);
+    vfs_node_t *uevent_node = vfs_open(uevent_path, 0);
+    ASSERT(uevent_node);
 
     char uevent_content[256];
     sprintf(uevent_content, "MAJOR=%d\nMINOR=%d\nDEVNAME=%s\nDEVPATH=%s\n%s",
@@ -545,53 +402,6 @@ vfs_node_t *sysfs_regist_dev(char t, int major, int minor,
     return real_device_node;
 }
 
-vfs_node_t *sysfs_write_attr(vfs_node_t *parent, const char *name,
-                             const char *content) {
-    char *parent_path = vfs_get_fullpath(parent);
-    char path[512];
-
-    sprintf(path, "%s/%s", parent_path, name);
-    free(parent_path);
-
-    vfs_node_t *node = sysfs_open_node(path, 0);
-    if (!node)
-        node = sysfs_child_append(parent, name, false);
-    if (!node)
-        return NULL;
-
-    sysfs_node_t *handle = node->handle;
-    if (handle)
-        handle->size = 0;
-    if (content)
-        vfs_write(node, content, 0, strlen(content));
-    return node;
-}
-
-vfs_node_t *sysfs_write_attrf(vfs_node_t *parent, const char *name,
-                              const char *fmt, ...) {
-    char content[256];
-    va_list ap;
-
-    memset(content, 0, sizeof(content));
-    va_start(ap, fmt);
-    vsnprintf(content, sizeof(content), fmt, ap);
-    va_end(ap);
-    return sysfs_write_attr(parent, name, content);
-}
-
-void sysfs_detach_node(vfs_node_t *node) {
-    if (!node)
-        return;
-    vfs_detach_child(node);
-    node->parent = NULL;
-}
-
-void sysfs_detach_path(const char *path, bool nofollow) {
-    vfs_node_t *node = sysfs_open_node(path, nofollow ? O_NOFOLLOW : 0);
-    if (node)
-        sysfs_detach_node(node);
-}
-
 vfs_node_t *sysfs_child_append(vfs_node_t *parent, const char *name,
                                bool is_dir) {
     char *parent_path = vfs_get_fullpath(parent);
@@ -600,7 +410,7 @@ vfs_node_t *sysfs_child_append(vfs_node_t *parent, const char *name,
     sprintf(path, "%s/%s", parent_path, name);
 
     vfs_node_t *node =
-        is_dir ? sysfs_ensure_dir(path) : sysfs_mkfile_path(path);
+        is_dir ? sysfs_ensure_dir(path) : sysfs_ensure_file(path);
 
     free(parent_path);
 
@@ -614,12 +424,9 @@ vfs_node_t *sysfs_child_append_symlink(vfs_node_t *parent, const char *name,
     char path[512];
     sprintf(path, "%s/%s", parent_path, name);
 
-    int ret = sysfs_symlink_path(path, target_path);
+    vfs_node_t *node = sysfs_ensure_symlink(path, target_path);
 
     free(parent_path);
 
-    if (ret < 0 && ret != -EEXIST)
-        return NULL;
-
-    return sysfs_open_node(path, O_NOFOLLOW);
+    return node;
 }

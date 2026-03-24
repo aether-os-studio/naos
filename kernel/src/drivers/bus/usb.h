@@ -53,9 +53,7 @@ struct usb_device_interface {
 #define USB_MAX_STRING_LEN 64
 
 struct usb_controller {
-    usb_pipe_t *freelist;
     pci_device_t *pci;
-    void *mmio;
     uint8_t type;
     uint8_t maxaddr;
     uint8_t busnum;
@@ -362,8 +360,6 @@ void usb_free_pipe(usb_device_t *usbdev, usb_pipe_t *pipe);
 int usb_send_default_control(usb_pipe_t *pipe, const usb_ctrl_request_t *req,
                              void *data);
 int usb_is_freelist(usb_controller_t *cntl, usb_pipe_t *pipe);
-void usb_add_freelist(usb_pipe_t *pipe);
-usb_pipe_t *usb_get_freelist(usb_controller_t *cntl, uint8_t eptype);
 void usb_desc2pipe(usb_pipe_t *pipe, usb_device_t *usbdev,
                    usb_endpoint_descriptor_t *epdesc);
 int usb_get_period(usb_device_t *usbdev, usb_endpoint_descriptor_t *epdesc);

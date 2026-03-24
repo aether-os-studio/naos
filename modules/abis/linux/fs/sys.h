@@ -1,6 +1,6 @@
 #pragma once
 
-#include <drivers/usb/usb.h>
+#include <drivers/bus/usb.h>
 #include <fs/vfs/vfs.h>
 
 typedef struct sysfs_node {
@@ -19,17 +19,17 @@ int alloc_seq_num();
 vfs_node_t *sysfs_regist_dev(char t, int major, int minor,
                              const char *real_device_path, const char *dev_name,
                              const char *other_uevent_content);
+vfs_node_t *sysfs_ensure_symlink_at(vfs_node_t *start, const char *path,
+                                    const char *target);
+vfs_node_t *sysfs_ensure_symlink(const char *path, const char *target);
+vfs_node_t *sysfs_ensure_file_at(vfs_node_t *start, const char *path);
+vfs_node_t *sysfs_ensure_file(const char *path);
+vfs_node_t *sysfs_ensure_dir_at(vfs_node_t *start, const char *path);
 vfs_node_t *sysfs_ensure_dir(const char *path);
-vfs_node_t *sysfs_write_attr(vfs_node_t *parent, const char *name,
-                             const char *content);
-vfs_node_t *sysfs_write_attrf(vfs_node_t *parent, const char *name,
-                              const char *fmt, ...);
-vfs_node_t *sysfs_open_node(const char *path, uint64_t flags);
-void sysfs_detach_node(vfs_node_t *node);
-void sysfs_detach_path(const char *path, bool nofollow);
-int sysfs_symlink_path(const char *path, const char *target_path);
 vfs_node_t *sysfs_child_append(vfs_node_t *parent, const char *name,
                                bool is_dir);
 vfs_node_t *sysfs_child_append_symlink(vfs_node_t *parent, const char *name,
                                        const char *target_path);
-void usb_sysfs_init(void);
+
+void sysfs_register_device(bus_device_t *device);
+void sysfs_unregister_device(bus_device_t *device);

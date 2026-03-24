@@ -191,7 +191,7 @@ usb_driver_t hub_driver = {
     .remove = usb_hub_remove,
 };
 
-__attribute__((visibility("default"))) int dlmain() {
+int dlmain() {
     regist_usb_driver(&hub_driver);
 
     return 0;

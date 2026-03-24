@@ -1,10 +1,45 @@
 // Rewrite version from seabios usb.c
 
 #include <arch/arch.h>
-#include <dev/device.h>
+#include <drivers/bus/bus.h>
 #include <drivers/kernel_logger.h>
-#include <drivers/usb/usb.h>
+#include <drivers/bus/usb.h>
 #include <task/task.h>
+
+attribute_t usb_bus_subsystem_attr = {
+    .name = "SUBSYETEM",
+    .value = "usb",
+};
+
+attribute_t *usb_bus_default_attrs[] = {
+    &usb_bus_subsystem_attr,
+};
+
+bus_t usb_bus = {
+    .name = "usb",
+    .devices_path = "/sys/bus/usb/devices",
+    .drivers_path = "/sys/bus/usb/drivers",
+    .bus_default_attrs = usb_bus_default_attrs,
+    .bus_default_attrs_count =
+        sizeof(usb_bus_default_attrs) / sizeof(usb_bus_default_attrs[0]),
+    .bus_default_bin_attrs = NULL,
+    .bus_default_bin_attrs_count = 0,
+};
+
+int usb_get_device_path(bus_device_t *device, char *buf, size_t max) {
+    usb_device_t *usb_device = device->private_data;
+    snprintf(buf, max, "%03u/%03u", usb_device->busnum, usb_device->devnum);
+    return 0;
+}
+
+bus_device_t *bus_device_install_usb(void *dev_data, attribute_t **extra_attrs,
+                                     int extra_attrs_count,
+                                     bin_attribute_t **extra_bin_attrs,
+                                     int extra_bin_attrs_count) {
+    return bus_device_install_internal(
+        &usb_bus, dev_data, extra_attrs, extra_attrs_count, extra_bin_attrs,
+        extra_bin_attrs_count, usb_get_device_path);
+}
 
 #define USB_HOTPLUG_SCAN_NS (250ULL * 1000ULL * 1000ULL)
 #define USB_HUB_SNAPSHOT_MAX 64
@@ -696,21 +731,21 @@ static ssize_t usbfs_ioctl(void *dev, int cmd, void *args, fd_t *fd) {
 static ssize_t usbfs_poll(void *dev, int events) { return 0; }
 
 static void usb_register_devnode(usb_device_t *usbdev) {
-    char name[NAMELEN];
+    char name[64];
 
     if (!usbdev || usbdev->usbfs_devnr)
         return;
 
     usb_format_devnode_name(usbdev, name, sizeof(name));
-    usbdev->usbfs_devnr =
-        device_install(DEV_CHAR, DEV_USB, usbdev, name, 0, NULL, NULL,
-                       usbfs_ioctl, usbfs_poll, usbfs_read, usbfs_write, NULL);
+    // usbdev->usbfs_devnr = device_install_usb(
+    //     DEV_CHAR, DEV_USB, usbdev, name, 0, NULL, NULL, usbfs_ioctl,
+    //     usbfs_poll, usbfs_read, usbfs_write, NULL);
 }
 
 static void usb_unregister_devnode(usb_device_t *usbdev) {
     if (!usbdev || !usbdev->usbfs_devnr)
         return;
-    device_uninstall(usbdev->usbfs_devnr);
+    // device_uninstall(usbdev->usbfs_devnr);
     usbdev->usbfs_devnr = 0;
 }
 
@@ -865,29 +900,6 @@ int usb_send_bulk_nonblock(usb_pipe_t *pipe_fl, int dir, void *data,
 
 int usb_is_freelist(usb_controller_t *cntl, usb_pipe_t *pipe) {
     return pipe->cntl != cntl;
-}
-
-void usb_add_freelist(usb_pipe_t *pipe) {
-    if (!pipe)
-        return;
-    usb_controller_t *cntl = pipe->cntl;
-    pipe->freenext = cntl->freelist;
-    cntl->freelist = pipe;
-}
-
-usb_pipe_t *usb_get_freelist(usb_controller_t *cntl, uint8_t eptype) {
-    usb_pipe_t **pfree = &cntl->freelist;
-
-    for (;;) {
-        usb_pipe_t *pipe = *pfree;
-        if (!pipe)
-            return NULL;
-        if (pipe->eptype == eptype) {
-            *pfree = pipe->freenext;
-            return pipe;
-        }
-        pfree = &pipe->freenext;
-    }
 }
 
 void usb_desc2pipe(usb_pipe_t *pipe, usb_device_t *usbdev,
@@ -1280,6 +1292,7 @@ static const int speed_to_ctlsize[] = {
 static int usb_set_address(usb_device_t *usbdev) {
     usb_controller_t *cntl = usbdev->hub->cntl;
     usb_endpoint_descriptor_t epdesc = {
+        .bEndpointAddress = 0,
         .wMaxPacketSize = speed_to_ctlsize[usbdev->speed],
         .bmAttributes = USB_ENDPOINT_XFER_CONTROL,
     };
@@ -1287,11 +1300,10 @@ static int usb_set_address(usb_device_t *usbdev) {
     usb_delay_ms(USB_TIME_RSTRCY);
 
     usbdev->defpipe = usb_alloc_pipe(usbdev, &epdesc, NULL);
-    if (!usbdev->defpipe)
+    if (!usbdev->defpipe) {
+        printk("USB: device allocate pipe failed\n");
         return -1;
-
-    if (cntl->flags & USB_CNTL_FLAG_NATIVE_ADDR)
-        return 0;
+    }
 
     if (cntl->maxaddr >= USB_MAXADDR)
         return -1;
@@ -1329,6 +1341,14 @@ static int configure_usb_device(usb_device_t *usbdev) {
         return 0;
     }
 
+    printk("USB device descriptor:\n");
+    printk("  bLength = %d\n", dinfo.bLength);
+    printk("  bDescriptorType = %d\n", dinfo.bDescriptorType);
+    printk("  bcdUSB = %#06lx\n", dinfo.bcdUSB);
+    printk("  bDeviceClass = %#04lx\n", dinfo.bDeviceClass);
+    printk("  bDeviceSubClass = %#04lx\n", dinfo.bDeviceSubClass);
+    printk("  bMaxPacketSize0 = %#04lx\n", dinfo.bMaxPacketSize0);
+
     maxpacket = dinfo.bMaxPacketSize0;
     if (dinfo.bcdUSB >= 0x0300)
         maxpacket = 1U << dinfo.bMaxPacketSize0;
@@ -1338,6 +1358,7 @@ static int configure_usb_device(usb_device_t *usbdev) {
     }
 
     usb_endpoint_descriptor_t epdesc = {
+        .bEndpointAddress = 0,
         .wMaxPacketSize = maxpacket,
         .bmAttributes = USB_ENDPOINT_XFER_CONTROL,
     };
@@ -1681,7 +1702,6 @@ void usb_register_controller(usb_controller_t *cntl, usb_hub_t *hub) {
     cntl->busnum = usb_next_busnum++;
     spin_unlock(&usb_hub_list_lock);
 
-    cntl->freelist = NULL;
     cntl->maxaddr = 0;
     cntl->next_devnum = 2;
     cntl->roothub = hub;

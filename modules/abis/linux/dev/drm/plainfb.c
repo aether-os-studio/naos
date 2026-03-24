@@ -1306,21 +1306,21 @@ void drm_plainfb_init() {
 
             char driver_link_path[192];
             sprintf(driver_link_path, "%s/driver", pci_device_path);
-            sysfs_symlink_path(driver_link_path, driver_root);
+            sysfs_ensure_symlink(driver_link_path, driver_root);
 
             char reverse_link_path[192];
             sprintf(reverse_link_path, "%s/%04x:%02x:%02x.%u", driver_root,
                     vga_pci_devices[0]->segment, vga_pci_devices[0]->bus,
                     vga_pci_devices[0]->slot, vga_pci_devices[0]->func);
-            sysfs_symlink_path(reverse_link_path, pci_device_path);
+            sysfs_ensure_symlink(reverse_link_path, pci_device_path);
 
             char pci_uevent_path[192];
             sprintf(pci_uevent_path, "%s/uevent", pci_device_path);
-            vfs_node_t *pci_uevent = sysfs_open_node(pci_uevent_path, 0);
+            vfs_node_t *pci_uevent = vfs_open(pci_uevent_path, 0);
             if (pci_uevent) {
                 char uevent_content[256];
                 sprintf(uevent_content,
-                        "DRIVER=%s\nPCI_SLOT_NAME=%04x:%02x:%02x.%u\n",
+                        "DRIVER=%s\nPCI_SLOT_NAME=%04x:%02x:%02x.%01x\n",
                         driver_name, vga_pci_devices[0]->segment,
                         vga_pci_devices[0]->bus, vga_pci_devices[0]->slot,
                         vga_pci_devices[0]->func);

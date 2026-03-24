@@ -351,6 +351,206 @@ pci_device_t *pci_find_bdfs(uint8_t bus, uint8_t slot, uint8_t func,
     return NULL;
 }
 
+ssize_t pci_bus_config_read(struct bus_device *dev, struct bin_attribute *attr,
+                            char *buf, uint64_t off, size_t count) {
+    return 0;
+}
+
+ssize_t pci_bus_config_write(struct bus_device *dev, struct bin_attribute *attr,
+                             const char *buf, uint64_t off, size_t count) {
+    return 0;
+}
+
+bin_attribute_t pci_bus_config_bin_attr = {
+    .name = "config",
+    .read = pci_bus_config_read,
+    .write = pci_bus_config_write,
+};
+
+ssize_t pci_bus_class_read(struct bus_device *dev, struct bin_attribute *attr,
+                           char *buf, uint64_t off, size_t count) {
+    if (count < 8)
+        return -ENOSPC;
+    if (off >= 8)
+        return 0;
+    pci_device_t *pci_dev = dev->private_data;
+    snprintf(buf, 8, "%#06x", pci_dev->class_code);
+    return 8;
+}
+
+ssize_t pci_bus_class_write(struct bus_device *dev, struct bin_attribute *attr,
+                            const char *buf, uint64_t off, size_t count) {
+    return 0;
+}
+
+bin_attribute_t pci_bus_class_bin_attr = {
+    .name = "class",
+    .read = pci_bus_class_read,
+    .write = pci_bus_class_write,
+};
+
+ssize_t pci_bus_revision_read(struct bus_device *dev,
+                              struct bin_attribute *attr, char *buf,
+                              uint64_t off, size_t count) {
+    if (count < 4)
+        return -ENOSPC;
+    if (off >= 4)
+        return 0;
+    pci_device_t *pci_dev = dev->private_data;
+    snprintf(buf, 4, "%#02x", pci_dev->revision_id);
+    return 4;
+}
+
+ssize_t pci_bus_revision_write(struct bus_device *dev,
+                               struct bin_attribute *attr, const char *buf,
+                               uint64_t off, size_t count) {
+    return 0;
+}
+
+bin_attribute_t pci_bus_revision_bin_attr = {
+    .name = "revision",
+    .read = pci_bus_revision_read,
+    .write = pci_bus_revision_write,
+};
+
+ssize_t pci_bus_vendor_read(struct bus_device *dev, struct bin_attribute *attr,
+                            char *buf, uint64_t off, size_t count) {
+    if (count < 6)
+        return -ENOSPC;
+    if (off >= 6)
+        return 0;
+    pci_device_t *pci_dev = dev->private_data;
+    snprintf(buf, 6, "%#04x", pci_dev->vendor_id);
+    return 6;
+}
+
+ssize_t pci_bus_vendor_write(struct bus_device *dev, struct bin_attribute *attr,
+                             const char *buf, uint64_t off, size_t count) {
+    return 0;
+}
+
+bin_attribute_t pci_bus_vendor_bin_attr = {
+    .name = "vendor",
+    .read = pci_bus_vendor_read,
+    .write = pci_bus_vendor_write,
+};
+
+ssize_t pci_bus_device_read(struct bus_device *dev, struct bin_attribute *attr,
+                            char *buf, uint64_t off, size_t count) {
+    if (count < 6)
+        return -ENOSPC;
+    if (off >= 6)
+        return 0;
+    pci_device_t *pci_dev = dev->private_data;
+    snprintf(buf, 6, "%#04x", pci_dev->device_id);
+    return 6;
+}
+
+ssize_t pci_bus_device_write(struct bus_device *dev, struct bin_attribute *attr,
+                             const char *buf, uint64_t off, size_t count) {
+    return 0;
+}
+
+bin_attribute_t pci_bus_device_bin_attr = {
+    .name = "device",
+    .read = pci_bus_device_read,
+    .write = pci_bus_device_write,
+};
+
+ssize_t pci_bus_subsystem_vendor_read(struct bus_device *dev,
+                                      struct bin_attribute *attr, char *buf,
+                                      uint64_t off, size_t count) {
+    if (count < 6)
+        return -ENOSPC;
+    if (off >= 6)
+        return 0;
+    pci_device_t *pci_dev = dev->private_data;
+    snprintf(buf, 6, "%#04x", pci_dev->subsystem_vendor_id);
+    return 6;
+}
+
+ssize_t pci_bus_subsystem_vendor_write(struct bus_device *dev,
+                                       struct bin_attribute *attr,
+                                       const char *buf, uint64_t off,
+                                       size_t count) {
+    return 0;
+}
+
+bin_attribute_t pci_bus_subsystem_vendor_bin_attr = {
+    .name = "subsystem_vendor",
+    .read = pci_bus_subsystem_vendor_read,
+    .write = pci_bus_subsystem_vendor_write,
+};
+
+ssize_t pci_bus_subsystem_device_read(struct bus_device *dev,
+                                      struct bin_attribute *attr, char *buf,
+                                      uint64_t off, size_t count) {
+    if (count < 6)
+        return -ENOSPC;
+    if (off >= 6)
+        return 0;
+    pci_device_t *pci_dev = dev->private_data;
+    snprintf(buf, 6, "%#04x", pci_dev->subsystem_device_id);
+    return 6;
+}
+
+ssize_t pci_bus_subsystem_device_write(struct bus_device *dev,
+                                       struct bin_attribute *attr,
+                                       const char *buf, uint64_t off,
+                                       size_t count) {
+    return 0;
+}
+
+bin_attribute_t pci_bus_subsystem_device_bin_attr = {
+    .name = "subsystem_device",
+    .read = pci_bus_subsystem_device_read,
+    .write = pci_bus_subsystem_device_write,
+};
+
+bin_attribute_t *pci_bus_default_bin_attrs[] = {
+    &pci_bus_config_bin_attr,           &pci_bus_class_bin_attr,
+    &pci_bus_revision_bin_attr,         &pci_bus_vendor_bin_attr,
+    &pci_bus_device_bin_attr,           &pci_bus_subsystem_vendor_bin_attr,
+    &pci_bus_subsystem_device_bin_attr,
+};
+
+attribute_t pci_bus_subsystem_attr = {
+    .name = "SUBSYETEM",
+    .value = "pci",
+};
+
+attribute_t *pci_bus_default_attrs[] = {
+    &pci_bus_subsystem_attr,
+};
+
+bus_t pci_bus = {
+    .name = "pci",
+    .devices_path = "/sys/bus/pci/devices",
+    .drivers_path = "/sys/bus/pci/drivers",
+    .bus_default_attrs = pci_bus_default_attrs,
+    .bus_default_attrs_count =
+        sizeof(pci_bus_default_attrs) / sizeof(pci_bus_default_attrs[0]),
+    .bus_default_bin_attrs = pci_bus_default_bin_attrs,
+    .bus_default_bin_attrs_count = sizeof(pci_bus_default_bin_attrs) /
+                                   sizeof(pci_bus_default_bin_attrs[0]),
+};
+
+int pci_get_device_path(bus_device_t *device, char *buf, size_t max) {
+    pci_device_t *pci_device = device->private_data;
+    snprintf(buf, max, "%04x:%02x:%02x.%01x", pci_device->segment,
+             pci_device->bus, pci_device->slot, pci_device->func);
+    return 0;
+}
+
+bus_device_t *bus_device_install_pci(void *dev_data, attribute_t **extra_attrs,
+                                     int extra_attrs_count,
+                                     bin_attribute_t **extra_bin_attrs,
+                                     int extra_bin_attrs_count) {
+    return bus_device_install_internal(
+        &pci_bus, dev_data, extra_attrs, extra_attrs_count, extra_bin_attrs,
+        extra_bin_attrs_count, pci_get_device_path);
+}
+
 void pci_scan_bus(pci_device_op_t *op, uint16_t segment_group, uint8_t bus);
 
 void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
@@ -450,10 +650,6 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
                 op->write32(bus, device, function, segment, offset, bar);
 
                 pci_device->bars[i].size = ~(size_mask & 0xFFFFFFFC) + 1;
-
-                printk("  BAR%d: I/O at 0x%llx, size 0x%llx\n", i,
-                       pci_device->bars[i].address, pci_device->bars[i].size);
-
             } else {
                 // Memory Space BAR
                 uint8_t mem_type = (bar >> 1) & 0x3;
@@ -478,10 +674,6 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
                     pci_device->bars[i].address = base;
                     pci_device->bars[i].size = size;
                     pci_device->bars[i].mmio = true;
-
-                    printk("  BAR%d: 32-bit MMIO%s at 0x%llx, size 0x%llx\n", i,
-                           prefetchable ? " (Prefetchable)" : "", base, size);
-
                 } else if (mem_type == 0x02) {
                     // 64-bit Memory BAR
                     if (i >= 5) {
@@ -524,9 +716,6 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
                     pci_device->bars[i].size = size;
                     pci_device->bars[i].mmio = true;
 
-                    printk("  BAR%d: 64-bit MMIO%s at 0x%llx, size 0x%llx\n", i,
-                           prefetchable ? " (Prefetchable)" : "", base, size);
-
                     // 64位BAR占用两个槽位
                     i++;
                     if (i < 6) {
@@ -541,6 +730,46 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
         // 添加到设备列表
         if (pci_device_number < PCI_DEVICE_MAX) {
             pci_devices[pci_device_number] = pci_device;
+
+            attributes_builder_t *builder = attributes_builder_new();
+            char value[256];
+
+            sprintf(value, "/devices/pci%04x:%02x/%04x:%02x:%02x.%01x",
+                    pci_device->segment, pci_device->bus, pci_device->segment,
+                    pci_device->bus, pci_device->slot, pci_device->func);
+            attribute_t *attr = attribute_new("DEVPATH", value);
+            attributes_builder_append(builder, attr);
+
+            sprintf(value, "%06x", pci_device->class_code);
+            attr = attribute_new("PCI_CLASS", value);
+            attributes_builder_append(builder, attr);
+
+            sprintf(value, "%04x:%04x", pci_device->vendor_id,
+                    pci_device->device_id);
+            attr = attribute_new("PCI_ID", value);
+            attributes_builder_append(builder, attr);
+
+            sprintf(value, "%04x:%04x", pci_device->subsystem_vendor_id,
+                    pci_device->subsystem_device_id);
+            attr = attribute_new("PCI_SUBSYS_ID", value);
+            attributes_builder_append(builder, attr);
+
+            sprintf(value, "%04x:%02x:%02x:%01x", pci_device->segment,
+                    pci_device->bus, pci_device->slot, pci_device->func);
+            attr = attribute_new("PCI_SLOT_NAME", value);
+            attributes_builder_append(builder, attr);
+
+            attribute_t **attrs = builder->attrs;
+            int attrs_count = builder->count;
+            free(builder);
+
+            pci_device->device =
+                bus_device_install_pci(pci_device, attrs, attrs_count, NULL, 0);
+
+            for (int i = 0; i < attrs_count; i++) {
+                attrbute_free(attrs[i]);
+            }
+
             pci_device_number++;
         } else {
             printk("PCIe: Device list full, dropping device\n");
@@ -596,8 +825,6 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
 
 static bool pci_function_exists(pci_device_op_t *op, uint16_t segment,
                                 uint8_t bus, uint8_t slot, uint8_t func) {
-    printk("PCIe: Probing device %02x:%02x.%x\n", bus, slot, func);
-
     uint16_t vendor = op->read16(bus, slot, func, segment, 0x00);
 
     // Vendor ID 必须有效
@@ -686,7 +913,7 @@ void pci_init() {
         pci_device_t *device = pci_devices[i];
 
         for (uint64_t d = 0; d < MAX_PCI_DRIVERS; d++) {
-            if (pci_drivers[d] && (pci_drivers[d]->flags == 0) &&
+            if (pci_drivers[d] &&
                 ((pci_drivers[d]->class_id == device->class_code) ||
                  ((pci_drivers[d]->vendor_device_id & 0xFFFF0000) ==
                   ((uint32_t)device->vendor_id << 16)))) {

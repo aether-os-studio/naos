@@ -1,9 +1,11 @@
 #include <drivers/tty.h>
+#include <dev/device.h>
 #include <task/signal.h>
 #include <drivers/serialtty.h>
 #include <mm/mm.h>
 #include <libs/keys.h>
 #include <task/task.h>
+#include <fs/vfs/fcntl.h>
 
 void terminal_flush_serial(tty_t *session) {
     // flanterm_flush(session->terminal);

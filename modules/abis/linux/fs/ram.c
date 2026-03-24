@@ -1,6 +1,5 @@
 #include <fs/vfs/vfs.h>
 #include <fs/ram.h>
-#include <dev/device.h>
 #include <drivers/kernel_logger.h>
 #include <drivers/bus/pci.h>
 #include <net/netlink.h>
@@ -122,10 +121,6 @@ void ramfs_open(vfs_node_t *parent, const char *name, vfs_node_t *node) {
 bool ramfs_close(vfs_node_t *node) { return false; }
 
 ssize_t ramfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
-    if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
-        return device_read(fd->node->rdev, addr, offset, size, fd);
-    }
-
     ramfs_node_t *handle = fd->node->handle;
     if (offset >= handle->size)
         return 0;
@@ -135,10 +130,6 @@ ssize_t ramfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
 }
 
 ssize_t ramfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
-    if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
-        return device_write(fd->node->rdev, (void *)addr, offset, size, fd);
-    }
-
     spin_lock(&ramfs_oplock);
     ramfs_node_t *handle = fd->node->handle;
     if (offset > SIZE_MAX - size) {
@@ -426,9 +417,6 @@ int ramfs_stat(vfs_node_t *node) {
 int ramfs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
     if (!fd->node || !fd->node->handle)
         return -EBADF;
-    if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
-        return device_ioctl(fd->node->rdev, cmd, (void *)arg, fd);
-    }
     return -ENOSYS;
 }
 

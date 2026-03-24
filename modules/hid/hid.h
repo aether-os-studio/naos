@@ -1,6 +1,6 @@
 #pragma once
 
-#include <drivers/usb/usb.h>
+#include <drivers/bus/usb.h>
 #include <libs/klibc.h>
 
 #define CHARACTER_ENTER '\n'
