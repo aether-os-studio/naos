@@ -144,11 +144,8 @@ void arch_context_free(arch_context_t *context) {
 }
 
 task_t *arch_get_current() {
-    task_t *task = NULL;
-    if (x64_get_cpu_local()) {
-        asm volatile("movq %%gs:0x10, %0" : "=r"(task));
-    }
-    return task;
+    x64_cpu_local_t *local = x64_get_cpu_local();
+    return local ? local->task_ptr : NULL;
 }
 
 void arch_set_current(task_t *current) { x64_cpu_local_set_current(current); }
@@ -157,7 +154,7 @@ extern tss_t tss[MAX_CPU_NUM];
 
 void __switch_to(task_t *prev, task_t *next) {
     prev->arch_context->fsbase = read_fsbase();
-    // prev->arch_context->gsbase = read_gsbase();
+    prev->arch_context->gsbase = read_gsbase();
 
     x64_fpu_save(prev->arch_context->fpu_ctx);
 
@@ -166,7 +163,7 @@ void __switch_to(task_t *prev, task_t *next) {
     x64_fpu_restore(next->arch_context->fpu_ctx);
 
     write_fsbase(next->arch_context->fsbase);
-    // write_gsbase(next->arch_context->gsbase);
+    write_gsbase(next->arch_context->gsbase);
 }
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
@@ -199,7 +196,7 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry,
 
     context->fsbase = 0;
     write_fsbase(context->fsbase);
-    // write_gsbase(context->gsbase);
+    write_gsbase(context->gsbase);
 
     x64_fpu_restore(context->fpu_ctx);
 
@@ -233,7 +230,7 @@ uint64_t sys_arch_prctl(uint64_t cmd, uint64_t arg) {
         if (!is_canonical_user_addr(arg))
             return (uint64_t)(-EINVAL);
         current_task->arch_context->gsbase = arg;
-        // write_gsbase(current_task->arch_context->gsbase);
+        write_gsbase(current_task->arch_context->gsbase);
         return 0;
     case ARCH_GET_FS:
         value = current_task->arch_context->fsbase;
