@@ -29,33 +29,29 @@ ifeq ($(ARCH), x86_64)
 export CC := $(ARCH)-linux-gnu-gcc
 export CXX := $(ARCH)-linux-gnu-g++
 export LD := $(ARCH)-linux-gnu-ld
-export AR := $(ARCH)-linux-gnu-ar
 export NM := $(ARCH)-linux-gnu-nm
-export RANLIB := $(ARCH)-linux-gnu-ranlib
+export OBJCOPY := $(ARCH)-linux-gnu-objcopy
 endif
 ifeq ($(ARCH), aarch64)
 export CC := $(ARCH)-linux-gnu-gcc
 export CXX := $(ARCH)-linux-gnu-g++
 export LD := $(ARCH)-linux-gnu-ld
-export AR := $(ARCH)-linux-gnu-ar
 export NM := $(ARCH)-linux-gnu-nm
-export RANLIB := $(ARCH)-linux-gnu-ranlib
+export OBJCOPY := $(ARCH)-linux-gnu-objcopy
 endif
 ifeq ($(ARCH), riscv64)
 export CC := $(ARCH)-linux-gnu-gcc
 export CXX := $(ARCH)-linux-gnu-g++
 export LD := $(ARCH)-linux-gnu-ld
-export AR := $(ARCH)-linux-gnu-ar
 export NM := $(ARCH)-linux-gnu-nm
-export RANLIB := $(ARCH)-linux-gnu-ranlib
+export OBJCOPY := $(ARCH)-linux-gnu-objcopy
 endif
 ifeq ($(ARCH), loongarch64)
 export CC := $(ARCH)-linux-gnu-gcc
 export CXX := $(ARCH)-linux-gnu-g++
 export LD := $(ARCH)-linux-gnu-ld
-export AR := $(ARCH)-linux-gnu-ar
 export NM := $(ARCH)-linux-gnu-nm
-export RANLIB := $(ARCH)-linux-gnu-ranlib
+export OBJCOPY := $(ARCH)-linux-gnu-objcopy
 endif
 
 export ROOT_DIR := "$(shell pwd)"
@@ -122,7 +118,7 @@ prepare: libgcc_$(ARCH).a liballoc_$(ARCH).a
 
 liballoc_$(ARCH).a:
 	wget https://github.com/plos-clan/liballoc/releases/download/release/liballoc-$(ARCH).a -O liballoc_$(ARCH)_norenamed.a
-	objcopy --redefine-sym malloc=liballoc_malloc --redefine-sym realloc=liballoc_realloc --redefine-sym calloc=liballoc_calloc --redefine-sym aligned_alloc=liballoc_aligned_alloc --redefine-sym free=liballoc_free liballoc_$(ARCH)_norenamed.a liballoc_$(ARCH).a
+	$(OBJCOPY) --redefine-sym malloc=liballoc_malloc --redefine-sym realloc=liballoc_realloc --redefine-sym calloc=liballoc_calloc --redefine-sym aligned_alloc=liballoc_aligned_alloc --redefine-sym free=liballoc_free liballoc_$(ARCH)_norenamed.a liballoc_$(ARCH).a
 
 libgcc_$(ARCH).a:
 	wget https://github.com/osdev0/libgcc-binaries/releases/download/$(LIBGCC_VERSION)/libgcc-$(ARCH).a -O libgcc_$(ARCH).a
