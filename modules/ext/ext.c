@@ -395,22 +395,6 @@ static int ext_dev_write(ext_mount_ctx_t *fs, uint64_t offset, const void *buf,
     return ext_dev_write_direct(fs, offset, buf, size);
 }
 
-static void ext_fix_root_recursive(vfs_node_t *node, vfs_node_t *root) {
-    if (!node)
-        return;
-
-    if (node != root && node == node->root) {
-        return;
-    }
-
-    node->root = root;
-
-    vfs_node_t *child, *tmp;
-    llist_for_each(child, tmp, &node->childs, node_for_childs) {
-        ext_fix_root_recursive(child, root);
-    }
-}
-
 static void ext_hide_node(vfs_node_t *node) {
     if (!node)
         return;
@@ -2307,63 +2291,6 @@ void ext_unmount(vfs_node_t *node) {
     spin_unlock(&rwlock);
 }
 
-int ext_remount(vfs_node_t *old, vfs_node_t *node) {
-    if (!old || !node)
-        return -EINVAL;
-
-    spin_lock(&rwlock);
-    ext_mount_ctx_t *ctx = ext_find_mount(old);
-    if (!ctx) {
-        spin_unlock(&rwlock);
-        return -ENOENT;
-    }
-
-    if (old->parent == node) {
-        vfs_detach_child(old);
-        old->parent = NULL;
-    }
-
-    ctx->root = node;
-    node->root = node;
-    vfs_merge_nodes_to(node, old);
-    node->inode = old->inode;
-    node->fsid = old->fsid;
-    node->dev = old->dev;
-    node->rdev = old->rdev;
-    node->type = old->type;
-    node->mode = old->mode;
-    node->blksz = old->blksz;
-
-    int ret = ext_populate_dir_with_fs_locked(ctx, node);
-    if (!ret) {
-        uint64_t nodes_count = 0;
-        vfs_node_t *child, *tmp;
-        llist_for_each(child, tmp, &node->childs, node_for_childs) {
-            nodes_count++;
-        }
-
-        char **names = calloc(nodes_count, sizeof(char *));
-        if (names) {
-            uint64_t idx = 0;
-            llist_for_each(child, tmp, &node->childs, node_for_childs) {
-                names[idx++] = child->name ? strdup(child->name) : NULL;
-            }
-            for (uint64_t i = 0; i < idx; i++) {
-                if (names[i]) {
-                    ext_resolve_children_conflict(node, names[i]);
-                    free(names[i]);
-                }
-            }
-            free(names);
-        }
-    }
-
-    ext_fix_root_recursive(node, node);
-
-    spin_unlock(&rwlock);
-    return ret;
-}
-
 void ext_open(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     spin_lock(&rwlock);
 
@@ -3107,7 +3034,6 @@ void ext_free_handle(vfs_node_t *node) {
 static vfs_operations_t ext_vfs_ops = {
     .mount = ext_mount,
     .unmount = ext_unmount,
-    .remount = ext_remount,
     .open = ext_open,
     .close = ext_close,
     .read = ext_read,

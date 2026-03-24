@@ -368,53 +368,53 @@ void procfs_on_new_task(task_t *task) {
 }
 
 void procfs_on_open_file(task_t *task, int fd) {
-    if (!task->procfs_node) {
-        return;
-    }
-    vfs_node_t *fd_root = vfs_open_at(task->procfs_node, "fd", 0);
-    if (!fd_root)
-        return;
+    //     if (!task->procfs_node) {
+    //         return;
+    //     }
+    //     vfs_node_t *fd_root = vfs_open_at(task->procfs_node, "fd", 0);
+    //     if (!fd_root)
+    //         return;
 
-    if (!task->fd_info || !task->fd_info->fds[fd])
-        return;
+    //     if (!task->fd_info || !task->fd_info->fds[fd])
+    //         return;
 
-    char fd_name[8];
-    sprintf(fd_name, "%d", fd);
-    vfs_node_t *fd_node = vfs_node_alloc(fd_root, fd_name);
-    fd_node->type = file_symlink;
-    fd_node->mode = 0700;
-    proc_handle_t *fd_node_handle = malloc(sizeof(proc_handle_t));
-    memset(fd_node_handle, 0, sizeof(proc_handle_t));
-    fd_node->handle = fd_node_handle;
-    fd_node_handle->node = fd_node;
-    fd_node_handle->task = task;
-    vfs_node_t *node = task->fd_info->fds[fd]->node;
-    if (node->name) {
-        vfs_node_t *parent = node->parent;
-        if (!parent)
-            goto done;
-        while (parent->parent) {
-            parent = parent->parent;
-        }
-        if (parent != rootdir)
-            goto done;
-        char *link_name = vfs_get_fullpath_at(node, task->fs->root);
-        strcpy(fd_node_handle->content, link_name);
-        free(link_name);
-    }
+    //     char fd_name[8];
+    //     sprintf(fd_name, "%d", fd);
+    //     vfs_node_t *fd_node = vfs_node_alloc(fd_root, fd_name);
+    //     fd_node->type = file_symlink;
+    //     fd_node->mode = 0700;
+    //     proc_handle_t *fd_node_handle = malloc(sizeof(proc_handle_t));
+    //     memset(fd_node_handle, 0, sizeof(proc_handle_t));
+    //     fd_node->handle = fd_node_handle;
+    //     fd_node_handle->node = fd_node;
+    //     fd_node_handle->task = task;
+    //     vfs_node_t *node = task->fd_info->fds[fd]->node;
+    //     if (node->name) {
+    //         vfs_node_t *parent = node->parent;
+    //         if (!parent)
+    //             goto done;
+    //         while (parent->parent) {
+    //             parent = parent->parent;
+    //         }
+    //         if (parent != rootdir)
+    //             goto done;
+    //         char *link_name = vfs_get_fullpath_at(node, task->fs->root);
+    //         strcpy(fd_node_handle->content, link_name);
+    //         free(link_name);
+    //     }
 
-done:
-    sprintf(fd_node_handle->name, "fd");
+    // done:
+    //     sprintf(fd_node_handle->name, "fd");
 }
 
 void procfs_on_close_file(task_t *task, int fd) {
-    char name[3 + 8];
-    sprintf(name, "fd/%d", fd);
-    vfs_node_t *fd_node = vfs_open_at(task->procfs_node, name, O_NOFOLLOW);
-    if (!fd_node)
-        return;
+    // char name[3 + 8];
+    // sprintf(name, "fd/%d", fd);
+    // vfs_node_t *fd_node = vfs_open_at(task->procfs_node, name, O_NOFOLLOW);
+    // if (!fd_node)
+    //     return;
 
-    vfs_free(fd_node);
+    // vfs_free(fd_node);
 }
 
 void procfs_on_exit_task(task_t *task) {

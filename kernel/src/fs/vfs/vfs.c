@@ -244,10 +244,13 @@ void vfs_free_handle(vfs_node_t *node) {
 void vfs_free(vfs_node_t *vfs) {
     if (vfs == NULL)
         return;
-    vfs_detach_child(vfs);
     if (vfs == vfs->root)
         return;
-    if (--vfs->refcount > 0) {
+    llist_delete(&vfs->node);
+    hashmap_remove(&vfs_inode_map, vfs->inode);
+    vfs_child_index_deinit(vfs);
+    vfs_detach_child(vfs);
+    if (vfs->refcount && --vfs->refcount > 0) {
         vfs->flags |= VFS_NODE_FLAGS_FREE_AFTER_USE;
         return;
     }
@@ -260,11 +263,9 @@ void vfs_free(vfs_node_t *vfs) {
         llist_delete(&lock->node);
         free(lock);
     }
-    llist_delete(&vfs->node);
-    hashmap_remove(&vfs_inode_map, vfs->inode);
-    vfs_child_index_deinit(vfs);
     vfs_free_handle(vfs);
-    free(vfs->name);
+    if (vfs->name)
+        free(vfs->name);
     free(vfs);
 }
 
@@ -1770,14 +1771,6 @@ int vfs_unmount(const char *path) {
         return -EINVAL;
     vfs_ops_of(node)->unmount(node);
     vfs_delete_mount_point_by_dir(node);
-    return 0;
-}
-
-int vfs_remount(vfs_node_t *old, vfs_node_t *dir) {
-    int ret = vfs_ops_of(old)->remount(old, dir);
-    if (ret < 0) {
-        return ret;
-    }
     return 0;
 }
 
