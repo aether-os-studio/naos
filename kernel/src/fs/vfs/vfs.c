@@ -647,6 +647,7 @@ int vfs_mkdir_at(vfs_node_t *start, const char *name) {
     if (name[0] != '/') {
         path = strdup(name);
     } else {
+        current = root;
         path = strdup(name + 1);
     }
 
@@ -765,6 +766,7 @@ int vfs_mkfile_at(vfs_node_t *start, const char *name) {
     if (name[0] != '/') {
         path = strdup(name);
     } else {
+        current = root;
         path = strdup(name + 1);
     }
 
@@ -892,6 +894,7 @@ static int vfs_link_internal(vfs_node_t *start, const char *name,
     if (name[0] != '/') {
         path = strdup(name);
     } else {
+        current = root;
         path = strdup(name + 1);
     }
 
@@ -1010,7 +1013,7 @@ int vfs_link_at(vfs_node_t *start, const char *name, const char *target_name) {
 }
 
 int vfs_link(const char *name, const char *target_name) {
-    return vfs_link_internal(vfs_task_root(), name, target_name, NULL);
+    return vfs_link_internal(vfs_task_cwd(), name, target_name, NULL);
 }
 
 int vfs_link_existing_at(vfs_node_t *start, const char *name,
@@ -1023,7 +1026,7 @@ int vfs_link_existing_at(vfs_node_t *start, const char *name,
 int vfs_link_existing(const char *name, vfs_node_t *target) {
     if (!target)
         return -ENOENT;
-    return vfs_link_internal(vfs_task_root(), name, NULL, target);
+    return vfs_link_internal(vfs_task_cwd(), name, NULL, target);
 }
 
 /**
@@ -1041,6 +1044,7 @@ int vfs_symlink_at(vfs_node_t *start, const char *name,
     if (name[0] != '/') {
         path = strdup(name);
     } else {
+        current = root;
         path = strdup(name + 1);
     }
 
@@ -1163,6 +1167,7 @@ int vfs_mknod_at(vfs_node_t *start, const char *name, uint16_t umode, int dev) {
     if (name[0] != '/') {
         path = strdup(name);
     } else {
+        current = root;
         path = strdup(name + 1);
     }
 
@@ -1483,15 +1488,7 @@ err:
 }
 
 vfs_node_t *vfs_open(const char *_path, uint64_t flags) {
-    vfs_node_t *node = NULL;
-
-    if (current_task && current_task->fs && current_task->fs->cwd) {
-        node = vfs_open_at(current_task->fs->cwd, _path, flags);
-    } else {
-        node = vfs_open_at(vfs_task_cwd(), _path, flags);
-    }
-
-    return node;
+    return vfs_open_at(vfs_task_cwd(), _path, flags);
 }
 
 vfs_node_t *vfs_find_node_by_inode(uint64_t inode) {
