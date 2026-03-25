@@ -1,6 +1,8 @@
 #include "msc.h"
 #include <mm/mm.h>
 
+volatile uint64_t usbmsc_drive_id = 0;
+
 #define MSC_CBW_SIGNATURE 0x43425355U
 #define MSC_CSW_SIGNATURE 0x53425355U
 #define MSC_BOT_RESET 0xFF
@@ -382,7 +384,7 @@ static int msc_probe_lun(usb_msc_lun_t *lun) {
     }
 
     memset(name, 0, sizeof(name));
-    sprintf(name, "USB-MSC%u", lun->lun);
+    sprintf(name, "usbmsc%dl%d", usbmsc_drive_id++, lun->lun);
     regist_blkdev(name, lun, lun->block_size,
                   lun->block_count * lun->block_size, MSC_MAX_TRANSFER_SIZE,
                   usb_msc_read_blocks, usb_msc_write_blocks);

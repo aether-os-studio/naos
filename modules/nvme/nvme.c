@@ -1,5 +1,7 @@
 #include "nvme.h"
 
+volatile uint64_t nvme_drive_id = 0;
+
 // Memory allocation (DMA-capable)
 void *naos_dma_alloc(size_t size, uint64_t *phys_addr) {
     void *addr = alloc_frames_bytes(size);
@@ -1050,7 +1052,10 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
             ns->ctrl = ctrl;
             ns->ns = &ctrl->namespaces[i - 1];
 
-            regist_blkdev("NVMe", ns, ns->ns->block_size,
+            char name[16];
+            snprintf(name, sizeof(name), "nvme%d", nvme_drive_id++);
+
+            regist_blkdev(name, ns, ns->ns->block_size,
                           ns->ns->block_count * ns->ns->block_size,
                           MIN(ns->ctrl->max_transfer_size,
                               NVME_MAX_PRP_LIST_ENTRIES * DEFAULT_PAGE_SIZE),

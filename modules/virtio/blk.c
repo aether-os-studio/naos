@@ -3,6 +3,8 @@
 #include <mm/mm.h>
 #include <libs/klibc.h>
 
+volatile uint64_t virtioblk_drive_id = 0;
+
 virtio_blk_device_t *virtio_blk_devices[MAX_VIRTIO_BLKDEV_NUM];
 int virtio_blk_idx = 0;
 
@@ -76,7 +78,10 @@ int virtio_blk_init(virtio_driver_t *driver) {
         return -1;
     }
 
-    regist_blkdev((char *)"virtio-blk", blk_device, blk_device->block_size,
+    char name[16];
+    snprintf(name, sizeof(name), "virtioblk%d", virtioblk_drive_id++);
+
+    regist_blkdev(name, blk_device, blk_device->block_size,
                   config.capacity * blk_device->sector_size,
                   DEFAULT_PAGE_SIZE * 32, virtio_read, virtio_write);
 

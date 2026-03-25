@@ -289,9 +289,9 @@ int devtmpfs_link(vfs_node_t *parent, const char *name, vfs_node_t *node) {
 
 int devtmpfs_mount(uint64_t dev, vfs_node_t *node) {
     if (devtmpfs_root != fake_devtmpfs_root)
-        return 0;
+        return -ENXIO;
     if (devtmpfs_root == node)
-        return 0;
+        return -ENXIO;
 
     spin_lock(&devtmpfs_oplock);
 

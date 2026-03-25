@@ -60,7 +60,6 @@ ssize_t procfs_readlink(vfs_node_t *node, void *addr, size_t offset,
         return len;
     }
     if (!strcmp(handle->name, "proc_root")) {
-        // TODO
         const char *fullpath = "/";
         int len = strlen(fullpath);
         len = MIN(len, size);
@@ -86,9 +85,9 @@ int procfs_poll(vfs_node_t *node, size_t events) {
 
 int procfs_mount(uint64_t dev, vfs_node_t *mnt) {
     if (procfs_root != fake_procfs_root)
-        return 0;
+        return -ENXIO;
     if (procfs_root == mnt)
-        return 0;
+        return -ENXIO;
 
     mutex_lock(&procfs_oplock);
 

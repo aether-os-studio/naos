@@ -5,7 +5,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 
-blkdev_t blk_devs[MAX_BLKDEV_NUM];
+DEFINE_LLIST(blk_dev_list);
 uint64_t blk_devnum = 0;
 
 uint64_t device_regist_blk(int subtype, void *data, char *name, void *ioctl,
@@ -14,158 +14,212 @@ uint64_t device_regist_blk(int subtype, void *data, char *name, void *ioctl,
                           NULL, read, write, NULL);
 }
 
+blkdev_t *find_blkdev_by_ptr(void *ptr) {
+    blkdev_t *dev, *n;
+    llist_for_each(dev, n, &blk_dev_list, list) {
+        if (dev->ptr == ptr)
+            return dev;
+    }
+    return NULL;
+}
+
+blkdev_t *find_blkdev_by_id(uint64_t id) {
+    blkdev_t *dev, *n;
+    llist_for_each(dev, n, &blk_dev_list, list) {
+        if (dev->id == id)
+            return dev;
+    }
+    return NULL;
+}
+
+blkdev_t *find_blkdev_by_name(const char *name) {
+    blkdev_t *dev, *n;
+    llist_for_each(dev, n, &blk_dev_list, list) {
+        if (dev->name && strcmp(dev->name, name) == 0)
+            return dev;
+    }
+    return NULL;
+}
+
+void blkdev_register(blkdev_t *dev) {
+    llist_append(&blk_dev_list, &dev->list);
+    dev->id = blk_devnum++;
+    dev->mounted = false;
+}
+
+void blkdev_unregister(blkdev_t *dev) {
+    if (dev->mounted)
+        blkdev_unmount(dev);
+    llist_delete(&dev->list);
+    free(dev->name);
+}
+
+int blkdev_mount(blkdev_t *dev) {
+    if (!dev || dev->mounted)
+        return -1;
+
+    partition_t *part = &partitions[partition_num];
+    uint64_t lba_size = dev->block_size ? dev->block_size : 512;
+
+    struct GPT_DPT *buffer = (struct GPT_DPT *)malloc(sizeof(struct GPT_DPT));
+    blkdev_read(dev->id, lba_size, buffer, sizeof(struct GPT_DPT));
+
+    if (memcmp(buffer->signature, GPT_HEADER_SIGNATURE, 8) ||
+        buffer->num_partition_entries == 0 ||
+        buffer->partition_entry_lba == 0) {
+        free(buffer);
+        goto probe_mbr;
+    }
+
+    struct GPT_DPTE *dptes =
+        (struct GPT_DPTE *)malloc(128 * sizeof(struct GPT_DPTE));
+    blkdev_read(dev->id, buffer->partition_entry_lba * lba_size, dptes,
+                128 * sizeof(struct GPT_DPTE));
+
+    for (uint32_t j = 0; j < 128; j++) {
+        if (dptes[j].starting_lba == 0 || dptes[j].ending_lba == 0)
+            continue;
+
+        part->blkdev_id = dev->id;
+        part->starting_lba = dptes[j].starting_lba;
+        part->ending_lba = dptes[j].ending_lba;
+        part->type = GPT;
+
+        char pname[32];
+        sprintf(pname, "%spart%d", dev->name, j);
+        partitions[partition_num].dev =
+            device_regist_blk(DEV_PART, &partitions[partition_num], pname,
+                              partition_ioctl, partition_read, partition_write);
+
+        partition_num++;
+    }
+
+    free(dptes);
+    free(buffer);
+    dev->mounted = true;
+    return 0;
+
+probe_mbr:
+    char *iso9660_detect = (char *)malloc(5);
+    memset(iso9660_detect, 0, 5);
+    blkdev_read(dev->id, 0x8001, iso9660_detect, 5);
+    if (!memcmp(iso9660_detect, "CD001", 5)) {
+        part->blkdev_id = dev->id;
+        part->starting_lba = 0;
+        part->ending_lba =
+            blkdev_ioctl(dev->id, IOCTL_GETSIZE, 0) / lba_size - 1;
+        part->type = RAW;
+
+        char pname[32];
+        sprintf(pname, "%spart%d", dev->name, dev->id);
+        partitions[partition_num].dev =
+            device_regist_blk(DEV_PART, &partitions[partition_num], pname,
+                              partition_ioctl, partition_read, partition_write);
+
+        partition_num++;
+        free(iso9660_detect);
+        dev->mounted = true;
+        return 0;
+    }
+
+    struct MBR_DPT *boot_sector =
+        (struct MBR_DPT *)malloc(sizeof(struct MBR_DPT));
+    blkdev_read(dev->id, 0, boot_sector, sizeof(struct MBR_DPT));
+
+    if (boot_sector->bs_trail_sig != 0xAA55) {
+        part->blkdev_id = dev->id;
+        part->starting_lba = 0;
+        part->ending_lba =
+            blkdev_ioctl(dev->id, IOCTL_GETSIZE, 0) / lba_size - 1;
+        part->type = RAW;
+
+        char pname[32];
+        sprintf(pname, "%spart%d", dev->name, dev->id);
+        partitions[partition_num].dev =
+            device_regist_blk(DEV_PART, &partitions[partition_num], pname,
+                              partition_ioctl, partition_read, partition_write);
+
+        partition_num++;
+        free(boot_sector);
+        dev->mounted = true;
+        return 0;
+    }
+
+    for (int j = 0; j < MBR_MAX_PARTITION_NUM; j++) {
+        if (boot_sector->dpte[j].start_lba == 0 ||
+            boot_sector->dpte[j].sectors_limit == 0)
+            continue;
+
+        part->blkdev_id = dev->id;
+        part->starting_lba = boot_sector->dpte[j].start_lba;
+        part->ending_lba = boot_sector->dpte[j].start_lba +
+                           boot_sector->dpte[j].sectors_limit - 1;
+        part->type = MBR;
+
+        char pname[32];
+        sprintf(pname, "%spart%d", dev->name, j);
+        partitions[partition_num].dev =
+            device_regist_blk(DEV_PART, &partitions[partition_num], pname,
+                              partition_ioctl, partition_read, partition_write);
+
+        partition_num++;
+    }
+
+    free(boot_sector);
+    dev->mounted = true;
+    return 0;
+}
+
+int blkdev_unmount(blkdev_t *dev) {
+    if (!dev || !dev->mounted)
+        return -1;
+
+    for (int i = 0; i < partition_num; i++) {
+        if (partitions[i].blkdev_id == dev->id) {
+            partitions[i].blkdev_id = (uint64_t)-1;
+            partitions[i].starting_lba = 0;
+            partitions[i].ending_lba = 0;
+        }
+    }
+    dev->mounted = false;
+    return 0;
+}
+
 void regist_blkdev(char *name, void *ptr, uint64_t block_size, uint64_t size,
                    uint64_t max_op_size,
                    uint64_t (*read)(void *data, uint64_t lba, void *buffer,
                                     uint64_t size),
                    uint64_t (*write)(void *data, uint64_t lba, void *buffer,
                                      uint64_t size)) {
-    blk_devs[blk_devnum].name = strdup((const char *)name);
-    blk_devs[blk_devnum].ptr = ptr;
-    blk_devs[blk_devnum].block_size = block_size ? block_size : 512;
-    blk_devs[blk_devnum].size = size;
-    blk_devs[blk_devnum].max_op_size = max_op_size;
-    blk_devs[blk_devnum].read = read;
-    blk_devs[blk_devnum].write = write;
+    blkdev_t *dev = (blkdev_t *)malloc(sizeof(blkdev_t));
+    dev->name = strdup(name);
+    dev->ptr = ptr;
+    dev->block_size = block_size ? block_size : 512;
+    dev->size = size;
+    dev->max_op_size = max_op_size;
+    dev->read = read;
+    dev->write = write;
 
-    for (uint64_t i = blk_devnum; i <= blk_devnum; i++) {
-        partition_t *part = &partitions[partition_num];
-        uint64_t lba_size =
-            blk_devs[i].block_size ? blk_devs[i].block_size : 512;
-
-        struct GPT_DPT *buffer =
-            (struct GPT_DPT *)malloc(sizeof(struct GPT_DPT));
-        blkdev_read(i, lba_size, buffer, sizeof(struct GPT_DPT));
-
-        if (memcmp(buffer->signature, GPT_HEADER_SIGNATURE, 8) ||
-            buffer->num_partition_entries == 0 ||
-            buffer->partition_entry_lba == 0) {
-            free(buffer);
-            goto probe_mbr;
-        }
-
-        struct GPT_DPTE *dptes =
-            (struct GPT_DPTE *)malloc(128 * sizeof(struct GPT_DPTE));
-        blkdev_read(i, buffer->partition_entry_lba * lba_size, dptes,
-                    128 * sizeof(struct GPT_DPTE));
-
-        for (uint32_t j = 0; j < 128; j++) {
-            if (dptes[j].starting_lba == 0 || dptes[j].ending_lba == 0)
-                continue;
-
-            part->blkdev_id = i;
-            part->starting_lba = dptes[j].starting_lba;
-            part->ending_lba = dptes[j].ending_lba;
-            part->type = GPT;
-
-            // Register partition to devfs
-            char name[32];
-            sprintf(name, "part%d", j);
-            partitions[partition_num].dev = device_regist_blk(
-                DEV_PART, &partitions[partition_num], name, partition_ioctl,
-                partition_read, partition_write);
-
-            partition_num++;
-        }
-
-        free(dptes);
-        free(buffer);
-
-        continue;
-
-    probe_mbr:
-        char *iso9660_detect = (char *)malloc(5);
-        memset(iso9660_detect, 0, 5);
-        blkdev_read(i, 0x8001, iso9660_detect, 5);
-        if (!memcmp(iso9660_detect, "CD001", 5)) {
-            part->blkdev_id = i;
-            part->starting_lba = 0;
-            part->ending_lba = blkdev_ioctl(i, IOCTL_GETSIZE, 0) / lba_size - 1;
-            part->type = RAW;
-
-            // Register partition to devfs
-            char name[32];
-            sprintf(name, "part%d", i);
-            partitions[partition_num].dev = device_regist_blk(
-                DEV_PART, &partitions[partition_num], name, partition_ioctl,
-                partition_read, partition_write);
-
-            partition_num++;
-
-            free(iso9660_detect);
-
-            continue;
-        }
-
-        struct MBR_DPT *boot_sector =
-            (struct MBR_DPT *)malloc(sizeof(struct MBR_DPT));
-        blkdev_read(i, 0, boot_sector, sizeof(struct MBR_DPT));
-
-        if (boot_sector->bs_trail_sig != 0xAA55) {
-            part->blkdev_id = i;
-            part->starting_lba = 0;
-            part->ending_lba = blkdev_ioctl(i, IOCTL_GETSIZE, 0) / lba_size - 1;
-            part->type = RAW;
-
-            // Register partition to devfs
-            char name[32];
-            sprintf(name, "part%d", i);
-            partitions[partition_num].dev = device_regist_blk(
-                DEV_PART, &partitions[partition_num], name, partition_ioctl,
-                partition_read, partition_write);
-
-            partition_num++;
-            continue;
-        }
-
-        for (int j = 0; j < MBR_MAX_PARTITION_NUM; j++) {
-            if (boot_sector->dpte[j].start_lba == 0 ||
-                boot_sector->dpte[j].sectors_limit == 0)
-                continue;
-
-            part->blkdev_id = i;
-            part->starting_lba = boot_sector->dpte[j].start_lba;
-            part->ending_lba = boot_sector->dpte[j].start_lba +
-                               boot_sector->dpte[j].sectors_limit - 1;
-            part->type = MBR;
-
-            // Register partition to devfs
-            char name[32];
-            sprintf(name, "part%d", i);
-            partitions[partition_num].dev = device_regist_blk(
-                DEV_PART, &partitions[partition_num], name, partition_ioctl,
-                partition_read, partition_write);
-
-            partition_num++;
-        }
-
-        // ok:
-        free(boot_sector);
-    }
-
-    blk_devnum++;
+    blkdev_register(dev);
+    blkdev_mount(dev);
 }
 
 void unregist_blkdev(void *ptr) {
-    for (int i = 0; i < MAX_BLKDEV_NUM; i++) {
-        if (blk_devs[i].ptr == ptr) {
-            free(blk_devs[i].name);
-            blk_devs[i].ptr = NULL;
-            blk_devs[i].block_size = 0;
-            blk_devs[i].max_op_size = 0;
-            blk_devs[i].size = 0;
-            blk_devs[i].read = NULL;
-            blk_devs[i].write = NULL;
-        }
-    }
+    blkdev_t *dev = find_blkdev_by_ptr(ptr);
+    if (dev)
+        blkdev_unregister(dev);
 }
 
 uint64_t blkdev_ioctl(uint64_t drive, uint64_t cmd, uint64_t arg) {
+    blkdev_t *dev = find_blkdev_by_id(drive);
+    if (!dev)
+        return 0;
+
     switch (cmd) {
     case IOCTL_GETSIZE:
-        return blk_devs[drive].size;
+        return dev->size;
     case IOCTL_GETBLKSIZE:
-        return blk_devs[drive].block_size;
+        return dev->block_size;
 
     default:
         break;
@@ -206,7 +260,7 @@ static bool blk_copy_from_buffer(void *dst, const void *src, uint64_t len,
 }
 
 uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len) {
-    blkdev_t *dev = &blk_devs[drive];
+    blkdev_t *dev = find_blkdev_by_id(drive);
     if (!dev || !dev->ptr || !dev->read)
         return (uint64_t)-1;
     if (len == 0)
@@ -317,7 +371,7 @@ uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len) {
 
 uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
                       uint64_t len) {
-    blkdev_t *dev = &blk_devs[drive];
+    blkdev_t *dev = find_blkdev_by_id(drive);
     if (!dev || !dev->ptr || !dev->write)
         return (uint64_t)-1;
     if (len == 0)

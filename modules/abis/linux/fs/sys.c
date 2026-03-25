@@ -124,8 +124,8 @@ ssize_t sysfs_readlink(vfs_node_t *node, void *addr, size_t offset,
     free(from_path);
     free(to_path);
 
-    ssize_t to_copy = MIN(size, strlen(output));
-    memcpy(addr, output, to_copy);
+    ssize_t to_copy = MIN(size - offset, strlen(output));
+    memcpy(addr, output + offset, to_copy);
 
     return to_copy;
 }
@@ -161,9 +161,9 @@ int sysfs_symlink(vfs_node_t *parent, const char *name, vfs_node_t *node) {
 
 int sysfs_mount(uint64_t dev, vfs_node_t *node) {
     if (sysfs_root != fake_sysfs_root)
-        return 0;
+        return -ENXIO;
     if (sysfs_root == node)
-        return 0;
+        return -ENXIO;
 
     spin_lock(&sysfs_oplock);
 
