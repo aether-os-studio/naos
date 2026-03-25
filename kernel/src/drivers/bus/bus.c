@@ -83,6 +83,8 @@ bus_device_t *bus_device_install_internal(
 
     device->bus = bus;
     device->private_data = dev_data;
+    device->sysfs_path = NULL;
+    device->bus_link_path = NULL;
 
     device->get_device_path = get_device_path;
 

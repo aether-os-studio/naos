@@ -28,7 +28,7 @@ void devtmpfs_init_umount();
 void devfs_register_device(device_t *device);
 void devfs_unregister_device(device_t *device);
 
-void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code,
+void input_generate_event(void *data, uint16_t type, uint16_t code,
                           int32_t value, uint64_t sec, uint64_t usecs);
 
 void devfs_nodes_init();

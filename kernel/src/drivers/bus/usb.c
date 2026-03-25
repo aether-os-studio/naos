@@ -7,7 +7,7 @@
 #include <task/task.h>
 
 attribute_t usb_bus_subsystem_attr = {
-    .name = "SUBSYETEM",
+    .name = "SUBSYSTEM",
     .value = "usb",
 };
 
@@ -28,7 +28,14 @@ bus_t usb_bus = {
 
 int usb_get_device_path(bus_device_t *device, char *buf, size_t max) {
     usb_device_t *usb_device = device->private_data;
-    snprintf(buf, max, "%03u/%03u", usb_device->busnum, usb_device->devnum);
+    snprintf(buf, max, "%s", usb_device->topology);
+    return 0;
+}
+
+static int usb_get_interface_path(bus_device_t *device, char *buf, size_t max) {
+    usb_device_interface_t *iface = device->private_data;
+    snprintf(buf, max, "%s:1.%u", iface->usbdev->topology,
+             iface->iface->bInterfaceNumber);
     return 0;
 }
 
@@ -149,6 +156,145 @@ static const char *usb_root_hub_product_name(uint8_t type) {
         return "UHCI Root Hub";
     default:
         return "USB Root Hub";
+    }
+}
+
+static const char *usb_speed_sysfs_name(uint8_t speed) {
+    switch (speed) {
+    case USB_LOWSPEED:
+        return "1.5";
+    case USB_FULLSPEED:
+        return "12";
+    case USB_HIGHSPEED:
+        return "480";
+    case USB_SUPERSPEED:
+        return "5000";
+    default:
+        return "0";
+    }
+}
+
+static void usb_format_bcd(char *buf, size_t size, uint16_t value) {
+    snprintf(buf, size, "%x.%02x", (value >> 8) & 0xff, value & 0xff);
+}
+
+static void usb_register_bus_device(usb_device_t *usbdev) {
+    if (!usbdev || usbdev->bus_device)
+        return;
+
+    attributes_builder_t *builder = attributes_builder_new();
+    char value[256];
+
+    snprintf(value, sizeof(value), "/devices/usb/%s", usbdev->topology);
+    attributes_builder_append(builder, attribute_new("DEVPATH", value));
+    attributes_builder_append(builder, attribute_new("DEVTYPE", "usb_device"));
+
+    snprintf(value, sizeof(value), "%u", usbdev->busnum);
+    attributes_builder_append(builder, attribute_new("busnum", value));
+
+    snprintf(value, sizeof(value), "%u", usbdev->devnum);
+    attributes_builder_append(builder, attribute_new("devnum", value));
+
+    snprintf(value, sizeof(value), "%s", usbdev->topology);
+    attributes_builder_append(builder, attribute_new("devpath", value));
+
+    snprintf(value, sizeof(value), "%04x", usbdev->vendorid);
+    attributes_builder_append(builder, attribute_new("idVendor", value));
+
+    snprintf(value, sizeof(value), "%04x", usbdev->productid);
+    attributes_builder_append(builder, attribute_new("idProduct", value));
+
+    snprintf(value, sizeof(value), "%02x", usbdev->device_desc.bDeviceClass);
+    attributes_builder_append(builder, attribute_new("bDeviceClass", value));
+
+    snprintf(value, sizeof(value), "%02x", usbdev->device_desc.bDeviceSubClass);
+    attributes_builder_append(builder, attribute_new("bDeviceSubClass", value));
+
+    snprintf(value, sizeof(value), "%02x", usbdev->device_desc.bDeviceProtocol);
+    attributes_builder_append(builder, attribute_new("bDeviceProtocol", value));
+
+    usb_format_bcd(value, sizeof(value), usbdev->device_desc.bcdUSB);
+    attributes_builder_append(builder, attribute_new("version", value));
+
+    usb_format_bcd(value, sizeof(value), usbdev->device_desc.bcdDevice);
+    attributes_builder_append(builder, attribute_new("bcdDevice", value));
+
+    attributes_builder_append(
+        builder, attribute_new("speed", usb_speed_sysfs_name(usbdev->speed)));
+
+    if (usbdev->manufacturer[0])
+        attributes_builder_append(
+            builder, attribute_new("manufacturer", usbdev->manufacturer));
+    if (usbdev->product[0])
+        attributes_builder_append(builder,
+                                  attribute_new("product", usbdev->product));
+    if (usbdev->serial[0])
+        attributes_builder_append(builder,
+                                  attribute_new("serial", usbdev->serial));
+
+    usbdev->bus_device =
+        bus_device_install_usb(usbdev, builder->attrs, builder->count, NULL, 0);
+
+    for (int i = 0; i < builder->count; i++) {
+        free(builder->attrs[i]);
+    }
+
+    free(builder);
+}
+
+static void usb_register_interface_bus_devices(usb_device_t *usbdev) {
+    if (!usbdev || !usbdev->ifaces || usbdev->ifaces_num <= 0)
+        return;
+
+    for (int i = 0; i < usbdev->ifaces_num; i++) {
+        usb_device_interface_t *iface = &usbdev->ifaces[i];
+        if (iface->bus_device)
+            continue;
+
+        attributes_builder_t *builder = attributes_builder_new();
+        char value[256];
+
+        snprintf(value, sizeof(value), "/devices/usb/%s/%s:1.%u",
+                 usbdev->topology, usbdev->topology,
+                 iface->iface->bInterfaceNumber);
+        attributes_builder_append(builder, attribute_new("DEVPATH", value));
+        attributes_builder_append(builder,
+                                  attribute_new("DEVTYPE", "usb_interface"));
+
+        snprintf(value, sizeof(value), "%02x", iface->iface->bInterfaceNumber);
+        attributes_builder_append(builder,
+                                  attribute_new("bInterfaceNumber", value));
+
+        snprintf(value, sizeof(value), "%02x", iface->iface->bAlternateSetting);
+        attributes_builder_append(builder,
+                                  attribute_new("bAlternateSetting", value));
+
+        snprintf(value, sizeof(value), "%02x", iface->iface->bNumEndpoints);
+        attributes_builder_append(builder,
+                                  attribute_new("bNumEndpoints", value));
+
+        snprintf(value, sizeof(value), "%02x", iface->iface->bInterfaceClass);
+        attributes_builder_append(builder,
+                                  attribute_new("bInterfaceClass", value));
+
+        snprintf(value, sizeof(value), "%02x",
+                 iface->iface->bInterfaceSubClass);
+        attributes_builder_append(builder,
+                                  attribute_new("bInterfaceSubClass", value));
+
+        snprintf(value, sizeof(value), "%02x",
+                 iface->iface->bInterfaceProtocol);
+        attributes_builder_append(builder,
+                                  attribute_new("bInterfaceProtocol", value));
+
+        iface->bus_device = bus_device_install_internal(
+            &usb_bus, iface, builder->attrs, builder->count, NULL, 0,
+            usb_get_interface_path);
+
+        for (int j = 0; j < builder->count; j++) {
+            free(builder->attrs[j]);
+        }
+        free(builder);
     }
 }
 
@@ -1269,6 +1415,8 @@ static int usb_parse_config(usb_device_t *usbdev,
                 curr->end = ptr;
 
             curr = &usbdev->ifaces[usbdev->ifaces_num++];
+            curr->usbdev = usbdev;
+            curr->bus_device = NULL;
             curr->iface = (void *)ptr;
             curr->end = end;
         }
@@ -1405,6 +1553,9 @@ static int configure_usb_device(usb_device_t *usbdev) {
                     sizeof(usbdev->product));
     usb_read_string(usbdev, dinfo.iSerialNumber, usbdev->serial,
                     sizeof(usbdev->serial));
+
+    usb_register_bus_device(usbdev);
+    usb_register_interface_bus_devices(usbdev);
 
     usbdev->online = true;
     usb_notify_device_add(usbdev);
@@ -1711,8 +1862,10 @@ void usb_register_controller(usb_controller_t *cntl, usb_hub_t *hub) {
     spin_init(&hub->lock);
 
     usb_notify_controller_add(cntl);
-    if (cntl->rootdev)
+    if (cntl->rootdev) {
+        usb_register_bus_device(cntl->rootdev);
         usb_notify_device_add(cntl->rootdev);
+    }
     usb_enumerate(hub);
 }
 

@@ -533,8 +533,7 @@ int linuxabi_on_remove_bus_device(bus_device_t *dev) {
 
 void *linuxabi_regist_input_dev(const char *device_name, void *arg) {
     regist_input_dev_arg_t *regist_arg = arg;
-    return regist_input_dev(device_name, regist_arg->uevent_append,
-                            regist_arg->from, regist_arg->event_bit);
+    return regist_input_dev(device_name, regist_arg);
 }
 
 abi_t linux_abi = {
@@ -544,8 +543,7 @@ abi_t linux_abi = {
     .init_before_user = linuxabi_init_before_user,
     .run_user_init = linuxabi_run_user_init,
     .regist_input_dev = linuxabi_regist_input_dev,
-    .handle_kb_scancode = handle_kb_scancode,
-    .handle_mouse_event = handle_mouse_event,
+    .input_generate_event = input_generate_event,
 };
 
 int dlmain() {

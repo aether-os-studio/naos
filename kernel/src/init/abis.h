@@ -14,9 +14,8 @@ typedef struct abi {
     void (*init_before_user)(void);
     int (*run_user_init)(const char *path);
     void *(*regist_input_dev)(const char *device_name, void *arg);
-    void (*handle_kb_scancode)(uint8_t scan_code, bool pressed,
-                               bool is_extended);
-    void (*handle_mouse_event)(uint8_t flag, int8_t x, int8_t y, int8_t z);
+    void (*input_generate_event)(void *item, uint16_t type, uint16_t code,
+                                 int32_t value, uint64_t sec, uint64_t usecs);
 } abi_t;
 
 extern abi_t *system_abi;

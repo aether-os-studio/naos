@@ -934,8 +934,9 @@ void devfs_nodes_init() {
     pts_init();
 }
 
-void input_generate_event(dev_input_event_t *item, uint16_t type, uint16_t code,
+void input_generate_event(void *data, uint16_t type, uint16_t code,
                           int32_t value, uint64_t sec, uint64_t usecs) {
+    dev_input_event_t *item = data;
     if (!item || item->timesOpened == 0)
         return;
 

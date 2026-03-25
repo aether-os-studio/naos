@@ -18,7 +18,10 @@ int alloc_seq_num();
 
 vfs_node_t *sysfs_regist_dev(char t, int major, int minor,
                              const char *real_device_path, const char *dev_name,
-                             const char *other_uevent_content);
+                             const char *other_uevent_content,
+                             const char *subsystem_path, const char *class_path,
+                             const char *class_name,
+                             const char *parent_device_path);
 vfs_node_t *sysfs_ensure_symlink_at(vfs_node_t *start, const char *path,
                                     const char *target);
 vfs_node_t *sysfs_ensure_symlink(const char *path, const char *target);

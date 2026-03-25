@@ -19,6 +19,7 @@ typedef struct usb_interface_descriptor usb_interface_descriptor_t;
 typedef struct usb_endpoint_descriptor usb_endpoint_descriptor_t;
 typedef struct usb_super_speed_endpoint_descriptor
     usb_super_speed_endpoint_descriptor_t;
+typedef struct bus_device bus_device_t;
 
 #define EVENT_SUCCESS 0
 #define EVENT_SHORT_PACKET 1
@@ -46,6 +47,8 @@ struct usb_pipe {
 struct usb_device_interface {
     usb_interface_descriptor_t *iface;
     void *end;
+    usb_device_t *usbdev;
+    bus_device_t *bus_device;
 };
 
 #define USB_MAX_BOUND_DRIVERS 8
@@ -272,6 +275,7 @@ struct usb_super_speed_endpoint_descriptor {
 struct usb_device {
     usb_hub_t *hub;
     usb_pipe_t *defpipe;
+    bus_device_t *bus_device;
     uint32_t port;
     usb_device_interface_t *ifaces;
     int ifaces_num;

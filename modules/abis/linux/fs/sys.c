@@ -46,17 +46,20 @@ bool sysfs_close(vfs_node_t *node) { return false; }
 ssize_t sysfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     sysfs_node_t *handle = fd->node->handle;
     char *fullpath = vfs_get_fullpath(handle->node);
-    int fullpath_len = strlen(fullpath);
     sysfs_bin_attribute_bucket_t *ptr, *tmp;
     llist_for_each(ptr, tmp, &sysfs_bin_attributes, node) {
-        char name[128];
-        ptr->device->get_device_path(ptr->device, name, sizeof(name));
-        int prefix_len = strlen(ptr->device->bus->devices_path);
-        int name_len = strlen(name);
-        if (prefix_len + 1 + name_len + 1 >= fullpath_len)
-            continue;
-        if (strstr(fullpath + prefix_len + 1, name) &&
-            strstr(fullpath + prefix_len + 1 + name_len + 1, ptr->attr->name)) {
+        bool matched = false;
+        if (ptr->device->sysfs_path &&
+            strstr(fullpath, ptr->device->sysfs_path) == fullpath) {
+            matched = strstr(fullpath + strlen(ptr->device->sysfs_path),
+                             ptr->attr->name) != NULL;
+        }
+        if (!matched && ptr->device->bus_link_path &&
+            strstr(fullpath, ptr->device->bus_link_path) == fullpath) {
+            matched = strstr(fullpath + strlen(ptr->device->bus_link_path),
+                             ptr->attr->name) != NULL;
+        }
+        if (matched) {
             free(fullpath);
             return ptr->attr->read(ptr->device, ptr->attr, addr, offset, size);
         }
@@ -72,17 +75,20 @@ ssize_t sysfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
 ssize_t sysfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     sysfs_node_t *handle = fd->node->handle;
     char *fullpath = vfs_get_fullpath(handle->node);
-    int fullpath_len = strlen(fullpath);
     sysfs_bin_attribute_bucket_t *ptr, *tmp;
     llist_for_each(ptr, tmp, &sysfs_bin_attributes, node) {
-        char name[128];
-        ptr->device->get_device_path(ptr->device, name, sizeof(name));
-        int prefix_len = strlen(ptr->device->bus->devices_path);
-        int name_len = strlen(name);
-        if (prefix_len + 1 + name_len + 1 >= fullpath_len)
-            continue;
-        if (strstr(fullpath + prefix_len + 1, name) &&
-            strstr(fullpath + prefix_len + 1 + name_len + 1, ptr->attr->name)) {
+        bool matched = false;
+        if (ptr->device->sysfs_path &&
+            strstr(fullpath, ptr->device->sysfs_path) == fullpath) {
+            matched = strstr(fullpath + strlen(ptr->device->sysfs_path),
+                             ptr->attr->name) != NULL;
+        }
+        if (!matched && ptr->device->bus_link_path &&
+            strstr(fullpath, ptr->device->bus_link_path) == fullpath) {
+            matched = strstr(fullpath + strlen(ptr->device->bus_link_path),
+                             ptr->attr->name) != NULL;
+        }
+        if (matched) {
             free(fullpath);
             return ptr->attr->write(ptr->device, ptr->attr, addr, offset, size);
         }
@@ -311,16 +317,44 @@ void sysfs_register_device(bus_device_t *device) {
     if (!device->bus)
         return;
 
+    char bus_root[128];
+    snprintf(bus_root, sizeof(bus_root), "/sys/bus/%s", device->bus->name);
+    sysfs_ensure_dir(bus_root);
     vfs_node_t *devices_root = sysfs_ensure_dir(device->bus->devices_path);
-    vfs_node_t *drivers_root = sysfs_ensure_dir(device->bus->drivers_path);
+    sysfs_ensure_dir(device->bus->drivers_path);
+
+    const char *devpath = NULL;
+    for (int i = 0; i < device->attrs_count; i++) {
+        attribute_t *attr = device->attrs[i];
+        if (!strcmp(attr->name, "DEVPATH")) {
+            devpath = attr->value;
+            break;
+        }
+    }
 
     char name[128];
     device->get_device_path(device, name, sizeof(name));
-    vfs_node_t *device_root = sysfs_ensure_dir_at(devices_root, name);
+    char real_path[256];
+    if (devpath && devpath[0]) {
+        snprintf(real_path, sizeof(real_path), "/sys%s", devpath);
+    } else {
+        snprintf(real_path, sizeof(real_path), "%s/%s",
+                 device->bus->devices_path, name);
+    }
 
-    char path[32];
-    snprintf(path, sizeof(path), "/sys/bus/%s", device->bus->name);
-    sysfs_ensure_symlink_at(device_root, "subsystem", path);
+    free(device->sysfs_path);
+    device->sysfs_path = strdup(real_path);
+
+    char link_path[256];
+    snprintf(link_path, sizeof(link_path), "%s/%s", device->bus->devices_path,
+             name);
+    free(device->bus_link_path);
+    device->bus_link_path = strdup(link_path);
+
+    vfs_node_t *device_root = sysfs_ensure_dir(real_path);
+    sysfs_ensure_symlink(link_path, real_path);
+
+    sysfs_ensure_symlink_at(device_root, "subsystem", bus_root);
 
     for (int i = 0; i < device->bin_attrs_count; i++) {
         bin_attribute_t *bin_attr = device->bin_attrs[i];
@@ -332,6 +366,17 @@ void sysfs_register_device(bus_device_t *device) {
     uint64_t offset = 0;
     for (int i = 0; i < device->attrs_count; i++) {
         attribute_t *attr = device->attrs[i];
+        if (strcmp(attr->name, "DEVPATH") != 0) {
+            vfs_node_t *attr_node =
+                sysfs_ensure_file_at(device_root, attr->name);
+            if (attr_node) {
+                char attr_content[256];
+                int attr_len = snprintf(attr_content, sizeof(attr_content),
+                                        "%s\n", attr->value ? attr->value : "");
+                vfs_write(attr_node, attr_content, 0, attr_len);
+            }
+        }
+
         char content[128];
         int len = snprintf(content, sizeof(content), "%s=%s\n", attr->name,
                            attr->value);
@@ -352,7 +397,10 @@ int alloc_seq_num() { return next_seq_num++; }
 
 vfs_node_t *sysfs_regist_dev(char t, int major, int minor,
                              const char *real_device_path, const char *dev_name,
-                             const char *other_uevent_content) {
+                             const char *other_uevent_content,
+                             const char *subsystem_path, const char *class_path,
+                             const char *class_name,
+                             const char *parent_device_path) {
     const char *root = (t == 'c') ? "char" : "block";
 
     char dev_root_path[256];
@@ -372,6 +420,52 @@ vfs_node_t *sysfs_regist_dev(char t, int major, int minor,
 
     char *fullpath = vfs_get_fullpath(real_device_node);
 
+    char dev_path[256];
+    sprintf(dev_path, "%s/dev", fullpath);
+    vfs_mkfile(dev_path);
+    vfs_node_t *dev_node = vfs_open(dev_path, 0);
+    if (dev_node) {
+        char dev_content[32];
+        int dev_len =
+            snprintf(dev_content, sizeof(dev_content), "%d:%d\n", major, minor);
+        vfs_write(dev_node, dev_content, 0, dev_len);
+    }
+
+    if (subsystem_path && subsystem_path[0]) {
+        char subsystem_link[256];
+        sprintf(subsystem_link, "%s/subsystem", fullpath);
+        sysfs_ensure_symlink(subsystem_link, subsystem_path);
+    }
+
+    if (class_path && class_path[0] && class_name && class_name[0]) {
+        char class_link[256];
+        sprintf(class_link, "%s/%s", class_path, class_name);
+        sysfs_ensure_symlink(class_link, fullpath);
+    }
+
+    if (!dev_root_is_real) {
+        const char *last_slash = strrchr(fullpath, '/');
+        if (last_slash && last_slash != fullpath) {
+            char parent_path[256];
+            size_t parent_len = (size_t)(last_slash - fullpath);
+            memcpy(parent_path, fullpath, parent_len);
+            parent_path[parent_len] = '\0';
+
+            char child_device_link[256];
+            sprintf(child_device_link, "%s/device", fullpath);
+            sysfs_ensure_symlink(child_device_link, parent_path);
+
+            if (parent_device_path && parent_device_path[0]) {
+                char parent_device_link[256];
+                sprintf(parent_device_link, "%s/device", parent_path);
+                sysfs_ensure_symlink(parent_device_link, parent_device_path);
+            }
+        }
+    }
+
+    char devpath_for_event[256];
+    snprintf(devpath_for_event, sizeof(devpath_for_event), "%s", fullpath + 4);
+
     char uevent_path[256];
     sprintf(uevent_path, "%s/uevent", fullpath);
 
@@ -379,25 +473,49 @@ vfs_node_t *sysfs_regist_dev(char t, int major, int minor,
     vfs_node_t *uevent_node = vfs_open(uevent_path, 0);
     ASSERT(uevent_node);
 
-    char uevent_content[256];
-    sprintf(uevent_content, "MAJOR=%d\nMINOR=%d\nDEVNAME=%s\nDEVPATH=%s\n%s",
-            major, minor, dev_name, fullpath + 4, other_uevent_content);
+    const char *extra = other_uevent_content ? other_uevent_content : "";
+    size_t uevent_content_len =
+        snprintf(NULL, 0, "MAJOR=%d\nMINOR=%d\nDEVNAME=%s\nDEVPATH=%s\n%s",
+                 major, minor, dev_name, devpath_for_event, extra) +
+        1;
+    char *uevent_content = malloc(uevent_content_len);
+    snprintf(uevent_content, uevent_content_len,
+             "MAJOR=%d\nMINOR=%d\nDEVNAME=%s\nDEVPATH=%s\n%s", major, minor,
+             dev_name, devpath_for_event, extra);
     vfs_write(uevent_node, uevent_content, 0, strlen(uevent_content));
 
     free(fullpath);
 
-    char buffer[256];
-    sprintf(buffer, "add@/%s\nACTION=add\nSEQNUM=%d\nTAGS=:systemd:\n%s\n",
-            dev_root_is_real ? dev_root_path : real_device_path,
-            alloc_seq_num(), uevent_content);
-    int len = strlen(buffer);
-    for (int i = 0; i < len; i++) {
-        if (buffer[i] == '\n')
-            buffer[i] = '\0';
+    int seqnum = alloc_seq_num();
+    size_t buffer_len =
+        snprintf(NULL, 0, "add@%s\nACTION=add\nSEQNUM=%d\nTAGS=:systemd:\n%s\n",
+                 devpath_for_event, seqnum, uevent_content) +
+        1;
+    char *buffer = malloc(buffer_len);
+    snprintf(buffer, buffer_len,
+             "add@%s\nACTION=add\nSEQNUM=%d\nTAGS=:systemd:\n%s\n",
+             devpath_for_event, seqnum, uevent_content);
+    size_t src_len = strlen(buffer);
+    size_t dst_len = 0;
+    bool last_was_nul = false;
+    for (size_t i = 0; i < src_len; i++) {
+        char c = buffer[i];
+        if (c == '\n')
+            c = '\0';
+        if (c == '\0') {
+            if (last_was_nul)
+                continue;
+            last_was_nul = true;
+        } else {
+            last_was_nul = false;
+        }
+        buffer[dst_len++] = c;
     }
-    if (!memcmp(buffer + len - 2, "\0\0", 2))
-        len--;
-    netlink_kernel_uevent_send(buffer, len);
+    if (dst_len == 0 || buffer[dst_len - 1] != '\0')
+        buffer[dst_len++] = '\0';
+    netlink_kernel_uevent_send(buffer, (int)dst_len);
+    free(buffer);
+    free(uevent_content);
 
     return real_device_node;
 }

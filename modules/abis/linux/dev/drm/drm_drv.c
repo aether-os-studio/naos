@@ -416,7 +416,8 @@ static void drm_device_setup_sysfs(int major, int card_minor, int render_minor,
 
     vfs_node_t *card_root =
         sysfs_regist_dev('c', major, card_minor, "", card_dev_name,
-                         "SUBSYSTEM=drm\nDEVTYPE=drm_minor\n");
+                         "SUBSYSTEM=drm\nDEVTYPE=drm_minor\n", NULL, NULL,
+                         NULL, pci_device_path);
     vfs_node_t *card_root_dev = sysfs_child_append(card_root, "dev", false);
     char devnum_content[32];
     sprintf(devnum_content, "%d:%d\n", major, card_minor);
@@ -456,7 +457,8 @@ static void drm_device_setup_sysfs(int major, int card_minor, int render_minor,
     if (has_render_node) {
         vfs_node_t *render_root =
             sysfs_regist_dev('c', major, render_minor, "", render_dev_name,
-                             "SUBSYSTEM=drm\nDEVTYPE=drm_minor\n");
+                             "SUBSYSTEM=drm\nDEVTYPE=drm_minor\n", NULL, NULL,
+                             NULL, pci_device_path);
         vfs_node_t *render_root_dev =
             sysfs_child_append(render_root, "dev", false);
         sprintf(devnum_content, "%d:%d\n", major, render_minor);

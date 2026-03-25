@@ -60,9 +60,6 @@ typedef void (*ps2_mouse_callback_t)(ps2_mouse_event_t event);
 void ps2_keyboard_set_callback(ps2_keyboard_callback_t callback);
 void ps2_mouse_set_callback(ps2_mouse_callback_t callback);
 
-size_t kb_event_bit(void *data, uint64_t request, void *arg);
-size_t mouse_event_bit(void *data, uint64_t request, void *arg);
-
 bool ps2_init(void);
 bool ps2_keyboard_init(void);
 bool ps2_mouse_init(void);

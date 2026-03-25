@@ -10,6 +10,8 @@
  * SC - System Control
  */
 
+#pragma once
+
 #include <libs/klibc.h>
 
 #define KEY_RESERVED 0
@@ -280,6 +282,19 @@ rely on ambient */
 
 #define KEY_MICMUTE 248 /* Mute / unmute the microphone */
 
+#define KEY_MAX 0x2ff
+#define KEY_CNT (KEY_MAX + 1)
+
+#define INPUT_PROP_POINTER 0x00
+#define INPUT_PROP_DIRECT 0x01
+#define INPUT_PROP_BUTTONPAD 0x02
+#define INPUT_PROP_SEMI_MT 0x03
+#define INPUT_PROP_TOPBUTTONPAD 0x04
+#define INPUT_PROP_POINTING_STICK 0x05
+#define INPUT_PROP_ACCELEROMETER 0x06
+#define INPUT_PROP_MAX 0x1f
+#define INPUT_PROP_CNT (INPUT_PROP_MAX + 1)
+
 /* Code 255 is reserved for special needs of AT keyboard driver */
 
 #define BTN_MISC 0x100
@@ -449,10 +464,7 @@ enum {
     KEY_BUTTON_RIGHT = 0x84,
 };
 
-void kb_evdev_generate(uint8_t code, bool pressed);
-void handle_kb_event(uint8_t scan_code, bool pressed, bool is_extended);
-void handle_kb_scancode(uint8_t scan_code, bool pressed, bool is_extended);
-void handle_mouse_event(uint8_t flag, int8_t x, int8_t y, int8_t z);
+uint16_t evdev_code_from_set1_scancode(uint8_t scan_code, bool is_extended);
 
 int kb_read(char *buffer, int n);
 int kb_available();

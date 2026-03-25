@@ -515,7 +515,7 @@ bin_attribute_t *pci_bus_default_bin_attrs[] = {
 };
 
 attribute_t pci_bus_subsystem_attr = {
-    .name = "SUBSYETEM",
+    .name = "SUBSYSTEM",
     .value = "pci",
 };
 

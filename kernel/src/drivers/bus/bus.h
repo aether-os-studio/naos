@@ -1,6 +1,7 @@
 #pragma once
 
 #include <libs/klibc.h>
+#include <libs/keys.h>
 #include <libs/llist.h>
 
 #define KDGETMODE 0x4B3B // 获取终端模式命令
@@ -106,6 +107,11 @@ typedef struct dev_input_event {
     struct input_id inputid;
 
     size_t properties;
+    uint8_t evbit[(EV_CNT + 7) / 8];
+    uint8_t keybit[(KEY_CNT + 7) / 8];
+    uint8_t relbit[(REL_CNT + 7) / 8];
+    uint8_t absbit[(ABS_CNT + 7) / 8];
+    struct input_absinfo absinfo[ABS_CNT];
 
     event_bit_t event_bit;
 
@@ -149,6 +155,8 @@ typedef struct bus_device {
 
     bus_t *bus;
     void *private_data;
+    char *sysfs_path;
+    char *bus_link_path;
 
     int (*get_device_path)(struct bus_device *device, char *buf,
                            size_t max_count);

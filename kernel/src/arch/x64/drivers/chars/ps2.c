@@ -2,10 +2,9 @@
 #include <irq/irq_manager.h>
 #include <libs/keys.h>
 #include <init/abis.h>
+#include <boot/boot.h>
+#include <fs/vfs/vfs.h>
 #include <linuxabi.h>
-
-extern void handle_kb_event(uint8_t scan_code, bool pressed, bool is_extended);
-extern void handle_mouse_event(uint8_t flag, int8_t x, int8_t y, int8_t z);
 
 static struct {
     ps2_keyboard_callback_t keyboard_callback;
@@ -18,10 +17,26 @@ static struct {
     uint8_t mouse_cycle;
     uint8_t mouse_packet[4];
     bool mouse_has_wheel;
+    bool mouse_left_pressed;
+    bool mouse_right_pressed;
+    bool mouse_middle_pressed;
 
     bool port1_available;
     bool port2_available;
 } ps2_state = {0};
+
+static bool ps2_input_now(dev_input_event_t *event, struct timespec *now) {
+    if (!event || !now)
+        return false;
+
+    uint64_t nano = nano_time();
+    if (event->clock_id == CLOCK_REALTIME)
+        now->tv_sec = boot_get_boottime() + nano / 1000000000;
+    else
+        now->tv_sec = nano / 1000000000;
+    now->tv_nsec = nano % 1000000000;
+    return true;
+}
 
 // 等待可以写入
 static bool ps2_wait_write(void) {
@@ -133,21 +148,308 @@ static bool ps2_mouse_detect_wheel(void) {
     return (id == 3 || id == 4);
 }
 
+char character_table[140] = {
+    0,    27,   '1',  '2',  '3',  '4',  '5',  '6',  '7',  '8',  '9',  '0',
+    '-',  '=',  0,    9,    'q',  'w',  'e',  'r',  't',  'y',  'u',  'i',
+    'o',  'p',  '[',  ']',  0,    0,    'a',  's',  'd',  'f',  'g',  'h',
+    'j',  'k',  'l',  ';',  '\'', '`',  0,    '\\', 'z',  'x',  'c',  'v',
+    'b',  'n',  'm',  ',',  '.',  '/',  0,    '*',  0,    ' ',  0,    0,
+    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+    0,    0,    0,    0,    0,    0,    0,    0,    0x1B, 0,    0,    0,
+    0,    0,    0,    0,    0,    0,    0,    0x0E, 0x1C, 0,    0,    0,
+    0,    0,    0,    0,    0,    '/',  0,    0,    0,    0,    0,    0,
+    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+    0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0,
+    0,    0,    0,    0,    0,    0,    0,    0x2C,
+};
+
+char shifted_character_table[140] = {
+    0,    27,   '!',  '@',  '#',  '$',  '%',  '^',  '&',  '*',  '(',  ')',
+    '_',  '+',  0,    9,    'Q',  'W',  'E',  'R',  'T',  'Y',  'U',  'I',
+    'O',  'P',  '{',  '}',  0,    0,    'A',  'S',  'D',  'F',  'G',  'H',
+    'J',  'K',  'L',  ':',  '"',  '~',  0,    '|',  'Z',  'X',  'C',  'V',
+    'B',  'N',  'M',  '<',  '>',  '?',  0,    '*',  0,    ' ',  0,    0,
+    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+    0,    0,    0,    0,    0,    0,    0,    0,    0x1B, 0,    0,    0,
+    0,    0,    0,    0,    0,    0,    0,    0x0E, 0x1C, 0,    0,    0,
+    0,    0,    0,    0,    0,    '?',  0,    0,    0,    0,    0,    0,
+    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,
+    0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0,
+    0,    0,    0,    0,    0,    0,    0,    0x2C,
+};
+
+// 修饰键状态
+static struct {
+    bool shift;
+    bool ctrl;
+    bool alt;
+    bool caps_lock;
+} kb_mods = {0, 0, 0, 0};
+
+char scancode_map[140] = {
+    0,   0,    '1',  '2', '3',  '4', '5', '6', '7', '8', '9', '0', '-',
+    '=', '\b', '\t', 'q', 'w',  'e', 'r', 't', 'y', 'u', 'i', 'o', 'p',
+    '[', ']',  '\n', 0,   'a',  's', 'd', 'f', 'g', 'h', 'j', 'k', 'l',
+    ';', '\'', '`',  0,   '\\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',',
+    '.', '/',  0,    '*', 0,    ' ', 0,   0,   0,   0,   0,   0,   0,
+    0,   0,    0,    0,   0,    0,   '7', '8', '9', '-', '4', '5', '6',
+    '+', '1',  '2',  '3', '0',  '.', 0,   0,   0,   0,   0};
+
+char scancode_map_shift[140] = {
+    0,   0,    '!',  '@', '#', '$', '%', '^', '&', '*', '(', ')', '_',
+    '+', '\b', '\t', 'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P',
+    '{', '}',  '\n', 0,   'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L',
+    ':', '\"', '~',  0,   '|', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<',
+    '>', '?',  0,    '*', 0,   ' ', 0,   0,   0,   0,   0,   0,   0,
+    0,   0,    0,    0,   0,   0,   '7', '8', '9', '-', '4', '5', '6',
+    '+', '1',  '2',  '3', '0', '.', 0,   0,   0,   0,   0};
+
+static const char *get_escape_sequence(uint8_t sc) {
+    switch (sc) {
+    case 0x48:
+        return "\x1b[A"; // ↑
+    case 0x50:
+        return "\x1b[B"; // ↓
+    case 0x4D:
+        return "\x1b[C"; // →
+    case 0x4B:
+        return "\x1b[D"; // ←
+    case 0x47:
+        return "\x1b[H"; // Home
+    case 0x4F:
+        return "\x1b[F"; // End
+    case 0x49:
+        return "\x1b[5~"; // PgUp
+    case 0x51:
+        return "\x1b[6~"; // PgDn
+    case 0x52:
+        return "\x1b[2~"; // Insert
+    case 0x53:
+        return "\x1b[3~"; // Delete
+    case 0x3B:
+        return "\x1bOP"; // F1
+    case 0x3C:
+        return "\x1bOQ"; // F2
+    case 0x3D:
+        return "\x1bOR"; // F3
+    case 0x3E:
+        return "\x1bOS"; // F4
+    case 0x3F:
+        return "\x1b[15~"; // F5
+    case 0x40:
+        return "\x1b[17~"; // F6
+    case 0x41:
+        return "\x1b[18~"; // F7
+    case 0x42:
+        return "\x1b[19~"; // F8
+    case 0x43:
+        return "\x1b[20~"; // F9
+    case 0x44:
+        return "\x1b[21~"; // F10
+    case 0x57:
+        return "\x1b[23~"; // F11
+    case 0x58:
+        return "\x1b[24~"; // F12
+    default:
+        return NULL;
+    }
+}
+
+static const uint8_t evdev_base_table[89] = {
+    0,
+    KEY_ESC,
+    KEY_1,
+    KEY_2,
+    KEY_3,
+    KEY_4,
+    KEY_5,
+    KEY_6,
+    KEY_7,
+    KEY_8,
+    KEY_9,
+    KEY_0,
+    KEY_MINUS,
+    KEY_EQUAL,
+    KEY_BACKSPACE,
+    KEY_TAB,
+    KEY_Q,
+    KEY_W,
+    KEY_E,
+    KEY_R,
+    KEY_T,
+    KEY_Y,
+    KEY_U,
+    KEY_I,
+    KEY_O,
+    KEY_P,
+    KEY_LEFTBRACE,
+    KEY_RIGHTBRACE,
+    KEY_ENTER,
+    KEY_LEFTCTRL,
+    KEY_A,
+    KEY_S,
+    KEY_D,
+    KEY_F,
+    KEY_G,
+    KEY_H,
+    KEY_J,
+    KEY_K,
+    KEY_L,
+    KEY_SEMICOLON,
+    KEY_APOSTROPHE,
+    KEY_GRAVE,
+    KEY_LEFTSHIFT,
+    KEY_BACKSLASH,
+    KEY_Z,
+    KEY_X,
+    KEY_C,
+    KEY_V,
+    KEY_B,
+    KEY_N,
+    KEY_M,
+    KEY_COMMA,
+    KEY_DOT,
+    KEY_SLASH,
+    KEY_RIGHTSHIFT,
+    KEY_KPASTERISK,
+    KEY_LEFTALT,
+    KEY_SPACE,
+    KEY_CAPSLOCK,
+    KEY_F1,
+    KEY_F2,
+    KEY_F3,
+    KEY_F4,
+    KEY_F5,
+    KEY_F6,
+    KEY_F7,
+    KEY_F8,
+    KEY_F9,
+    KEY_F10,
+    KEY_NUMLOCK,
+    KEY_SCROLLLOCK,
+    KEY_KP7,
+    KEY_KP8,
+    KEY_KP9,
+    KEY_KPMINUS,
+    KEY_KP4,
+    KEY_KP5,
+    KEY_KP6,
+    KEY_KPPLUS,
+    KEY_KP1,
+    KEY_KP2,
+    KEY_KP3,
+    KEY_KP0,
+    KEY_KPDOT,
+    0,
+    0,
+    0,
+    KEY_F11,
+    KEY_F12,
+};
+
+static const uint8_t evdev_ext_table[128] = {
+    [0x1C] = KEY_KPENTER,  [0x1D] = KEY_RIGHTCTRL, [0x35] = KEY_KPSLASH,
+    [0x37] = KEY_SYSRQ,    [0x38] = KEY_RIGHTALT,  [0x47] = KEY_HOME,
+    [0x48] = KEY_UP,       [0x49] = KEY_PAGEUP,    [0x4B] = KEY_LEFT,
+    [0x4D] = KEY_RIGHT,    [0x4F] = KEY_END,       [0x50] = KEY_DOWN,
+    [0x51] = KEY_PAGEDOWN, [0x52] = KEY_INSERT,    [0x53] = KEY_DELETE,
+    [0x5B] = KEY_LEFTMETA, [0x5C] = KEY_RIGHTMETA, [0x5D] = KEY_MENU,
+};
+
+uint16_t evdev_code_from_set1_scancode(uint8_t scan_code, bool is_extended) {
+    if (is_extended) {
+        if (scan_code < sizeof(evdev_ext_table)) {
+            return evdev_ext_table[scan_code];
+        }
+    } else {
+        if (scan_code < sizeof(evdev_base_table)) {
+            return evdev_base_table[scan_code];
+        }
+    }
+
+    return 0;
+}
+
+dev_input_event_t *ps2_kb_input_event = NULL;
+dev_input_event_t *ps2_mouse_input_event = NULL;
+
 void ps2_keyboard_callback(ps2_keyboard_event_t event) {
-    system_abi->handle_kb_scancode(event.scancode, event.pressed,
-                                   event.is_extended);
+    if (!system_abi || !system_abi->input_generate_event || !ps2_kb_input_event)
+        return;
+
+    struct timespec now;
+    if (!ps2_input_now(ps2_kb_input_event, &now))
+        return;
+
+    uint16_t code =
+        evdev_code_from_set1_scancode(event.scancode, event.is_extended);
+    if (!code)
+        return;
+
+    system_abi->input_generate_event(ps2_kb_input_event, EV_KEY, code,
+                                     event.pressed ? 1 : 0, now.tv_sec,
+                                     now.tv_nsec / 1000);
+    system_abi->input_generate_event(ps2_kb_input_event, EV_SYN, SYN_REPORT, 0,
+                                     now.tv_sec, now.tv_nsec / 1000);
 }
 
 void ps2_mouse_callback(ps2_mouse_event_t event) {
-    uint8_t flags = 0;
-    if (event.left_button)
-        flags |= (1 << 0);
-    if (event.right_button)
-        flags |= (1 << 1);
-    if (event.middle_button)
-        flags |= (1 << 2);
+    if (!system_abi || !system_abi->input_generate_event ||
+        !ps2_mouse_input_event)
+        return;
 
-    system_abi->handle_mouse_event(flags, event.x, event.y, -event.z);
+    struct timespec now;
+    if (!ps2_input_now(ps2_mouse_input_event, &now))
+        return;
+
+    bool emitted = false;
+
+    if (event.x) {
+        system_abi->input_generate_event(ps2_mouse_input_event, EV_REL, REL_X,
+                                         event.x, now.tv_sec,
+                                         now.tv_nsec / 1000);
+        emitted = true;
+    }
+    if (event.y) {
+        system_abi->input_generate_event(ps2_mouse_input_event, EV_REL, REL_Y,
+                                         event.y, now.tv_sec,
+                                         now.tv_nsec / 1000);
+        emitted = true;
+    }
+    if (event.z) {
+        system_abi->input_generate_event(ps2_mouse_input_event, EV_REL,
+                                         REL_WHEEL, -event.z, now.tv_sec,
+                                         now.tv_nsec / 1000);
+        emitted = true;
+    }
+
+    if (ps2_state.mouse_left_pressed != event.left_button) {
+        ps2_state.mouse_left_pressed = event.left_button;
+        system_abi->input_generate_event(ps2_mouse_input_event, EV_KEY,
+                                         BTN_LEFT, event.left_button ? 1 : 0,
+                                         now.tv_sec, now.tv_nsec / 1000);
+        emitted = true;
+    }
+    if (ps2_state.mouse_right_pressed != event.right_button) {
+        ps2_state.mouse_right_pressed = event.right_button;
+        system_abi->input_generate_event(ps2_mouse_input_event, EV_KEY,
+                                         BTN_RIGHT, event.right_button ? 1 : 0,
+                                         now.tv_sec, now.tv_nsec / 1000);
+        emitted = true;
+    }
+    if (ps2_state.mouse_middle_pressed != event.middle_button) {
+        ps2_state.mouse_middle_pressed = event.middle_button;
+        system_abi->input_generate_event(
+            ps2_mouse_input_event, EV_KEY, BTN_MIDDLE,
+            event.middle_button ? 1 : 0, now.tv_sec, now.tv_nsec / 1000);
+        emitted = true;
+    }
+
+    if (emitted) {
+        system_abi->input_generate_event(ps2_mouse_input_event, EV_SYN,
+                                         SYN_REPORT, 0, now.tv_sec,
+                                         now.tv_nsec / 1000);
+    }
 }
 
 // 初始化PS/2控制器
@@ -205,9 +507,6 @@ bool ps2_init(void) {
     return ps2_state.port1_available || ps2_state.port2_available;
 }
 
-dev_input_event_t *kb_input_event = NULL;
-dev_input_event_t *mouse_input_event = NULL;
-
 // 初始化键盘
 bool ps2_keyboard_init(void) {
     if (!ps2_state.port1_available) {
@@ -250,12 +549,13 @@ bool ps2_keyboard_init(void) {
 
     ps2_keyboard_set_callback(ps2_keyboard_callback);
 
-    regist_input_dev_arg_t arg = {
-        .uevent_append = "ID_INPUT_KEYBOARD=1",
-        .from = INPUT_FROM_PS2,
-        .event_bit = kb_event_bit,
-    };
-    kb_input_event = system_abi->regist_input_dev("ps2kbd", &arg);
+    regist_input_dev_arg_t arg = {0};
+    arg.uevent_append = "ID_INPUT_KEYBOARD=1";
+    arg.from = INPUT_FROM_PS2;
+    input_dev_desc_set_event(&arg, EV_REP);
+    for (int i = KEY_ESC; i <= KEY_MENU; i++)
+        input_dev_desc_set_key(&arg, i);
+    ps2_kb_input_event = system_abi->regist_input_dev("ps2kbd", &arg);
 
     irq_regist_irq(
         PS2_KBD_INTERRUPT_VECTOR,
@@ -311,12 +611,17 @@ bool ps2_mouse_init(void) {
 
     ps2_mouse_set_callback(ps2_mouse_callback);
 
-    regist_input_dev_arg_t arg = {
-        .uevent_append = "ID_INPUT_MOUSE=1",
-        .from = INPUT_FROM_PS2,
-        .event_bit = mouse_event_bit,
-    };
-    mouse_input_event = system_abi->regist_input_dev("ps2mouse", &arg);
+    regist_input_dev_arg_t arg = {0};
+    arg.uevent_append = "ID_INPUT_MOUSE=1";
+    arg.from = INPUT_FROM_PS2;
+    input_dev_desc_set_property(&arg, INPUT_PROP_POINTER);
+    input_dev_desc_set_key(&arg, BTN_LEFT);
+    input_dev_desc_set_key(&arg, BTN_RIGHT);
+    input_dev_desc_set_key(&arg, BTN_MIDDLE);
+    input_dev_desc_set_rel(&arg, REL_X);
+    input_dev_desc_set_rel(&arg, REL_Y);
+    input_dev_desc_set_rel(&arg, REL_WHEEL);
+    ps2_mouse_input_event = system_abi->regist_input_dev("ps2mouse", &arg);
 
     irq_regist_irq(
         PS2_MOUSE_INTERRUPT_VECTOR,
@@ -431,145 +736,3 @@ void ps2_mouse_set_callback(ps2_mouse_callback_t callback) {
 }
 
 bool ps2_mouse_has_wheel(void) { return ps2_state.mouse_has_wheel; }
-
-size_t kb_event_bit(void *data, uint64_t request, void *arg) {
-    size_t number = _IOC_NR(request);
-    size_t size = _IOC_SIZE(request);
-
-    size_t ret = (size_t)-ENOSYS;
-    switch (number) {
-    // case 0x03:
-    // {
-    //     struct input_repeat_params *params = arg;
-    //     params->delay = 500;
-    //     params->period = 50;
-    //     break;
-    // }
-    case 0x20: {
-        size_t out = (1 << EV_KEY);
-        ret = MIN(sizeof(size_t), size);
-        memcpy(arg, &out, ret);
-        break;
-    }
-    case (0x20 + EV_SW):
-    case (0x20 + EV_MSC):
-    case (0x20 + EV_SND):
-    case (0x20 + EV_LED):
-    case (0x20 + EV_REL):
-    case (0x20 + EV_ABS): {
-        *(size_t *)arg = 0;
-        ret = MIN(sizeof(size_t), size);
-        break;
-    }
-    case (0x20 + EV_FF): {
-        *(size_t *)arg = 0;
-        ret = MIN(16, size);
-        break;
-    }
-    case (0x20 + EV_KEY): {
-        uint8_t map[96] = {0};
-        for (int i = KEY_ESC; i <= KEY_MENU; i++)
-            map[i / 8] |= (1 << (i % 8));
-        ret = MIN(96, size);
-        memcpy(arg, map, ret);
-        break;
-    }
-    case 0x18: // EVIOCGKEY()
-    {
-        uint8_t map[96];
-        memset(map, 0, sizeof(map));
-        ret = MIN(96, size);
-        memcpy(arg, map, ret);
-        break;
-    }
-    case 0x19: // EVIOCGLED()
-        *(size_t *)arg = 0;
-        ret = MIN(8, size);
-        break;
-    case 0x1b: // EVIOCGSW()
-        *(size_t *)arg = 0;
-        ret = MIN(8, size);
-        break;
-    case 0xa0:
-        dev_input_event_t *event = data;
-        event->clock_id = *(int *)arg;
-        ret = 0;
-        break;
-    default:
-        printk("kb_event_bit(): Unsupported ioctl: request = %#018lx\n",
-               request);
-        break;
-    }
-
-    return ret;
-}
-
-size_t mouse_event_bit(void *data, uint64_t request, void *arg) {
-    size_t number = _IOC_NR(request);
-    size_t size = _IOC_SIZE(request);
-
-    size_t ret = (size_t)-ENOSYS;
-    switch (number) {
-    // case 0x03:
-    // {
-    //     struct input_repeat_params *params = arg;
-    //     params->delay = 500;
-    //     params->period = 50;
-    //     break;
-    // }
-    case 0x20: {
-        size_t out = (1 << EV_KEY) | (1 << EV_REL);
-        ret = MIN(sizeof(size_t), size);
-        memcpy(arg, &out, ret);
-        break;
-    }
-    case (0x20 + EV_SW):
-    case (0x20 + EV_MSC):
-    case (0x20 + EV_SND):
-    case (0x20 + EV_LED):
-    case (0x20 + EV_ABS): {
-        *(size_t *)arg = 0;
-        ret = MIN(sizeof(size_t), size);
-        break;
-    }
-    case (0x20 + EV_FF): {
-        *(size_t *)arg = 0;
-        ret = MIN(16, size);
-        break;
-    }
-    case (0x20 + EV_REL): {
-        size_t out = (1 << REL_X) | (1 << REL_Y) | (1 << REL_WHEEL);
-        ret = MIN(sizeof(size_t), size);
-        memcpy(arg, &out, ret);
-        break;
-    }
-    case (0x20 + EV_KEY): {
-        uint8_t map[96] = {0};
-        map[BTN_RIGHT / 8] |= (1 << (BTN_RIGHT % 8));
-        map[BTN_LEFT / 8] |= (1 << (BTN_LEFT % 8));
-        ret = MIN(96, size);
-        memcpy(arg, map, ret);
-        break;
-    }
-    case 0x18: // EVIOCGKEY()
-        ret = MIN(96, size);
-        break;
-    case 0x19: // EVIOCGLED()
-        ret = MIN(8, size);
-        break;
-    case 0x1b: // EVIOCGSW()
-        ret = MIN(8, size);
-        break;
-    case 0xa0:
-        dev_input_event_t *event = data;
-        event->clock_id = *(int *)arg;
-        ret = 0;
-        break;
-    default:
-        printk("mouse_event_bit(): Unsupported ioctl: request = %#018lx\n",
-               request);
-        break;
-    }
-
-    return ret;
-}
