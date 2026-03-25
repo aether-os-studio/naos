@@ -39,12 +39,10 @@ static int mount_handle_create_root(mount_handle_t *mnt_handle) {
     if (mnt_handle->root_node)
         return 0;
 
-    vfs_node_t *root = vfs_node_alloc(NULL, NULL);
+    vfs_node_t *root = vfs_create_detached_mount_root(NULL);
     if (!root)
         return -ENOMEM;
 
-    root->type = file_dir;
-    root->root = root;
     vfs_node_ref_get(root);
 
     int ret = mnt_handle->fs->ops->mount(mnt_handle->dev, root);
@@ -737,17 +735,17 @@ uint64_t sys_move_mount(int from_dfd, const char *from_pathname_user,
             return -EINVAL;
         if (!mnt_handle->root_node)
             return -EINVAL;
+        struct mount_point *target_mnt = task_mnt_namespace_find_mount_by_root(
+            current_task->nsproxy->mnt_ns, target_dir);
+        if (target_mnt)
+            target_dir = target_mnt->dir;
         if (vfs_is_ancestor(mnt_handle->root_node, target_dir))
             return -EINVAL;
 
-        int ret = 0;
         task_mnt_namespace_add_mount(
             current_task->nsproxy->mnt_ns, mnt_handle->fs, target_dir,
             mnt_handle->root_node,
             mnt_handle->source ? mnt_handle->source : "none");
-        if (ret < 0)
-            return ret;
-
         mnt_handle->attached = true;
         return 0;
     }
@@ -761,11 +759,16 @@ uint64_t sys_move_mount(int from_dfd, const char *from_pathname_user,
             !current_task->nsproxy->mnt_ns)
             return -EINVAL;
 
-        struct mount_point *mnt = task_mnt_namespace_find_mount(
+        struct mount_point *target_mnt = task_mnt_namespace_find_mount_by_root(
+            current_task->nsproxy->mnt_ns, target_dir);
+        if (target_mnt)
+            target_dir = target_mnt->dir;
+
+        struct mount_point *mnt = task_mnt_namespace_find_mount_by_root(
             current_task->nsproxy->mnt_ns, source_mount);
         if (!mnt)
-            mnt = task_mnt_namespace_find_mount_by_root(
-                current_task->nsproxy->mnt_ns, source_mount);
+            mnt = task_mnt_namespace_find_mount(current_task->nsproxy->mnt_ns,
+                                                source_mount);
         if (!mnt)
             return -EINVAL;
         if (mnt->dir == target_dir)

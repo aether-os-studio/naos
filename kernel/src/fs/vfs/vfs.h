@@ -421,6 +421,9 @@ struct mount_point {
     char *devname;
 };
 
+vfs_node_t *vfs_create_detached_mount_root(vfs_node_t *dir);
+int vfs_bind_mount_root(vfs_node_t *root, vfs_node_t *dir);
+
 #define IN_ACCESS 0x1
 #define IN_ATTRIB 0x4
 #define IN_CLOSE_WRITE 0x8

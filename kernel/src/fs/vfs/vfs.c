@@ -244,7 +244,7 @@ void vfs_free_handle(vfs_node_t *node) {
 void vfs_free(vfs_node_t *vfs) {
     if (vfs == NULL)
         return;
-    if (vfs == vfs->root)
+    if (vfs == rootdir)
         return;
     llist_delete(&vfs->node);
     hashmap_remove(&vfs_inode_map, vfs->inode);
@@ -267,6 +267,37 @@ void vfs_free(vfs_node_t *vfs) {
     if (vfs->name)
         free(vfs->name);
     free(vfs);
+}
+
+vfs_node_t *vfs_create_detached_mount_root(vfs_node_t *dir) {
+    vfs_node_t *root = vfs_node_alloc(NULL, dir ? dir->name : NULL);
+    if (!root)
+        return NULL;
+
+    root->type = file_dir;
+    root->root = root;
+
+    if (dir && vfs_bind_mount_root(root, dir) < 0) {
+        vfs_free(root);
+        return NULL;
+    }
+
+    return root;
+}
+
+int vfs_bind_mount_root(vfs_node_t *root, vfs_node_t *dir) {
+    if (!root || !dir)
+        return -EINVAL;
+
+    char *name = dir->name ? strdup(dir->name) : NULL;
+    if (dir->name && !name)
+        return -ENOMEM;
+
+    free(root->name);
+    root->name = name;
+    root->parent = dir->parent;
+    root->root = root;
+    return 0;
 }
 
 void vfs_merge_nodes_to(vfs_node_t *dest, vfs_node_t *source) {
@@ -1576,7 +1607,6 @@ int vfs_mount(uint64_t dev, vfs_node_t *node, const char *type) {
                 return 0;
             } else {
                 node->root = old_root;
-                printk("Mount fs %s failed, ret = %d\n", type, ret);
                 return ret;
             }
         }

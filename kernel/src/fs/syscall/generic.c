@@ -297,6 +297,13 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
         return (uint64_t)-ENOENT;
     }
 
+    task_mount_namespace_t *mnt_ns = (current_task && current_task->nsproxy)
+                                         ? current_task->nsproxy->mnt_ns
+                                         : NULL;
+    struct mount_point *visible_mnt =
+        mnt_ns ? task_mnt_namespace_find_mount_by_root(mnt_ns, dir) : NULL;
+    vfs_node_t *target_dir = visible_mnt ? visible_mnt->dir : dir;
+
     if (flags & MS_MOVE) {
         if (flags & (MS_REMOUNT | MS_BIND)) {
             return (uint64_t)-EINVAL;
@@ -312,23 +319,23 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
         if (!(old_mount->type & file_dir))
             return (uint64_t)-ENOTDIR;
 
-        struct mount_point *mnt = task_mnt_namespace_find_mount(
+        struct mount_point *mnt = task_mnt_namespace_find_mount_by_root(
             current_task->nsproxy->mnt_ns, old_mount);
         if (!mnt)
-            mnt = task_mnt_namespace_find_mount_by_root(
-                current_task->nsproxy->mnt_ns, old_mount);
+            mnt = task_mnt_namespace_find_mount(current_task->nsproxy->mnt_ns,
+                                                old_mount);
         if (!mnt)
             return (uint64_t)-EINVAL;
-        if (mnt->dir == dir)
+        if (mnt->dir == target_dir)
             return 0;
         if (vfs_is_ancestor(mnt->root_node, dir))
             return (uint64_t)-EINVAL;
 
-        if (!(dir->type & file_dir))
+        if (!(target_dir->type & file_dir))
             return (uint64_t)-ENOTDIR;
 
         return task_mnt_namespace_move_mount(current_task->nsproxy->mnt_ns,
-                                             mnt->dir, dir);
+                                             mnt->dir, target_dir);
     }
 
     if (flags & MS_REMOUNT) {
@@ -337,12 +344,14 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
         if (!current_task || !current_task->nsproxy ||
             !current_task->nsproxy->mnt_ns)
             return (uint64_t)-EINVAL;
-        if (!task_mnt_namespace_find_mount(current_task->nsproxy->mnt_ns, dir))
+        if (!task_mnt_namespace_find_mount_by_root(
+                current_task->nsproxy->mnt_ns, dir) &&
+            !task_mnt_namespace_find_mount(current_task->nsproxy->mnt_ns, dir))
             return (uint64_t)-EINVAL;
         return 0;
     }
 
-    if (dir == dir->root)
+    if (target_dir == target_dir->root)
         return -EBUSY;
 
     uint64_t dev_nr = 0;
@@ -351,13 +360,23 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
         dev_nr = dev->rdev;
     }
 
-    int ret = vfs_mount(dev_nr, dir, (const char *)type);
-    if (ret < 0)
+    if (mnt_ns) {
+        vfs_node_t *root_node = vfs_create_detached_mount_root(target_dir);
+        if (!root_node)
+            return -ENOMEM;
+
+        int ret = vfs_mount(dev_nr, root_node, (const char *)type);
+        if (ret < 0) {
+            vfs_free(root_node);
+            return ret;
+        }
+
+        task_mnt_namespace_add_mount(mnt_ns, all_fs[root_node->fsid],
+                                     target_dir, root_node, devname);
         return ret;
-    if (current_task && current_task->nsproxy && current_task->nsproxy->mnt_ns)
-        task_mnt_namespace_add_mount(current_task->nsproxy->mnt_ns,
-                                     all_fs[dir->fsid], dir, dir, devname);
-    return ret;
+    }
+
+    return vfs_mount(dev_nr, dir, (const char *)type);
 }
 
 uint64_t sys_umount2(const char *target, uint64_t flags) {
@@ -372,19 +391,21 @@ uint64_t sys_umount2(const char *target, uint64_t flags) {
     struct mount_point *mnt = NULL;
     if (current_task && current_task->nsproxy &&
         current_task->nsproxy->mnt_ns) {
-        mnt =
-            task_mnt_namespace_find_mount(current_task->nsproxy->mnt_ns, node);
+        mnt = task_mnt_namespace_find_mount_by_root(
+            current_task->nsproxy->mnt_ns, node);
         if (!mnt)
-            mnt = task_mnt_namespace_find_mount_by_root(
-                current_task->nsproxy->mnt_ns, node);
+            mnt = task_mnt_namespace_find_mount(current_task->nsproxy->mnt_ns,
+                                                node);
     }
 
     int ret = 0;
-    if (mnt && mnt->root_node && mnt->root_node != node) {
+    if (mnt && mnt->root_node) {
         if (!mnt->fs || !mnt->fs->ops || !mnt->fs->ops->unmount)
             return (uint64_t)-EINVAL;
         mnt->fs->ops->unmount(mnt->root_node);
-        vfs_close(mnt->root_node);
+        task_mnt_namespace_remove_mount(current_task->nsproxy->mnt_ns,
+                                        mnt->root_node);
+        return 0;
     } else {
         ret = vfs_unmount(target_k);
         if (ret < 0)

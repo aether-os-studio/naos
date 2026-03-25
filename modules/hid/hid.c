@@ -5,9 +5,6 @@
 #include <libs/keys.h>
 #include <task/task.h>
 
-extern dev_input_event_t *kb_input_event;
-extern dev_input_event_t *mouse_input_event;
-
 #define USB_DT_HID 0x21
 #define USB_DT_REPORT 0x22
 

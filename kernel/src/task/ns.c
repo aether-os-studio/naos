@@ -158,11 +158,29 @@ task_mount_namespace_create(vfs_node_t *root,
     vfs_node_ref_get(root);
 
     if (parent) {
+        size_t count = 0;
         struct mount_point *mnt = NULL, *tmp = NULL;
+        llist_for_each(mnt, tmp, &parent->mount_points, node) { count++; }
+
+        struct mount_point **mounts = calloc(count, sizeof(*mounts));
+        if (!mounts) {
+            vfs_close(mnt_ns->root);
+            free(mnt_ns);
+            return NULL;
+        }
+
+        size_t idx = 0;
         llist_for_each(mnt, tmp, &parent->mount_points, node) {
+            mounts[idx++] = mnt;
+        }
+
+        while (idx > 0) {
+            mnt = mounts[--idx];
             task_mnt_namespace_add_mount(mnt_ns, mnt->fs, mnt->dir,
                                          mnt->root_node, mnt->devname);
         }
+
+        free(mounts);
     }
     return mnt_ns;
 }
@@ -267,22 +285,10 @@ void task_mnt_namespace_add_mount(task_mount_namespace_t *mnt_ns, struct fs *fs,
     if (!mnt_ns || !fs || !dir || !root_node || !devname)
         return;
 
-    struct mount_point *mnt = task_mnt_namespace_find_mount(mnt_ns, dir);
-    if (mnt) {
-        vfs_close(mnt->dir);
-        vfs_close(mnt->root_node);
-        mnt->fs = fs;
-        mnt->root_node = root_node;
-        mnt->dir = dir;
-        mnt->original_dir_root = dir->root;
-        vfs_node_ref_get(dir);
-        vfs_node_ref_get(root_node);
-        free(mnt->devname);
-        mnt->devname = strdup(devname);
+    if (root_node != dir && vfs_bind_mount_root(root_node, dir) < 0)
         return;
-    }
 
-    mnt = calloc(1, sizeof(struct mount_point));
+    struct mount_point *mnt = calloc(1, sizeof(struct mount_point));
     if (!mnt)
         return;
 
@@ -299,44 +305,48 @@ void task_mnt_namespace_add_mount(task_mount_namespace_t *mnt_ns, struct fs *fs,
 
 void task_mnt_namespace_remove_mount(task_mount_namespace_t *mnt_ns,
                                      vfs_node_t *dir) {
-    struct mount_point *mnt = task_mnt_namespace_find_mount(mnt_ns, dir);
+    struct mount_point *mnt =
+        task_mnt_namespace_find_mount_by_root(mnt_ns, dir);
+    if (!mnt)
+        mnt = task_mnt_namespace_find_mount(mnt_ns, dir);
     if (!mnt)
         return;
 
     llist_delete(&mnt->node);
     vfs_close(mnt->dir);
-    vfs_close(mnt->root_node);
+    if (mnt->root_node != mnt->dir) {
+        vfs_free(mnt->root_node);
+    } else {
+        vfs_close(mnt->root_node);
+    }
     free(mnt->devname);
     free(mnt);
 }
 
 int task_mnt_namespace_move_mount(task_mount_namespace_t *mnt_ns,
                                   vfs_node_t *old_dir, vfs_node_t *new_dir) {
-    struct mount_point *mnt = task_mnt_namespace_find_mount(mnt_ns, old_dir);
+    struct mount_point *mnt =
+        task_mnt_namespace_find_mount_by_root(mnt_ns, old_dir);
+    if (!mnt)
+        mnt = task_mnt_namespace_find_mount(mnt_ns, old_dir);
     if (!mnt)
         return -ENOENT;
 
     if (!(new_dir->type & file_dir))
         return -ENOTDIR;
 
-    if (new_dir->root == new_dir) {
-        struct mount_point *target_mnt =
-            task_mnt_namespace_find_mount(mnt_ns, new_dir);
-        if (target_mnt)
-            return -EBUSY;
-    }
-
     if (vfs_is_ancestor(mnt->root_node, new_dir))
         return -EINVAL;
 
+    if (mnt->root_node != mnt->dir &&
+        vfs_bind_mount_root(mnt->root_node, new_dir) < 0) {
+        return -ENOMEM;
+    }
+
     vfs_node_ref_get(new_dir);
     vfs_close(mnt->dir);
-
-    vfs_node_t *new_dir_original_root = new_dir->root;
-    old_dir->root = mnt->original_dir_root;
-    new_dir->root = new_dir;
     mnt->dir = new_dir;
-    mnt->original_dir_root = new_dir_original_root;
+    mnt->original_dir_root = new_dir->root;
 
     return 0;
 }
@@ -372,12 +382,25 @@ task_ns_proxy_t *task_ns_proxy_create_initial(void) {
         return NULL;
     }
 
+    size_t count = 0;
     struct mount_point *mnt = NULL, *tmp = NULL;
-    llist_for_each(mnt, tmp, &mount_points, node) {
+    llist_for_each(mnt, tmp, &mount_points, node) { count++; }
+
+    struct mount_point **mounts = calloc(count, sizeof(*mounts));
+    if (!mounts)
+        return nsproxy;
+
+    size_t idx = 0;
+    llist_for_each(mnt, tmp, &mount_points, node) { mounts[idx++] = mnt; }
+
+    while (idx > 0) {
+        mnt = mounts[--idx];
         task_mnt_namespace_add_mount(nsproxy->mnt_ns, mnt->fs, mnt->dir,
                                      mnt->root_node ? mnt->root_node : mnt->dir,
                                      mnt->devname);
     }
+
+    free(mounts);
 
     return nsproxy;
 }
