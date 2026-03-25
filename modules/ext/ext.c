@@ -2581,16 +2581,15 @@ int ext_link(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     if (!parent || !name || !node)
         return -EINVAL;
 
-    spin_lock(&rwlock);
     ext_mount_ctx_t *fs = ext_find_mount(parent);
     if (!fs) {
-        spin_unlock(&rwlock);
         return -ENOENT;
     }
 
     vfs_node_t *target = vfs_open(name, O_NOFOLLOW);
-    int ret = target ? ext_link_node_locked(fs, parent, target, node) : -ENOENT;
 
+    spin_lock(&rwlock);
+    int ret = target ? ext_link_node_locked(fs, parent, target, node) : -ENOENT;
     spin_unlock(&rwlock);
     return ret;
 }
