@@ -1,3 +1,4 @@
+#include <boot/boot.h>
 #include <libs/rbtree.h>
 #include <arch/arch.h>
 #include <task/task.h>
@@ -38,6 +39,14 @@ spinlock_t worker_tick_locks[MAX_WORKER_NUM];
 uint32_t worker_slot_by_cpu[MAX_CPU_NUM];
 
 static void sched_update_itimer_task(task_t *task, uint64_t now_ms);
+
+static inline uint64_t task_timer_current_time_ns(clockid_t clock_type) {
+    if (clock_type == CLOCK_REALTIME) {
+        return boot_get_boottime() * 1000000000ULL + nano_time();
+    }
+
+    return nano_time();
+}
 void task_refresh_tick_work_state(task_t *task);
 
 static task_sighand_t *task_sighand_alloc(void) {
@@ -824,6 +833,8 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->env_start = 0;
     task->env_end = 0;
 
+    spin_init(&task->timers_lock);
+
     task_init_default_rlimits(task);
 
     task->clone_flags = 0;
@@ -1260,15 +1271,29 @@ static void sched_update_itimer_task(task_t *task, uint64_t now_ms) {
 
     for (int j = 0; j < MAX_TIMERS_NUM; j++) {
         if (task->timers[j] == NULL)
-            break;
+            continue;
         kernel_timer_t *kt = task->timers[j];
-        if (kt->expires && now_ms >= kt->expires) {
-            task_commit_signal(task, kt->sigev_signo, NULL);
+        uint64_t now_ns = task_timer_current_time_ns(kt->clock_type);
 
-            if (kt->interval)
-                kt->expires += kt->interval;
-            else
+        if (kt->expires && now_ns >= kt->expires) {
+            if (kt->sigev_notify == SIGEV_SIGNAL) {
+                siginfo_t info;
+                memset(&info, 0, sizeof(info));
+                info.si_signo = kt->sigev_signo;
+                info.si_code = SI_TIMER;
+                info._sifields._timer._tid = j;
+                info._sifields._timer._overrun = 0;
+                info._sifields._timer._sigval = kt->sigev_value;
+                task_commit_signal(task, kt->sigev_signo, &info);
+            }
+
+            if (kt->interval) {
+                uint64_t delta = now_ns - kt->expires;
+                uint64_t periods = delta / kt->interval + 1;
+                kt->expires += periods * kt->interval;
+            } else {
                 kt->expires = 0;
+            }
         }
     }
 

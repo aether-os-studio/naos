@@ -233,6 +233,53 @@ static inline void socket_notify_sock(socket_t *sock, uint32_t events) {
     socket_notify_node(sock->node, events);
 }
 
+static bool unix_socket_backlog_reserve_locked(socket_t *sock,
+                                               int min_capacity) {
+    if (!sock || min_capacity <= 0)
+        return true;
+
+    if (sock->backlogCap >= min_capacity)
+        return true;
+
+    if (sock->connMax <= 0 || min_capacity > sock->connMax)
+        return false;
+
+    int new_capacity = sock->backlogCap;
+    if (new_capacity <= 0)
+        new_capacity = MIN(sock->connMax, 16);
+
+    while (new_capacity < min_capacity) {
+        if (new_capacity >= sock->connMax) {
+            new_capacity = sock->connMax;
+            break;
+        }
+
+        if (new_capacity > sock->connMax / 2) {
+            new_capacity = sock->connMax;
+        } else {
+            new_capacity *= 2;
+        }
+    }
+
+    if (new_capacity < min_capacity)
+        return false;
+
+    socket_t **new_backlog = calloc((size_t)new_capacity, sizeof(*new_backlog));
+    if (!new_backlog)
+        return false;
+
+    for (int i = 0; i < sock->connCurr; i++) {
+        int slot = (sock->connHead + i) % sock->backlogCap;
+        new_backlog[i] = sock->backlog[slot];
+    }
+
+    free(sock->backlog);
+    sock->backlog = new_backlog;
+    sock->backlogCap = new_capacity;
+    sock->connHead = 0;
+    return true;
+}
+
 static inline size_t unix_socket_recv_used_locked(const socket_t *sock) {
     return sock ? sock->recv_pos : 0;
 }
@@ -1158,14 +1205,9 @@ int socket_listen(uint64_t fd, int backlog) {
         sock->backlog = NULL;
     }
     sock->connMax = backlog;
-    sock->backlog = calloc(sock->connMax, sizeof(socket_t *));
     sock->connCurr = 0;
     sock->connHead = 0;
-    if (sock->connMax > 0 && !sock->backlog) {
-        sock->connMax = 0;
-        mutex_unlock(&sock->lock);
-        return -ENOMEM;
-    }
+    sock->backlogCap = 0;
     mutex_unlock(&sock->lock);
     return 0;
 }
@@ -1201,7 +1243,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
 
     bool listener_nonblock = !!(fd_get_flags(listener_fd) & O_NONBLOCK);
 
-    if (!listen_sock->connMax || !listen_sock->backlog) {
+    if (!listen_sock->connMax) {
         fd_release(listener_fd);
         return -EINVAL;
     }
@@ -1215,7 +1257,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
             server_sock = listen_sock->backlog[head];
             listen_sock->backlog[head] = NULL;
             listen_sock->connHead =
-                (listen_sock->connHead + 1) % listen_sock->connMax;
+                (listen_sock->connHead + 1) % listen_sock->backlogCap;
             listen_sock->connCurr--;
             if (listen_sock->connCurr == 0)
                 listen_sock->connHead = 0;
@@ -1381,8 +1423,7 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
 
     while (true) {
         mutex_lock(&listen_sock->lock);
-        if (listen_sock->closed || !listen_sock->connMax ||
-            !listen_sock->backlog) {
+        if (listen_sock->closed || !listen_sock->connMax) {
             mutex_unlock(&listen_sock->lock);
             unix_socket_release_lookup_ref(listen_sock);
             return -ECONNREFUSED;
@@ -1434,7 +1475,7 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
     sock->established = true;
 
     mutex_lock(&listen_sock->lock);
-    if (listen_sock->closed || !listen_sock->connMax || !listen_sock->backlog ||
+    if (listen_sock->closed || !listen_sock->connMax ||
         listen_sock->connCurr >= listen_sock->connMax) {
         mutex_unlock(&listen_sock->lock);
         sock->peer = NULL;
@@ -1444,8 +1485,18 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
         unix_socket_free(server_sock);
         return -ECONNREFUSED;
     }
-    int tail =
-        (listen_sock->connHead + listen_sock->connCurr) % listen_sock->connMax;
+    if (!unix_socket_backlog_reserve_locked(listen_sock,
+                                            listen_sock->connCurr + 1)) {
+        mutex_unlock(&listen_sock->lock);
+        sock->peer = NULL;
+        sock->established = false;
+        server_sock->peer = NULL;
+        unix_socket_release_lookup_ref(listen_sock);
+        unix_socket_free(server_sock);
+        return -ENOMEM;
+    }
+    int tail = (listen_sock->connHead + listen_sock->connCurr) %
+               listen_sock->backlogCap;
     listen_sock->backlog[tail] = server_sock;
     listen_sock->connCurr++;
     mutex_unlock(&listen_sock->lock);
@@ -1835,10 +1886,10 @@ bool socket_close(vfs_node_t *node) {
     // 标记关闭（在锁内设置）
     sock->closed = true;
     sock->node = NULL;
-    if (sock->connMax > 0 && sock->backlog && sock->connCurr > 0) {
+    if (sock->connMax > 0 && sock->backlogCap > 0 && sock->connCurr > 0) {
         int pending = sock->connCurr;
         for (int i = 0; i < pending; i++) {
-            int slot = (sock->connHead + i) % sock->connMax;
+            int slot = (sock->connHead + i) % sock->backlogCap;
             socket_t *pending_sock = sock->backlog[slot];
             sock->backlog[slot] = NULL;
             if (!pending_sock)

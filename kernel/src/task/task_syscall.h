@@ -201,8 +201,9 @@ uint64_t sys_rseq(void *rseq, uint32_t rseq_len, int flags, uint32_t sig);
 uint64_t sys_alarm(uint64_t seconds);
 uint64_t sys_timer_create(clockid_t clockid, struct sigevent *sevp,
                           timer_t *timerid);
-uint64_t sys_timer_settime(timer_t timerid, const struct itimerval *new_value,
-                           struct itimerval *old_value);
+uint64_t sys_timer_settime(timer_t timerid, int flags,
+                           const struct itimerspec *new_value,
+                           struct itimerspec *old_value);
 
 uint64_t sys_reboot(int magic1, int magic2, uint32_t cmd, void *arg);
 

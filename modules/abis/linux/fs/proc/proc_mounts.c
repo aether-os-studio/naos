@@ -1,10 +1,6 @@
 #include <fs/proc/proc.h>
 
-char *mount_info =
-    "dev /dev devtmpfs rw,nosuid,relatime,mode=755,inode64 0 0\n"
-    "proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n"
-    "tmpfs /tmp tmpfs "
-    "rw,nosuid,size=8040232k,nr_inodes=1048576,nodev,inode64,usrquota 0 0";
+const char *mount_info = "";
 
 size_t proc_mounts_stat(proc_handle_t *handle) { return strlen(mount_info); }
 

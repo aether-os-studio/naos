@@ -256,7 +256,7 @@ static inline void select_bitmap_set(uint8_t *map, int index) {
 
 size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
                   struct timeval *timeout) {
-    size_t complength = sizeof(struct pollfd) * nfds * 3;
+    size_t complength = sizeof(struct pollfd) * nfds * 8;
     struct pollfd *comp = (struct pollfd *)malloc(complength);
     size_t compIndex = 0;
     if (read) {

@@ -330,6 +330,7 @@ typedef struct task {
     uint64_t env_start;
     uint64_t env_end;
     int_timer_internal_t itimer_real;
+    spinlock_t timers_lock;
     kernel_timer_t *timers[MAX_TIMERS_NUM];
     struct rlimit rlim[16];
     uint64_t parent_death_sig;

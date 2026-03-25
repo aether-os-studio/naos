@@ -55,21 +55,27 @@ ssize_t procfs_readlink(vfs_node_t *node, void *addr, size_t offset,
     if (!strcmp(handle->name, "proc_exe") && task->exec_node) {
         char *fullpath = vfs_get_fullpath_at(task->exec_node, task->fs->root);
         int len = strlen(fullpath);
-        len = MIN(len, size);
-        memcpy(addr, fullpath, len);
+        if (offset >= len)
+            return 0;
+        len = MIN(len - offset, size);
+        memcpy(addr, fullpath + offset, len);
         return len;
     }
     if (!strcmp(handle->name, "proc_root")) {
         const char *fullpath = "/";
         int len = strlen(fullpath);
-        len = MIN(len, size);
-        memcpy(addr, fullpath, len);
+        if (offset >= len)
+            return 0;
+        len = MIN(len - offset, size);
+        memcpy(addr, fullpath + offset, len);
         return len;
     }
     if (!strcmp(handle->name, "fd")) {
         int len = strlen(handle->content);
-        len = MIN(len, size);
-        memcpy(addr, handle->content, len);
+        if (offset >= len)
+            return 0;
+        len = MIN(len - offset, size);
+        memcpy(addr, handle->content + offset, len);
         return len;
     }
 

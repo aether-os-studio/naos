@@ -9,6 +9,47 @@ extern hashmap_t task_parent_map;
 extern hashmap_t task_pgid_map;
 extern spinlock_t should_free_lock;
 
+static inline bool timer_clockid_supported(clockid_t clockid) {
+    return clockid == CLOCK_REALTIME || clockid == CLOCK_MONOTONIC;
+}
+
+static inline uint64_t timer_current_time_ns(clockid_t clockid) {
+    if (clockid == CLOCK_REALTIME) {
+        return boot_get_boottime() * 1000000000ULL + nano_time();
+    }
+
+    return nano_time();
+}
+
+static inline int timer_validate_spec(const struct itimerspec *spec) {
+    if (!spec)
+        return -EINVAL;
+
+    if (spec->it_value.tv_sec < 0 || spec->it_value.tv_nsec < 0 ||
+        spec->it_interval.tv_sec < 0 || spec->it_interval.tv_nsec < 0 ||
+        spec->it_value.tv_nsec >= 1000000000L ||
+        spec->it_interval.tv_nsec >= 1000000000L) {
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+static inline uint64_t timer_spec_to_ns(const struct timerfd_timespec *ts) {
+    if (!ts)
+        return 0;
+
+    return (uint64_t)ts->tv_sec * 1000000000ULL + (uint64_t)ts->tv_nsec;
+}
+
+static inline void timer_ns_to_spec(uint64_t ns, struct timerfd_timespec *ts) {
+    if (!ts)
+        return;
+
+    ts->tv_sec = ns / 1000000000ULL;
+    ts->tv_nsec = ns % 1000000000ULL;
+}
+
 static int read_task_file_into_user_memory(task_t *task, vfs_node_t *node,
                                            uint64_t uaddr, size_t offset,
                                            size_t size) {
@@ -1840,6 +1881,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         child->tidptr = child_tid;
     }
 
+    spin_init(&child->timers_lock);
+
     memcpy(child->rlim, self->rlim, sizeof(child->rlim));
 
     child->child_vfork_done = false;
@@ -2084,7 +2127,16 @@ size_t sys_setitimer(int which, struct itimerval *value,
 uint64_t sys_timer_create(clockid_t clockid, struct sigevent *sevp,
                           timer_t *timerid) {
     kernel_timer_t *kt = NULL;
+    struct sigevent ksev;
+    timer_t created_timerid;
     uint64_t i;
+
+    if (!timerid)
+        return -EFAULT;
+    if (!timer_clockid_supported(clockid))
+        return -EINVAL;
+
+    spin_lock(&current_task->timers_lock);
     for (i = 0; i < MAX_TIMERS_NUM; i++) {
         if (current_task->timers[i] == NULL) {
             kt = malloc(sizeof(kernel_timer_t));
@@ -2092,6 +2144,7 @@ uint64_t sys_timer_create(clockid_t clockid, struct sigevent *sevp,
             break;
         }
     }
+    spin_unlock(&current_task->timers_lock);
 
     if (!kt)
         return -ENOMEM;
@@ -2100,50 +2153,94 @@ uint64_t sys_timer_create(clockid_t clockid, struct sigevent *sevp,
 
     kt->clock_type = clockid;
     kt->sigev_notify = SIGEV_SIGNAL;
+    kt->sigev_signo = SIGALRM;
+
+    created_timerid = (timer_t)(uintptr_t)i;
+    kt->sigev_value.sival_ptr = created_timerid;
 
     if (sevp) {
-        struct sigevent ksev;
-        memcpy(&ksev, sevp, sizeof(struct sigevent));
+        if (copy_from_user(&ksev, sevp, sizeof(ksev))) {
+            current_task->timers[i] = NULL;
+            free(kt);
+            return -EFAULT;
+        }
+
+        if (ksev.sigev_notify != SIGEV_SIGNAL &&
+            ksev.sigev_notify != SIGEV_NONE) {
+            current_task->timers[i] = NULL;
+            free(kt);
+            return -EINVAL;
+        }
+
+        if (ksev.sigev_notify == SIGEV_SIGNAL &&
+            !signal_sig_in_range(ksev.sigev_signo)) {
+            current_task->timers[i] = NULL;
+            free(kt);
+            return -EINVAL;
+        }
 
         kt->sigev_signo = ksev.sigev_signo;
         kt->sigev_value = ksev.sigev_value;
         kt->sigev_notify = ksev.sigev_notify;
     }
 
-    *timerid = (timer_t)i;
+    if (copy_to_user(timerid, &created_timerid, sizeof(created_timerid))) {
+        current_task->timers[i] = NULL;
+        free(kt);
+        return -EFAULT;
+    }
 
     return 0;
 }
 
-uint64_t sys_timer_settime(timer_t timerid, const struct itimerval *new_value,
-                           struct itimerval *old_value) {
+uint64_t sys_timer_settime(timer_t timerid, int flags,
+                           const struct itimerspec *new_value,
+                           struct itimerspec *old_value) {
     uint64_t idx = (uint64_t)timerid;
+    struct itimerspec kts;
+    uint64_t interval;
+    uint64_t value;
+    uint64_t now;
+    uint64_t expires;
+
     if (idx >= MAX_TIMERS_NUM)
+        return -EINVAL;
+    if (!new_value)
+        return -EINVAL;
+    if (flags & ~TIMER_ABSTIME)
         return -EINVAL;
 
     kernel_timer_t *kt = current_task->timers[idx];
+    if (!kt)
+        return -EINVAL;
 
-    struct itimerval kts;
-    memcpy(&kts, new_value, sizeof(*new_value));
+    if (copy_from_user(&kts, new_value, sizeof(kts)))
+        return -EFAULT;
+    if (timer_validate_spec(&kts))
+        return -EINVAL;
 
-    uint64_t interval = new_value->it_interval.tv_sec * 1000 +
-                        new_value->it_interval.tv_usec / 1000;
-    uint64_t expires =
-        new_value->it_value.tv_sec * 1000 + new_value->it_value.tv_usec / 1000;
-
-    uint64_t now = nano_time() / 1000000;
+    interval = timer_spec_to_ns(&kts.it_interval);
+    value = timer_spec_to_ns(&kts.it_value);
+    now = timer_current_time_ns(kt->clock_type);
 
     if (old_value) {
-        struct itimerval old;
-        old.it_interval.tv_sec = kt->interval / 1000;
-        old.it_interval.tv_usec = (kt->interval % 1000) * 1000000;
-        old.it_value.tv_sec = (kt->expires - now) / 1000;
-        old.it_value.tv_usec = ((kt->expires - now) % 1000) * 1000000;
-        memcpy(old_value, &old, sizeof(old));
+        struct itimerspec old = {0};
+        uint64_t remaining = kt->expires > now ? kt->expires - now : 0;
+
+        timer_ns_to_spec(kt->interval, &old.it_interval);
+        timer_ns_to_spec(remaining, &old.it_value);
+        if (copy_to_user(old_value, &old, sizeof(old)))
+            return -EFAULT;
+    }
+
+    if (flags & TIMER_ABSTIME) {
+        expires = value;
+    } else {
+        expires = value ? now + value : 0;
     }
 
     kt->interval = interval;
-    kt->expires = now + expires;
+    kt->expires = expires;
     task_refresh_tick_work_state(current_task);
 
     return 0;

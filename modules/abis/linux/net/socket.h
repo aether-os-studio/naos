@@ -97,6 +97,7 @@ typedef struct socket {
     int connMax;
     int connCurr;
     int connHead;
+    int backlogCap;
     struct socket **backlog;
 
     // accept 产生的 socket 记录文件名

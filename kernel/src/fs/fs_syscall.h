@@ -234,6 +234,10 @@ struct itimerspec {
     struct timerfd_timespec it_value;
 };
 
+#ifndef TIMER_ABSTIME
+#define TIMER_ABSTIME (1 << 0)
+#endif
+
 #define EFD_CLOEXEC 02000000
 #define EFD_NONBLOCK 04000
 #define EFD_SEMAPHORE 00000001
