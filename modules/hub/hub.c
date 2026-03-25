@@ -127,10 +127,17 @@ static usb_hub_ops_t usb_hub_op = {
     .disconnect = usb_hub_disconnect,
 };
 
+static const usb_device_id_t hub_ids[] = {
+    {
+        .match_flags = USB_DEVICE_ID_MATCH_INT_CLASS,
+        .bInterfaceClass = USB_CLASS_HUB,
+    },
+    {0},
+};
+
 int usb_hub_setup(usb_device_t *usbdev, usb_device_interface_t *iface) {
     usb_hub_op.realloc_pipe = usbdev->hub->op->realloc_pipe;
-    usb_hub_op.send_pipe = usbdev->hub->op->send_pipe;
-    usb_hub_op.send_intr_pipe = usbdev->hub->op->send_intr_pipe;
+    usb_hub_op.submit_xfer = usbdev->hub->op->submit_xfer;
 
     usb_hub_descriptor_t desc;
     int ret = get_hub_desc(usbdev->defpipe, &desc);
@@ -185,8 +192,9 @@ int usb_hub_setup(usb_device_t *usbdev, usb_device_interface_t *iface) {
 int usb_hub_remove(usb_device_t *usbdev) { return 0; }
 
 usb_driver_t hub_driver = {
-    .class = USB_CLASS_HUB,
-    .subclass = 0,
+    .name = "hub",
+    .id_table = hub_ids,
+    .priority = 0,
     .probe = usb_hub_setup,
     .remove = usb_hub_remove,
 };

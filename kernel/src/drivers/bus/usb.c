@@ -1003,16 +1003,48 @@ usb_realloc_pipe(usb_device_t *usbdev, usb_pipe_t *pipe,
     return usbdev->hub->op->realloc_pipe(usbdev, pipe, epdesc, ss_epdesc);
 }
 
+int usb_submit_xfer(usb_xfer_t *xfer) {
+    if (!xfer || !xfer->pipe || !xfer->pipe->usbdev ||
+        !xfer->pipe->usbdev->hub || !xfer->pipe->usbdev->hub->op ||
+        !xfer->pipe->usbdev->hub->op->submit_xfer) {
+        return -EINVAL;
+    }
+
+    return xfer->pipe->usbdev->hub->op->submit_xfer(xfer);
+}
+
 int usb_send_pipe(usb_pipe_t *pipe_fl, int dir, const void *cmd, void *data,
                   int datasize, uint64_t timeout_ns) {
-    return pipe_fl->usbdev->hub->op->send_pipe(pipe_fl, dir, cmd, data,
-                                               datasize, timeout_ns);
+    usb_xfer_t xfer = {
+        .pipe = pipe_fl,
+        .dir = dir,
+        .cmd = cmd,
+        .data = data,
+        .datasize = datasize,
+        .timeout_ns = timeout_ns,
+        .cb = NULL,
+        .user_data = NULL,
+        .flags = 0,
+    };
+
+    return usb_submit_xfer(&xfer);
 }
 
 int usb_send_intr_pipe(usb_pipe_t *pipe_fl, void *data_ptr, int len,
                        intr_xfer_cb cb, void *user_data) {
-    return pipe_fl->usbdev->hub->op->send_intr_pipe(pipe_fl, data_ptr, len, cb,
-                                                    user_data);
+    usb_xfer_t xfer = {
+        .pipe = pipe_fl,
+        .dir = USB_DIR_IN,
+        .cmd = NULL,
+        .data = data_ptr,
+        .datasize = len,
+        .timeout_ns = 0,
+        .cb = cb,
+        .user_data = user_data,
+        .flags = USB_XFER_ASYNC,
+    };
+
+    return usb_submit_xfer(&xfer);
 }
 
 int usb_32bit_pipe(usb_pipe_t *pipe_fl) { return 1; }
@@ -1041,7 +1073,19 @@ int usb_send_bulk(usb_pipe_t *pipe_fl, int dir, void *data, int datasize) {
 
 int usb_send_bulk_nonblock(usb_pipe_t *pipe_fl, int dir, void *data,
                            int datasize) {
-    return usb_send_pipe(pipe_fl, dir, NULL, data, datasize, 0);
+    usb_xfer_t xfer = {
+        .pipe = pipe_fl,
+        .dir = dir,
+        .cmd = NULL,
+        .data = data,
+        .datasize = datasize,
+        .timeout_ns = 0,
+        .cb = NULL,
+        .user_data = NULL,
+        .flags = USB_XFER_ASYNC,
+    };
+
+    return usb_submit_xfer(&xfer);
 }
 
 int usb_is_freelist(usb_controller_t *cntl, usb_pipe_t *pipe) {
@@ -1130,6 +1174,19 @@ usb_find_ss_desc(usb_device_interface_t *iface) {
     }
 
     return NULL;
+}
+
+int usb_set_interface(usb_device_t *usbdev, uint8_t iface_num,
+                      uint8_t alt_setting) {
+    usb_ctrl_request_t req = {
+        .bRequestType = USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_INTERFACE,
+        .bRequest = USB_REQ_SET_INTERFACE,
+        .wValue = alt_setting,
+        .wIndex = iface_num,
+        .wLength = 0,
+    };
+
+    return usb_device_control(usbdev, &req, NULL, 1000);
 }
 
 static int get_device_info8(usb_pipe_t *pipe, usb_device_descriptor_t *dinfo) {
@@ -1320,6 +1377,69 @@ static uint8_t usb_alloc_devnum(usb_controller_t *cntl) {
     return cntl->next_devnum++;
 }
 
+static int usb_match_id(const usb_device_id_t *id, usb_device_t *usbdev,
+                        usb_device_interface_t *iface) {
+    int score = 0;
+
+    if (!id || !id->match_flags)
+        return -1;
+
+    if ((id->match_flags & USB_DEVICE_ID_MATCH_VENDOR) &&
+        id->idVendor != usbdev->vendorid)
+        return -1;
+    if ((id->match_flags & USB_DEVICE_ID_MATCH_PRODUCT) &&
+        id->idProduct != usbdev->productid)
+        return -1;
+    if ((id->match_flags & USB_DEVICE_ID_MATCH_INT_CLASS) &&
+        id->bInterfaceClass != iface->iface->bInterfaceClass)
+        return -1;
+    if ((id->match_flags & USB_DEVICE_ID_MATCH_INT_SUBCLASS) &&
+        id->bInterfaceSubClass != iface->iface->bInterfaceSubClass)
+        return -1;
+    if ((id->match_flags & USB_DEVICE_ID_MATCH_INT_PROTOCOL) &&
+        id->bInterfaceProtocol != iface->iface->bInterfaceProtocol)
+        return -1;
+
+    if (id->match_flags & USB_DEVICE_ID_MATCH_VENDOR)
+        score++;
+    if (id->match_flags & USB_DEVICE_ID_MATCH_PRODUCT)
+        score++;
+    if (id->match_flags & USB_DEVICE_ID_MATCH_INT_CLASS)
+        score++;
+    if (id->match_flags & USB_DEVICE_ID_MATCH_INT_SUBCLASS)
+        score++;
+    if (id->match_flags & USB_DEVICE_ID_MATCH_INT_PROTOCOL)
+        score++;
+
+    return score;
+}
+
+static const usb_device_id_t *usb_match_driver(usb_driver_t *driver,
+                                               usb_device_t *usbdev,
+                                               usb_device_interface_t *iface,
+                                               int *score_out) {
+    const usb_device_id_t *id;
+    int best_score = -1;
+    const usb_device_id_t *best = NULL;
+
+    if (!driver || !driver->id_table)
+        return NULL;
+
+    for (id = driver->id_table; id->match_flags; id++) {
+        int score = usb_match_id(id, usbdev, iface);
+        if (score < 0)
+            continue;
+        if (score > best_score) {
+            best_score = score;
+            best = id;
+        }
+    }
+
+    if (score_out)
+        *score_out = best_score;
+    return best;
+}
+
 static int usb_bind_driver(usb_device_t *usbdev, usb_driver_t *driver) {
     for (uint8_t i = 0; i < usbdev->bound_driver_count; i++) {
         if (usbdev->bound_drivers[i] == driver)
@@ -1333,43 +1453,84 @@ static int usb_bind_driver(usb_device_t *usbdev, usb_driver_t *driver) {
     return 0;
 }
 
-static int usb_probe_interface(usb_device_t *usbdev,
-                               usb_device_interface_t *iface) {
-    for (int i = 0; i < MAX_USBDEV_NUM; i++) {
-        usb_driver_t *driver = usb_drivers[i];
-        int matched = 0;
+int usb_init_driver(usb_device_t *usbdev) {
+    typedef struct usb_probe_candidate {
+        usb_driver_t *driver;
+        usb_device_interface_t *iface;
+        int score;
+    } usb_probe_candidate_t;
 
-        if (!driver)
+    for (int iface_n = 0; iface_n < usbdev->ifaces_num; iface_n++) {
+        usb_device_interface_t *base = &usbdev->ifaces[iface_n];
+        usb_probe_candidate_t *candidates = NULL;
+        int candidate_count = 0;
+        uint8_t iface_number;
+
+        if (!base->iface)
             continue;
 
-        if (iface->iface->bInterfaceClass == USB_CLASS_VENDOR_SPEC) {
-            matched = driver->vendorid == usbdev->vendorid;
-            if (matched && driver->productid &&
-                driver->productid != usbdev->productid)
-                matched = 0;
-        } else {
-            matched = driver->class == iface->iface->bInterfaceClass;
-            if (matched && driver->subclass &&
-                driver->subclass != iface->iface->bInterfaceSubClass)
-                matched = 0;
+        iface_number = base->iface->bInterfaceNumber;
+        for (int prev = 0; prev < iface_n; prev++) {
+            if (usbdev->ifaces[prev].iface &&
+                usbdev->ifaces[prev].iface->bInterfaceNumber == iface_number) {
+                iface_number = 0xff;
+                break;
+            }
         }
 
-        if (!matched)
+        if (iface_number == 0xff)
             continue;
 
-        if (driver->probe(usbdev, iface) < 0)
-            return -1;
+        for (int j = 0; j < usbdev->ifaces_num; j++) {
+            usb_device_interface_t *iface = &usbdev->ifaces[j];
 
-        return usb_bind_driver(usbdev, driver);
-    }
+            if (!iface->iface ||
+                iface->iface->bInterfaceNumber != base->iface->bInterfaceNumber)
+                continue;
 
-    return 0;
-}
+            for (int i = 0; i < MAX_USBDEV_NUM; i++) {
+                usb_driver_t *driver = usb_drivers[i];
+                int score = -1;
 
-int usb_init_driver(usb_device_t *usbdev) {
-    for (int iface_n = 0; iface_n < usbdev->ifaces_num; iface_n++) {
-        if (usb_probe_interface(usbdev, &usbdev->ifaces[iface_n]) < 0)
-            continue;
+                if (!driver)
+                    continue;
+                if (!usb_match_driver(driver, usbdev, iface, &score))
+                    continue;
+
+                usb_probe_candidate_t *new_candidates = realloc(
+                    candidates, sizeof(*candidates) * (candidate_count + 1));
+                if (!new_candidates) {
+                    free(candidates);
+                    return -ENOMEM;
+                }
+
+                candidates = new_candidates;
+                candidates[candidate_count].driver = driver;
+                candidates[candidate_count].iface = iface;
+                candidates[candidate_count].score =
+                    score + driver->priority * 16;
+                candidate_count++;
+            }
+        }
+
+        for (int a = 0; a < candidate_count; a++) {
+            for (int b = a + 1; b < candidate_count; b++) {
+                if (candidates[b].score > candidates[a].score) {
+                    usb_probe_candidate_t tmp = candidates[a];
+                    candidates[a] = candidates[b];
+                    candidates[b] = tmp;
+                }
+            }
+        }
+
+        for (int i = 0; i < candidate_count; i++) {
+            if (candidates[i].driver->probe(usbdev, candidates[i].iface) == 0) {
+                usb_bind_driver(usbdev, candidates[i].driver);
+                break;
+            }
+        }
+
+        free(candidates);
     }
 
     return 0;

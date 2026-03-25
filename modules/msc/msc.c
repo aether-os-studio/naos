@@ -499,9 +499,15 @@ int usb_msc_remove(usb_device_t *usbdev) {
     return 0;
 }
 
+static const usb_device_id_t msc_ids[] = {
+    USB_INTERFACE_INFO(USB_CLASS_MASS_STORAGE, US_SC_SCSI, US_PR_BULK),
+    {0},
+};
+
 usb_driver_t msc_driver = {
-    .class = USB_CLASS_MASS_STORAGE,
-    .subclass = 0,
+    .name = "msc",
+    .id_table = msc_ids,
+    .priority = 0,
     .probe = usb_msc_setup,
     .remove = usb_msc_remove,
 };

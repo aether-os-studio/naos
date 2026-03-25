@@ -13,6 +13,8 @@ typedef struct usb_hub usb_hub_t;
 typedef struct usb_hub_ops usb_hub_ops_t;
 typedef struct usb_bus_notifier_ops usb_bus_notifier_ops_t;
 typedef struct usb_ctrl_request usb_ctrl_request_t;
+typedef struct usb_xfer usb_xfer_t;
+typedef struct usb_device_id usb_device_id_t;
 typedef struct usb_device_descriptor usb_device_descriptor_t;
 typedef struct usb_config_descriptor usb_config_descriptor_t;
 typedef struct usb_interface_descriptor usb_interface_descriptor_t;
@@ -28,7 +30,8 @@ typedef struct bus_device bus_device_t;
 #define EVENT_TIMEOUT -3
 #define EVENT_ERROR -4
 
-typedef void (*intr_xfer_cb)(int status, void *user_data);
+typedef void (*usb_xfer_cb)(int status, int actual_length, void *user_data);
+typedef usb_xfer_cb intr_xfer_cb;
 
 struct usb_pipe {
     union {
@@ -88,10 +91,7 @@ struct usb_hub_ops {
         usb_device_t *usbdev, usb_pipe_t *upipe,
         usb_endpoint_descriptor_t *epdesc,
         usb_super_speed_endpoint_descriptor_t *ss_epdesc);
-    int (*send_pipe)(usb_pipe_t *pipe, int dir, const void *cmd, void *data,
-                     int datasize, uint64_t timeout_ns);
-    int (*send_intr_pipe)(usb_pipe_t *pipe, void *data_ptr, int len,
-                          intr_xfer_cb cb, void *user_data);
+    int (*submit_xfer)(usb_xfer_t *xfer);
 
     int (*detect)(usb_hub_t *hub, uint32_t port);
     int (*reset)(usb_hub_t *hub, uint32_t port);
@@ -182,6 +182,7 @@ struct usb_ctrl_request {
 #define USB_DT_ENDPOINT 0x05
 #define USB_DT_DEVICE_QUALIFIER 0x06
 #define USB_DT_OTHER_SPEED_CONFIG 0x07
+#define USB_DT_PIPE_USAGE 0x24
 #define USB_DT_ENDPOINT_COMPANION 0x30
 
 struct usb_device_descriptor {
@@ -339,6 +340,55 @@ enum scsi_version {
     SCSI_VERSION_16 = 16,
 };
 
+struct usb_xfer {
+    usb_pipe_t *pipe;
+    int dir;
+    const void *cmd;
+    void *data;
+    int datasize;
+    uint64_t timeout_ns;
+    usb_xfer_cb cb;
+    void *user_data;
+    uint32_t flags;
+};
+
+#define USB_XFER_ASYNC (1U << 0)
+
+struct usb_device_id {
+    uint16_t match_flags;
+    uint16_t idVendor;
+    uint16_t idProduct;
+    uint8_t bInterfaceClass;
+    uint8_t bInterfaceSubClass;
+    uint8_t bInterfaceProtocol;
+};
+
+#define USB_DEVICE_ID_MATCH_VENDOR (1U << 0)
+#define USB_DEVICE_ID_MATCH_PRODUCT (1U << 1)
+#define USB_DEVICE_ID_MATCH_INT_CLASS (1U << 2)
+#define USB_DEVICE_ID_MATCH_INT_SUBCLASS (1U << 3)
+#define USB_DEVICE_ID_MATCH_INT_PROTOCOL (1U << 4)
+#define USB_DEVICE_ID_MATCH_DEVICE                                             \
+    (USB_DEVICE_ID_MATCH_VENDOR | USB_DEVICE_ID_MATCH_PRODUCT)
+#define USB_DEVICE_ID_MATCH_INT_INFO                                           \
+    (USB_DEVICE_ID_MATCH_INT_CLASS | USB_DEVICE_ID_MATCH_INT_SUBCLASS |        \
+     USB_DEVICE_ID_MATCH_INT_PROTOCOL)
+
+#define USB_DEVICE(vend, prod)                                                 \
+    {                                                                          \
+        .match_flags = USB_DEVICE_ID_MATCH_DEVICE,                             \
+        .idVendor = (vend),                                                    \
+        .idProduct = (prod),                                                   \
+    }
+
+#define USB_INTERFACE_INFO(cls, subcls, proto)                                 \
+    {                                                                          \
+        .match_flags = USB_DEVICE_ID_MATCH_INT_INFO,                           \
+        .bInterfaceClass = (cls),                                              \
+        .bInterfaceSubClass = (subcls),                                        \
+        .bInterfaceProtocol = (proto),                                         \
+    }
+
 #define USB_INTERFACE_SUBCLASS_BOOT 1
 #define USB_INTERFACE_PROTOCOL_KEYBOARD 1
 #define USB_INTERFACE_PROTOCOL_MOUSE 2
@@ -350,6 +400,7 @@ enum scsi_version {
 #define HID_REQ_SET_IDLE 0x0A
 #define HID_REQ_SET_PROTOCOL 0x0B
 
+int usb_submit_xfer(usb_xfer_t *xfer);
 int usb_send_pipe(usb_pipe_t *pipe, int dir, const void *cmd, void *data,
                   int datasize, uint64_t timeout_ns);
 int usb_send_bulk(usb_pipe_t *pipe, int dir, void *data, int datasize);
@@ -372,6 +423,8 @@ usb_endpoint_descriptor_t *usb_find_desc(usb_device_interface_t *iface,
                                          int type, int dir);
 usb_super_speed_endpoint_descriptor_t *
 usb_find_ss_desc(usb_device_interface_t *iface);
+int usb_set_interface(usb_device_t *usbdev, uint8_t iface_num,
+                      uint8_t alt_setting);
 void usb_enumerate(usb_hub_t *hub);
 void usb_register_controller(usb_controller_t *cntl, usb_hub_t *hub);
 void usb_unregister_controller(usb_controller_t *cntl);
@@ -383,10 +436,9 @@ const char *usb_speed_name(uint8_t speed);
 #define MAX_USBDEV_NUM 256
 
 struct usb_driver {
-    uint8_t class;
-    uint8_t subclass;
-    uint16_t vendorid;
-    uint16_t productid;
+    const char *name;
+    const usb_device_id_t *id_table;
+    int priority;
     int (*probe)(usb_device_t *usbdev, usb_device_interface_t *iface);
     int (*remove)(usb_device_t *usbdev);
 };

@@ -978,7 +978,8 @@ static bool hid_process_field(hid_device_t *hid, const hid_field_t *field,
     }
 }
 
-static void hid_cb(int status, void *user_data) {
+static void hid_cb(int status, int actual_length, void *user_data) {
+    (void)actual_length;
     hid_device_t *hid = user_data;
     hid->xfer_status = status;
     hid->xfer_done = true;
@@ -1141,9 +1142,18 @@ static int usb_hid_setup(usb_device_t *usbdev, usb_device_interface_t *iface) {
 
 int usb_hid_remove(usb_device_t *usbdev) { return 0; }
 
+static const usb_device_id_t hid_ids[] = {
+    {
+        .match_flags = USB_DEVICE_ID_MATCH_INT_CLASS,
+        .bInterfaceClass = USB_CLASS_HID,
+    },
+    {0},
+};
+
 usb_driver_t hid_driver = {
-    .class = USB_CLASS_HID,
-    .subclass = 0,
+    .name = "hid",
+    .id_table = hid_ids,
+    .priority = 0,
     .probe = usb_hid_setup,
     .remove = usb_hid_remove,
 };

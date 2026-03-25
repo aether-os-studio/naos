@@ -16,7 +16,7 @@ extern uint32_t cpuid_to_lapicid[MAX_CPU_NUM];
 #define XHCI_RING_ITEMS 128
 #define XHCI_RING_SIZE (XHCI_RING_ITEMS * sizeof(struct xhci_trb))
 #define XHCI_TRB_MAX_XFER 65536
-#define XHCI_EVENT_POLL_NS (1ULL * 1000ULL * 1000ULL)
+#define XHCI_EVENT_POLL_NS (1ULL * 1000 * 1000)
 #define XHCI_IMAN_IP (1U << 0)
 #define XHCI_IMAN_IE (1U << 1)
 
@@ -53,6 +53,8 @@ extern uint32_t cpuid_to_lapicid[MAX_CPU_NUM];
 #define XHCI_HCS1_MAX_INTRS_MASK 0x7ff
 #define XHCI_HCS1_MAX_PORTS_SHIFT 24
 #define XHCI_HCS1_MAX_PORTS_MASK 0xff
+#define XHCI_HCC_MAX_PSA_SHIFT 12
+#define XHCI_HCC_MAX_PSA_MASK 0xf
 
 #define TRB_C (1 << 0)
 #define TRB_TYPE_SHIFT 10
@@ -191,8 +193,12 @@ struct xhci_pipe {
     uint32_t epid;
     uint16_t interrupter;
     int transfer_count;
-    intr_xfer_cb intr_xfer;
-    void *intr_xfer_data;
+    usb_xfer_cb async_cb;
+    void *async_user_data;
+    void *async_data;
+    int async_len;
+    int async_dir;
+    bool async_active;
 };
 
 struct usb_xhci {
@@ -386,8 +392,7 @@ static usb_hub_ops_t xhci_hub_ops = {
     .portmap = xhci_hub_portmap,
     .disconnect = xhci_hub_disconnect,
     .realloc_pipe = xhci_realloc_pipe,
-    .send_pipe = xhci_send_pipe,
-    .send_intr_pipe = xhci_send_intr_pipe,
+    .submit_xfer = xhci_submit_xfer,
 };
 
 static int xhci_cc_to_status(uint32_t completion_code) {
@@ -409,6 +414,18 @@ static int xhci_cc_to_status(uint32_t completion_code) {
 
 static bool xhci_ring_busy(struct xhci_ring *ring) {
     return ring->eidx != ring->nidx;
+}
+
+static int xhci_actual_length(struct xhci_pipe *pipe, int requested_len) {
+    uint32_t residue;
+
+    if (requested_len <= 0)
+        return 0;
+
+    residue = pipe->reqs.evt.status & 0x00ffffff;
+    if ((int)residue >= requested_len)
+        return 0;
+    return requested_len - (int)residue;
 }
 
 static void xhci_trb_fill(struct xhci_ring *ring, void *data, uint32_t status,
@@ -530,14 +547,28 @@ static void xhci_process_event_ring(struct xhci_event_ring *intr) {
                 struct xhci_trb *ftrb_phys =
                     (struct xhci_trb *)xhci_virt_to_phys(ring->trbs);
                 uint32_t eidx = (uint32_t)(rtrb_phys - ftrb_phys) + 1;
+                int status = xhci_cc_to_status(evt_cc);
                 memcpy(&ring->evt, etrb, sizeof(*etrb));
                 ring->eidx = eidx;
+                pipe->transfer_count++;
 
-                if (pipe->pipe.eptype == USB_ENDPOINT_XFER_INT) {
-                    if (pipe->intr_xfer) {
-                        pipe->intr_xfer(xhci_cc_to_status(evt_cc),
-                                        pipe->intr_xfer_data);
-                    }
+                if (pipe->async_active) {
+                    usb_xfer_cb cb = pipe->async_cb;
+                    void *user_data = pipe->async_user_data;
+                    int actual = xhci_actual_length(pipe, pipe->async_len);
+
+                    if (pipe->async_dir && pipe->async_data && actual > 0)
+                        dma_sync_device_to_cpu(pipe->async_data, actual);
+
+                    pipe->async_active = false;
+                    pipe->async_cb = NULL;
+                    pipe->async_user_data = NULL;
+                    pipe->async_data = NULL;
+                    pipe->async_len = 0;
+                    pipe->async_dir = 0;
+
+                    if (cb)
+                        cb(status, actual, user_data);
                 }
             } else {
                 printk(
@@ -739,6 +770,7 @@ xhci_alloc_pipe(usb_device_t *usbdev, usb_endpoint_descriptor_t *epdesc,
     xhci_input_ctx_t *in = NULL;
     uint32_t epid;
     uint8_t eptype = epdesc->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK;
+    uint64_t deq;
 
     if (epdesc->bEndpointAddress == 0) {
         epid = 1;
@@ -781,7 +813,7 @@ xhci_alloc_pipe(usb_device_t *usbdev, usb_endpoint_descriptor_t *epdesc,
              (eptype == USB_ENDPOINT_XFER_ISOC ||
               eptype == USB_ENDPOINT_XFER_INT))
         max_burst = (pipe->pipe.maxpacket >> 11) & 0x3;
-    uint64_t deq = xhci_virt_to_phys(pipe->reqs.trbs);
+    deq = xhci_virt_to_phys(pipe->reqs.trbs);
     ep->ctx[1] |= (uint32_t)max_burst << 8;
     const uint32_t error_count = 3;
     ep->ctx[1] |= (error_count << 1);
@@ -865,6 +897,8 @@ xhci_realloc_pipe(usb_device_t *usbdev, usb_pipe_t *upipe,
         struct xhci_pipe *pipe = container_of(upipe, struct xhci_pipe, pipe);
         usb_xhci_t *xhci = container_of(upipe->cntl, usb_xhci_t, usb);
         xhci->pipes[pipe->slotid][pipe->epid] = NULL;
+        xhci_free_ring(&pipe->reqs);
+        free_frames_bytes(pipe, sizeof(*pipe));
         // usb_add_freelist(upipe);
         return NULL;
     }
@@ -894,10 +928,11 @@ xhci_realloc_pipe(usb_device_t *usbdev, usb_pipe_t *upipe,
 }
 
 static void xhci_xfer_setup(struct xhci_pipe *pipe, int dir, void *cmd,
-                            void *data, int datalen) {
+                            void *data, int datalen, uint16_t stream_id) {
     usb_xhci_t *xhci = container_of(pipe->pipe.cntl, usb_xhci_t, usb);
     uint32_t trt = datalen == 0 ? 0 : (dir ? 3 : 2);
     uint32_t status_dir = datalen == 0 ? 1 : !dir;
+    uint32_t doorbell = pipe->epid;
 
     xhci_trb_queue(&pipe->reqs, cmd,
                    xhci_trb_status(USB_CONTROL_SETUP_SIZE, pipe->interrupter),
@@ -911,59 +946,89 @@ static void xhci_xfer_setup(struct xhci_pipe *pipe, int dir, void *cmd,
     xhci_trb_queue(&pipe->reqs, NULL, xhci_trb_status(0, pipe->interrupter),
                    (TR_STATUS << TRB_TYPE_SHIFT) | TRB_TR_IOC |
                        (status_dir ? TRB_TR_DIR : 0));
-    xhci_doorbell(xhci, pipe->slotid, pipe->epid);
+    xhci_doorbell(xhci, pipe->slotid, doorbell);
 }
 
-static void xhci_xfer_normal(struct xhci_pipe *pipe, void *data, int datalen) {
+static void xhci_xfer_normal(struct xhci_pipe *pipe, void *data, int datalen,
+                             uint16_t stream_id) {
     usb_xhci_t *xhci = container_of(pipe->pipe.cntl, usb_xhci_t, usb);
+    uint32_t doorbell = pipe->epid;
 
     xhci_trb_queue(&pipe->reqs, data, datalen,
                    (TR_NORMAL << TRB_TYPE_SHIFT) | TRB_TR_IOC);
-    xhci_doorbell(xhci, pipe->slotid, pipe->epid);
+    xhci_doorbell(xhci, pipe->slotid, doorbell);
 }
 
-int xhci_send_pipe(usb_pipe_t *p, int dir, const void *cmd, void *data,
-                   int datalen, uint64_t timeout_ns) {
-    struct xhci_pipe *pipe = container_of(p, struct xhci_pipe, pipe);
-    usb_xhci_t *xhci = container_of(p->cntl, usb_xhci_t, usb);
-    int timeout_ms = timeout_ns != (uint64_t)-1 ? (int)(timeout_ns / 1000000ULL)
-                                                : usb_xfer_time(p, datalen);
+int xhci_submit_xfer(usb_xfer_t *xfer) {
+    struct xhci_pipe *pipe;
+    usb_xhci_t *xhci;
+    int timeout_ms;
+    int datalen;
+    int dir;
+    const void *cmd;
+    void *data;
+
+    if (!xfer || !xfer->pipe)
+        return -EINVAL;
+
+    pipe = container_of(xfer->pipe, struct xhci_pipe, pipe);
+    xhci = container_of(xfer->pipe->cntl, usb_xhci_t, usb);
+    datalen = xfer->datasize;
+    dir = xfer->dir;
+    cmd = xfer->cmd;
+    data = xfer->data;
+
+    if (pipe->async_active || xhci_ring_busy(&pipe->reqs))
+        return -EBUSY;
+
+    timeout_ms = xfer->timeout_ns != (uint64_t)-1
+                     ? (int)(xfer->timeout_ns / 1000000ULL)
+                     : usb_xfer_time(xfer->pipe, datalen);
 
     if (data && datalen > 0)
         dma_sync_cpu_to_device(data, datalen);
 
+    if (xfer->flags & USB_XFER_ASYNC) {
+        pipe->async_active = true;
+        pipe->async_cb = xfer->cb;
+        pipe->async_user_data = xfer->user_data;
+        pipe->async_data = data;
+        pipe->async_len = datalen;
+        pipe->async_dir = dir ? 1 : 0;
+    }
+
     if (cmd) {
         const usb_ctrl_request_t *req = cmd;
         if (req->bRequest == USB_REQ_SET_ADDRESS) {
+            if (xfer->flags & USB_XFER_ASYNC) {
+                pipe->async_active = false;
+                pipe->async_cb = NULL;
+                pipe->async_user_data = NULL;
+                pipe->async_data = NULL;
+                pipe->async_len = 0;
+                pipe->async_dir = 0;
+            }
             return 0;
         }
-        xhci_xfer_setup(pipe, dir, (void *)cmd, data, datalen);
-    } else
-        xhci_xfer_normal(pipe, data, datalen);
+        xhci_xfer_setup(pipe, dir, (void *)cmd, data, datalen, 0);
+    } else {
+        xhci_xfer_normal(pipe, data, datalen, 0);
+    }
+
+    if (xfer->flags & USB_XFER_ASYNC) {
+        return 0;
+    }
 
     int cc = xhci_event_wait(xhci, &pipe->reqs, timeout_ms);
     if (cc != CC_SUCCESS && cc != CC_SHORT_PACKET)
         return -1;
 
-    pipe->transfer_count++;
-
     if (dir && data) {
-        uint32_t residue = pipe->reqs.evt.status & 0x00ffffff;
-        int actual = datalen - residue;
+        int actual = xhci_actual_length(pipe, datalen);
         if (actual > 0)
             dma_sync_device_to_cpu(data, actual);
     }
 
-    return 0;
-}
-
-int xhci_send_intr_pipe(usb_pipe_t *p, void *buf, int len, intr_xfer_cb cb,
-                        void *user_data) {
-    struct xhci_pipe *pipe = container_of(p, struct xhci_pipe, pipe);
-
-    pipe->intr_xfer = cb;
-    pipe->intr_xfer_data = user_data;
-    xhci_xfer_normal(pipe, buf, len);
     return 0;
 }
 
@@ -975,6 +1040,8 @@ static void xhci_event_thread(uint64_t arg) {
         task_block(current_task, TASK_BLOCKING, (int64_t)XHCI_EVENT_POLL_NS,
                    "xhci_event");
     }
+
+    task_exit(0);
 }
 
 static int xhci_alloc_runtime_state(usb_xhci_t *xhci) {
@@ -1107,7 +1174,7 @@ static int xhci_start_controller(usb_xhci_t *xhci) {
         }
     }
 
-    delay(1000);
+    delay(100);
 
     return 0;
 }

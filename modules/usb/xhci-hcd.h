@@ -16,14 +16,12 @@ typedef struct xhci_devlist xhci_dev_ctx_entry_t;
 typedef struct xhci_inctx xhci_input_ctx_t;
 typedef struct xhci_trb xhci_trb_t;
 typedef struct xhci_er_seg xhci_event_ring_seg_t;
+typedef struct xhci_stream_ctx xhci_stream_ctx_t;
 
 usb_pipe_t *xhci_realloc_pipe(usb_device_t *usbdev, usb_pipe_t *upipe,
                               usb_endpoint_descriptor_t *epdesc,
                               usb_super_speed_endpoint_descriptor_t *ss_epdesc);
-int xhci_send_pipe(usb_pipe_t *pipe, int dir, const void *cmd, void *data,
-                   int datasize, uint64_t timeout_ns);
-int xhci_send_intr_pipe(usb_pipe_t *pipe, void *buf, int len, intr_xfer_cb cb,
-                        void *user_data);
+int xhci_submit_xfer(usb_xfer_t *xfer);
 
 struct xhci_caps {
     uint8_t caplength;
@@ -118,6 +116,12 @@ struct xhci_er_seg {
     uint32_t ptr_high;
     uint32_t size;
     uint32_t reserved_01;
+} __attribute__((packed));
+
+struct xhci_stream_ctx {
+    uint32_t stream_ring_low;
+    uint32_t stream_ring_high;
+    uint32_t reserved_01[2];
 } __attribute__((packed));
 
 static inline void writel(void *addr, uint32_t val) {

@@ -288,12 +288,12 @@ typedef struct sem {
 } sem_t;
 
 static inline bool sem_wait(sem_t *sem, uint32_t timeout) {
-    uint64_t timerStart = nano_time();
+    uint64_t timer_start = nano_time();
     bool ret = false;
 
+    uint64_t timeout_ns = (uint64_t)timeout * 1000000ULL;
+
     while (true) {
-        if (timeout > 0 && nano_time() > (timerStart + timeout))
-            goto just_return; // not under any lock atm
         spin_lock(&sem->lock);
         if (sem->cnt > 0) {
             sem->cnt--;
@@ -301,6 +301,8 @@ static inline bool sem_wait(sem_t *sem, uint32_t timeout) {
             goto cleanup;
         }
         spin_unlock(&sem->lock);
+        if (timeout_ns > 0 && nano_time() > (timer_start + timeout_ns))
+            goto just_return;
     }
 
 cleanup:
