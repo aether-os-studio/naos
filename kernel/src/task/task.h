@@ -101,6 +101,29 @@ extern vfs_node_t *rootdir;
 
 #define current_task arch_get_current()
 
+static inline bool task_is_on_cpu(task_t *task) {
+    return task ? __atomic_load_n(&task->on_cpu, __ATOMIC_ACQUIRE) : false;
+}
+
+static inline void task_mark_on_cpu(task_t *task, bool on_cpu) {
+    if (!task)
+        return;
+
+    __atomic_store_n(&task->on_cpu, on_cpu, __ATOMIC_RELEASE);
+}
+
+static inline bool task_is_reaped(task_t *task) {
+    return task ? __atomic_load_n(&task->exit_reaped, __ATOMIC_ACQUIRE) : true;
+}
+
+static inline bool task_try_mark_reaped(task_t *task) {
+    bool expected = false;
+
+    return task && __atomic_compare_exchange_n(&task->exit_reaped, &expected,
+                                               true, false, __ATOMIC_ACQ_REL,
+                                               __ATOMIC_ACQUIRE);
+}
+
 static inline task_index_bucket_t *task_index_bucket_lookup(hashmap_t *map,
                                                             uint64_t key) {
     return (task_index_bucket_t *)hashmap_get(map, key);
@@ -240,6 +263,7 @@ void task_complete_vfork(task_t *task);
 size_t task_count(void);
 int task_kill_all(int sig);
 int task_kill_process_group(int pgid, int sig);
+void task_reap_deferred(size_t budget);
 extern spinlock_t task_queue_lock;
 
 extern task_t *idle_tasks[MAX_CPU_NUM];

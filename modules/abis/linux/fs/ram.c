@@ -270,13 +270,6 @@ void ramfs_unmount(vfs_node_t *root) {
     root->fsid = (uint32_t)(root->flags >> 32);
 
     vfs_node_t *node, *ram;
-    llist_for_each(node, ram, &root->childs, node_for_childs) {
-        if (node == node->root) {
-            char *node_path = vfs_get_fullpath(node);
-            vfs_unmount((const char *)node_path);
-            free(node_path);
-        }
-    }
 
     root->dev = root->parent ? root->parent->dev : 0;
     root->rdev = root->parent ? root->parent->rdev : 0;

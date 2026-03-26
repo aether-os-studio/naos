@@ -471,7 +471,12 @@ void free_page_table(task_mm_info_t *directory) {
     bool should_free = false;
 
     spin_lock(&directory->lock);
-    if (--directory->ref_count <= 0) {
+    if (directory->ref_count <= 0) {
+        spin_unlock(&directory->lock);
+        return;
+    }
+
+    if (--directory->ref_count == 0) {
         should_free = true;
     }
     spin_unlock(&directory->lock);

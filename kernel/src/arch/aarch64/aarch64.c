@@ -18,6 +18,7 @@ extern void syscall_handlers_init();
 
 void arch_init() {
     arch_set_current(idle_tasks[current_cpu_id]);
+    task_mark_on_cpu(idle_tasks[current_cpu_id], true);
 
     syscall_handlers_init();
 

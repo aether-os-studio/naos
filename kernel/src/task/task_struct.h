@@ -346,6 +346,8 @@ typedef struct task {
     bool is_kernel;
     bool is_clone;
     bool child_vfork_done;
+    bool exit_reaped;
+    bool on_cpu;
     bool wake_pending;
     spinlock_t block_lock;
     uint64_t membarrier_seen_seq;

@@ -507,7 +507,7 @@ static vma_t *alloc_mapping_vma(uint64_t start, uint64_t len, uint64_t prot,
         vma->vm_flags |= VMA_DEVICE;
 
     if (node) {
-        char *fullpath = vfs_get_fullpath(node);
+        char *fullpath = vfs_get_fullpath_at(node, task_fs_root(current_task));
         if (fullpath) {
             vma->vm_name = strdup(fullpath);
             free(fullpath);

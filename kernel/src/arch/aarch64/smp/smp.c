@@ -66,6 +66,7 @@ void ap_kmain(struct limine_mp_info *cpu) {
     }
 
     arch_set_current(idle_tasks[current_cpu_id]);
+    task_mark_on_cpu(idle_tasks[current_cpu_id], true);
 
     gic_init_percpu();
 

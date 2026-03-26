@@ -41,6 +41,7 @@ void general_ap_entry(uint64_t hartid) {
     }
 
     arch_set_current(idle_tasks[hartid_to_cpuid(hartid)]);
+    task_mark_on_cpu(idle_tasks[hartid_to_cpuid(hartid)], true);
 
     timer_init_hart(hartid);
 

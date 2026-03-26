@@ -942,6 +942,7 @@ void task_init() {
     }
 
     arch_set_current(idle_tasks[current_cpu_id]);
+    task_mark_on_cpu(idle_tasks[current_cpu_id], true);
     task_mm_mark_cpu_active(idle_tasks[current_cpu_id]->mm, current_cpu_id);
 
     task_initialized = true;
@@ -1171,13 +1172,16 @@ void task_exit_inner(task_t *task, int64_t code) {
             task_commit_signal(parent, SIGCHLD, &sigchld_info);
         }
 
-        if (ignore_sigchld || (sa.sa_flags & SA_NOCLDWAIT))
-            task_enqueue_should_free(task);
+        if (ignore_sigchld || (sa.sa_flags & SA_NOCLDWAIT)) {
+            if (task_try_mark_reaped(task))
+                task_enqueue_should_free(task);
+        }
 
         if (!ignore_sigchld && !sigchld_blocked)
             task_unblock(parent, 128 + SIGCHLD);
     } else if (!task_has_parent(task)) {
-        task_enqueue_should_free(task);
+        if (task_try_mark_reaped(task))
+            task_enqueue_should_free(task);
     }
 }
 
@@ -1397,6 +1401,7 @@ void schedule(uint64_t sched_flags) {
     bool state = arch_interrupt_enabled();
 
     arch_disable_interrupt();
+    task_reap_deferred(16);
 
     task_t *prev = current_task;
     if (prev->preempt_count) {

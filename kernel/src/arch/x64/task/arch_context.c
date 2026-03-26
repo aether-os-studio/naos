@@ -153,6 +153,9 @@ void arch_set_current(task_t *current) { x64_cpu_local_set_current(current); }
 extern tss_t tss[MAX_CPU_NUM];
 
 void __switch_to(task_t *prev, task_t *next) {
+    task_mark_on_cpu(prev, false);
+    task_mark_on_cpu(next, true);
+
     prev->arch_context->fsbase = read_fsbase();
     prev->arch_context->gsbase = read_gsbase();
 

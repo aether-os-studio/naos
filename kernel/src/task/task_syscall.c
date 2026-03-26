@@ -400,6 +400,14 @@ static inline void task_fill_rusage(task_t *task, bool include_children,
 extern void task_timeout_cancel(task_t *task);
 
 void free_task(task_t *ptr) {
+    if (!ptr)
+        return;
+
+    if (task_is_on_cpu(ptr)) {
+        task_enqueue_should_free(ptr);
+        return;
+    }
+
     task_timeout_cancel(ptr);
 
     spin_lock(&should_free_lock);
@@ -441,6 +449,16 @@ void free_task(task_t *ptr) {
     free_frames_bytes((void *)(ptr->syscall_stack - STACK_SIZE), STACK_SIZE);
 
     free(ptr);
+}
+
+void task_reap_deferred(size_t budget) {
+    for (size_t i = 0; i < budget; i++) {
+        task_t *to_free = task_dequeue_should_free();
+        if (!to_free)
+            break;
+
+        free_task(to_free);
+    }
 }
 
 static void task_execve_free_string_array(char **strings, int count) {
@@ -1326,6 +1344,12 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
             }
 
             if (ptr->state == TASK_DIED) {
+                if (task_is_reaped(ptr))
+                    continue;
+
+                if (!task_try_mark_reaped(ptr))
+                    continue;
+
                 found_dead = ptr;
                 break;
             } else {
@@ -1376,12 +1400,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
         task_enqueue_should_free(target);
     }
 
-    while (true) {
-        task_t *to_free = task_dequeue_should_free();
-        if (!to_free)
-            break;
-        free_task(to_free);
-    }
+    task_reap_deferred(64);
 
     return ret;
 }
@@ -1460,12 +1479,20 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
                 continue;
             }
 
-            if (ptr->state == TASK_DIED && (options & WEXITED)) {
-                found_dead = ptr;
-                break;
-            } else {
-                found_alive = ptr;
+            if (ptr->state == TASK_DIED) {
+                if (task_is_reaped(ptr))
+                    continue;
+
+                if (options & WEXITED) {
+                    if (!task_try_mark_reaped(ptr))
+                        continue;
+
+                    found_dead = ptr;
+                    break;
+                }
             }
+
+            found_alive = ptr;
         }
         spin_unlock(&task_queue_lock);
 
@@ -1516,6 +1543,7 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
                 }
             }
             if (copy_to_user(infop, &info, sizeof(info))) {
+                __atomic_store_n(&target->exit_reaped, false, __ATOMIC_RELEASE);
                 return (uint64_t)-EFAULT;
             }
         }
@@ -1528,17 +1556,13 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
         if (!(options & WNOWAIT) && target->state == TASK_DIED) {
             task_aggregate_child_usage(current_task, target);
             task_enqueue_should_free(target);
+        } else if ((options & WNOWAIT) && target->state == TASK_DIED) {
+            __atomic_store_n(&target->exit_reaped, false, __ATOMIC_RELEASE);
         }
     }
 
-    if (!(options & WNOWAIT)) {
-        while (true) {
-            task_t *to_free = task_dequeue_should_free();
-            if (!to_free)
-                break;
-            free_task(to_free);
-        }
-    }
+    if (!(options & WNOWAIT))
+        task_reap_deferred(64);
 
     return ret;
 }
@@ -1740,17 +1764,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                       flags);
     shm_fork(self, child);
 
-#if defined(__x86_64__)
-    uint64_t tmp;
-    asm volatile("movq %%cr3, %0\n\tmovq %0, %%cr3" : "=r"(tmp)::"memory");
-#elif defined(__aarch64__)
-    asm volatile("dsb ishst\n\t"
-                 "tlbi vmalle1is\n\t"
-                 "dsb ish\n\t"
-                 "isb\n\t");
-#elif defined(__riscv__)
-    asm volatile("sfence.vma");
-#endif
+    arch_flush_tlb_all();
 
 #if defined(__x86_64__)
     uint64_t user_sp = regs->rsp;

@@ -250,7 +250,7 @@ void vfs_free(vfs_node_t *vfs) {
     hashmap_remove(&vfs_inode_map, vfs->inode);
     vfs_child_index_deinit(vfs);
     vfs_detach_child(vfs);
-    if (vfs->refcount && --vfs->refcount > 0) {
+    if (vfs->refcount > 0) {
         vfs->flags |= VFS_NODE_FLAGS_FREE_AFTER_USE;
         return;
     }
