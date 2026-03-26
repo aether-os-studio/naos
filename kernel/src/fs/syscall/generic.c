@@ -1755,8 +1755,11 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
 
     struct statx res;
     struct statx *buff = &res;
+    memset(buff, 0, sizeof(struct statx));
 
     task_t *self = current_task;
+
+    vfs_node_t *node = NULL;
 
     if (flags & AT_EMPTY_PATH) {
         if (dirfd >= MAX_FD_NUM || !self->fd_info->fds[dirfd])
@@ -1764,7 +1767,7 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
         int ret = do_stat_fd(dirfd, &simple);
         if (ret < 0)
             return ret;
-        buff->stx_mnt_id = self->fd_info->fds[dirfd]->node->fsid;
+        node = self->fd_info->fds[dirfd]->node;
     } else {
         char *resolved = at_resolve_pathname(dirfd, (char *)pathname);
 
@@ -1774,7 +1777,7 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
 
         uint64_t ret = do_stat_path(resolved, &simple);
 
-        vfs_node_t *node = vfs_open(resolved, O_NOFOLLOW);
+        node = vfs_open(resolved, O_NOFOLLOW);
 
         free(resolved);
 
@@ -1783,8 +1786,6 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
 
         if ((int64_t)ret < 0)
             return ret;
-
-        buff->stx_mnt_id = node->fsid;
     }
 
     buff->stx_mask = mask;
@@ -1798,11 +1799,16 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
     buff->stx_size = simple.st_size;
     buff->stx_blocks = simple.st_blocks;
     buff->stx_attributes_mask = 0;
+    if (node == node->root) {
+        buff->stx_attributes_mask |= STATX_ATTR_MOUNT_ROOT;
+    }
 
     buff->stx_dev_major = (simple.st_dev >> 8) & 0xFF;
     buff->stx_dev_minor = simple.st_dev & 0xFF;
     buff->stx_rdev_major = (simple.st_rdev >> 8) & 0xFF;
     buff->stx_rdev_minor = simple.st_rdev & 0xFF;
+
+    buff->stx_mnt_id = node->fsid;
 
     buff->stx_atime.tv_sec = simple.st_atim.tv_sec;
     buff->stx_atime.tv_nsec = simple.st_atim.tv_nsec;

@@ -1658,10 +1658,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                    int *parent_tid, int *child_tid, uint64_t tls) {
     arch_disable_interrupt();
 
-    if (flags & CLONE_VFORK) {
-        flags |= CLONE_VM;
-    }
-
     if ((flags & CLONE_THREAD) &&
         (!(flags & CLONE_SIGHAND) || !(flags & CLONE_VM))) {
         return (uint64_t)-EINVAL;
