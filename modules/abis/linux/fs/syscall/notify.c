@@ -108,9 +108,6 @@ uint64_t sys_inotify_init() { return sys_inotify_init1(0); }
 
 uint64_t sys_inotify_add_watch(uint64_t notifyfd, const char *path_user,
                                uint64_t mask) {
-    if (notifyfd == SPECIAL_FD)
-        return 0;
-
     if (mask & ~inotify_valid_user_mask)
         return (uint64_t)-EINVAL;
 

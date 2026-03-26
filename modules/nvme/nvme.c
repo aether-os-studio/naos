@@ -446,7 +446,6 @@ typedef struct {
     bool done;
     bool success;
     uint32_t result;
-    volatile uint32_t refs;
 } admin_sync_ctx_t;
 
 static void admin_sync_callback(void *ctx, bool success, uint32_t result) {
@@ -454,20 +453,13 @@ static void admin_sync_callback(void *ctx, bool success, uint32_t result) {
     sync_ctx->success = success;
     sync_ctx->result = result;
     __atomic_store_n(&sync_ctx->done, true, __ATOMIC_RELEASE);
-
-    if (__sync_sub_and_fetch(&sync_ctx->refs, 1) == 0)
-        free(sync_ctx);
 }
 
 static int nvme_admin_cmd_sync(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
                                uint32_t *result, uint32_t timeout_ms) {
-    admin_sync_ctx_t *sync_ctx = calloc(1, sizeof(*sync_ctx));
-    if (!sync_ctx)
-        return -1;
+    admin_sync_ctx_t sync_ctx = {0};
 
-    sync_ctx->refs = 2;
-
-    uint16_t cid = nvme_alloc_cid(ctrl, admin_sync_callback, sync_ctx);
+    uint16_t cid = nvme_alloc_cid(ctrl, admin_sync_callback, &sync_ctx);
     if (cid == 0xFFFF)
         goto error_ctx;
 
@@ -483,7 +475,7 @@ static int nvme_admin_cmd_sync(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
         goto error_ctx;
     }
 
-    while (!__atomic_load_n(&sync_ctx->done, __ATOMIC_ACQUIRE)) {
+    while (!__atomic_load_n(&sync_ctx.done, __ATOMIC_ACQUIRE)) {
         if (!nvme_process_queue_completions(ctrl, &ctrl->admin_queue))
             arch_pause();
 
@@ -493,23 +485,18 @@ static int nvme_admin_cmd_sync(nvme_controller_t *ctrl, nvme_sqe_t *cmd,
                 "ms\n",
                 cmd->cdw0 & 0xFF, cid, timeout_ms);
             nvme_dump_status(ctrl);
-            if (__sync_sub_and_fetch(&sync_ctx->refs, 1) == 0)
-                free(sync_ctx);
             return -1;
         }
     }
 
     if (result)
-        *result = sync_ctx->result;
+        *result = sync_ctx.result;
 
-    bool success = sync_ctx->success;
-    if (__sync_sub_and_fetch(&sync_ctx->refs, 1) == 0)
-        free(sync_ctx);
+    bool success = sync_ctx.success;
 
     return success ? 0 : -1;
 
 error_ctx:
-    free(sync_ctx);
     return -1;
 }
 
@@ -809,7 +796,6 @@ typedef struct nvme_callback_ctx {
     bool completed;
     bool success;
     uint32_t result;
-    volatile uint32_t refs;
 } nvme_callback_ctx_t;
 
 void nvme_io_callback(void *ctx, bool success, uint32_t result) {
@@ -817,9 +803,6 @@ void nvme_io_callback(void *ctx, bool success, uint32_t result) {
     cb_ctx->success = success;
     cb_ctx->result = result;
     __atomic_store_n(&cb_ctx->completed, true, __ATOMIC_RELEASE);
-
-    if (__sync_sub_and_fetch(&cb_ctx->refs, 1) == 0)
-        free(cb_ctx);
 }
 
 typedef struct nvme_ns {
@@ -836,20 +819,17 @@ static uint64_t nvme_wait_io_done(nvme_controller_t *ctrl, nvme_queue_t *queue,
         if (!nvme_process_queue_completions(ctrl, queue))
             arch_pause();
 
-        if (nvme_platform_ops->get_time_ms() - start > timeout_ms) {
+        if ((timeout_ms != (uint32_t)-1) &&
+            nvme_platform_ops->get_time_ms() - start > timeout_ms) {
             printk("NVMe: %s command timed out after %u ms\n", op_name,
                    timeout_ms);
             nvme_dump_status(ctrl);
-            if (__sync_sub_and_fetch(&cb_ctx->refs, 1) == 0)
-                free(cb_ctx);
             return 0;
         }
     }
 
     bool success = cb_ctx->success;
     uint32_t result = cb_ctx->result;
-    if (__sync_sub_and_fetch(&cb_ctx->refs, 1) == 0)
-        free(cb_ctx);
 
     if (success)
         return ok_ret;
@@ -862,38 +842,30 @@ uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_ns_t *ns = data;
     nvme_queue_t *queue = nvme_pick_io_queue(ns->ctrl);
 
-    nvme_callback_ctx_t *cb_ctx = calloc(1, sizeof(*cb_ctx));
-    if (!cb_ctx)
-        return 0;
-
-    cb_ctx->refs = 2;
+    nvme_callback_ctx_t cb_ctx = {0};
     int r = nvme_read_async(ns->ctrl, ns->ns->nsid, lba, size, buffer, 0,
-                            nvme_io_callback, cb_ctx);
+                            nvme_io_callback, &cb_ctx);
     if (r < 0) {
         printk("NVMe: submit read command failed\n");
-        free(cb_ctx);
         return 0;
     }
-    return nvme_wait_io_done(ns->ctrl, queue, cb_ctx, size, "read", 30000);
+    return nvme_wait_io_done(ns->ctrl, queue, &cb_ctx, size, "read",
+                             (uint32_t)-1);
 }
 
 uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_ns_t *ns = data;
     nvme_queue_t *queue = nvme_pick_io_queue(ns->ctrl);
 
-    nvme_callback_ctx_t *cb_ctx = calloc(1, sizeof(*cb_ctx));
-    if (!cb_ctx)
-        return 0;
-
-    cb_ctx->refs = 2;
+    nvme_callback_ctx_t cb_ctx = {0};
     int r = nvme_write_async(ns->ctrl, ns->ns->nsid, lba, size, buffer, 0,
-                             nvme_io_callback, cb_ctx);
+                             nvme_io_callback, &cb_ctx);
     if (r < 0) {
         printk("NVMe: submit write command failed\n");
-        free(cb_ctx);
         return 0;
     }
-    return nvme_wait_io_done(ns->ctrl, queue, cb_ctx, size, "write", 30000);
+    return nvme_wait_io_done(ns->ctrl, queue, &cb_ctx, size, "write",
+                             (uint32_t)-1);
 }
 
 // Main probe function

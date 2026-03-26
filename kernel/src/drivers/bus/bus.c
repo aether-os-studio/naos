@@ -11,7 +11,7 @@ attribute_t *attribute_new(const char *name, const char *value) {
     return attr;
 }
 
-void attrbute_free(attribute_t *attr) {
+void attribute_free(attribute_t *attr) {
     if (attr->name)
         free(attr->name);
     if (attr->value)

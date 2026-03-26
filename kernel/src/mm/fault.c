@@ -86,7 +86,6 @@ static uint64_t vm_flags_to_pt_flags(uint64_t vm_flags) {
 static page_fault_result_t map_anon_fault_page(task_t *task, vma_t *vma,
                                                uint64_t vaddr) {
     uint64_t pt_flags = vm_flags_to_pt_flags(vma->vm_flags);
-    uint64_t arch_flags = get_arch_page_table_flags(pt_flags);
     uint64_t aligned_vaddr = PADDING_DOWN(vaddr, DEFAULT_PAGE_SIZE);
     uint64_t *pgdir = NULL;
 
@@ -98,7 +97,8 @@ static page_fault_result_t map_anon_fault_page(task_t *task, vma_t *vma,
         return PF_RES_OK;
     }
 
-    map_page(pgdir, aligned_vaddr, (uint64_t)-1, arch_flags, true);
+    map_page_range_mm(task->mm, aligned_vaddr, (uint64_t)-1, DEFAULT_PAGE_SIZE,
+                      pt_flags);
 
     spin_unlock(&task->mm->lock);
 
@@ -135,7 +135,6 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
 
     uint64_t aligned_vaddr = PADDING_DOWN(vaddr, DEFAULT_PAGE_SIZE);
     uint64_t final_pt_flags = vm_flags_to_pt_flags(snapshot->vm_flags);
-    uint64_t final_arch_flags = get_arch_page_table_flags(final_pt_flags);
     uint64_t page_off_in_vma = aligned_vaddr - snapshot->vm_start;
 
     if ((uint64_t)snapshot->vm_offset > UINT64_MAX - page_off_in_vma)
@@ -196,7 +195,8 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
         return PF_RES_OK;
     }
 
-    map_page(pgdir, aligned_vaddr, page_paddr, final_arch_flags, false);
+    map_page_range_mm(task->mm, aligned_vaddr, page_paddr, DEFAULT_PAGE_SIZE,
+                      final_pt_flags);
 
     spin_unlock(&task->mm->lock);
     spin_unlock(&mgr->lock);
@@ -273,6 +273,7 @@ map_cow_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
     spin_unlock(&task->mm->lock);
 
     address_release(old_paddr);
+
     return PF_RES_OK;
 }
 

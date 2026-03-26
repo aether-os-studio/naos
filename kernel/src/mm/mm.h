@@ -85,10 +85,6 @@ void unmap_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t size);
 uint64_t map_change_attribute_range_mm(task_mm_info_t *mm, uint64_t vaddr,
                                        uint64_t len, uint64_t flags);
 
-#if !defined(__x86_64__)
-static inline void arch_tlb_shootdown_mm(task_mm_info_t *mm) { (void)mm; }
-#endif
-
 typedef struct {
     uintptr_t addr;
     size_t actual_count; // 实际分配的页数

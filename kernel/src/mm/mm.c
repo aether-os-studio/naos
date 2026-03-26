@@ -328,5 +328,6 @@ uint64_t map_change_attribute_range_mm(task_mm_info_t *mm, uint64_t vaddr,
                                        uint64_t len, uint64_t flags) {
     uint64_t ret =
         map_change_attribute_range(task_mm_pgdir(mm), vaddr, len, flags);
+
     return ret;
 }

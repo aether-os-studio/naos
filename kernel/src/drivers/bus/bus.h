@@ -126,7 +126,7 @@ typedef struct attribute {
 } attribute_t;
 
 attribute_t *attribute_new(const char *name, const char *value);
-void attrbute_free(attribute_t *attr);
+void attribute_free(attribute_t *attr);
 
 struct bus_device;
 

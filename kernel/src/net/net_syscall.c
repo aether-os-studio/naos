@@ -8,16 +8,6 @@
 #include <drivers/kernel_logger.h>
 #include <net/netlink.h>
 
-typedef struct socket_kmsg {
-    struct msghdr msg;
-    struct msghdr user_msg;
-    struct iovec *user_iov;
-    struct iovec *kernel_iov;
-    void **iov_buffers;
-    void *name_buffer;
-    void *control_buffer;
-} socket_kmsg_t;
-
 #define SOCKET_MMSG_VLEN_MAX 1024U
 
 static bool is_socket(fd_t *fd) {
@@ -61,145 +51,6 @@ static int socket_copy_sockaddr_from_user(const struct sockaddr_un *user_addr,
                                           socklen_t addrlen,
                                           struct sockaddr_un **out_addr) {
     return socket_alloc_copy_from_user(user_addr, addrlen, (void **)out_addr);
-}
-
-static void socket_free_kmsg(socket_kmsg_t *kmsg) {
-    if (!kmsg)
-        return;
-
-    if (kmsg->iov_buffers) {
-        for (size_t i = 0; i < kmsg->msg.msg_iovlen; i++)
-            free(kmsg->iov_buffers[i]);
-    }
-
-    free(kmsg->iov_buffers);
-    free(kmsg->kernel_iov);
-    free(kmsg->user_iov);
-    free(kmsg->name_buffer);
-    free(kmsg->control_buffer);
-    memset(kmsg, 0, sizeof(*kmsg));
-}
-
-static int socket_prepare_kmsg_from_user(const struct msghdr *user_msg_ptr,
-                                         socket_kmsg_t *kmsg, bool for_send) {
-    memset(kmsg, 0, sizeof(*kmsg));
-
-    if (copy_from_user(&kmsg->user_msg, user_msg_ptr, sizeof(kmsg->user_msg)))
-        return -EFAULT;
-
-    kmsg->msg = kmsg->user_msg;
-
-    if (kmsg->msg.msg_iovlen > 0) {
-        if (!kmsg->msg.msg_iov ||
-            kmsg->msg.msg_iovlen > SIZE_MAX / sizeof(struct iovec))
-            return -EFAULT;
-
-        size_t iov_bytes = kmsg->msg.msg_iovlen * sizeof(struct iovec);
-        int ret = socket_alloc_copy_from_user(kmsg->msg.msg_iov, iov_bytes,
-                                              (void **)&kmsg->user_iov);
-        if (ret < 0)
-            return ret;
-
-        kmsg->kernel_iov = calloc(kmsg->msg.msg_iovlen, sizeof(struct iovec));
-        kmsg->iov_buffers = calloc(kmsg->msg.msg_iovlen, sizeof(void *));
-        if (!kmsg->kernel_iov || !kmsg->iov_buffers)
-            return -ENOMEM;
-
-        for (size_t i = 0; i < kmsg->msg.msg_iovlen; i++) {
-            size_t len = kmsg->user_iov[i].len;
-            if (!len)
-                continue;
-
-            ret = socket_validate_user_buffer(kmsg->user_iov[i].iov_base, len);
-            if (ret < 0)
-                return ret;
-
-            kmsg->iov_buffers[i] = malloc(len);
-            if (!kmsg->iov_buffers[i])
-                return -ENOMEM;
-
-            if (for_send && copy_from_user(kmsg->iov_buffers[i],
-                                           kmsg->user_iov[i].iov_base, len))
-                return -EFAULT;
-
-            kmsg->kernel_iov[i].iov_base = kmsg->iov_buffers[i];
-            kmsg->kernel_iov[i].len = len;
-        }
-
-        kmsg->msg.msg_iov = kmsg->kernel_iov;
-    } else {
-        kmsg->msg.msg_iov = NULL;
-    }
-
-    if (kmsg->user_msg.msg_name && kmsg->user_msg.msg_namelen > 0) {
-        int ret = socket_alloc_copy_from_user(kmsg->user_msg.msg_name,
-                                              kmsg->user_msg.msg_namelen,
-                                              &kmsg->name_buffer);
-        if (ret < 0)
-            return ret;
-        kmsg->msg.msg_name = kmsg->name_buffer;
-    } else {
-        kmsg->msg.msg_name = NULL;
-        kmsg->msg.msg_namelen = 0;
-    }
-
-    if (kmsg->user_msg.msg_control && kmsg->user_msg.msg_controllen > 0) {
-        if (for_send) {
-            int ret = socket_alloc_copy_from_user(kmsg->user_msg.msg_control,
-                                                  kmsg->user_msg.msg_controllen,
-                                                  &kmsg->control_buffer);
-            if (ret < 0)
-                return ret;
-        } else {
-            kmsg->control_buffer = calloc(1, kmsg->user_msg.msg_controllen);
-            if (!kmsg->control_buffer)
-                return -ENOMEM;
-        }
-        kmsg->msg.msg_control = kmsg->control_buffer;
-    } else {
-        kmsg->msg.msg_control = NULL;
-        kmsg->msg.msg_controllen = 0;
-    }
-
-    return 0;
-}
-
-static int socket_copy_recvmsg_to_user(struct msghdr *user_msg_ptr,
-                                       socket_kmsg_t *kmsg, size_t recvd) {
-    size_t remaining = recvd;
-
-    for (size_t i = 0; i < kmsg->msg.msg_iovlen && remaining > 0; i++) {
-        size_t to_copy = MIN(remaining, kmsg->user_iov[i].len);
-        if (to_copy && copy_to_user(kmsg->user_iov[i].iov_base,
-                                    kmsg->iov_buffers[i], to_copy))
-            return -EFAULT;
-        remaining -= to_copy;
-    }
-
-    if (kmsg->user_msg.msg_name && kmsg->user_msg.msg_namelen > 0) {
-        size_t copy_len = MIN((size_t)kmsg->user_msg.msg_namelen,
-                              (size_t)kmsg->msg.msg_namelen);
-        if (copy_len &&
-            copy_to_user(kmsg->user_msg.msg_name, kmsg->name_buffer, copy_len))
-            return -EFAULT;
-    }
-
-    if (kmsg->user_msg.msg_control && kmsg->user_msg.msg_controllen > 0) {
-        size_t copy_len =
-            MIN(kmsg->user_msg.msg_controllen, kmsg->msg.msg_controllen);
-        if (copy_len && copy_to_user(kmsg->user_msg.msg_control,
-                                     kmsg->control_buffer, copy_len))
-            return -EFAULT;
-    }
-
-    struct msghdr out_msg = kmsg->user_msg;
-    out_msg.msg_namelen = kmsg->msg.msg_namelen;
-    out_msg.msg_controllen = kmsg->msg.msg_controllen;
-    out_msg.msg_flags = kmsg->msg.msg_flags;
-    if (copy_to_user(user_msg_ptr, &out_msg, sizeof(out_msg)))
-        return -EFAULT;
-
-    return 0;
 }
 
 static int socket_validate_user_struct(const void *ptr, size_t len) {
@@ -764,16 +615,7 @@ int64_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
 
     socket_handle_t *handle = node->node->handle;
     if (handle && handle->op && handle->op->sendmsg) {
-        socket_kmsg_t kmsg;
-        int ret = socket_prepare_kmsg_from_user(msg, &kmsg, true);
-        if (ret < 0) {
-            socket_free_kmsg(&kmsg);
-            return ret;
-        }
-
-        int64_t out = handle->op->sendmsg(sockfd, &kmsg.msg, flags);
-        socket_free_kmsg(&kmsg);
-        return out;
+        return handle->op->sendmsg(sockfd, msg, flags);
     }
     return 0;
 }
@@ -795,21 +637,7 @@ int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
 
     socket_handle_t *handle = node->node->handle;
     if (handle && handle->op && handle->op->recvmsg) {
-        socket_kmsg_t kmsg;
-        int ret = socket_prepare_kmsg_from_user(msg, &kmsg, false);
-        if (ret < 0) {
-            socket_free_kmsg(&kmsg);
-            return ret;
-        }
-
-        int64_t out = handle->op->recvmsg(sockfd, &kmsg.msg, flags);
-        if (out >= 0) {
-            ret = socket_copy_recvmsg_to_user(msg, &kmsg, (size_t)out);
-            if (ret < 0)
-                out = ret;
-        }
-        socket_free_kmsg(&kmsg);
-        return out;
+        return handle->op->recvmsg(sockfd, msg, flags);
     }
     return 0;
 }

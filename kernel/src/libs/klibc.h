@@ -291,7 +291,9 @@ static inline bool sem_wait(sem_t *sem, uint32_t timeout) {
     uint64_t timer_start = nano_time();
     bool ret = false;
 
-    uint64_t timeout_ns = (uint64_t)timeout * 1000000ULL;
+    uint64_t timeout_ns = (timeout == (uint32_t)-1)
+                              ? (uint64_t)-1
+                              : ((uint64_t)timeout * 1000000ULL);
 
     while (true) {
         spin_lock(&sem->lock);
@@ -301,7 +303,7 @@ static inline bool sem_wait(sem_t *sem, uint32_t timeout) {
             goto cleanup;
         }
         spin_unlock(&sem->lock);
-        if (timeout_ns > 0 && nano_time() > (timer_start + timeout_ns))
+        if ((int64_t)timeout_ns > 0 && nano_time() > (timer_start + timeout_ns))
             goto just_return;
     }
 

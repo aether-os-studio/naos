@@ -522,6 +522,11 @@ static void apic_resched_ipi_handler(uint64_t irq_num, void *data,
     (void)regs;
 }
 
+static void apic_tlb_shootdown_ipi_handler(uint64_t irq_num, void *data,
+                                           struct pt_regs *regs) {
+    arch_flush_tlb_all();
+}
+
 irq_controller_t apic_controller = {
     .mask = apic_mask,
     .unmask = apic_unmask,
@@ -532,6 +537,9 @@ irq_controller_t apic_controller = {
 void apic_ipi_init() {
     irq_regist_ipi(APIC_RESCHED_IPI_VECTOR, apic_resched_ipi_handler, 0, NULL,
                    &apic_controller, "RESCHED_IPI", IRQ_FLAGS_LAPIC,
+                   apic_send_ipi);
+    irq_regist_ipi(APIC_TLB_SHOOTDOWN_VECTOR, apic_tlb_shootdown_ipi_handler, 0,
+                   NULL, &apic_controller, "TLB_SHOOTDOWN", IRQ_FLAGS_LAPIC,
                    apic_send_ipi);
     irq_set_sched_ipi(APIC_RESCHED_IPI_VECTOR);
 }

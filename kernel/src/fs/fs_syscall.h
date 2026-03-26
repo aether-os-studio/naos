@@ -59,8 +59,6 @@ struct iovec {
 #define MS_ACTIVE (1 << 30)
 #define MS_NOUSER (1 << 31)
 
-#define SPECIAL_FD 0x2025
-
 #define CLOSE_RANGE_UNSHARE (1U << 1)
 #define CLOSE_RANGE_CLOEXEC (1U << 2)
 

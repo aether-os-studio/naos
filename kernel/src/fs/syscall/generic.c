@@ -654,9 +654,6 @@ uint64_t sys_fsync(uint64_t fd) {
 }
 
 uint64_t sys_close(uint64_t fd) {
-    if (fd == SPECIAL_FD)
-        return 0;
-
     task_t *self = current_task;
 
     if (fd >= MAX_FD_NUM)
@@ -683,7 +680,9 @@ uint64_t sys_close(uint64_t fd) {
         return ret;
 
     on_close_file_call(self, fd, entry);
+
     fd_release(entry);
+
     return 0;
 }
 
@@ -938,19 +937,30 @@ uint64_t sys_pread64(int fd, void *buf, size_t len, uint64_t offset) {
     task_t *self = current_task;
 
     ssize_t ret = 0;
-    with_fd_info_lock(self->fd_info, {
-        if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
-            ret = -EBADF;
-            break;
-        }
+    with_fd_info_lock(
+        self->fd_info, ({
+            if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
+                ret = -EBADF;
+                break;
+            }
 
-        if (self->fd_info->fds[fd]->node->type & file_dir) {
-            ret = -EISDIR;
-            break;
-        }
+            if (self->fd_info->fds[fd]->node->type & file_dir) {
+                ret = -EISDIR;
+                break;
+            }
 
-        ret = vfs_read_fd(self->fd_info->fds[fd], buf, offset, len);
-    });
+            fd_shared_t shared = {
+                .offset = offset,
+                .flags = self->fd_info->fds[fd]->shared->flags,
+                .ref_count = 1,
+            };
+            fd_t f = {
+                .node = self->fd_info->fds[fd]->node,
+                .shared = &shared,
+                .close_on_exec = self->fd_info->fds[fd]->close_on_exec,
+            };
+            ret = vfs_read_fd(&f, buf, offset, len);
+        }));
 
     return (uint64_t)ret;
 }
@@ -967,19 +977,30 @@ uint64_t sys_pwrite64(int fd, const void *buf, size_t len, uint64_t offset) {
     task_t *self = current_task;
 
     ssize_t ret = 0;
-    with_fd_info_lock(self->fd_info, {
-        if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
-            ret = -EBADF;
-            break;
-        }
+    with_fd_info_lock(
+        self->fd_info, ({
+            if (fd >= MAX_FD_NUM || self->fd_info->fds[fd] == NULL) {
+                ret = -EBADF;
+                break;
+            }
 
-        if (self->fd_info->fds[fd]->node->type & file_dir) {
-            ret = -EISDIR;
-            break;
-        }
+            if (self->fd_info->fds[fd]->node->type & file_dir) {
+                ret = -EISDIR;
+                break;
+            }
 
-        ret = vfs_write_fd(self->fd_info->fds[fd], buf, offset, len);
-    });
+            fd_shared_t shared = {
+                .offset = offset,
+                .flags = self->fd_info->fds[fd]->shared->flags,
+                .ref_count = 1,
+            };
+            fd_t f = {
+                .node = self->fd_info->fds[fd]->node,
+                .shared = &shared,
+                .close_on_exec = self->fd_info->fds[fd]->close_on_exec,
+            };
+            ret = vfs_write_fd(&f, buf, offset, len);
+        }));
 
     return (uint64_t)ret;
 }

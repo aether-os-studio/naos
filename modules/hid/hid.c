@@ -327,15 +327,13 @@ static void hid_register_bus_device(hid_device_t *hid, uint32_t instance_id) {
     char modalias[256];
     snprintf(modalias, sizeof(modalias), "hid:b0003g0001v%08Xp%08X",
              hid->iface->usbdev->vendorid, hid->iface->usbdev->productid);
+
     attributes_builder_append(builder, attribute_new("MODALIAS", modalias));
 
     hid->bus_device = bus_device_install_internal(&hid_bus, hid, builder->attrs,
                                                   builder->count, NULL, 0,
                                                   hid_get_device_path);
 
-    for (int i = 0; i < builder->count; i++) {
-        attrbute_free(builder->attrs[i]);
-    }
     free(builder);
 }
 

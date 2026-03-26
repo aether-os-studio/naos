@@ -470,7 +470,6 @@ void free_page_table(task_mm_info_t *directory) {
     vma_manager_t *mgr = &directory->task_vma_mgr;
     bool should_free = false;
 
-    spin_lock(&mgr->lock);
     spin_lock(&directory->lock);
     if (--directory->ref_count <= 0) {
         should_free = true;
@@ -478,10 +477,10 @@ void free_page_table(task_mm_info_t *directory) {
     spin_unlock(&directory->lock);
 
     if (!should_free) {
-        spin_unlock(&mgr->lock);
         return;
     }
 
+    spin_lock(&mgr->lock);
     vma_manager_exit_cleanup(mgr);
     spin_unlock(&mgr->lock);
 

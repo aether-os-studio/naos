@@ -1716,9 +1716,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         child->fs->root = child->nsproxy->mnt_ns->root;
     }
 
-    child->cpu_id = ((self->clone_flags & CLONE_VM) || (flags & CLONE_VM))
-                        ? self->cpu_id
-                        : alloc_cpu_id();
+    child->cpu_id = (flags & CLONE_VM) ? self->cpu_id : alloc_cpu_id();
 
     child->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
     child->syscall_stack =

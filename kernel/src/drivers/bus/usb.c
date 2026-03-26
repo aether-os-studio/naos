@@ -235,10 +235,6 @@ static void usb_register_bus_device(usb_device_t *usbdev) {
     usbdev->bus_device =
         bus_device_install_usb(usbdev, builder->attrs, builder->count, NULL, 0);
 
-    for (int i = 0; i < builder->count; i++) {
-        free(builder->attrs[i]);
-    }
-
     free(builder);
 }
 

@@ -766,10 +766,6 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
             pci_device->device =
                 bus_device_install_pci(pci_device, attrs, attrs_count, NULL, 0);
 
-            for (int i = 0; i < attrs_count; i++) {
-                attrbute_free(attrs[i]);
-            }
-
             pci_device_number++;
         } else {
             printk("PCIe: Device list full, dropping device\n");
