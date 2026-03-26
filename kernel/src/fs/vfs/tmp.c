@@ -415,33 +415,35 @@ void *tmpfs_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
     return addr;
 }
 
-void tmpfs_resize(vfs_node_t *node, uint64_t size) {
+int tmpfs_resize(vfs_node_t *node, uint64_t size) {
     tmpfs_node_t *handle = node->handle;
     if (!handle)
-        return;
+        return -EINVAL;
 
     spin_lock(&tmpfs_oplock);
     if (size == 0) {
         handle->size = 0;
         tmpfs_sync_node_from_handle(node, handle);
         spin_unlock(&tmpfs_oplock);
-        return;
+        return 0;
     }
 
     size_t new_capability = size;
     if (new_capability > MAX_TMPFS_FILE_SIZE) {
         spin_unlock(&tmpfs_oplock);
-        return;
+        return -E2BIG;
     }
 
     if (tmpfs_replace_content(handle, new_capability, handle->size, true) !=
         0) {
         spin_unlock(&tmpfs_oplock);
-        return;
+        return -ENOMEM;
     }
     handle->size = size;
     tmpfs_sync_node_from_handle(node, handle);
     spin_unlock(&tmpfs_oplock);
+
+    return 0;
 }
 
 int tmpfs_stat(vfs_node_t *node) {

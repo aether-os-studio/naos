@@ -371,27 +371,29 @@ void *ramfs_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
     return addr;
 }
 
-void ramfs_resize(vfs_node_t *node, uint64_t size) {
+int ramfs_resize(vfs_node_t *node, uint64_t size) {
     ramfs_node_t *handle = node->handle;
     if (!handle)
-        return;
+        return -EINVAL;
 
     spin_lock(&ramfs_oplock);
     size_t new_capability = size;
     if (new_capability > MAX_RAMFS_FILE_SIZE) {
         spin_unlock(&ramfs_oplock);
-        return;
+        return -E2BIG;
     }
 
     if (ramfs_replace_content(handle, new_capability, handle->capability,
                               false) != 0) {
         spin_unlock(&ramfs_oplock);
-        return;
+        return -ENOMEM;
     }
 
     handle->size = MIN(handle->size, size);
     ramfs_sync_node_from_handle(node, handle);
     spin_unlock(&ramfs_oplock);
+
+    return 0;
 }
 
 int ramfs_stat(vfs_node_t *node) {

@@ -430,33 +430,35 @@ int devtmpfs_poll(vfs_node_t *node, size_t events) {
     return -ENOSYS;
 }
 
-void devtmpfs_resize(vfs_node_t *node, uint64_t size) {
+int devtmpfs_resize(vfs_node_t *node, uint64_t size) {
     devtmpfs_node_t *handle = node ? node->handle : NULL;
     if (!handle)
-        return;
+        return -EINVAL;
 
     spin_lock(&devtmpfs_oplock);
     if (size == 0) {
         handle->size = 0;
         devtmpfs_sync_node_from_handle(node, handle);
         spin_unlock(&devtmpfs_oplock);
-        return;
+        return 0;
     }
 
     size_t new_capability = size;
     if (new_capability > MAX_DEVTMPFS_FILE_SIZE) {
         spin_unlock(&devtmpfs_oplock);
-        return;
+        return -E2BIG;
     }
 
     if (devtmpfs_replace_content(handle, new_capability, handle->size, true) !=
         0) {
         spin_unlock(&devtmpfs_oplock);
-        return;
+        return -ENOMEM;
     }
     handle->size = size;
     devtmpfs_sync_node_from_handle(node, handle);
     spin_unlock(&devtmpfs_oplock);
+
+    return 0;
 }
 
 int devtmpfs_stat(vfs_node_t *node) {

@@ -2986,15 +2986,15 @@ int ext_poll(vfs_node_t *node, size_t events) {
     return 0;
 }
 
-void ext_resize(vfs_node_t *node, uint64_t size) {
+int ext_resize(vfs_node_t *node, uint64_t size) {
     if (!node || !(node->type & file_none))
-        return;
+        return -EINVAL;
 
     spin_lock(&rwlock);
     ext_mount_ctx_t *fs = ext_find_mount(node);
     if (!fs) {
         spin_unlock(&rwlock);
-        return;
+        return -ENOENT;
     }
 
     ext_inode_disk_t inode = {0};
@@ -3009,6 +3009,8 @@ void ext_resize(vfs_node_t *node, uint64_t size) {
         ext_sync_node_from_inode(node, fs, &inode);
     }
     spin_unlock(&rwlock);
+
+    return 0;
 }
 
 void *ext_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,

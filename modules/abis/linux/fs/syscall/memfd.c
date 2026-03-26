@@ -73,21 +73,25 @@ int memfd_stat(vfs_node_t *node) {
     return 0;
 }
 
-void memfd_resize(vfs_node_t *node, uint64_t size) {
+int memfd_resize(vfs_node_t *node, uint64_t size) {
     if (size == 0)
-        return;
+        return 0;
 
     struct memfd_ctx *ctx = node ? node->handle : NULL;
     if (!ctx)
-        return;
+        return -EINVAL;
 
     spin_lock(&ctx->lock);
     uint8_t *new_data = alloc_frames_bytes(size);
+    if (!new_data)
+        return -ENOMEM;
     memcpy(new_data, ctx->data, MIN(size, ctx->len));
     free_frames_bytes(ctx->data, ctx->len);
     ctx->data = new_data;
     ctx->len = size;
     spin_unlock(&ctx->lock);
+
+    return 0;
 }
 
 void *memfd_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,

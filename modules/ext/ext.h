@@ -34,7 +34,7 @@ int ext_rename(vfs_node_t *node, const char *new);
 int ext_stat(vfs_node_t *node);
 int ext_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg);
 int ext_poll(vfs_node_t *node, size_t events);
-void ext_resize(vfs_node_t *node, uint64_t size);
+int ext_resize(vfs_node_t *node, uint64_t size);
 void *ext_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
               size_t flags);
 void ext_free_handle(vfs_node_t *node);

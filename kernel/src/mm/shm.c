@@ -36,7 +36,7 @@ static void *shmfs_map(fd_t *file, void *addr, size_t offset, size_t size,
                        size_t prot, size_t flags);
 static int shmfs_ioctl(fd_t *node, ssize_t cmd, ssize_t arg);
 static int shmfs_poll(vfs_node_t *node, size_t events);
-static void shmfs_resize(vfs_node_t *node, uint64_t size);
+static int shmfs_resize(vfs_node_t *node, uint64_t size);
 static int shmfs_delete(vfs_node_t *parent, vfs_node_t *node);
 static void shmfs_free_handle(vfs_node_t *node);
 
@@ -384,7 +384,7 @@ static int shmfs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
 
 static int shmfs_poll(vfs_node_t *node, size_t events) { return 0; }
 
-static void shmfs_resize(vfs_node_t *node, uint64_t size) {}
+static int shmfs_resize(vfs_node_t *node, uint64_t size) { return 0; }
 
 static int shmfs_delete(vfs_node_t *parent, vfs_node_t *node) {
     if (!node)

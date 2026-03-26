@@ -81,6 +81,7 @@ struct usb_hub {
     bool registered;
     bool removing;
     bool needs_rescan;
+    bool enumerating;
     uint32_t refcount;
     uint64_t next_scan_ns;
     struct llist_header node;

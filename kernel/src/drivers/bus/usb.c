@@ -1864,6 +1864,11 @@ static void usb_scan_hub(usb_hub_t *hub) {
     if (!hub || !hub->ports)
         return;
 
+    if (hub->enumerating)
+        return;
+
+    hub->enumerating = true;
+
     for (uint32_t port = 0; port < hub->portcount; port++) {
         usb_device_t *child;
         int present;
@@ -1913,6 +1918,8 @@ static void usb_scan_hub(usb_hub_t *hub) {
             usb_disconnect_device(child);
         }
     }
+
+    hub->enumerating = false;
 }
 
 static void usb_hotplug_thread(uint64_t arg) {

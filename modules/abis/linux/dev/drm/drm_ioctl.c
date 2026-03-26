@@ -181,16 +181,18 @@ static int drm_primefd_stat(vfs_node_t *node) {
     return 0;
 }
 
-static void drm_primefd_resize(vfs_node_t *node, uint64_t size) {
+static int drm_primefd_resize(vfs_node_t *node, uint64_t size) {
     drm_prime_fd_ctx_t *ctx = node ? node->handle : NULL;
     if (!ctx) {
-        return;
+        return -EINVAL;
     }
 
     ctx->size = MIN(size, ctx->size);
     if (ctx->node) {
         ctx->node->size = ctx->size;
     }
+
+    return 0;
 }
 
 static int drm_primefs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {

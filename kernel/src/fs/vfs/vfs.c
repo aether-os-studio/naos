@@ -2091,12 +2091,15 @@ fd_t *vfs_dup(fd_t *fd) {
     return new_fd;
 }
 
-void vfs_resize(vfs_node_t *node, uint64_t size) {
+int vfs_resize(vfs_node_t *node, uint64_t size) {
     if (!(node->type & file_none))
-        return;
-    vfs_ops_of(node)->resize(node, size);
+        return -EINVAL;
+    int ret = vfs_ops_of(node)->resize(node, size);
+    if (ret < 0)
+        return ret;
     node->size = size;
     vfs_on_new_event(node, IN_MODIFY);
+    return ret;
 }
 
 void *vfs_map(fd_t *fd, uint64_t addr, uint64_t len, uint64_t prot,

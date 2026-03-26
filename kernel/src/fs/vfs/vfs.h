@@ -142,7 +142,7 @@ typedef bool (*vfs_close_t)(vfs_node_t *node);
  *\param current  当前文件句柄
  *\param size     新的大小
  */
-typedef void (*vfs_resize_t)(vfs_node_t *node, uint64_t size);
+typedef int (*vfs_resize_t)(vfs_node_t *node, uint64_t size);
 
 /**
  *\brief 写入一个文件
@@ -659,7 +659,7 @@ void vfs_update(vfs_node_t *node);
  *\param node     文件节点
  *\param size     新长度
  */
-void vfs_resize(vfs_node_t *node, uint64_t size);
+int vfs_resize(vfs_node_t *node, uint64_t size);
 
 /**
  *\brief 获取文件的完整路径

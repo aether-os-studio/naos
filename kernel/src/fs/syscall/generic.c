@@ -2430,9 +2430,7 @@ uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
 
     vfs_node_t *node = self->fd_info->fds[fd]->node;
 
-    vfs_resize(node, offset + len);
-
-    return 0;
+    return vfs_resize(node, offset + len);
 }
 
 uint64_t sys_truncate(const char *path_user, uint64_t length) {
@@ -2445,9 +2443,7 @@ uint64_t sys_truncate(const char *path_user, uint64_t length) {
         return (uint64_t)-ENOENT;
     }
 
-    vfs_resize(node, length);
-
-    return 0;
+    return vfs_resize(node, length);
 }
 
 uint64_t sys_ftruncate(int fd, uint64_t length) {
@@ -2456,9 +2452,7 @@ uint64_t sys_ftruncate(int fd, uint64_t length) {
     if (fd < 0 || fd >= MAX_FD_NUM || !self->fd_info->fds[fd])
         return -EBADF;
 
-    vfs_resize(self->fd_info->fds[fd]->node, length);
-
-    return 0;
+    return vfs_resize(self->fd_info->fds[fd]->node, length);
 }
 
 uint64_t sys_flock(int fd, uint64_t operation) {

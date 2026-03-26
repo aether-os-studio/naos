@@ -625,7 +625,7 @@ static void xhci_process_event_ring(struct xhci_event_ring *intr) {
 
 static void xhci_process_events(usb_xhci_t *xhci) {
     spin_lock(&xhci->event_lock);
-    for (int i = 0; i < MIN(cpu_count, xhci->max_intrs); i++) {
+    for (int i = 0; i < MIN(cpu_count, xhci->enabled_intrs); i++) {
         xhci_process_event_ring(&xhci->evt[i]);
     }
     spin_unlock(&xhci->event_lock);
@@ -1371,7 +1371,7 @@ static void xhci_free_controller(usb_xhci_t *xhci) {
     if (xhci->event_task)
         task_unblock(xhci->event_task, EOK);
 
-    for (int i = 0; i < xhci->max_intrs; i++) {
+    for (int i = 0; i < MIN(cpu_count, xhci->max_intrs); i++) {
         xhci_free_ring(&xhci->evt[i].ring);
         if (xhci->evt[i].eseg)
             free_frames_bytes(xhci->evt[i].eseg, sizeof(*xhci->evt[i].eseg));
