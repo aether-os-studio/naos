@@ -6,32 +6,24 @@ set -e # fail globally
 SCRIPT=$(realpath "$0")
 SCRIPTPATH=$(dirname "$SCRIPT")
 
-APK_PATH="$SCRIPTPATH/cache/$(uname -m)-apk-static"
+XBPS_INSTALL_PATH="$SCRIPTPATH/cache/xbps"
+XBPS_XZ_PATH="$SCRIPTPATH/cache/xbps-static-latest.tar.xz"
+XBPS_XZ_URI="https://repo-default.voidlinux.org/static/xbps-static-latest.$(uname -m)-musl.tar.xz"
 
-ALPINE_VERSION=edge
+mkdir -p "$(dirname "$XBPS_XZ_PATH")"
+[ -f "$XBPS_XZ_PATH" ] || wget "$XBPS_XZ_URI" -O "$XBPS_XZ_PATH"
 
-export APK_PATH ARCH ROOTFS_SYSROOT ALPINE_VERSION
+mkdir -p "$(dirname "$XBPS_INSTALL_PATH")"
+[ -d "$XBPS_INSTALL_PATH" ] || tar -xf $XBPS_XZ_PATH -C $XBPS_INSTALL_PATH
 
-MIRROR_ROOT="http://mirrors.ustc.edu.cn/alpine"
+sudo XBPS_ARCH=$ARCH $XBPS_INSTALL_PATH/usr/bin/xbps-install -S -r $ROOTFS_SYSROOT -R "https://mirrors.tuna.tsinghua.edu.cn/voidlinux/current" \
+    base-minimal bash coreutils util-linux \
+    gcc binutils \
+    glibc-locales ncurses tzdata which shadow grep elfutils curl \
+    seatd eudev dbus weston xorg-server-xwayland xrandr \
+    mesa mesa-dri mesa-demos \
+    adwaita-icon-theme dejavu-fonts-ttf
 
-MIRROR="${MIRROR_ROOT}/${ALPINE_VERSION}"
-APK_CMD="sudo $APK_PATH --arch $ARCH -U --allow-untrusted --root $ROOTFS_SYSROOT/"
-
-$APK_CMD -X "$MIRROR/main" --initdb add alpine-base bash coreutils grep musl ncurses
-
-printf "${MIRROR}/main\n${MIRROR}/community\n${MIRROR_ROOT}/edge/testing\n" | sudo tee $ROOTFS_SYSROOT/etc/apk/repositories
-
-sudo cp -r $SCRIPTPATH/base/etc/resolv.conf $ROOTFS_SYSROOT/etc/
-
-sudo chroot "$ROOTFS_SYSROOT/" /bin/bash --login -c "apk add musl-dev gcompat gzip xz make file tar pciutils tzdata nano vim lua5.1 gcc binutils fastfetch libdrm-dev libdrm-tests bind-tools curl evtest \
-seatd seatd-launch dbus eudev \
-weston weston-backend-drm weston-shell-desktop weston-xwayland xwayland xrandr ttf-dejavu adwaita-icon-theme \
-weston-terminal \
-mesa mesa-gl mesa-egl mesa-gles mesa-gbm mesa-utils mesa-demos mesa-vulkan-swrast mesa-dri-gallium \
-"
-
-sudo rm -rf $ROOTFS_SYSROOT/bin/sh
-sudo ln -sf /bin/bash $ROOTFS_SYSROOT/bin/sh
 sudo ln -sf /usr/share/zoneinfo/Asia/Shanghai $ROOTFS_SYSROOT/etc/localtime
 
 sudo cp -r $SCRIPTPATH/base/* $ROOTFS_SYSROOT/

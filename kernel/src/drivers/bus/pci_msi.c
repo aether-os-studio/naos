@@ -3,12 +3,6 @@
 #include <arch/arch.h>
 #include <drivers/kernel_logger.h>
 
-/**
- * @brief 生成msi消息
- *
- * @param msi_desc msi描述符
- * @return struct msi_msg_t* msi消息指针（在描述符内）
- */
 struct msi_msg_t *msi_arch_get_msg(struct msi_desc_t *msi_desc) {
 #if defined(__x86_64__)
     msi_desc->msg.address_hi = msi_desc->processor & 0xFFFFFF00;
@@ -57,13 +51,6 @@ __msi_read_cap_list(struct msi_desc_t *msi_desc, uint32_t cap_off) {
     return cap_list;
 }
 
-/**
- * @brief 读取msix的capability list
- *
- * @param msi_desc msi描述符
- * @param cap_off capability list的offset
- * @return struct pci_msix_cap_t 对应的capability list
- */
 static inline struct pci_msix_cap_t
 __msi_read_msix_cap_list(struct msi_desc_t *msi_desc, uint32_t cap_off) {
     struct pci_msix_cap_t cap_list = {0};
@@ -82,22 +69,13 @@ __msi_read_msix_cap_list(struct msi_desc_t *msi_desc, uint32_t cap_off) {
     return cap_list;
 }
 
-/**
- * @brief 映射设备的msix表
- *
- * @param pci_dev pci设备信息结构体
- * @param msix_cap msix capability list的结构体
- * @return int 错误码
- */
 static inline int __msix_map_table(pci_device_t *pci_dev,
                                    struct pci_msix_cap_t *msix_cap) {
-    // msix table相对于bar寄存器中存储的地址的offset
     pci_dev->msix_offset = msix_cap->dword1 & (~0x7);
     pci_dev->msix_table_size = (msix_cap->msg_ctrl & 0x7ff) + 1;
     pci_dev->msix_mmio_size =
         pci_dev->msix_table_size * 16 + pci_dev->msix_offset;
 
-    // 获取BAR的物理地址并映射到虚拟地址空间
     uint32_t bir = msix_cap->dword1 & 0x7;
     if (bir > 5) {
         printk("MSI-X: Invalid bir %d\n", bir);
@@ -110,42 +88,27 @@ static inline int __msix_map_table(pci_device_t *pci_dev,
         return -ENOMEM;
     }
 
-    // 映射整个BAR区域（包括MSI-X表）
     pci_dev->msix_mmio_vaddr = phys_to_virt((uint64_t)bar_physical_address);
     map_page_range(get_current_page_dir(false), pci_dev->msix_mmio_vaddr,
                    bar_physical_address, pci_dev->bars[bir].size,
-                   PT_FLAG_R | PT_FLAG_W);
+                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
 
     return 0;
 }
 
-/**
- * @brief 将msi_desc中的数据填写到msix表的指定表项处
- *
- * @param pci_dev pci设备结构体
- * @param msi_desc msi描述符
- */
 static inline void __msix_set_entry(struct msi_desc_t *msi_desc) {
     uint64_t table_base =
         msi_desc->pci_dev->msix_mmio_vaddr + msi_desc->pci_dev->msix_offset;
     volatile uint32_t *entry_ptr =
         (volatile uint32_t *)(table_base + msi_desc->msi_index * 16);
 
-    // 设置地址字段（低32位 + 高32位），使用小端格式
     entry_ptr[0] = msi_desc->msg.address_lo;
     entry_ptr[1] = msi_desc->msg.address_hi;
 
-    // 设置数据字段和控制字段
     entry_ptr[2] = msi_desc->msg.data;
     entry_ptr[3] = msi_desc->msg.vector_control & ~1;
 }
 
-/**
- * @brief 清空设备的msix table的指定表项
- *
- * @param pci_dev pci设备
- * @param msi_index 表项号
- */
 static inline void __msix_clear_entry(pci_device_t *pci_dev,
                                       uint16_t msi_index) {
     uint64_t table_base = pci_dev->msix_mmio_vaddr + pci_dev->msix_offset;
@@ -157,23 +120,16 @@ static inline void __msix_clear_entry(pci_device_t *pci_dev,
     entry_ptr[1] = 0;
 }
 
-/**
- * @brief 启用 Message Signaled Interrupts
- *
- * @param header 设备header
- * @param vector 中断向量号
- * @param processor 要投递到的处理器
- * @param edge_trigger 是否边缘触发
- * @param assert 是否高电平触发
- *
- * @return 返回码
- */
 int pci_enable_msi(struct msi_desc_t *msi_desc) {
-    pci_device_t *ptr = msi_desc->pci_dev;
+    pci_device_t *ptr;
     uint32_t cap_ptr;
-    uint32_t tmp;
+    uint16_t command;
     uint16_t message_control;
-    uint64_t message_addr;
+
+    if (!msi_desc || !msi_desc->pci_dev || !msi_desc->pci_dev->op)
+        return -EINVAL;
+
+    ptr = msi_desc->pci_dev;
 
     if (msi_desc->pci.msi_attribute.is_msix) {
         cap_ptr = pci_enumerate_capability_list(ptr, 0x11);
@@ -190,72 +146,56 @@ int pci_enable_msi(struct msi_desc_t *msi_desc) {
         msi_desc->pci.msi_attribute.is_msix = 0;
     }
 
-    // 获取msi消息
     msi_arch_get_msg(msi_desc);
 
-    // disable intx
-    tmp = ptr->op->read32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                          0x04); // 读取cap+0x0处的值
-    tmp &= ~(1U << 10);
-    ptr->op->write32(ptr->bus, ptr->slot, ptr->func, ptr->segment, 0x04, tmp);
+    command = ptr->op->read16(ptr->bus, ptr->slot, ptr->func, ptr->segment,
+                              PCI_CONF_COMMAND);
+    command |= (1U << 10);
+    ptr->op->write16(ptr->bus, ptr->slot, ptr->func, ptr->segment,
+                     PCI_CONF_COMMAND, command);
 
-    if (msi_desc->pci.msi_attribute.is_msix) // MSI-X
-    {
-        if (msi_desc->msi_index == 0) {
-            // 读取msix的信息
-            struct pci_msix_cap_t cap =
-                __msi_read_msix_cap_list(msi_desc, cap_ptr);
-            // 映射msix table
+    if (msi_desc->pci.msi_attribute.is_msix) {
+        struct pci_msix_cap_t cap = __msi_read_msix_cap_list(msi_desc, cap_ptr);
+
+        if (ptr->msix_mmio_vaddr == 0) {
             int ret = __msix_map_table(ptr, &cap);
-            if (ret < 0) {
+            if (ret < 0)
                 return ret;
-            }
-
-            // 使能msi-x
-            tmp = ptr->op->read32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                                  cap_ptr + 0x2); // 读取cap+0x2处的值
-            tmp &= ~(1U << 14);
-            tmp |= (1U << 15);
-            ptr->op->write32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                             cap_ptr + 0x2, tmp);
         }
 
-        // 设置msix的中断
+        if (msi_desc->msi_index >= ptr->msix_table_size)
+            return -EINVAL;
+
         __msix_set_entry(msi_desc);
-    } else {
-        tmp = ptr->op->read32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                              cap_ptr); // 读取cap+0x0处的值
-        message_control = (tmp >> 16) & 0xffff;
 
-        // 写入message address
-        message_addr = ((((uint64_t)msi_desc->msg.address_hi) << 32) |
-                        msi_desc->msg.address_lo); // 获取message address
-        ptr->op->write32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                         cap_ptr + 0x4, (uint32_t)(message_addr & 0xffffffff));
-
-        if (message_control & (1 << 7)) // 64位
-            ptr->op->write32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                             cap_ptr + 0x8,
-                             (uint32_t)((message_addr >> 32) & 0xffffffff));
-
-        // 写入message data
-
-        tmp = msi_desc->msg.data;
-        if (message_control & (1 << 7)) // 64位
-            ptr->op->write32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                             cap_ptr + 0xc, tmp);
-        else
-            ptr->op->write32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                             cap_ptr + 0x8, tmp);
-
-        // 使能msi
-        tmp = ptr->op->read32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                              cap_ptr + 0x2); // 读取cap+0x2处的值
-        tmp |= 1;
-        tmp &= ~(7 << 4);
-        ptr->op->write32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
-                         cap_ptr + 0x2, tmp);
+        message_control = ptr->op->read16(ptr->bus, ptr->slot, ptr->func,
+                                          ptr->segment, cap_ptr + 0x2);
+        message_control &= ~(1U << 14);
+        message_control |= (1U << 15);
+        ptr->op->write16(ptr->bus, ptr->slot, ptr->func, ptr->segment,
+                         cap_ptr + 0x2, message_control);
+        return 0;
     }
+
+    message_control = ptr->op->read16(ptr->bus, ptr->slot, ptr->func,
+                                      ptr->segment, cap_ptr + 0x2);
+    ptr->op->write32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
+                     cap_ptr + 0x4, msi_desc->msg.address_lo);
+
+    if (message_control & (1U << 7)) {
+        ptr->op->write32(ptr->bus, ptr->slot, ptr->func, ptr->segment,
+                         cap_ptr + 0x8, msi_desc->msg.address_hi);
+        ptr->op->write16(ptr->bus, ptr->slot, ptr->func, ptr->segment,
+                         cap_ptr + 0xC, (uint16_t)msi_desc->msg.data);
+    } else {
+        ptr->op->write16(ptr->bus, ptr->slot, ptr->func, ptr->segment,
+                         cap_ptr + 0x8, (uint16_t)msi_desc->msg.data);
+    }
+
+    message_control |= 1U;
+    message_control &= ~(7U << 4);
+    ptr->op->write16(ptr->bus, ptr->slot, ptr->func, ptr->segment,
+                     cap_ptr + 0x2, message_control);
 
     return 0;
 }

@@ -1188,7 +1188,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
         self->fd_info = new;
     }
 
-    string_builder_t *builder = create_string_builder(DEFAULT_PAGE_SIZE * 4);
+    string_builder_t *builder = create_string_builder(DEFAULT_PAGE_SIZE * 8);
     for (int i = 0; i < argv_count; i++) {
         string_builder_append(builder, new_argv[i]);
         if (i != argv_count - 1)

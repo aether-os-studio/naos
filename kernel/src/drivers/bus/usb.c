@@ -1907,6 +1907,7 @@ static void usb_scan_hub(usb_hub_t *hub) {
                 hub->devcount--;
             spin_unlock(&hub->lock);
 
+            printk("USB port %d disconnected.\n", port);
             if (hub->op->disconnect)
                 hub->op->disconnect(hub, port);
             usb_disconnect_device(child);
@@ -1981,7 +1982,7 @@ void usb_enumerate(usb_hub_t *hub) {
             return;
     }
 
-    // usb_hotplug_start();
+    usb_hotplug_start();
 
     spin_lock(&usb_hub_list_lock);
     if (!hub->registered) {

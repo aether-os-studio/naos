@@ -9,7 +9,7 @@
 #define APIC_RESCHED_IPI_VECTOR 0x40
 #define APIC_TLB_SHOOTDOWN_VECTOR 0x41
 
-#define IRQ_ALLOCATE_NUM_BASE 80
+#define IRQ_ALLOCATE_NUM_BASE 0x80
 
 void generic_interrupt_table_init_early();
 

@@ -191,7 +191,6 @@ struct xhci_pipe {
     usb_pipe_t pipe;
     uint32_t slotid;
     uint32_t epid;
-    uint16_t interrupter;
     int transfer_count;
     usb_xfer_cb async_cb;
     void *async_user_data;
@@ -204,6 +203,8 @@ struct xhci_pipe {
 struct usb_xhci {
     usb_controller_t usb;
 
+    usb_hub_t *root_hub;
+
     pci_device_t *pci_dev;
     void *mmio;
 
@@ -211,6 +212,7 @@ struct usb_xhci {
     uint32_t ports;
     uint32_t slots;
     uint32_t max_intrs;
+    uint32_t enabled_intrs;
     uint8_t context64;
     struct xhci_portmap usb2;
     struct xhci_portmap usb3;
@@ -222,13 +224,15 @@ struct usb_xhci {
 
     xhci_dev_ctx_entry_t *devs;
     struct xhci_ring cmds;
-    struct xhci_event_ring evt;
+    struct xhci_event_ring *evt;
 
     struct xhci_pipe ***pipes;
 
     spinlock_t event_lock;
     task_t *event_task;
     bool running;
+
+    bool irq_enabled;
 
 #define XHCI_QUIRK_VL805_OLD_REV (1UL << 0)
     uint64_t quirks;
@@ -322,7 +326,6 @@ static void xhci_print_port_state(const char *prefix, uint32_t port,
 static int xhci_hub_detect(usb_hub_t *hub, uint32_t port) {
     usb_xhci_t *xhci = container_of(hub->cntl, usb_xhci_t, usb);
     uint32_t portsc = readl(&xhci->pr[port].portsc);
-    printk("xhci: Detecting port %d, portsc = %#010x\n", port, portsc);
     return (portsc & XHCI_PORTSC_CCS) ? 1 : 0;
 }
 
@@ -501,6 +504,7 @@ static void xhci_commit_erdp(usb_xhci_t *xhci, struct xhci_event_ring *intr) {
 
     writel(&intr->ir->erdp_low, (uint32_t)(erdp & ~0xfU) | (1 << 3));
     writel(&intr->ir->erdp_high, erdp >> 32);
+    writel(&intr->ir->iman, XHCI_IMAN_IE | XHCI_IMAN_IP);
 
     if (xhci->quirks & XHCI_QUIRK_VL805_OLD_REV) {
         uint32_t low = readl(&intr->ir->erdp_low);
@@ -595,6 +599,8 @@ static void xhci_process_event_ring(struct xhci_event_ring *intr) {
                  (1 << XHCI_PORTSC_PLS_SHIFT));
             writel(&xhci->pr[port].portsc, pclear);
             xhci_print_port_state(__func__, port, portsc);
+            if (portsc & XHCI_PORTSC_CSC)
+                usb_hub_mark_port_changed(xhci->root_hub, port);
             break;
         }
         default:
@@ -619,7 +625,9 @@ static void xhci_process_event_ring(struct xhci_event_ring *intr) {
 
 static void xhci_process_events(usb_xhci_t *xhci) {
     spin_lock(&xhci->event_lock);
-    xhci_process_event_ring(&xhci->evt);
+    for (int i = 0; i < MIN(cpu_count, xhci->max_intrs); i++) {
+        xhci_process_event_ring(&xhci->evt[i]);
+    }
     spin_unlock(&xhci->event_lock);
 }
 
@@ -629,8 +637,9 @@ static int xhci_event_wait(usb_xhci_t *xhci, struct xhci_ring *ring,
 
     while (nano_time() < timeout) {
         xhci_process_events(xhci);
-        if (!xhci_ring_busy(ring))
+        if (!xhci_ring_busy(ring)) {
             return TRB_CC(ring->evt.status);
+        }
         schedule(SCHED_FLAG_YIELD);
     }
 
@@ -758,8 +767,8 @@ static int xhci_config_hub(usb_hub_t *hub) {
     return cc == CC_SUCCESS ? 0 : -EIO;
 }
 
-static uint16_t xhci_pick_interrupter(usb_xhci_t *xhci, uint8_t eptype) {
-    return 0;
+static uint16_t xhci_pick_interrupter(usb_xhci_t *xhci) {
+    return current_cpu_id % xhci->enabled_intrs;
 }
 
 static usb_pipe_t *
@@ -787,7 +796,6 @@ xhci_alloc_pipe(usb_device_t *usbdev, usb_endpoint_descriptor_t *epdesc,
 
     usb_desc2pipe(&pipe->pipe, usbdev, epdesc);
     pipe->epid = epid;
-    pipe->interrupter = xhci_pick_interrupter(xhci, eptype);
 
     if (xhci_alloc_ring(&pipe->reqs) != 0)
         goto fail;
@@ -934,16 +942,19 @@ static void xhci_xfer_setup(struct xhci_pipe *pipe, int dir, void *cmd,
     uint32_t status_dir = datalen == 0 ? 1 : !dir;
     uint32_t doorbell = pipe->epid;
 
-    xhci_trb_queue(&pipe->reqs, cmd,
-                   xhci_trb_status(USB_CONTROL_SETUP_SIZE, pipe->interrupter),
-                   (TR_SETUP << TRB_TYPE_SHIFT) | TRB_TR_IDT | (trt << 16));
+    xhci_trb_queue(
+        &pipe->reqs, cmd,
+        xhci_trb_status(USB_CONTROL_SETUP_SIZE, xhci_pick_interrupter(xhci)),
+        (TR_SETUP << TRB_TYPE_SHIFT) | TRB_TR_IDT | (trt << 16));
 
     if (datalen && data) {
-        xhci_trb_queue(&pipe->reqs, data, datalen,
+        xhci_trb_queue(&pipe->reqs, data,
+                       xhci_trb_status(datalen, xhci_pick_interrupter(xhci)),
                        (TR_DATA << TRB_TYPE_SHIFT) | (dir ? TRB_TR_DIR : 0));
     }
 
-    xhci_trb_queue(&pipe->reqs, NULL, xhci_trb_status(0, pipe->interrupter),
+    xhci_trb_queue(&pipe->reqs, NULL,
+                   xhci_trb_status(0, xhci_pick_interrupter(xhci)),
                    (TR_STATUS << TRB_TYPE_SHIFT) | TRB_TR_IOC |
                        (status_dir ? TRB_TR_DIR : 0));
     xhci_doorbell(xhci, pipe->slotid, doorbell);
@@ -954,7 +965,8 @@ static void xhci_xfer_normal(struct xhci_pipe *pipe, void *data, int datalen,
     usb_xhci_t *xhci = container_of(pipe->pipe.cntl, usb_xhci_t, usb);
     uint32_t doorbell = pipe->epid;
 
-    xhci_trb_queue(&pipe->reqs, data, datalen,
+    xhci_trb_queue(&pipe->reqs, data,
+                   xhci_trb_status(datalen, xhci_pick_interrupter(xhci)),
                    (TR_NORMAL << TRB_TYPE_SHIFT) | TRB_TR_IOC);
     xhci_doorbell(xhci, pipe->slotid, doorbell);
 }
@@ -1044,6 +1056,15 @@ static void xhci_event_thread(uint64_t arg) {
     task_exit(0);
 }
 
+static void xhci_irq_handler(uint64_t irq_num, void *data,
+                             struct pt_regs *regs) {
+    xhci_event_ring_t *ring = (xhci_event_ring_t *)data;
+    spin_lock(&ring->xhci->event_lock);
+    xhci_process_event_ring(ring);
+    writel(&ring->xhci->op->usbsts, XHCI_STS_EINT);
+    spin_unlock(&ring->xhci->event_lock);
+}
+
 static int xhci_alloc_runtime_state(usb_xhci_t *xhci) {
     xhci->devs = alloc_frames_bytes(sizeof(*xhci->devs) * (xhci->slots + 1));
     if (!xhci->devs)
@@ -1053,13 +1074,21 @@ static int xhci_alloc_runtime_state(usb_xhci_t *xhci) {
     if (xhci_alloc_ring(&xhci->cmds) != 0)
         return -ENOMEM;
 
-    if (xhci_alloc_ring(&xhci->evt.ring) != 0)
-        return -ENOMEM;
+    xhci->evt =
+        calloc(MIN(cpu_count, xhci->max_intrs), sizeof(struct xhci_event_ring));
 
-    xhci->evt.id = 0;
-    xhci->evt.xhci = xhci;
-    xhci->evt.ir = xhci->mmio + readl(&xhci->caps->rtsoff) + 0x20;
-    xhci->evt.eseg = alloc_frames_bytes(sizeof(*xhci->evt.eseg));
+    for (int intr = 0; intr < MIN(cpu_count, xhci->max_intrs); intr++) {
+        if (xhci_alloc_ring(&xhci->evt[intr].ring) != 0)
+            return -ENOMEM;
+
+        xhci->evt[intr].id = intr;
+        xhci->evt[intr].xhci = xhci;
+        xhci->evt[intr].ir = xhci->mmio +
+                             (readl(&xhci->caps->rtsoff) & ~0x1fU) + 0x20 +
+                             (intr * sizeof(struct xhci_ir));
+        xhci->evt[intr].eseg =
+            alloc_frames_bytes(sizeof(*xhci->evt[intr].eseg));
+    }
 
     xhci->pipes = calloc(xhci->slots + 1, sizeof(*xhci->pipes));
     if (!xhci->pipes)
@@ -1075,20 +1104,24 @@ static int xhci_alloc_runtime_state(usb_xhci_t *xhci) {
 }
 
 static void xhci_program_interrupters(usb_xhci_t *xhci) {
-    struct xhci_event_ring *evt = &xhci->evt;
-    uint64_t ring_phys = xhci_virt_to_phys(evt->ring.trbs);
-    uint64_t erst_phys = xhci_virt_to_phys(evt->eseg);
+    for (int intr = 0; intr < MIN(cpu_count, xhci->max_intrs); intr++) {
+        struct xhci_event_ring *evt = &xhci->evt[intr];
+        uint64_t ring_phys = xhci_virt_to_phys(evt->ring.trbs);
+        uint64_t erst_phys = xhci_virt_to_phys(evt->eseg);
 
-    evt->eseg->ptr_low = (uint32_t)ring_phys;
-    evt->eseg->ptr_high = ring_phys >> 32;
-    evt->eseg->size = XHCI_RING_ITEMS;
-    dma_sync_cpu_to_device(evt->eseg, sizeof(*evt->eseg));
+        evt->eseg->ptr_low = (uint32_t)ring_phys;
+        evt->eseg->ptr_high = ring_phys >> 32;
+        evt->eseg->size = XHCI_RING_ITEMS;
+        dma_sync_cpu_to_device(evt->eseg, sizeof(*evt->eseg));
 
-    writel(&evt->ir->erstsz, 1);
-    writel(&evt->ir->erstba_low, (uint32_t)erst_phys);
-    writel(&evt->ir->erstba_high, erst_phys >> 32);
-    writel(&evt->ir->erdp_low, (uint32_t)(ring_phys & ~0xfU) | (1 << 3));
-    writel(&evt->ir->erdp_high, ring_phys >> 32);
+        writel(&evt->ir->erstsz, 1);
+        writel(&evt->ir->erstba_low, (uint32_t)erst_phys);
+        writel(&evt->ir->erstba_high, erst_phys >> 32);
+        writel(&evt->ir->erdp_low, (uint32_t)(ring_phys & ~0xfU) | (1 << 3));
+        writel(&evt->ir->erdp_high, ring_phys >> 32);
+        writel(&evt->ir->imod, 0);
+        writel(&evt->ir->iman, XHCI_IMAN_IE | XHCI_IMAN_IP);
+    }
 }
 
 static int xhci_setup_scratchpad(usb_xhci_t *xhci) {
@@ -1142,30 +1175,59 @@ static int xhci_start_controller(usb_xhci_t *xhci) {
     writel(&xhci->op->crcr_low, (uint32_t)(crcr & ~0x3fU) | 1);
     writel(&xhci->op->crcr_high, crcr >> 32);
 
+    xhci->running = true;
+    xhci->event_task = NULL;
+    xhci->enabled_intrs = 1;
+#if defined(__x86_64__)
+    xhci->irq_enabled = true;
+    for (int i = 0; i < MIN(cpu_count, xhci->max_intrs); i++) {
+        struct msi_desc_t desc;
+        desc.irq_num = irq_allocate_irqnum();
+        desc.processor = cpuid_to_lapicid[i];
+        desc.pci_dev = xhci->pci_dev;
+        desc.assert = false;
+        desc.edge_trigger = false;
+        desc.msi_index = i;
+        desc.pci.msi_attribute.can_mask = false;
+        desc.pci.msi_attribute.is_64 = true;
+        desc.pci.msi_attribute.is_msix = true;
+        if (pci_enable_msi(&desc)) {
+            if (i == 0) {
+                printk("XHCI use polling mode\n");
+                xhci->event_task =
+                    task_create("xhci_event", xhci_event_thread, (uint64_t)xhci,
+                                KTHREAD_PRIORITY);
+
+                xhci->irq_enabled = false;
+            }
+            break;
+        } else {
+            if (i != 0)
+                xhci->enabled_intrs++;
+            irq_regist_irq(desc.irq_num, xhci_irq_handler, 0, &xhci->evt[i],
+                           &apic_controller, "xhci_irq_handler",
+                           IRQ_FLAGS_MSIX);
+        }
+    }
+    writel(&xhci->op->usbsts, XHCI_STS_EINT);
+#else
+    xhci->irq_enabled = false;
+    xhci->event_task = task_create("xhci_event", xhci_event_thread,
+                                   (uint64_t)xhci, KTHREAD_PRIORITY);
+#endif
     xhci_program_interrupters(xhci);
 
     if (xhci_setup_scratchpad(xhci) != 0)
         return -ENOMEM;
 
     reg = readl(&xhci->op->usbcmd);
-    reg |= XHCI_CMD_RS;
+    reg |= (xhci->irq_enabled ? XHCI_CMD_INTE : 0) | XHCI_CMD_RS;
     writel(&xhci->op->usbcmd, reg);
 
     if (wait_bit(&xhci->op->usbsts, XHCI_STS_HCH, 0, 1000) != 0)
         return -EIO;
 
     delay(10);
-
-    writel(&xhci->evt.ir->imod, 0);
-    writel(&xhci->evt.ir->iman, 0);
-
-    reg = readl(&xhci->op->usbcmd);
-    reg &= ~XHCI_CMD_INTE;
-    writel(&xhci->op->usbcmd, reg);
-
-    xhci->running = true;
-    xhci->event_task = task_create("xhci_event", xhci_event_thread,
-                                   (uint64_t)xhci, KTHREAD_PRIORITY);
 
     for (uint32_t port = 0; port < xhci->ports; port++) {
         uint32_t portsc = readl(&xhci->pr[port].portsc);
@@ -1309,9 +1371,11 @@ static void xhci_free_controller(usb_xhci_t *xhci) {
     if (xhci->event_task)
         task_unblock(xhci->event_task, EOK);
 
-    xhci_free_ring(&xhci->evt.ring);
-    if (xhci->evt.eseg)
-        free_frames_bytes(xhci->evt.eseg, sizeof(*xhci->evt.eseg));
+    for (int i = 0; i < xhci->max_intrs; i++) {
+        xhci_free_ring(&xhci->evt[i].ring);
+        if (xhci->evt[i].eseg)
+            free_frames_bytes(xhci->evt[i].eseg, sizeof(*xhci->evt[i].eseg));
+    }
 
     if (xhci->pipes) {
         for (uint32_t slot = 0; slot <= xhci->slots; slot++)
@@ -1379,6 +1443,8 @@ int xhci_hcd_driver_probe(pci_device_t *pci_dev, uint32_t vendor_device_id) {
     hub->cntl = &xhci->usb;
     hub->portcount = xhci->ports;
     hub->op = &xhci_hub_ops;
+
+    xhci->root_hub = hub;
 
     delay(XHCI_TIME_POSTPOWER);
 
