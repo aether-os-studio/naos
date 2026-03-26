@@ -10,12 +10,15 @@ typedef size_t (*stat_entry_t)(proc_handle_t *handle);
 typedef int (*poll_entry_t)(proc_handle_t *handle, int events);
 typedef size_t (*read_entry_t)(proc_handle_t *handle, void *addr, size_t offset,
                                size_t size);
+typedef ssize_t (*readlink_entry_t)(proc_handle_t *handle, void *addr,
+                                    size_t offset, size_t size);
 
 struct proc_handle {
     char name[64];
     char content[256];
     vfs_node_t *node;
     task_t *task;
+    int fd_num;
 };
 
 typedef struct proc_handle_node {
@@ -23,6 +26,7 @@ typedef struct proc_handle_node {
     uint64_t hash;
     read_entry_t read_entry;
     stat_entry_t stat_entry;
+    readlink_entry_t readlink_entry;
     poll_entry_t poll_entry;
 } proc_handle_node_t;
 
@@ -37,6 +41,8 @@ void procfs_stat_dispatch(proc_handle_t *handle, vfs_node_t *node);
 int procfs_poll_dispatch(proc_handle_t *handle, vfs_node_t *node, int events);
 size_t procfs_read_dispatch(proc_handle_t *handle, void *addr, size_t offset,
                             size_t size);
+ssize_t procfs_readlink_dispatch(proc_handle_t *handle, void *addr,
+                                 size_t offset, size_t size);
 
 size_t proc_filesystems_stat(proc_handle_t *handle);
 size_t proc_filesystems_read(proc_handle_t *handle, void *addr, size_t offset,
@@ -90,6 +96,15 @@ size_t proc_oom_score_adj_stat(proc_handle_t *handle);
 int proc_oom_score_adj_poll(proc_handle_t *handle, int events);
 size_t proc_oom_score_adj_read(proc_handle_t *handle, void *addr, size_t offset,
                                size_t size);
+ssize_t proc_root_readlink(proc_handle_t *handle, void *addr, size_t offset,
+                           size_t size);
+ssize_t proc_exe_readlink(proc_handle_t *handle, void *addr, size_t offset,
+                          size_t size);
+ssize_t proc_fd_readlink(proc_handle_t *handle, void *addr, size_t offset,
+                         size_t size);
+size_t proc_fdinfo_stat(proc_handle_t *handle);
+size_t proc_fdinfo_read(proc_handle_t *handle, void *addr, size_t offset,
+                        size_t size);
 size_t procfs_node_read(size_t len, size_t offset, size_t size, char *addr,
                         char *contect);
 size_t procfs_task_region_read(task_t *task, uint64_t start, uint64_t end,

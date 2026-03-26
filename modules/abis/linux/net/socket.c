@@ -1608,10 +1608,6 @@ done:
         return (size_t)ancillary_ret;
     }
 
-    mutex_lock(&sock->lock);
-    bool sock_passcred = sock->passcred;
-    mutex_unlock(&sock->lock);
-
     bool peer_passcred = false;
     if (peer) {
         if (peer_needs_unref) {
@@ -1628,7 +1624,7 @@ done:
         }
     }
 
-    if (sock_passcred || peer_passcred) {
+    if (peer_passcred) {
         if (!ancillary) {
             ancillary = calloc(1, sizeof(*ancillary));
             if (!ancillary) {
@@ -1723,6 +1719,7 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
         msg->msg_controllen >= sizeof(struct cmsghdr)) {
         size_t controllen_used = 0;
         struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
+        bool emitted_cred = false;
 
         for (unix_socket_ancillary_t *anc = ancillary_list; anc != NULL;
              anc = anc->next) {
@@ -1749,6 +1746,10 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
             }
 
             if (anc->has_cred) {
+                if (emitted_cred) {
+                    continue;
+                }
+
                 size_t space_left = msg->msg_controllen - controllen_used;
                 if (cmsg && space_left >= CMSG_SPACE(sizeof(struct ucred))) {
                     cmsg->cmsg_level = SOL_SOCKET;
@@ -1757,6 +1758,7 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
                     memcpy(CMSG_DATA(cmsg), &anc->cred, sizeof(struct ucred));
                     controllen_used += CMSG_SPACE(sizeof(struct ucred));
                     cmsg = CMSG_NXTHDR(msg, cmsg);
+                    emitted_cred = true;
                 } else {
                     msg->msg_flags |= MSG_CTRUNC;
                 }

@@ -388,6 +388,54 @@ uint64_t sys_getcwd(char *cwd, uint64_t size);
 uint64_t sys_dup(uint64_t fd);
 uint64_t sys_dup2(uint64_t fd, uint64_t newfd);
 uint64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags);
+
+#define PIDFS_IOCTL_MAGIC 0xFF
+
+#define PIDFD_GET_CGROUP_NAMESPACE _IO(PIDFS_IOCTL_MAGIC, 1)
+#define PIDFD_GET_IPC_NAMESPACE _IO(PIDFS_IOCTL_MAGIC, 2)
+#define PIDFD_GET_MNT_NAMESPACE _IO(PIDFS_IOCTL_MAGIC, 3)
+#define PIDFD_GET_NET_NAMESPACE _IO(PIDFS_IOCTL_MAGIC, 4)
+#define PIDFD_GET_PID_NAMESPACE _IO(PIDFS_IOCTL_MAGIC, 5)
+#define PIDFD_GET_PID_FOR_CHILDREN_NAMESPACE _IO(PIDFS_IOCTL_MAGIC, 6)
+#define PIDFD_GET_TIME_NAMESPACE _IO(PIDFS_IOCTL_MAGIC, 7)
+#define PIDFD_GET_TIME_FOR_CHILDREN_NAMESPACE _IO(PIDFS_IOCTL_MAGIC, 8)
+#define PIDFD_GET_USER_NAMESPACE _IO(PIDFS_IOCTL_MAGIC, 9)
+#define PIDFD_GET_UTS_NAMESPACE _IO(PIDFS_IOCTL_MAGIC, 10)
+
+#define PIDFD_INFO_PID (1UL << 0)
+#define PIDFD_INFO_CREDS (1UL << 1)
+#define PIDFD_INFO_CGROUPID (1UL << 2)
+#define PIDFD_INFO_EXIT (1UL << 3)
+#define PIDFD_INFO_COREDUMP (1UL << 4)
+
+#define PIDFD_INFO_SIZE_VER0 64
+
+#define PIDFD_COREDUMPED (1U << 0)
+#define PIDFD_COREDUMP_SKIP (1U << 1)
+#define PIDFD_COREDUMP_USER (1U << 2)
+#define PIDFD_COREDUMP_ROOT (1U << 3)
+
+typedef struct pidfd_info {
+    uint64_t mask;
+    uint64_t cgroupid;
+    uint32_t pid;
+    uint32_t tgid;
+    uint32_t ppid;
+    uint32_t ruid;
+    uint32_t rgid;
+    uint32_t euid;
+    uint32_t egid;
+    uint32_t suid;
+    uint32_t sgid;
+    uint32_t fsuid;
+    uint32_t fsgid;
+    int32_t exit_code;
+    uint32_t coredump_mask;
+    uint32_t __spare1;
+} pidfd_info_t;
+
+#define PIDFD_GET_INFO _IOWR(PIDFS_IOCTL_MAGIC, 11, struct pidfd_info)
+
 uint64_t sys_pidfd_open(int pid, uint64_t flags);
 uint64_t pidfd_create_for_pid(uint64_t pid, uint64_t flags, bool cloexec);
 int pidfd_get_pid_from_fd(uint64_t fd, uint64_t *pid_out);

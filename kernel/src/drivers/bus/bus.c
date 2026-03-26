@@ -30,7 +30,8 @@ int attributes_builder_append(attributes_builder_t *builder,
                               attribute_t *attr) {
     if (builder->count >= builder->capability) {
         builder->capability *= 2;
-        builder->attrs = realloc(builder->attrs, builder->capability);
+        builder->attrs =
+            realloc(builder->attrs, builder->capability * sizeof(attribute_t));
     }
     builder->attrs[builder->count++] = attr;
     return 0;
@@ -48,7 +49,8 @@ int bin_attributes_builder_append(bin_attributes_builder_t *builder,
                                   bin_attribute_t *bin_attr) {
     if (builder->count >= builder->capability) {
         builder->capability *= 2;
-        builder->bin_attrs = realloc(builder->bin_attrs, builder->capability);
+        builder->bin_attrs = realloc(
+            builder->bin_attrs, builder->capability * sizeof(bin_attribute_t));
     }
     builder->bin_attrs[builder->count++] = bin_attr;
     return 0;

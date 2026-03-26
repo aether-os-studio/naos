@@ -1618,8 +1618,7 @@ uint64_t sys_clone3(struct pt_regs *regs, clone_args_t *args_user,
         return (uint64_t)-EFAULT;
     }
 
-    uint64_t clone_flags =
-        (args.flags & ~((uint64_t)CLONE_PIDFD)) | (args.exit_signal & 0xFFULL);
+    uint64_t clone_flags = args.flags | (args.exit_signal & 0xFFULL);
     uint64_t ret =
         sys_clone(regs, clone_flags, args.stack + args.stack_size,
                   (int *)args.parent_tid, (int *)args.child_tid, args.tls);

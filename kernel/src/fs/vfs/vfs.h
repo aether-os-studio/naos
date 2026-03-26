@@ -201,6 +201,7 @@ typedef void *(*vfs_mapfile_t)(fd_t *fd, void *addr, size_t offset, size_t size,
 typedef int (*vfs_poll_t)(vfs_node_t *node, size_t events);
 
 typedef void (*vfs_free_handle_t)(vfs_node_t *node);
+typedef size_t (*procfs_fdinfo_render_t)(fd_t *fd, char *buf, size_t size);
 
 uint32_t poll_to_epoll_comp(uint32_t poll_events);
 uint32_t epoll_to_poll_comp(uint32_t epoll_events);
@@ -307,6 +308,7 @@ typedef struct fs {
     uint64_t magic;
     const vfs_operations_t *ops;
     uint64_t flags;
+    procfs_fdinfo_render_t procfs_fdinfo_render;
 } fs_t;
 
 extern fs_t *all_fs[256];

@@ -1455,8 +1455,11 @@ vfs_node_t *vfs_open_at(vfs_node_t *start, const char *_path, uint64_t flags) {
             vfs_node_ref_get(symlink_node);
             char target_path[512];
             int len = vfs_readlink(current, target_path, sizeof(target_path));
-            if (len < 0)
+            if (len <= 0) {
+                if (flags & O_NOFOLLOW)
+                    goto done;
                 goto err;
+            }
             target_path[len] = '\0';
             vfs_node_t *target_node =
                 vfs_open_at(current->parent, (const char *)target_path, 0);

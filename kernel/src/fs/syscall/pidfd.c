@@ -126,6 +126,51 @@ static int pidfd_poll(vfs_node_t *node, size_t events) {
     return 0;
 }
 
+static int pidfd_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
+    vfs_node_t *node = fd->node;
+    pidfd_ctx_t *ctx = node ? node->handle : NULL;
+    if (!ctx)
+        return -EINVAL;
+    task_t *task = task_find_by_pid(ctx->pid);
+    if (!ctx)
+        return -ESRCH;
+
+    switch (cmd) {
+    case PIDFD_GET_INFO:
+        pidfd_info_t info;
+        if (copy_from_user(&info, (const void *)arg, sizeof(pidfd_info_t)))
+            return -EFAULT;
+        if (info.mask & PIDFD_INFO_PID) {
+            info.pid = task->pid;
+            info.tgid = task->tgid;
+            info.ppid = task->parent->pid;
+        }
+        if (info.mask & PIDFD_INFO_CGROUPID) {
+            info.cgroupid = 0;
+        }
+        if (info.mask & PIDFD_INFO_CREDS) {
+            info.ruid = task->uid;
+            info.rgid = task->gid;
+            info.euid = task->euid;
+            info.egid = task->egid;
+            info.suid = task->suid;
+            info.sgid = task->sgid;
+            info.fsuid = task->uid;
+            info.fsgid = task->gid;
+        }
+        info.exit_code = 0;
+        info.coredump_mask = 0;
+        if (copy_to_user((void *)arg, &info, sizeof(pidfd_info_t)))
+            return -EFAULT;
+
+        return 0;
+
+    default:
+        printk("Unsupported pidfd ioctl %#018x", cmd);
+        return -ENOTTY;
+    }
+}
+
 static bool pidfd_close(vfs_node_t *node) {
     pidfd_ctx_t *ctx = node ? node->handle : NULL;
     if (!ctx) {
@@ -140,11 +185,32 @@ static bool pidfd_close(vfs_node_t *node) {
     return true;
 }
 
+static size_t pidfd_procfs_fdinfo_render(fd_t *fd, char *buf, size_t size) {
+    pidfd_ctx_t *ctx;
+    int len;
+
+    if (!fd || !fd->node || !buf || size == 0)
+        return 0;
+
+    ctx = fd->node->handle;
+    if (!ctx)
+        return 0;
+
+    len = snprintf(buf, size, "Pid:\t%llu\nNSpid:\t%llu\n",
+                   (unsigned long long)ctx->pid, (unsigned long long)ctx->pid);
+    if (len < 0)
+        return 0;
+    if ((size_t)len >= size)
+        return size - 1;
+    return (size_t)len;
+}
+
 static vfs_operations_t pidfd_callbacks = {
     .close = pidfd_close,
     .read = pidfd_read,
     .write = pidfd_write,
     .poll = pidfd_poll,
+    .ioctl = pidfd_ioctl,
 
     .free_handle = vfs_generic_free_handle,
 };
@@ -154,6 +220,7 @@ static fs_t pidfdfs = {
     .magic = 0,
     .ops = &pidfd_callbacks,
     .flags = FS_FLAGS_HIDDEN,
+    .procfs_fdinfo_render = pidfd_procfs_fdinfo_render,
 };
 
 uint64_t pidfd_create_for_pid(uint64_t pid, uint64_t flags, bool cloexec) {

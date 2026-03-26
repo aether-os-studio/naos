@@ -21,7 +21,7 @@ sudo XBPS_ARCH=$ARCH $XBPS_INSTALL_PATH/usr/bin/xbps-install -S -r $ROOTFS_SYSRO
     gcc binutils \
     glibc-locales ncurses tzdata which shadow grep elfutils curl \
     seatd eudev dbus weston xorg-server-xwayland xrandr \
-    mesa mesa-dri mesa-demos \
+    fastfetch mesa mesa-dri mesa-demos \
     adwaita-icon-theme dejavu-fonts-ttf
 
 sudo ln -sf /usr/share/zoneinfo/Asia/Shanghai $ROOTFS_SYSROOT/etc/localtime

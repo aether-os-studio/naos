@@ -713,16 +713,21 @@ ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg, fd_t *fd) {
 
     switch (number) {
     case 0x01:
-        *((int *)arg) = 0x10001;
+        if (!arg || copy_to_user((void *)arg, &(int){0x10001}, sizeof(int)))
+            return -EFAULT;
         ret = 0;
         break;
     case 0x02: // EVIOCGID
-        memcpy((void *)arg, &event->inputid, sizeof(struct input_id));
+        if (!arg ||
+            copy_to_user((void *)arg, &event->inputid, sizeof(struct input_id)))
+            return -EFAULT;
         ret = 0;
         break;
     case 0x06: { // EVIOCGNAME(len)
         int toCopy = MIN(size, (size_t)strlen(event->devname) + 1);
-        memcpy((void *)arg, event->devname, toCopy);
+        if (toCopy &&
+            (!arg || copy_to_user((void *)arg, event->devname, (size_t)toCopy)))
+            return -EFAULT;
         ret = toCopy;
         break;
     }
@@ -733,16 +738,24 @@ ssize_t inputdev_ioctl(void *data, ssize_t request, ssize_t arg, fd_t *fd) {
     case 0x08: // EVIOCGUNIQ()
         if (event->uniq[0]) {
             int toCopy = MIN(size, (size_t)strlen(event->uniq) + 1);
-            memcpy((void *)arg, event->uniq, toCopy);
+            if (toCopy && (!arg || copy_to_user((void *)arg, event->uniq,
+                                                (size_t)toCopy)))
+                return -EFAULT;
             ret = toCopy;
         } else {
             ret = -ENODATA;
         }
         break;
     case 0x09: // EVIOCGPROP()
-        int toCopy = MIN(sizeof(size_t), size);
-        memcpy((void *)arg, &event->properties, toCopy);
-        ret = size;
+        if (size) {
+            int toCopy = MIN(sizeof(size_t), size);
+            if (!arg ||
+                copy_to_user((void *)arg, &event->properties, (size_t)toCopy))
+                return -EFAULT;
+            ret = toCopy;
+        } else {
+            ret = 0;
+        }
         break;
     case 0x03: // EVIOCGREP
         ret = event->event_bit(data, request, (void *)arg);

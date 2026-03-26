@@ -169,6 +169,9 @@ static size_t input_event_bit(void *data, uint64_t request, void *arg) {
     size_t number = _IOC_NR(request);
     size_t size = _IOC_SIZE(request);
 
+    if (!arg && size)
+        return (size_t)-EFAULT;
+
     size_t ret = (size_t)-ENOSYS;
     switch (number) {
     case 0x03: {
@@ -180,57 +183,74 @@ static size_t input_event_bit(void *data, uint64_t request, void *arg) {
             .period = 33,
         };
         ret = MIN(sizeof(repeat), size);
-        memcpy(arg, &repeat, ret);
+        if (ret && copy_to_user(arg, &repeat, ret))
+            return (size_t)-EFAULT;
         break;
     }
     case 0x20:
         ret = MIN(sizeof(event->evbit), size);
-        memcpy(arg, event->evbit, ret);
+        if (ret && copy_to_user(arg, event->evbit, ret))
+            return (size_t)-EFAULT;
         break;
     case (0x20 + EV_KEY):
         ret = MIN(sizeof(event->keybit), size);
-        memcpy(arg, event->keybit, ret);
+        if (ret && copy_to_user(arg, event->keybit, ret))
+            return (size_t)-EFAULT;
         break;
     case (0x20 + EV_REL):
         ret = MIN(sizeof(event->relbit), size);
-        memcpy(arg, event->relbit, ret);
+        if (ret && copy_to_user(arg, event->relbit, ret))
+            return (size_t)-EFAULT;
         break;
     case (0x20 + EV_ABS):
         ret = MIN(sizeof(event->absbit), size);
-        memcpy(arg, event->absbit, ret);
+        if (ret && copy_to_user(arg, event->absbit, ret))
+            return (size_t)-EFAULT;
         break;
     case (0x20 + EV_SW):
     case (0x20 + EV_MSC):
     case (0x20 + EV_SND):
-    case (0x20 + EV_LED):
-        *(size_t *)arg = 0;
+    case (0x20 + EV_LED): {
+        size_t value = 0;
         ret = MIN(sizeof(size_t), size);
+        if (ret && copy_to_user(arg, &value, ret))
+            return (size_t)-EFAULT;
         break;
-    case (0x20 + EV_FF):
-        *(size_t *)arg = 0;
+    }
+    case (0x20 + EV_FF): {
+        uint8_t zeroes[16] = {0};
         ret = MIN(16, size);
+        if (ret && copy_to_user(arg, zeroes, ret))
+            return (size_t)-EFAULT;
         break;
+    }
     case 0x18: {
         uint8_t map[INPUT_BITMAP_BYTES(KEY_CNT)];
         memset(map, 0, sizeof(map));
         ret = MIN(sizeof(map), size);
-        memcpy(arg, map, ret);
+        if (ret && copy_to_user(arg, map, ret))
+            return (size_t)-EFAULT;
         break;
     }
     case 0x19:
-    case 0x1b:
-        *(size_t *)arg = 0;
+    case 0x1b: {
+        size_t value = 0;
         ret = MIN(sizeof(size_t), size);
+        if (ret && copy_to_user(arg, &value, ret))
+            return (size_t)-EFAULT;
         break;
+    }
     case 0xa0:
-        event->clock_id = *(int *)arg;
+        if (copy_from_user(&event->clock_id, arg, sizeof(event->clock_id)))
+            return (size_t)-EFAULT;
         ret = 0;
         break;
     default:
         if (number >= 0x40 && number < (0x40 + ABS_CNT)) {
             uint16_t abs = number - 0x40;
             ret = MIN(sizeof(struct input_absinfo), size);
-            memcpy(arg, &event->absinfo[abs], ret);
+            if (ret && copy_to_user(arg, &event->absinfo[abs], ret))
+                return (size_t)-EFAULT;
             break;
         }
 
