@@ -151,7 +151,7 @@ void task_signal_free(task_signal_info_t *signal) {
 }
 
 static inline bool task_has_tick_work(task_t *task) {
-    if (!task || task->state == TASK_DIED || task->arch_context->dead) {
+    if (!task || task->state == TASK_DIED) {
         return false;
     }
 
@@ -390,7 +390,7 @@ static void task_timeout_softirq(void) {
 
         for (size_t i = 0; i < expired_count; i++) {
             task_t *task = expired[i];
-            if (!task || task->state == TASK_DIED || task->arch_context->dead) {
+            if (!task || task->state == TASK_DIED) {
                 continue;
             }
             if (task->force_wakeup_ns != UINT64_MAX &&
@@ -457,8 +457,7 @@ size_t task_thread_group_count(uint64_t tgid) {
                 continue;
 
             task_t *task = (task_t *)entry->value;
-            if (!task || task->state == TASK_DIED || !task->arch_context ||
-                task->arch_context->dead) {
+            if (!task || task->state == TASK_DIED || !task->arch_context) {
                 continue;
             }
 
@@ -601,8 +600,7 @@ static void task_set_parent_locked(task_t *task, task_t *parent,
 }
 
 static inline bool task_is_live_locked(task_t *task) {
-    return task && task->state != TASK_DIED && task->arch_context &&
-           !task->arch_context->dead;
+    return task && task->state != TASK_DIED;
 }
 
 static task_t *task_pick_reaper_locked(task_t *task) {
@@ -1032,7 +1030,7 @@ ret:
 }
 
 void task_unblock(task_t *task, int reason) {
-    if (!task || task->state == TASK_DIED || task->arch_context->dead) {
+    if (!task || task->state == TASK_DIED) {
         return;
     }
 
@@ -1109,8 +1107,6 @@ void task_exit_inner(task_t *task, int64_t code) {
     struct sched_entity *entity = (struct sched_entity *)task->sched_info;
     remove_sched_entity(task, schedulers[task->cpu_id]);
     if (entity) {
-        if (entity->node)
-            entity->node->data = NULL;
         entity->task = NULL;
     }
 
@@ -1226,7 +1222,7 @@ uint64_t task_exit(int64_t code) {
 
             task_t *task = (task_t *)entry->value;
             if (!task || task == self || task->state == TASK_DIED ||
-                !task->arch_context || task->arch_context->dead) {
+                !task->arch_context) {
                 continue;
             }
 
@@ -1401,7 +1397,6 @@ void schedule(uint64_t sched_flags) {
     bool state = arch_interrupt_enabled();
 
     arch_disable_interrupt();
-    task_reap_deferred(16);
 
     task_t *prev = current_task;
     if (prev->preempt_count) {
@@ -1425,7 +1420,7 @@ void schedule(uint64_t sched_flags) {
         next = sched_pick_next_task(schedulers[cpu_id]);
     }
 
-    if (next->state == TASK_DIED || next->arch_context->dead) {
+    if (next->state == TASK_DIED) {
         next = idle_tasks[cpu_id];
     }
 

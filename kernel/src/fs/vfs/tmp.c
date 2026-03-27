@@ -222,7 +222,7 @@ int tmpfs_mkfile(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     (void)parent;
     (void)name;
     node->mode = 0700;
-    tmpfs_node_t *handle = tmpfs_alloc_handle(node, DEFAULT_PAGE_SIZE);
+    tmpfs_node_t *handle = tmpfs_alloc_handle(node, PAGE_SIZE);
     if (!handle)
         return -ENOMEM;
     node->handle = handle;
@@ -237,7 +237,7 @@ int tmpfs_mknod(vfs_node_t *parent, const char *name, vfs_node_t *node,
     if (node->handle) {
         return -EEXIST;
     }
-    tmpfs_node_t *handle = tmpfs_alloc_handle(node, DEFAULT_PAGE_SIZE);
+    tmpfs_node_t *handle = tmpfs_alloc_handle(node, PAGE_SIZE);
     if (!handle)
         return -ENOMEM;
     node->handle = handle;
@@ -251,8 +251,7 @@ int tmpfs_symlink(vfs_node_t *parent, const char *name, vfs_node_t *node) {
         return -EEXIST;
     }
     size_t len = strlen(name);
-    tmpfs_node_t *handle =
-        tmpfs_alloc_handle(node, PADDING_UP(len, DEFAULT_PAGE_SIZE));
+    tmpfs_node_t *handle = tmpfs_alloc_handle(node, PADDING_UP(len, PAGE_SIZE));
     if (!handle)
         return -ENOMEM;
     memcpy(handle->content, name, len);

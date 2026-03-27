@@ -29,7 +29,7 @@ static int cgroupfs_resize_handle(cgroupfs_node_t *handle, size_t need) {
 
 static int cgroupfs_write_string(cgroupfs_node_t *handle, const char *content) {
     size_t len = content ? strlen(content) : 0;
-    size_t need = MAX((size_t)DEFAULT_PAGE_SIZE, len + 1);
+    size_t need = MAX((size_t)PAGE_SIZE, len + 1);
 
     int ret = cgroupfs_resize_handle(handle, need);
     if (ret < 0)
@@ -51,7 +51,7 @@ static cgroupfs_node_t *cgroupfs_alloc_handle(vfs_node_t *node) {
         return NULL;
 
     handle->node = node;
-    handle->capability = DEFAULT_PAGE_SIZE;
+    handle->capability = PAGE_SIZE;
     handle->content = alloc_frames_bytes(handle->capability);
     if (!handle->content) {
         free(handle);
@@ -177,7 +177,7 @@ ssize_t cgroupfs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
 
     if (offset + size + 1 > (size_t)handle->capability) {
         int ret = cgroupfs_resize_handle(
-            handle, PADDING_UP(offset + size + 1, DEFAULT_PAGE_SIZE));
+            handle, PADDING_UP(offset + size + 1, PAGE_SIZE));
         if (ret < 0)
             return ret;
     }

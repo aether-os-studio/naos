@@ -1,5 +1,6 @@
 #include <mm/buddy.h>
 #include <mm/bitmap.h>
+#include <mm/cache.h>
 #include <mm/page.h>
 
 extern Bitmap usable_regions;
@@ -24,7 +25,7 @@ typedef struct page_list {
 } page_list_t;
 
 #define PAGE_LIST_ENTRY_CAPACITY                                               \
-    ((DEFAULT_PAGE_SIZE - sizeof(page_list_t)) / sizeof(uintptr_t))
+    ((PAGE_SIZE - sizeof(page_list_t)) / sizeof(uintptr_t))
 
 static uintptr_t metadata_pool_phys = 0;
 static size_t metadata_pool_pages = 0;
@@ -45,11 +46,11 @@ static inline bool order_valid(size_t order) {
 }
 
 static inline uintptr_t zone_phys_start(zone_t *zone) {
-    return zone->zone_start_pfn * DEFAULT_PAGE_SIZE;
+    return zone->zone_start_pfn * PAGE_SIZE;
 }
 
 static inline uintptr_t zone_phys_end(zone_t *zone) {
-    return zone->zone_end_pfn * DEFAULT_PAGE_SIZE;
+    return zone->zone_end_pfn * PAGE_SIZE;
 }
 
 static inline page_list_t *page_list_virt(uintptr_t phys) {
@@ -70,13 +71,13 @@ static uintptr_t metadata_page_alloc(void) {
         metadata_free_list = page_list_virt(phys)->next_page;
     } else {
         ASSERT(metadata_pool_used < metadata_pool_pages);
-        phys = metadata_pool_phys + metadata_pool_used * DEFAULT_PAGE_SIZE;
+        phys = metadata_pool_phys + metadata_pool_used * PAGE_SIZE;
         metadata_pool_used++;
     }
 
     spin_unlock(&metadata_lock);
 
-    memset((void *)phys_to_virt(phys), 0, DEFAULT_PAGE_SIZE);
+    memset((void *)phys_to_virt(phys), 0, PAGE_SIZE);
     return phys;
 }
 
@@ -84,7 +85,7 @@ static void metadata_page_free(uintptr_t phys) {
     page_list_t *list = page_list_virt(phys);
     ASSERT(list != NULL);
 
-    memset(list, 0, DEFAULT_PAGE_SIZE);
+    memset(list, 0, PAGE_SIZE);
 
     spin_lock(&metadata_lock);
     list->next_page = metadata_free_list;
@@ -394,23 +395,22 @@ void buddy_init(void) {
     metadata_pool_used = 0;
     spin_init(&metadata_lock);
 
-    size_t total_frames = memory_size / DEFAULT_PAGE_SIZE;
+    size_t total_frames = memory_size / PAGE_SIZE;
     size_t head_pages = ORDER_COUNT * __MAX_NR_ZONES;
     metadata_pool_pages = (total_frames + PAGE_LIST_ENTRY_CAPACITY - 1) /
                           PAGE_LIST_ENTRY_CAPACITY;
     metadata_pool_pages += head_pages + 16;
 
-    void *metadata_pool_virt =
-        early_alloc(metadata_pool_pages * DEFAULT_PAGE_SIZE);
+    void *metadata_pool_virt = early_alloc(metadata_pool_pages * PAGE_SIZE);
     ASSERT(metadata_pool_virt != NULL);
     metadata_pool_phys = virt_to_phys((uint64_t)metadata_pool_virt);
     metadata_pool_used = 0;
 
-    uint64_t max_pfn = memory_size / DEFAULT_PAGE_SIZE;
-    uint64_t dma32_end_pfn = MIN(max_pfn, ZONE_DMA32_END / DEFAULT_PAGE_SIZE);
+    uint64_t max_pfn = memory_size / PAGE_SIZE;
+    uint64_t dma32_end_pfn = MIN(max_pfn, ZONE_DMA32_END / PAGE_SIZE);
 
 #if defined(__x86_64__)
-    uint64_t dma_end_pfn = MIN(max_pfn, ZONE_DMA_END / DEFAULT_PAGE_SIZE);
+    uint64_t dma_end_pfn = MIN(max_pfn, ZONE_DMA_END / PAGE_SIZE);
 
     create_zone(ZONE_DMA, 0, dma_end_pfn);
     create_zone(ZONE_DMA32, dma_end_pfn, dma32_end_pfn);
@@ -440,8 +440,8 @@ void add_memory_region(uintptr_t start, uintptr_t end, enum zone_type type) {
     if (!zone || start >= end)
         return;
 
-    start = PADDING_UP(start, DEFAULT_PAGE_SIZE);
-    end = PADDING_DOWN(end, DEFAULT_PAGE_SIZE);
+    start = PADDING_UP(start, PAGE_SIZE);
+    end = PADDING_DOWN(end, PAGE_SIZE);
     if (start >= end)
         return;
 
@@ -488,36 +488,41 @@ uintptr_t alloc_frames(size_t count) {
 
     uintptr_t addr = 0;
 
-    if (zones[ZONE_NORMAL] && zone_has_memory(zones[ZONE_NORMAL])) {
-        addr = buddy_alloc_zone(zones[ZONE_NORMAL], count);
-        if (addr != 0)
-            goto out;
-    }
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (zones[ZONE_NORMAL] && zone_has_memory(zones[ZONE_NORMAL])) {
+            addr = buddy_alloc_zone(zones[ZONE_NORMAL], count);
+            if (addr != 0)
+                break;
+        }
 
-    if (zones[ZONE_DMA32] && zone_has_memory(zones[ZONE_DMA32])) {
-        addr = buddy_alloc_zone(zones[ZONE_DMA32], count);
-        if (addr != 0)
-            goto out;
-    }
+        if (zones[ZONE_DMA32] && zone_has_memory(zones[ZONE_DMA32])) {
+            addr = buddy_alloc_zone(zones[ZONE_DMA32], count);
+            if (addr != 0)
+                break;
+        }
 
 #if defined(__x86_64__)
-    if (zones[ZONE_DMA] && zone_has_memory(zones[ZONE_DMA])) {
-        addr = buddy_alloc_zone(zones[ZONE_DMA], count);
-        if (addr != 0)
-            goto out;
-    }
+        if (zones[ZONE_DMA] && zone_has_memory(zones[ZONE_DMA])) {
+            addr = buddy_alloc_zone(zones[ZONE_DMA], count);
+            if (addr != 0)
+                break;
+        }
 #endif
 
-out:
+        if (attempt == 0 && cache_reclaim_pages(required_pages * 32) != 0)
+            continue;
+        break;
+    }
+
     if (addr == 0)
         return 0;
 
-    size_t page_index = addr / DEFAULT_PAGE_SIZE;
+    size_t page_index = addr / PAGE_SIZE;
     bitmap_set_range(&using_regions, page_index, page_index + required_pages,
                      true);
 
     for (size_t offset = 0; offset < required_pages; offset++) {
-        page_t *page = get_page(addr + offset * DEFAULT_PAGE_SIZE);
+        page_t *page = get_page(addr + offset * PAGE_SIZE);
         if (page)
             page_ref(page);
     }
@@ -527,12 +532,12 @@ out:
 
 static bool claim_last_page_refs(uintptr_t addr, size_t pages) {
     for (size_t offset = 0; offset < pages; offset++) {
-        page_t *page = get_page(addr + offset * DEFAULT_PAGE_SIZE);
+        page_t *page = get_page(addr + offset * PAGE_SIZE);
         if (page && page_try_release_last(page))
             continue;
 
         for (size_t rollback = 0; rollback < offset; rollback++) {
-            page_ref(get_page(addr + rollback * DEFAULT_PAGE_SIZE));
+            page_ref(get_page(addr + rollback * PAGE_SIZE));
         }
         return false;
     }
@@ -542,7 +547,7 @@ static bool claim_last_page_refs(uintptr_t addr, size_t pages) {
 
 static bool pages_are_unreferenced(uintptr_t addr, size_t pages) {
     for (size_t offset = 0; offset < pages; offset++) {
-        page_t *page = get_page(addr + offset * DEFAULT_PAGE_SIZE);
+        page_t *page = get_page(addr + offset * PAGE_SIZE);
         if (!page || page_refcount_read(page) != 0)
             return false;
     }
@@ -554,7 +559,7 @@ static void free_frames_common(uintptr_t addr, size_t count,
                                bool refs_already_released) {
     if (addr == 0 || count == 0)
         return;
-    if ((addr & (DEFAULT_PAGE_SIZE - 1)) != 0)
+    if ((addr & (PAGE_SIZE - 1)) != 0)
         return;
     if (addr > memory_size)
         return;
@@ -571,12 +576,12 @@ static void free_frames_common(uintptr_t addr, size_t count,
 
     uintptr_t zone_start = zone_phys_start(zone);
     uintptr_t zone_end = zone_phys_end(zone);
-    uintptr_t free_end = addr + required_pages * DEFAULT_PAGE_SIZE;
+    uintptr_t free_end = addr + required_pages * PAGE_SIZE;
 
     if (free_end < addr || addr < zone_start || free_end > zone_end)
         return;
 
-    size_t start_page_index = addr / DEFAULT_PAGE_SIZE;
+    size_t start_page_index = addr / PAGE_SIZE;
     if (start_page_index + required_pages < start_page_index ||
         start_page_index + required_pages > using_regions.length ||
         start_page_index + required_pages > usable_regions.length)
@@ -632,30 +637,35 @@ uintptr_t alloc_frames_dma32(size_t count) {
 
     uintptr_t addr = 0;
 
-    if (zones[ZONE_DMA32] && zone_has_memory(zones[ZONE_DMA32])) {
-        addr = buddy_alloc_zone(zones[ZONE_DMA32], count);
-        if (addr != 0)
-            goto out;
-    }
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (zones[ZONE_DMA32] && zone_has_memory(zones[ZONE_DMA32])) {
+            addr = buddy_alloc_zone(zones[ZONE_DMA32], count);
+            if (addr != 0)
+                break;
+        }
 
 #if defined(__x86_64__)
-    if (zones[ZONE_DMA] && zone_has_memory(zones[ZONE_DMA])) {
-        addr = buddy_alloc_zone(zones[ZONE_DMA], count);
-        if (addr != 0)
-            goto out;
-    }
+        if (zones[ZONE_DMA] && zone_has_memory(zones[ZONE_DMA])) {
+            addr = buddy_alloc_zone(zones[ZONE_DMA], count);
+            if (addr != 0)
+                break;
+        }
 #endif
 
-out:
+        if (attempt == 0 && cache_reclaim_pages(required_pages) != 0)
+            continue;
+        break;
+    }
+
     if (addr == 0)
         return 0;
 
-    size_t page_index = addr / DEFAULT_PAGE_SIZE;
+    size_t page_index = addr / PAGE_SIZE;
     bitmap_set_range(&using_regions, page_index, page_index + required_pages,
                      true);
 
     for (size_t offset = 0; offset < required_pages; offset++) {
-        page_t *page = get_page(addr + offset * DEFAULT_PAGE_SIZE);
+        page_t *page = get_page(addr + offset * PAGE_SIZE);
         if (page)
             page_ref(page);
     }

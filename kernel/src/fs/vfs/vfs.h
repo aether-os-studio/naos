@@ -135,6 +135,7 @@ typedef void (*vfs_open_t)(vfs_node_t *parent, const char *name,
  *\param current  当前文件句柄
  */
 typedef bool (*vfs_close_t)(vfs_node_t *node);
+typedef int (*vfs_fsync_t)(vfs_node_t *node);
 
 /**
  *\brief 重设文件大小
@@ -236,6 +237,7 @@ typedef struct vfs_inode_operations {
 
 typedef struct vfs_file_operations {
     vfs_close_t close;
+    vfs_fsync_t fsync;
     vfs_read_t read;
     vfs_write_t write;
     vfs_mapfile_t map;
@@ -280,6 +282,7 @@ typedef struct vfs_operations {
         vfs_file_operations_t file_ops;
         struct {
             vfs_close_t close;
+            vfs_fsync_t fsync;
             vfs_read_t read;
             vfs_write_t write;
             vfs_mapfile_t map;
@@ -676,6 +679,7 @@ bool vfs_is_ancestor(vfs_node_t *ancestor, vfs_node_t *node);
  *\param node     文件节点
  */
 int vfs_poll(vfs_node_t *node, size_t event);
+int vfs_fsync(vfs_node_t *node);
 
 fd_t *fd_create(vfs_node_t *node, uint64_t flags, bool close_on_exec);
 void fd_destroy(fd_t *fd);

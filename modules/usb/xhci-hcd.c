@@ -1130,12 +1130,12 @@ static int xhci_setup_scratchpad(usb_xhci_t *xhci) {
         return 0;
 
     uint64_t *spba = alloc_frames_bytes(sizeof(*spba) * spb);
-    void *pad = alloc_frames_bytes(DEFAULT_PAGE_SIZE * spb);
+    void *pad = alloc_frames_bytes(PAGE_SIZE * spb);
     if (!spba || !pad)
         return -ENOMEM;
 
     for (uint32_t i = 0; i < spb; i++) {
-        spba[i] = xhci_virt_to_phys((uint8_t *)pad + i * DEFAULT_PAGE_SIZE);
+        spba[i] = xhci_virt_to_phys((uint8_t *)pad + i * PAGE_SIZE);
     }
     dma_sync_cpu_to_device(spba, sizeof(*spba) * spb);
 

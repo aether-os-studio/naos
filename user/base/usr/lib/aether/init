@@ -11,8 +11,8 @@ export PATH="/bin:/usr/bin:/usr/sbin:/sbin:/bin:/usr/local/bin:/usr/local/sbin"
 export XCURSOR_THEME="Adwaita"
 export XCURSOR_SIZE="24"
 export XCURSOR_PATH="/usr/share/icons:/usr/share/pixmaps"
-export SDL_VIDEODRIVER=x11
-export SDL_AUDIODRIVER=dummy
+export SDL_VIDEODRIVER=wayland
+export SDL_AUDIODRIVER=pipewire
 export LIBGL_ALWAYS_SOFTWARE=1
 
 mkdir -p /tmp/.X11-unix

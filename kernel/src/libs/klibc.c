@@ -96,8 +96,7 @@ bool check_unmapped(uint64_t addr, uint64_t len) {
 
     spin_lock(&mgr->lock);
     while (cursor < end) {
-        uint64_t chunk_end =
-            MIN(end, PADDING_UP(cursor + 1, DEFAULT_PAGE_SIZE));
+        uint64_t chunk_end = MIN(end, PADDING_UP(cursor + 1, PAGE_SIZE));
         if (translate_address(pgdir, cursor)) {
             cursor = chunk_end;
             continue;

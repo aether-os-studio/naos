@@ -96,7 +96,7 @@ void vma_free(vma_t *vma) {
         return;
 
     if (vma->node) {
-        vfs_node_ref_put(vma->node, NULL);
+        vfs_close(vma->node);
         shm_try_reap_by_vnode(vma->node);
     }
     if (vma->vm_name)

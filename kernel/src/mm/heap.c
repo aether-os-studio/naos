@@ -18,8 +18,7 @@ void heap_err(enum HeapError error, void *ptr) {
 }
 
 struct MemorySpan heap_oom(size_t size) {
-    size_t allocate_size =
-        MAX(PADDING_UP(size, DEFAULT_PAGE_SIZE), KERNEL_HEAP_SIZE);
+    size_t allocate_size = MAX(PADDING_UP(size, PAGE_SIZE), KERNEL_HEAP_SIZE);
     uint64_t ptr = heap_ptr;
     heap_ptr += allocate_size;
     map_page_range(get_current_page_dir(false), ptr, (uint64_t)-1,

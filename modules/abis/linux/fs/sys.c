@@ -144,7 +144,7 @@ int sysfs_mkdir(vfs_node_t *parent, const char *name, vfs_node_t *node) {
 int sysfs_mkfile(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     node->mode = 0700;
     sysfs_node_t *handle = malloc(sizeof(sysfs_node_t));
-    handle->capability = DEFAULT_PAGE_SIZE;
+    handle->capability = PAGE_SIZE;
     handle->content = alloc_frames_bytes(handle->capability);
     handle->size = 0;
     handle->node = node;
@@ -156,7 +156,7 @@ int sysfs_symlink(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     node->mode = 0700;
     sysfs_node_t *handle = malloc(sizeof(sysfs_node_t));
     size_t len = strlen(name) + 1;
-    handle->capability = PADDING_UP(len, DEFAULT_PAGE_SIZE);
+    handle->capability = PADDING_UP(len, PAGE_SIZE);
     handle->content = alloc_frames_bytes(handle->capability);
     memcpy(handle->content, name, len);
     handle->size = len;

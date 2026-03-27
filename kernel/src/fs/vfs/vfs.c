@@ -1,6 +1,7 @@
 #include "fs/vfs/vfs.h"
 #include "arch/arch.h"
 #include "libs/hashmap.h"
+#include "mm/cache.h"
 #include "mm/mm.h"
 #include "task/task.h"
 
@@ -31,6 +32,17 @@ static inline const vfs_operations_t *vfs_ops_of(vfs_node_t *node) {
     if (!fs || !fs->ops)
         return &vfs_empty_ops;
     return fs->ops;
+}
+
+static inline bool vfs_node_is_cacheable(vfs_node_t *node) {
+    if (!node || !(node->type & file_none))
+        return false;
+
+    fs_t *fs = all_fs[node->fsid];
+    if (!fs)
+        return false;
+
+    return !(fs->flags & FS_FLAGS_VIRTUAL);
 }
 
 static inline vfs_node_t *vfs_task_root(void) {
@@ -190,7 +202,7 @@ vfs_node_t *vfs_node_alloc(vfs_node_t *parent, const char *name) {
     node->flags = 0;
     node->dev = parent ? parent->dev : 0;
     node->rdev = parent ? parent->rdev : 0;
-    node->blksz = DEFAULT_PAGE_SIZE;
+    node->blksz = PAGE_SIZE;
     node->name = name ? strdup(name) : NULL;
     node->inode = alloc_fake_inode();
     node->type = file_none;
@@ -246,6 +258,7 @@ void vfs_free(vfs_node_t *vfs) {
         return;
     if (vfs == rootdir)
         return;
+    cache_page_drop_node(vfs);
     llist_delete(&vfs->node);
     hashmap_remove(&vfs_inode_map, vfs->inode);
     vfs_child_index_deinit(vfs);
@@ -1571,6 +1584,11 @@ int vfs_close(vfs_node_t *node) {
         if (!has_handle)
             return 0;
 
+        if (!(node->flags & VFS_NODE_FLAGS_DELETED) &&
+            vfs_node_is_cacheable(node)) {
+            cache_page_writeback_node(node);
+        }
+
         bool real_close = vfs_ops_of(node)->close(node);
         if (real_close) {
             bool free_after_use = false;
@@ -1666,6 +1684,7 @@ ssize_t vfs_read(vfs_node_t *file, void *addr, size_t offset, size_t size) {
 
 ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size) {
     do_update(fd->node);
+    const vfs_operations_t *ops = vfs_ops_of(fd->node);
     uint64_t file_flags = fd_get_flags(fd);
     if (file_flags & O_PATH)
         return -EBADF;
@@ -1690,7 +1709,9 @@ ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size) {
         return vfs_read(linknode, addr, offset, size);
     }
 
-    ssize_t ret = vfs_ops_of(fd->node)->read(fd, addr, offset, size);
+    ssize_t ret = vfs_node_is_cacheable(fd->node)
+                      ? cache_page_read(fd->node, fd, ops, addr, offset, size)
+                      : ops->read(fd, addr, offset, size);
     if (ret > 0) {
         vfs_mark_dirty(fd->node, VFS_NODE_FLAGS_DIRTY_METADATA);
         vfs_on_new_event(fd->node, IN_ACCESS);
@@ -1720,6 +1741,7 @@ ssize_t vfs_write(vfs_node_t *file, const void *addr, size_t offset,
 
 ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size) {
     do_update(fd->node);
+    const vfs_operations_t *ops = vfs_ops_of(fd->node);
     uint64_t file_flags = fd_get_flags(fd);
     if (file_flags & O_PATH)
         return -EBADF;
@@ -1744,45 +1766,10 @@ ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size) {
         return vfs_write(linknode, addr, offset, size);
     }
 
-    uint64_t node_size = fd->node->size;
-    if (offset > node_size) {
-        size_t fill_bytes = offset - node_size;
-        size_t written = 0;
-
-        char *zero_page = alloc_frames_bytes(DEFAULT_PAGE_SIZE);
-        if (!zero_page)
-            return -ENOMEM;
-        memset(zero_page, 0, DEFAULT_PAGE_SIZE);
-
-        while (written < fill_bytes) {
-            size_t chunk = MIN(DEFAULT_PAGE_SIZE, fill_bytes - written);
-            size_t old_size = fd->node->size;
-            size_t write_offset = node_size + written;
-
-            ssize_t ret =
-                vfs_ops_of(fd->node)->write(fd, zero_page, write_offset, chunk);
-
-            if (ret < 0) {
-                free_frames_bytes(zero_page, DEFAULT_PAGE_SIZE);
-                return ret;
-            }
-
-            if (ret == 0) {
-                free_frames_bytes(zero_page, DEFAULT_PAGE_SIZE);
-                return -ENOSPC;
-            }
-
-            written += ret;
-            if (old_size == fd->node->size) {
-                fd->node->size += ret;
-            }
-        }
-
-        free_frames_bytes(zero_page, DEFAULT_PAGE_SIZE);
-    }
-
     ssize_t write_bytes = 0;
-    write_bytes = vfs_ops_of(fd->node)->write(fd, addr, offset, size);
+    write_bytes = vfs_node_is_cacheable(fd->node)
+                      ? cache_page_write(fd->node, fd, ops, addr, offset, size)
+                      : ops->write(fd, addr, offset, size);
     if (write_bytes > 0) {
         fd->node->size = MAX(fd->node->size, offset + write_bytes);
         vfs_mark_dirty(fd->node, VFS_NODE_FLAGS_DIRTY_METADATA);
@@ -1820,6 +1807,17 @@ int vfs_poll(vfs_node_t *node, size_t event) {
         return -EBADF;
     int ret = vfs_ops_of(node)->poll(node, event);
     return ret;
+}
+
+int vfs_fsync(vfs_node_t *node) {
+    if (!node)
+        return -EBADF;
+
+    fs_t *fs = all_fs[node->fsid];
+    if (!fs || !fs->ops || !fs->ops->fsync)
+        return 0;
+
+    return fs->ops->fsync(node);
 }
 
 bool vfs_is_ancestor(vfs_node_t *ancestor, vfs_node_t *node) {
@@ -2094,9 +2092,15 @@ fd_t *vfs_dup(fd_t *fd) {
 int vfs_resize(vfs_node_t *node, uint64_t size) {
     if (!(node->type & file_none))
         return -EINVAL;
+    if (vfs_node_is_cacheable(node)) {
+        int wb = cache_page_writeback_node(node);
+        if (wb < 0)
+            return wb;
+    }
     int ret = vfs_ops_of(node)->resize(node, size);
     if (ret < 0)
         return ret;
+    cache_page_drop_node(node);
     node->size = size;
     vfs_on_new_event(node, IN_MODIFY);
     return ret;

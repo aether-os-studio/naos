@@ -50,7 +50,7 @@ static void proc_stat_signal_masks(task_t *task, unsigned long long *ignored,
 }
 
 char *proc_gen_stat_file(task_t *task, size_t *content_len) {
-    char *buffer = malloc(DEFAULT_PAGE_SIZE * 4);
+    char *buffer = malloc(PAGE_SIZE * 4);
     uint64_t tgid = task_effective_tgid(task);
     size_t threads = task_thread_group_count(tgid);
     unsigned long long ignored = 0;

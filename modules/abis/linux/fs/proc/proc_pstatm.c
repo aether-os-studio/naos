@@ -2,7 +2,7 @@
 #include <task/task.h>
 
 char *proc_gen_statm_file(task_t *task, size_t *content_len) {
-    char *buffer = malloc(DEFAULT_PAGE_SIZE * 4);
+    char *buffer = malloc(PAGE_SIZE * 4);
     int len = sprintf(buffer, "%ld %ld %ld %ld %ld %ld %ld", 2000L, 1000L,
                       1000L, 10L, 0L, 20L, 0L);
     *content_len = len;

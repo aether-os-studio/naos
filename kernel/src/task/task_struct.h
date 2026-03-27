@@ -261,8 +261,6 @@ typedef struct pending_signal {
 } pending_signal_t;
 
 struct pt_regs;
-struct seccomp_filter;
-typedef struct seccomp_filter seccomp_filter_t;
 
 typedef struct task_sighand {
     spinlock_t siglock;
@@ -339,7 +337,6 @@ typedef struct task {
     void *robust_list_head;
     size_t robust_list_len;
     uint32_t seccomp_mode;
-    seccomp_filter_t *seccomp_filter;
     uint64_t clone_flags;
     task_ns_proxy_t *nsproxy;
     bool no_new_privs;

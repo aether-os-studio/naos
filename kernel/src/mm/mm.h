@@ -91,25 +91,25 @@ typedef struct {
 } alloc_result_t;
 
 static inline void *alloc_frames_bytes(uint64_t bytes) {
-    uint64_t addr = phys_to_virt(
-        alloc_frames((bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE));
+    uint64_t addr =
+        phys_to_virt(alloc_frames((bytes + PAGE_SIZE - 1) / PAGE_SIZE));
     return (void *)addr;
 }
 
 static inline void free_frames_bytes(void *ptr, uint64_t bytes) {
     free_frames(virt_to_phys((uint64_t)ptr),
-                (bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE);
+                (bytes + PAGE_SIZE - 1) / PAGE_SIZE);
 }
 
 static inline void *alloc_frames_bytes_dma32(uint64_t bytes) {
-    uint64_t addr = phys_to_virt(alloc_frames_dma32(
-        (bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE));
+    uint64_t addr =
+        phys_to_virt(alloc_frames_dma32((bytes + PAGE_SIZE - 1) / PAGE_SIZE));
     return (void *)addr;
 }
 
 static inline void free_frames_bytes_dma32(void *ptr, uint64_t bytes) {
     free_frames_dma32(virt_to_phys((uint64_t)ptr),
-                      (bytes + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE);
+                      (bytes + PAGE_SIZE - 1) / PAGE_SIZE);
 }
 
 extern void dcache_clean_range(void *addr, size_t size);

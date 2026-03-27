@@ -140,7 +140,7 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags) {
         return -ENOMEM;
     strncpy(ctx->name, name, 63);
     ctx->name[63] = '\0';
-    ctx->len = DEFAULT_PAGE_SIZE;
+    ctx->len = PAGE_SIZE;
     ctx->data = alloc_frames_bytes(ctx->len);
     memset(ctx->data, 0, ctx->len);
     ctx->flags = flags;

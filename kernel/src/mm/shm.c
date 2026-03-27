@@ -13,8 +13,7 @@ static inline long shm_now_seconds(void) {
     return (long)(nano_time() / 1000000000ULL);
 }
 
-#define PAGE_ALIGN_UP(x)                                                       \
-    (((x) + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1))
+#define PAGE_ALIGN_UP(x) (((x) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1))
 
 static int shmfs_mount(uint64_t dev, vfs_node_t *node);
 static void shmfs_unmount(vfs_node_t *node);
@@ -523,8 +522,8 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
     uint64_t addr = (uint64_t)shmaddr;
     if (addr) {
         if (shmflg & SHM_RND) {
-            addr = PADDING_DOWN(addr, DEFAULT_PAGE_SIZE);
-        } else if (addr & (DEFAULT_PAGE_SIZE - 1)) {
+            addr = PADDING_DOWN(addr, PAGE_SIZE);
+        } else if (addr & (PAGE_SIZE - 1)) {
             err = -EINVAL;
             goto out_unlock;
         }

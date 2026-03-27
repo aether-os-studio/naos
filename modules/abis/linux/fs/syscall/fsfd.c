@@ -840,14 +840,14 @@ fs_t fsfd_fs = {
     .name = "fsfd",
     .magic = 0,
     .ops = &fsfd_callbacks,
-    .flags = FS_FLAGS_HIDDEN,
+    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN,
 };
 
 fs_t mntfd_fs = {
     .name = "mntfd",
     .magic = 0,
     .ops = &mntfd_callbacks,
-    .flags = FS_FLAGS_HIDDEN,
+    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN,
 };
 
 void fsfdfs_init() {

@@ -45,9 +45,8 @@ typedef struct {
 } module_plan_t;
 
 static void load_segment(Elf64_Phdr *phdr, void *elf, uint64_t offset) {
-    size_t hi =
-        PADDING_UP(phdr->p_vaddr + phdr->p_memsz, DEFAULT_PAGE_SIZE) + offset;
-    size_t lo = PADDING_DOWN(phdr->p_vaddr, DEFAULT_PAGE_SIZE) + offset;
+    size_t hi = PADDING_UP(phdr->p_vaddr + phdr->p_memsz, PAGE_SIZE) + offset;
+    size_t lo = PADDING_DOWN(phdr->p_vaddr, PAGE_SIZE) + offset;
 
     uint64_t flags = PT_FLAG_R | PT_FLAG_W;
 
@@ -90,11 +89,10 @@ static bool mmap_phdr_segment(Elf64_Ehdr *ehdr, Elf64_Phdr *phdrs,
 
         if (phdrs[i].p_vaddr + offset + phdrs[i].p_memsz > load_max) {
             load_max = PADDING_UP(phdrs[i].p_vaddr + offset + phdrs[i].p_memsz,
-                                  DEFAULT_PAGE_SIZE);
+                                  PAGE_SIZE);
         }
         if (phdrs[i].p_vaddr + offset < load_min) {
-            load_min =
-                PADDING_DOWN(phdrs[i].p_vaddr + offset, DEFAULT_PAGE_SIZE);
+            load_min = PADDING_DOWN(phdrs[i].p_vaddr + offset, PAGE_SIZE);
         }
     }
 
@@ -860,8 +858,7 @@ bool dlinker_load(module_t *module) {
 
         module->load_base = load_base;
         module->mapped = true;
-        kernel_modules_load_offset +=
-            PADDING_UP(module->load_size, DEFAULT_PAGE_SIZE);
+        kernel_modules_load_offset += PADDING_UP(module->load_size, PAGE_SIZE);
     }
 
     dlinit_t dlinit = load_dynamic(phdrs, ehdr, module->load_base);

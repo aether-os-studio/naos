@@ -504,12 +504,11 @@ error_ctx:
 static int nvme_identify_controller(nvme_controller_t *ctrl,
                                     nvme_identify_ctrl_t *id_ctrl) {
     uint64_t buffer_phys;
-    void *buffer =
-        nvme_platform_ops->dma_alloc(DEFAULT_PAGE_SIZE, &buffer_phys);
+    void *buffer = nvme_platform_ops->dma_alloc(PAGE_SIZE, &buffer_phys);
     if (!buffer) {
         return -1;
     }
-    memset(buffer, 0, DEFAULT_PAGE_SIZE);
+    memset(buffer, 0, PAGE_SIZE);
 
     nvme_sqe_t cmd = {0};
     cmd.cdw0 = NVME_ADMIN_IDENTIFY;
@@ -522,19 +521,18 @@ static int nvme_identify_controller(nvme_controller_t *ctrl,
         memcpy(id_ctrl, buffer, sizeof(nvme_identify_ctrl_t));
     }
 
-    nvme_platform_ops->dma_free(buffer, DEFAULT_PAGE_SIZE);
+    nvme_platform_ops->dma_free(buffer, PAGE_SIZE);
     return ret;
 }
 
 static int nvme_identify_namespace(nvme_controller_t *ctrl, uint32_t nsid,
                                    nvme_identify_ns_t *id_ns) {
     uint64_t buffer_phys;
-    void *buffer =
-        nvme_platform_ops->dma_alloc(DEFAULT_PAGE_SIZE, &buffer_phys);
+    void *buffer = nvme_platform_ops->dma_alloc(PAGE_SIZE, &buffer_phys);
     if (!buffer) {
         return -1;
     }
-    memset(buffer, 0, DEFAULT_PAGE_SIZE);
+    memset(buffer, 0, PAGE_SIZE);
 
     nvme_sqe_t cmd = {0};
     cmd.cdw0 = NVME_ADMIN_IDENTIFY;
@@ -548,7 +546,7 @@ static int nvme_identify_namespace(nvme_controller_t *ctrl, uint32_t nsid,
         memcpy(id_ns, buffer, sizeof(nvme_identify_ns_t));
     }
 
-    nvme_platform_ops->dma_free(buffer, DEFAULT_PAGE_SIZE);
+    nvme_platform_ops->dma_free(buffer, PAGE_SIZE);
     return ret;
 }
 
@@ -958,7 +956,7 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
             id_ctrl.nn);
 
     if (id_ctrl.mdts) {
-        ctrl->max_transfer_size = ((1ULL << id_ctrl.mdts) * DEFAULT_PAGE_SIZE);
+        ctrl->max_transfer_size = ((1ULL << id_ctrl.mdts) * PAGE_SIZE);
     } else {
         ctrl->max_transfer_size = -1;
     }
@@ -1030,7 +1028,7 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
             regist_blkdev(name, ns, ns->ns->block_size,
                           ns->ns->block_count * ns->ns->block_size,
                           MIN(ns->ctrl->max_transfer_size,
-                              NVME_MAX_PRP_LIST_ENTRIES * DEFAULT_PAGE_SIZE),
+                              NVME_MAX_PRP_LIST_ENTRIES * PAGE_SIZE),
                           nvme_read, nvme_write);
         }
     }

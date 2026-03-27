@@ -62,7 +62,6 @@ extern void arch_context_switch_with_prev_next(arch_context_t *prev,
 void __switch_to(task_t *prev, task_t *next) {
     task_mark_on_cpu(prev, false);
     task_mark_on_cpu(next, true);
-    arch_set_current(next);
 }
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,

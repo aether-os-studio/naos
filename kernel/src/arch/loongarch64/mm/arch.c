@@ -13,7 +13,7 @@ uint64_t *get_current_page_dir(bool user) {
         asm volatile("csrrd %0, 0x1a" // PGDH
                      : "=r"(page_table_base));
     }
-    return (uint64_t *)phys_to_virt(page_table_base & ~(DEFAULT_PAGE_SIZE - 1));
+    return (uint64_t *)phys_to_virt(page_table_base & ~(PAGE_SIZE - 1));
 }
 
 uint64_t get_arch_page_table_flags(uint64_t flags) {
@@ -41,7 +41,7 @@ uint64_t get_arch_page_table_flags(uint64_t flags) {
 }
 
 void arch_flush_tlb(uint64_t vaddr) {
-    // vaddr &= ((~DEFAULT_PAGE_SIZE) << 1);
+    // vaddr &= ((~PAGE_SIZE) << 1);
     asm volatile("invtlb 0x6, $zero, %0\n\t"
                  "dbar 0\n\t"
                  :

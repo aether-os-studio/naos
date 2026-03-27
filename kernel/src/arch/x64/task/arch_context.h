@@ -81,7 +81,6 @@ typedef struct arch_context {
     uint64_t gsbase;
     struct pt_regs *ctx;
     fpu_context_t *fpu_ctx;
-    bool dead;
 } arch_context_t;
 
 #define X64_XSTATE_X87 (1ULL << 0)

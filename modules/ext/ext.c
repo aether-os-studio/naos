@@ -2377,6 +2377,26 @@ bool ext_close(vfs_node_t *node) {
     return true;
 }
 
+int ext_fsync(vfs_node_t *node) {
+    if (!node)
+        return -EINVAL;
+    if (!(node->type & file_none))
+        return 0;
+
+    spin_lock(&rwlock);
+
+    ext_mount_ctx_t *fs = ext_find_mount(node);
+    ext_handle_t *handle = node->handle;
+    ext_inode_disk_t inode = {0};
+    int ret = 0;
+
+    if (fs && handle)
+        ret = ext_flush_handle_inode_locked(fs, node, handle, &inode);
+
+    spin_unlock(&rwlock);
+    return ret;
+}
+
 ssize_t ext_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     if (!fd || !fd->node)
         return -EBADF;
@@ -3037,6 +3057,7 @@ static vfs_operations_t ext_vfs_ops = {
     .unmount = ext_unmount,
     .open = ext_open,
     .close = ext_close,
+    .fsync = ext_fsync,
     .read = ext_read,
     .write = ext_write,
     .readlink = ext_readlink,

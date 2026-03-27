@@ -31,16 +31,15 @@ uint64_t alloc_frames_early(size_t count) {
     bitmap_set_range(bitmap, frame_index, frame_index + count, false);
     early_last_alloc_pos = frame_index + count;
     spin_unlock(&frame_op_lock);
-    return frame_index * DEFAULT_PAGE_SIZE;
+    return frame_index * PAGE_SIZE;
 }
 
 void *early_alloc(size_t size) {
     if (size == 0)
         return NULL;
 
-    size_t aligned_size =
-        (size + DEFAULT_PAGE_SIZE - 1) & ~(DEFAULT_PAGE_SIZE - 1);
-    uint64_t phys = alloc_frames_early(aligned_size / DEFAULT_PAGE_SIZE);
+    size_t aligned_size = (size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    uint64_t phys = alloc_frames_early(aligned_size / PAGE_SIZE);
     if (phys == UINT64_MAX)
         return NULL;
 
@@ -85,8 +84,8 @@ static uintptr_t get_zone_boundary(enum zone_type type) {
 // 处理单个内存区域，正确处理不连续的可用帧
 static void process_memory_region(uintptr_t start, uintptr_t end) {
     // 页对齐
-    start = PADDING_UP(start, DEFAULT_PAGE_SIZE);
-    end = PADDING_DOWN(end, DEFAULT_PAGE_SIZE);
+    start = PADDING_UP(start, PAGE_SIZE);
+    end = PADDING_DOWN(end, PAGE_SIZE);
 
     if (start >= end)
         return;
@@ -105,13 +104,12 @@ static void process_memory_region(uintptr_t start, uintptr_t end) {
         uintptr_t region_current = current;
 
         while (region_current < zone_end) {
-            size_t frame = region_current / DEFAULT_PAGE_SIZE;
+            size_t frame = region_current / PAGE_SIZE;
 
             // 跳过不可用的帧
             while (region_current < zone_end &&
-                   !bitmap_get(&usable_regions,
-                               region_current / DEFAULT_PAGE_SIZE)) {
-                region_current += DEFAULT_PAGE_SIZE;
+                   !bitmap_get(&usable_regions, region_current / PAGE_SIZE)) {
+                region_current += PAGE_SIZE;
             }
 
             if (region_current >= zone_end)
@@ -122,9 +120,8 @@ static void process_memory_region(uintptr_t start, uintptr_t end) {
 
             // 找到连续可用区域的结束
             while (region_current < zone_end &&
-                   bitmap_get(&usable_regions,
-                              region_current / DEFAULT_PAGE_SIZE)) {
-                region_current += DEFAULT_PAGE_SIZE;
+                   bitmap_get(&usable_regions, region_current / PAGE_SIZE)) {
+                region_current += PAGE_SIZE;
             }
 
             uintptr_t usable_end = region_current;
@@ -146,9 +143,9 @@ void frame_init(void) {
     memory_size = get_memory_size();
 
     // 计算 bitmap 大小
-    size_t total_frames = memory_size / DEFAULT_PAGE_SIZE;
+    size_t total_frames = memory_size / PAGE_SIZE;
     size_t bitmap_size = (total_frames + 7) / 8;
-    size_t bitmap_size_aligned = PADDING_UP(bitmap_size, DEFAULT_PAGE_SIZE);
+    size_t bitmap_size_aligned = PADDING_UP(bitmap_size, PAGE_SIZE);
 
     uint64_t bitmap_address = 0;
 
@@ -186,8 +183,8 @@ void frame_init(void) {
 #endif
 
         if (region->type == USABLE) {
-            size_t start_frame = region->addr / DEFAULT_PAGE_SIZE;
-            size_t end_frame = (region->addr + region->len) / DEFAULT_PAGE_SIZE;
+            size_t start_frame = region->addr / PAGE_SIZE;
+            size_t end_frame = (region->addr + region->len) / PAGE_SIZE;
 
             if (end_frame > start_frame) {
                 bitmap_set_range(&usable_regions, start_frame, end_frame, true);
@@ -197,15 +194,14 @@ void frame_init(void) {
 
 #if defined(__x86_64__)
     // 保留低 1MB
-    size_t low_1M_frames = 0x100000 / DEFAULT_PAGE_SIZE;
+    size_t low_1M_frames = 0x100000 / PAGE_SIZE;
     bitmap_set_range(&usable_regions, 0, low_1M_frames, false);
 #endif
 
     // 标记 bitmap 自身占用的区域为不可用
-    size_t bitmap_frame_start = bitmap_address / DEFAULT_PAGE_SIZE;
+    size_t bitmap_frame_start = bitmap_address / PAGE_SIZE;
     size_t bitmap_frame_end =
-        PADDING_UP(bitmap_address + bitmap_size, DEFAULT_PAGE_SIZE) /
-        DEFAULT_PAGE_SIZE;
+        PADDING_UP(bitmap_address + bitmap_size, PAGE_SIZE) / PAGE_SIZE;
     bitmap_set_range(&usable_regions, bitmap_frame_start, bitmap_frame_end,
                      false);
 
@@ -233,7 +229,7 @@ void frame_init(void) {
         if (addr <= bitmap_address && bitmap_address < region_end) {
             // bitmap 在这个区域内
             uintptr_t bitmap_end =
-                PADDING_UP(bitmap_address + bitmap_size, DEFAULT_PAGE_SIZE);
+                PADDING_UP(bitmap_address + bitmap_size, PAGE_SIZE);
 
             // 处理 bitmap 之前的部分
             if (addr < bitmap_address) {
@@ -255,7 +251,7 @@ void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
     ASSERT((vaddr & 0xfff) == 0);
     ASSERT(paddr == (uint64_t)-1 || (paddr & 0xfff) == 0);
 
-    for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
+    for (uint64_t va = vaddr; va < vaddr + size; va += PAGE_SIZE) {
         if (paddr == (uint64_t)-1) {
             map_page(pml4, va, (uint64_t)-1, get_arch_page_table_flags(flags),
                      true);
@@ -276,7 +272,7 @@ void map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
     ASSERT((vaddr & 0xfff) == 0);
     ASSERT(paddr == (uint64_t)-1 || (paddr & 0xfff) == 0);
 
-    for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
+    for (uint64_t va = vaddr; va < vaddr + size; va += PAGE_SIZE) {
         if (paddr == (uint64_t)-1) {
             map_page(pml4, va, (uint64_t)-1, get_arch_page_table_flags(flags),
                      false);
@@ -293,7 +289,7 @@ void map_page_range_unforce_mm(task_mm_info_t *mm, uint64_t vaddr,
 }
 
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size) {
-    for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
+    for (uint64_t va = vaddr; va < vaddr + size; va += PAGE_SIZE) {
         unmap_page(pml4, va);
     }
 }
@@ -304,7 +300,7 @@ void unmap_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t size) {
 
     unmap_release_batch_t batch = {0};
 
-    for (uint64_t va = vaddr; va < vaddr + size; va += DEFAULT_PAGE_SIZE) {
+    for (uint64_t va = vaddr; va < vaddr + size; va += PAGE_SIZE) {
         if (batch.page_count == UNMAP_RELEASE_BATCH_MAX) {
             unmap_release_batch_commit(&batch);
         }
@@ -317,7 +313,7 @@ void unmap_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t size) {
 
 uint64_t map_change_attribute_range(uint64_t *pgdir, uint64_t vaddr,
                                     uint64_t len, uint64_t flags) {
-    for (uint64_t va = vaddr; va < vaddr + len; va += DEFAULT_PAGE_SIZE) {
+    for (uint64_t va = vaddr; va < vaddr + len; va += PAGE_SIZE) {
         map_change_attribute(pgdir, va, get_arch_page_table_flags(flags));
     }
 

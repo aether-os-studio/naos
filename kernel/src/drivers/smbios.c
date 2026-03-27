@@ -73,10 +73,10 @@ static bool smbios_is_range_mapped(const void *ptr, size_t len) {
     }
 
     uint64_t *pgdir = get_current_page_dir(false);
-    uintptr_t start = PADDING_DOWN((uintptr_t)ptr, DEFAULT_PAGE_SIZE);
-    uintptr_t end = PADDING_UP((uintptr_t)ptr + len, DEFAULT_PAGE_SIZE);
+    uintptr_t start = PADDING_DOWN((uintptr_t)ptr, PAGE_SIZE);
+    uintptr_t end = PADDING_UP((uintptr_t)ptr + len, PAGE_SIZE);
 
-    for (uintptr_t va = start; va < end; va += DEFAULT_PAGE_SIZE) {
+    for (uintptr_t va = start; va < end; va += PAGE_SIZE) {
         if (translate_address(pgdir, va) == 0) {
             return false;
         }
@@ -102,8 +102,8 @@ static const void *smbios_map_phys_window(uintptr_t phys_addr, size_t len) {
     }
 
     uintptr_t hhdm = (uintptr_t)boot_get_hhdm_offset();
-    uintptr_t phys_base = PADDING_DOWN(phys_addr, DEFAULT_PAGE_SIZE);
-    uintptr_t phys_end = PADDING_UP(phys_addr + len, DEFAULT_PAGE_SIZE);
+    uintptr_t phys_base = PADDING_DOWN(phys_addr, PAGE_SIZE);
+    uintptr_t phys_end = PADDING_UP(phys_addr + len, PAGE_SIZE);
     uintptr_t map_len = phys_end - phys_base;
     uintptr_t virt_base = hhdm + phys_base;
 

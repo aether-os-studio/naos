@@ -66,13 +66,13 @@ static int read_task_file_into_user_memory(task_t *task, vfs_node_t *node,
     size_t file_off = offset;
 
     while (remain > 0) {
-        uint64_t page_va = PADDING_DOWN(va, DEFAULT_PAGE_SIZE);
+        uint64_t page_va = PADDING_DOWN(va, PAGE_SIZE);
         uint64_t pa = translate_address(pgdir, page_va);
         if (!pa)
             return -EFAULT;
 
         size_t in_page = va - page_va;
-        size_t chunk = MIN(remain, DEFAULT_PAGE_SIZE - in_page);
+        size_t chunk = MIN(remain, PAGE_SIZE - in_page);
         size_t loaded = 0;
         while (loaded < chunk) {
             ssize_t ret =
@@ -109,13 +109,13 @@ static int zero_task_user_memory(task_t *task, uint64_t uaddr, size_t size) {
     size_t remain = size;
 
     while (remain > 0) {
-        uint64_t page_va = PADDING_DOWN(va, DEFAULT_PAGE_SIZE);
+        uint64_t page_va = PADDING_DOWN(va, PAGE_SIZE);
         uint64_t pa = translate_address(pgdir, page_va);
         if (!pa)
             return -EFAULT;
 
         size_t in_page = va - page_va;
-        size_t chunk = MIN(remain, DEFAULT_PAGE_SIZE - in_page);
+        size_t chunk = MIN(remain, PAGE_SIZE - in_page);
         memset((void *)(phys_to_virt(pa) + in_page), 0, chunk);
 
         va += chunk;
@@ -144,7 +144,7 @@ int write_task_user_memory(task_t *task, uint64_t uaddr, const void *src,
         if (!pa)
             return -EFAULT;
 
-        size_t page_left = DEFAULT_PAGE_SIZE - (va & (DEFAULT_PAGE_SIZE - 1));
+        size_t page_left = PAGE_SIZE - (va & (PAGE_SIZE - 1));
         size_t chunk = MIN(remain, page_left);
         memcpy((void *)phys_to_virt(pa), in, chunk);
 
@@ -175,7 +175,7 @@ int read_task_user_memory(task_t *task, uint64_t uaddr, void *dst,
         if (!pa)
             return -EFAULT;
 
-        size_t page_left = DEFAULT_PAGE_SIZE - (va & (DEFAULT_PAGE_SIZE - 1));
+        size_t page_left = PAGE_SIZE - (va & (PAGE_SIZE - 1));
         size_t chunk = MIN(remain, page_left);
         memcpy(out, (const void *)phys_to_virt(pa), chunk);
 
@@ -219,12 +219,12 @@ static int map_task_elf_segment(task_t *task, vfs_node_t *node,
         return -EINVAL;
 
     uint64_t seg_addr = load_base + phdr->p_vaddr;
-    uint64_t aligned_addr = PADDING_DOWN(seg_addr, DEFAULT_PAGE_SIZE);
-    uint64_t aligned_offset = PADDING_DOWN(phdr->p_offset, DEFAULT_PAGE_SIZE);
+    uint64_t aligned_addr = PADDING_DOWN(seg_addr, PAGE_SIZE);
+    uint64_t aligned_offset = PADDING_DOWN(phdr->p_offset, PAGE_SIZE);
     uint64_t page_prefix = seg_addr - aligned_addr;
     uint64_t file_map_size = phdr->p_filesz + page_prefix;
     uint64_t mem_map_size = phdr->p_memsz + page_prefix;
-    uint64_t alloc_size = PADDING_UP(mem_map_size, DEFAULT_PAGE_SIZE);
+    uint64_t alloc_size = PADDING_UP(mem_map_size, PAGE_SIZE);
     uint64_t final_flags = elf_segment_pt_flags(phdr->p_flags);
     uint64_t load_flags = final_flags | PT_FLAG_W;
 
@@ -379,6 +379,28 @@ static inline struct timeval task_ns_to_timeval(uint64_t ns) {
     return tv;
 }
 
+static void task_fd_info_put(fd_info_t *fd_info, task_t *task) {
+    if (!fd_info)
+        return;
+
+    if (--fd_info->ref_count > 0)
+        return;
+
+    with_fd_info_lock(fd_info, {
+        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+            if (!fd_info->fds[i])
+                continue;
+
+            fd_t *entry = fd_info->fds[i];
+            fd_info->fds[i] = NULL;
+            on_close_file_call(task, i, entry);
+            fd_release(entry);
+        }
+    });
+
+    free(fd_info);
+}
+
 static inline void task_fill_rusage(task_t *task, bool include_children,
                                     struct rusage *rusage) {
     if (!rusage)
@@ -421,11 +443,15 @@ void free_task(task_t *ptr) {
     task_pgid_index_detach_locked(ptr);
     spin_unlock(&task_queue_lock);
 
+    free_frames_bytes((void *)(ptr->syscall_stack - STACK_SIZE), STACK_SIZE);
+    free_frames_bytes((void *)(ptr->kernel_stack - STACK_SIZE), STACK_SIZE);
+
     if (!ptr->is_kernel)
         free_page_table(ptr->mm);
 
     if (ptr->cmdline)
         free(ptr->cmdline);
+    ptr->cmdline = NULL;
 
     ptr->arg_start = 0;
     ptr->arg_end = 0;
@@ -440,13 +466,9 @@ void free_task(task_t *ptr) {
 
     struct sched_entity *entity = ptr->sched_info;
     if (entity) {
-        free(entity->node);
         free(entity);
         ptr->sched_info = NULL;
     }
-
-    free_frames_bytes((void *)(ptr->kernel_stack - STACK_SIZE), STACK_SIZE);
-    free_frames_bytes((void *)(ptr->syscall_stack - STACK_SIZE), STACK_SIZE);
 
     free(ptr);
 }
@@ -606,7 +628,7 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
     PUSH_TO_STACK(tmp_stack, uint64_t, phdr);
     PUSH_TO_STACK(tmp_stack, uint64_t, AT_PHDR);
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, DEFAULT_PAGE_SIZE);
+    PUSH_TO_STACK(tmp_stack, uint64_t, PAGE_SIZE);
     PUSH_TO_STACK(tmp_stack, uint64_t, AT_PAGESZ);
 
     PUSH_TO_STACK(tmp_stack, uint64_t, SCHED_HZ);
@@ -647,11 +669,10 @@ static int register_elf_load_vma(task_t *task, vfs_node_t *node,
     }
 
     uint64_t seg_addr = load_base + phdr->p_vaddr;
-    uint64_t aligned_addr = PADDING_DOWN(seg_addr, DEFAULT_PAGE_SIZE);
-    uint64_t aligned_offset = PADDING_DOWN(phdr->p_offset, DEFAULT_PAGE_SIZE);
+    uint64_t aligned_addr = PADDING_DOWN(seg_addr, PAGE_SIZE);
+    uint64_t aligned_offset = PADDING_DOWN(phdr->p_offset, PAGE_SIZE);
     uint64_t size_diff = seg_addr - aligned_addr;
-    uint64_t map_size =
-        PADDING_UP(phdr->p_memsz + size_diff, DEFAULT_PAGE_SIZE);
+    uint64_t map_size = PADDING_UP(phdr->p_memsz + size_diff, PAGE_SIZE);
 
     vma_t *vma = vma_alloc();
     if (!vma)
@@ -700,7 +721,7 @@ static int task_execve_dethread(task_t *self) {
 
                 task_t *task = (task_t *)entry->value;
                 if (!task || task == self || task->state == TASK_DIED ||
-                    !task->arch_context || task->arch_context->dead) {
+                    !task->arch_context) {
                     continue;
                 }
                 if (task_effective_tgid(task) != tgid)
@@ -730,7 +751,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
                      const char **envp) {
     task_t *self = current_task;
 
-    char path[512];
+    char path[128];
     strncpy(path, path_user, sizeof(path));
 
     vfs_node_t *node = vfs_open(path, 0);
@@ -801,7 +822,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     }
     new_envp[envp_count] = NULL;
 
-    uint8_t header_buf[1024];
+    uint8_t header_buf[512];
     ssize_t header_read;
     int shebang_depth = 0;
 
@@ -1029,10 +1050,10 @@ uint64_t task_execve(const char *path_user, const char **argv,
     memset(new_mm, 0, sizeof(task_mm_info_t));
     spin_init(&new_mm->lock);
     new_mm->page_table_addr = alloc_frames(1);
-    memset((void *)phys_to_virt(new_mm->page_table_addr), 0, DEFAULT_PAGE_SIZE);
+    memset((void *)phys_to_virt(new_mm->page_table_addr), 0, PAGE_SIZE);
 #if defined(__x86_64__) || defined(__riscv__)
     memcpy((uint64_t *)phys_to_virt(new_mm->page_table_addr) + 256,
-           get_kernel_page_dir() + 256, DEFAULT_PAGE_SIZE / 2);
+           get_kernel_page_dir() + 256, PAGE_SIZE / 2);
 #endif
     new_mm->ref_count = 1;
     vma_manager_init(&new_mm->task_vma_mgr, true);
@@ -1070,7 +1091,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     uint64_t phdr_vaddr = 0;
     for (int i = 0; i < ehdr->e_phnum; ++i) {
         if (phdr[i].p_type == PT_INTERP) {
-            char interp_name[256];
+            char interp_name[128];
             vfs_read(node, interp_name, phdr[i].p_offset,
                      phdr[i].p_filesz < 256 ? phdr[i].p_filesz : 255);
             interp_name[phdr[i].p_filesz < 256 ? phdr[i].p_filesz : 255] = '\0';
@@ -1122,9 +1143,9 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
         } else if (phdr[i].p_type == PT_LOAD) {
             uint64_t seg_addr = real_load_start + phdr[i].p_vaddr;
-            uint64_t aligned_addr = PADDING_DOWN(seg_addr, DEFAULT_PAGE_SIZE);
+            uint64_t aligned_addr = PADDING_DOWN(seg_addr, PAGE_SIZE);
             uint64_t alloc_size = PADDING_UP(
-                phdr[i].p_memsz + (seg_addr - aligned_addr), DEFAULT_PAGE_SIZE);
+                phdr[i].p_memsz + (seg_addr - aligned_addr), PAGE_SIZE);
 
             if (aligned_addr < load_start)
                 load_start = aligned_addr;
@@ -1153,12 +1174,15 @@ uint64_t task_execve(const char *path_user, const char **argv,
         free(phdr);
     }
 
+    vfs_node_t *old_exec_node = self->exec_node;
     vfs_node_ref_get(node);
     self->exec_node = node;
+    if (old_exec_node)
+        vfs_close(old_exec_node);
 
     map_page_range((uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
-                   USER_STACK_END - DEFAULT_PAGE_SIZE * 8, (uint64_t)-1,
-                   DEFAULT_PAGE_SIZE * 8, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+                   USER_STACK_END - PAGE_SIZE * 8, (uint64_t)-1, PAGE_SIZE * 8,
+                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
     uint64_t stack = push_infos(
         self, USER_STACK_END, (char **)new_argv, argv_count, (char **)new_envp,
@@ -1183,12 +1207,11 @@ uint64_t task_execve(const char *path_user, const char **argv,
             }
         });
 
-        old->ref_count--;
-
         self->fd_info = new;
+        task_fd_info_put(old, self);
     }
 
-    string_builder_t *builder = create_string_builder(DEFAULT_PAGE_SIZE * 8);
+    string_builder_t *builder = create_string_builder(PAGE_SIZE * 8);
     for (int i = 0; i < argv_count; i++) {
         string_builder_append(builder, new_argv[i]);
         if (i != argv_count - 1)
@@ -1230,8 +1253,11 @@ uint64_t task_execve(const char *path_user, const char **argv,
     task_signal_free(self->signal);
     self->signal = new_signal;
 
+    char *old_cmdline = self->cmdline;
     self->cmdline = strdup(cmdline);
     free(cmdline);
+    if (old_cmdline)
+        free(old_cmdline);
     self->load_start = load_start;
     self->load_end = load_end;
 
@@ -1242,34 +1268,40 @@ uint64_t task_execve(const char *path_user, const char **argv,
     self->name[TASK_NAME_MAX - 1] = '\0';
 
     vma_t *stack_guard_vma = vma_alloc();
+    vma_t *region =
+        vma_find_intersection(&self->mm->task_vma_mgr,
+                              USER_STACK_START - PAGE_SIZE, USER_STACK_START);
+    if (stack_guard_vma) {
+        stack_guard_vma->vm_start = USER_STACK_START - PAGE_SIZE;
+        stack_guard_vma->vm_end = USER_STACK_START;
+        stack_guard_vma->vm_flags |= VMA_ANON | VMA_STACK;
+        stack_guard_vma->vm_type = VMA_TYPE_ANON;
+        stack_guard_vma->vm_name = NULL;
 
-    stack_guard_vma->vm_start = USER_STACK_START - DEFAULT_PAGE_SIZE;
-    stack_guard_vma->vm_end = USER_STACK_START;
-    stack_guard_vma->vm_flags |= VMA_ANON | VMA_STACK;
-
-    stack_guard_vma->vm_type = VMA_TYPE_ANON;
-    stack_guard_vma->vm_name = NULL;
-
-    vma_t *region = vma_find_intersection(&self->mm->task_vma_mgr,
-                                          USER_STACK_START - DEFAULT_PAGE_SIZE,
-                                          USER_STACK_START);
-    if (!region) {
-        vma_insert(&self->mm->task_vma_mgr, stack_guard_vma);
+        if (!region) {
+            if (vma_insert(&self->mm->task_vma_mgr, stack_guard_vma) != 0)
+                vma_free(stack_guard_vma);
+        } else {
+            vma_free(stack_guard_vma);
+        }
     }
 
     vma_t *stack_vma = vma_alloc();
-
-    stack_vma->vm_start = USER_STACK_START;
-    stack_vma->vm_end = USER_STACK_END;
-    stack_vma->vm_flags |= VMA_ANON | VMA_READ | VMA_WRITE | VMA_STACK;
-
-    stack_vma->vm_type = VMA_TYPE_ANON;
-    stack_vma->vm_name = strdup("[stack]");
-
     region = vma_find_intersection(&self->mm->task_vma_mgr, USER_STACK_START,
                                    USER_STACK_END);
-    if (!region) {
-        vma_insert(&self->mm->task_vma_mgr, stack_vma);
+    if (stack_vma) {
+        stack_vma->vm_start = USER_STACK_START;
+        stack_vma->vm_end = USER_STACK_END;
+        stack_vma->vm_flags |= VMA_ANON | VMA_READ | VMA_WRITE | VMA_STACK;
+        stack_vma->vm_type = VMA_TYPE_ANON;
+        stack_vma->vm_name = strdup("[stack]");
+
+        if (!region) {
+            if (vma_insert(&self->mm->task_vma_mgr, stack_vma) != 0)
+                vma_free(stack_vma);
+        } else {
+            vma_free(stack_vma);
+        }
     }
 
     task_complete_vfork(self);

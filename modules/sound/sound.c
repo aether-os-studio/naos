@@ -367,8 +367,8 @@ static void sound_runtime_release(sound_pcm_substream_t *substream) {
 static int
 sound_runtime_allocate_control_pages(sound_pcm_substream_t *substream) {
     sound_pcm_runtime_t *runtime = &substream->runtime;
-    uint64_t status_bytes = DEFAULT_PAGE_SIZE * SOUND_PCM_MMIO_PAGES;
-    uint64_t control_bytes = DEFAULT_PAGE_SIZE * SOUND_PCM_MMIO_PAGES;
+    uint64_t status_bytes = PAGE_SIZE * SOUND_PCM_MMIO_PAGES;
+    uint64_t control_bytes = PAGE_SIZE * SOUND_PCM_MMIO_PAGES;
 
     if (runtime->mmap_status && runtime->mmap_status_bytes != status_bytes) {
         free_frames_bytes(runtime->mmap_status, runtime->mmap_status_bytes);

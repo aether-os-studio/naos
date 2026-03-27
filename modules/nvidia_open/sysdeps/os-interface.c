@@ -30,8 +30,8 @@
     ((addr) ? (typeof(addr))((uint64_t)(addr) & ~NVIDIA_KERNEL_MAPPINGS_BASE)  \
             : 0)
 
-NvU32 os_page_size = DEFAULT_PAGE_SIZE;
-NvU64 os_page_mask = ~(DEFAULT_PAGE_SIZE - 1);
+NvU32 os_page_size = PAGE_SIZE;
+NvU64 os_page_mask = ~(PAGE_SIZE - 1);
 NvU8 os_page_shift = 12;
 NvBool os_cc_enabled = 0;
 NvBool os_cc_sev_snp_enabled = 0;
@@ -1083,7 +1083,7 @@ NV_STATUS NV_API_CALL nv_alloc_pages(nv_state_t *, NvU32 page_count,
                                      NvU64 *pte_array, void **priv_data) {
     ASSERT(node_id == -1);
 
-    void *p = alloc_frames_bytes(page_count * DEFAULT_PAGE_SIZE);
+    void *p = alloc_frames_bytes(page_count * PAGE_SIZE);
     if (!p)
         return NV_ERR_NO_MEMORY;
 
@@ -1091,12 +1091,11 @@ NV_STATUS NV_API_CALL nv_alloc_pages(nv_state_t *, NvU32 page_count,
 
     AllocInfo *info = malloc(sizeof(AllocInfo));
     info->base = virt;
-    info->length = page_count * DEFAULT_PAGE_SIZE;
+    info->length = page_count * PAGE_SIZE;
 
     for (size_t i = 0; i < ((contiguous) ? 1 : page_count); i++) {
-        pte_array[i] =
-            translate_address(get_current_page_dir(false),
-                              (uintptr_t)virt + i * DEFAULT_PAGE_SIZE);
+        pte_array[i] = translate_address(get_current_page_dir(false),
+                                         (uintptr_t)virt + i * PAGE_SIZE);
     }
 
     if (zeroed)
@@ -1114,8 +1113,8 @@ NV_STATUS NV_API_CALL nv_free_pages(nv_state_t *, NvU32 page_count,
     (void)contiguous;
     (void)cache_type;
 
-    if (page_count * DEFAULT_PAGE_SIZE == info->length) {
-        free_frames_bytes((void *)info->base, page_count * DEFAULT_PAGE_SIZE);
+    if (page_count * PAGE_SIZE == info->length) {
+        free_frames_bytes((void *)info->base, page_count * PAGE_SIZE);
         free(info);
     }
 

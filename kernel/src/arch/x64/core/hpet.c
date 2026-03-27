@@ -135,8 +135,7 @@ void hpet_init() {
 
     hpet_addr = (HpetInfo *)phys_to_virt(hpet->address.address);
     map_page_range(get_current_page_dir(false), (uint64_t)hpet_addr,
-                   hpet->address.address, DEFAULT_PAGE_SIZE,
-                   PT_FLAG_R | PT_FLAG_W);
+                   hpet->address.address, PAGE_SIZE, PT_FLAG_R | PT_FLAG_W);
 
     hpet_period_fs = hpet_addr->generalCapabilities >> 32;
     hpet_addr->generalConfiguration |= 1ULL;

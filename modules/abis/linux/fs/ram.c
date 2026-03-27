@@ -177,7 +177,7 @@ int ramfs_mkfile(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     (void)parent;
     (void)name;
     node->mode = 0700;
-    ramfs_node_t *handle = ramfs_alloc_handle(node, DEFAULT_PAGE_SIZE);
+    ramfs_node_t *handle = ramfs_alloc_handle(node, PAGE_SIZE);
     if (!handle)
         return -ENOMEM;
     node->handle = handle;
@@ -189,7 +189,7 @@ int ramfs_mknod(vfs_node_t *parent, const char *name, vfs_node_t *node,
     node->dev = dev;
     node->rdev = dev;
     node->mode = mode & 0777;
-    ramfs_node_t *handle = ramfs_alloc_handle(node, DEFAULT_PAGE_SIZE);
+    ramfs_node_t *handle = ramfs_alloc_handle(node, PAGE_SIZE);
     if (!handle)
         return -ENOMEM;
     node->handle = handle;
@@ -203,8 +203,7 @@ int ramfs_symlink(vfs_node_t *parent, const char *name, vfs_node_t *node) {
         return -EEXIST;
     }
     size_t len = strlen(name);
-    ramfs_node_t *handle =
-        ramfs_alloc_handle(node, PADDING_UP(len, DEFAULT_PAGE_SIZE));
+    ramfs_node_t *handle = ramfs_alloc_handle(node, PADDING_UP(len, PAGE_SIZE));
     if (!handle)
         return -ENOMEM;
     memcpy(handle->content, name, len);

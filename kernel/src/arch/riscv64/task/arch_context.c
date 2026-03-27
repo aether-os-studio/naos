@@ -70,9 +70,6 @@ void arch_set_current(task_t *current) {
 }
 
 void __switch_to(task_t *prev, task_t *next) {
-    task_mark_on_cpu(prev, false);
-    task_mark_on_cpu(next, true);
-
     if (prev->arch_context->ctx->sstatus & (1UL << 63)) {
         if (SSTATUS_GET_FS(prev->arch_context->ctx->sstatus) == 3) {
             fpu_save_context(prev->arch_context->fpu_ctx);
@@ -91,6 +88,9 @@ void __switch_to(task_t *prev, task_t *next) {
     asm volatile("sfence.vma" : : : "memory");
 
     csr_write(sscratch, next->is_kernel ? 0 : next->kernel_stack);
+
+    task_mark_on_cpu(prev, false);
+    task_mark_on_cpu(next, true);
 }
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,

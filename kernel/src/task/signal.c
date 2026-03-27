@@ -1206,8 +1206,8 @@ uint64_t sys_tgkill(int tgid, int pid, int sig) {
 
 __attribute__((used)) void task_signal(struct pt_regs *regs) {
     task_t *self = current_task;
-    if (!self || !self->signal || self->is_kernel || self->arch_context->dead ||
-        self->state == TASK_DIED || self->state == TASK_UNINTERRUPTABLE) {
+    if (!self || !self->signal || self->is_kernel || self->state == TASK_DIED ||
+        self->state == TASK_UNINTERRUPTABLE) {
         return;
     }
     if (!signal_arch_user_context(regs)) {

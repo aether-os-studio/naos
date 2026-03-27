@@ -219,7 +219,7 @@ static fs_t pidfdfs = {
     .name = "pidfdfs",
     .magic = 0,
     .ops = &pidfd_callbacks,
-    .flags = FS_FLAGS_HIDDEN,
+    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN,
     .procfs_fdinfo_render = pidfd_procfs_fdinfo_render,
 };
 

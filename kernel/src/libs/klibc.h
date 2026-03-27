@@ -361,8 +361,7 @@ static inline bool copy_to_user(void *dst, const void *src, size_t size) {
         if (!pa)
             return true;
 
-        size_t chunk =
-            MIN(remain, DEFAULT_PAGE_SIZE - (uaddr & (DEFAULT_PAGE_SIZE - 1)));
+        size_t chunk = MIN(remain, PAGE_SIZE - (uaddr & (PAGE_SIZE - 1)));
         memcpy(user_virt_from_paddr(pa), in, chunk);
 
         uaddr += chunk;
@@ -392,8 +391,7 @@ static inline bool copy_from_user(void *dst, const void *src, size_t size) {
         if (!pa)
             return true;
 
-        size_t chunk =
-            MIN(remain, DEFAULT_PAGE_SIZE - (uaddr & (DEFAULT_PAGE_SIZE - 1)));
+        size_t chunk = MIN(remain, PAGE_SIZE - (uaddr & (PAGE_SIZE - 1)));
         memcpy(out, user_virt_from_paddr(pa), chunk);
 
         uaddr += chunk;
@@ -422,8 +420,7 @@ static inline bool copy_from_user_str(char *dst, const char *src,
             return true;
 
         size_t chunk =
-            MIN(limit - copied - 1,
-                DEFAULT_PAGE_SIZE - (uaddr & (DEFAULT_PAGE_SIZE - 1)));
+            MIN(limit - copied - 1, PAGE_SIZE - (uaddr & (PAGE_SIZE - 1)));
         const char *page_ptr = (const char *)user_virt_from_paddr(pa);
 
         for (size_t index = 0; index < chunk; index++) {

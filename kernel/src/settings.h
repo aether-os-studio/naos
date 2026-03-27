@@ -5,12 +5,12 @@
 
 #define LIMINE_API_REVISION 3
 
-#define DEFAULT_PAGE_SIZE 4096UL
+#define PAGE_SIZE 4096UL
 
 #define MAX_CPU_NUM 128
 #define MAX_WORKER_NUM MAX_CPU_NUM
 #define MAX_IO_CPU_NUM 8
-#define STACK_SIZE (512 * 1024)
+#define STACK_SIZE (128 * 1024)
 
 #define BUILD_VERSION "0.10.0"
 

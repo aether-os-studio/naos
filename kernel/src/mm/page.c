@@ -10,15 +10,13 @@ extern Bitmap usable_regions;
 extern void *early_alloc(size_t size);
 
 void page_init() {
-    uint64_t page_maps_size = memory_size / DEFAULT_PAGE_SIZE * sizeof(page_t);
+    uint64_t page_maps_size = memory_size / PAGE_SIZE * sizeof(page_t);
     page_maps = early_alloc(page_maps_size);
     ASSERT(page_maps);
     memset(page_maps, 0, page_maps_size);
 }
 
-page_t *get_page(uint64_t addr) {
-    return page_maps + (addr / DEFAULT_PAGE_SIZE);
-}
+page_t *get_page(uint64_t addr) { return page_maps + (addr / PAGE_SIZE); }
 
 int page_refcount_read(page_t *page) {
     if (!page)
@@ -93,7 +91,7 @@ bool address_is_managed(uint64_t addr) {
     if (!page_maps || addr >= memory_size)
         return false;
 
-    size_t page_index = addr / DEFAULT_PAGE_SIZE;
+    size_t page_index = addr / PAGE_SIZE;
     if (page_index >= usable_regions.length)
         return false;
 

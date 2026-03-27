@@ -578,7 +578,7 @@ fs_t epollfs = {
     .name = "epollfs",
     .magic = 0,
     .ops = &epoll_vfs_ops,
-    .flags = FS_FLAGS_HIDDEN,
+    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN,
 };
 
 void epoll_init() { epollfs_id = vfs_regist(&epollfs); }

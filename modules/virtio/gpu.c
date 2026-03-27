@@ -272,7 +272,7 @@ static int virtio_gpu_ensure_control_buffer(void **buf_out,
     }
 
     uint64_t alloc_size =
-        PADDING_UP((uint64_t)required_size, (uint64_t)DEFAULT_PAGE_SIZE);
+        PADDING_UP((uint64_t)required_size, (uint64_t)PAGE_SIZE);
     if (*buf_out && *buf_size_out >= alloc_size) {
         return 0;
     }
@@ -1282,7 +1282,7 @@ static int virtio_gpu_alloc_host_visible_offset(virtio_gpu_device_t *gpu_dev,
         return -EINVAL;
     }
 
-    uint64_t aligned_size = PADDING_UP(size, (uint64_t)DEFAULT_PAGE_SIZE);
+    uint64_t aligned_size = PADDING_UP(size, (uint64_t)PAGE_SIZE);
     if (aligned_size > gpu_dev->host_visible_shm_size) {
         return -ENOSPC;
     }
@@ -1307,7 +1307,7 @@ static int virtio_gpu_alloc_host_visible_offset(virtio_gpu_device_t *gpu_dev,
             if (mapped_size == 0) {
                 continue;
             }
-            mapped_size = PADDING_UP(mapped_size, (uint64_t)DEFAULT_PAGE_SIZE);
+            mapped_size = PADDING_UP(mapped_size, (uint64_t)PAGE_SIZE);
 
             uint64_t mapped_start = mapped->host_visible_offset;
             uint64_t mapped_end = mapped_start + mapped_size;
@@ -1315,7 +1315,7 @@ static int virtio_gpu_alloc_host_visible_offset(virtio_gpu_device_t *gpu_dev,
             if (offset < mapped_end && mapped_start < end) {
                 conflict = true;
                 uint64_t candidate =
-                    PADDING_UP(mapped_end, (uint64_t)DEFAULT_PAGE_SIZE);
+                    PADDING_UP(mapped_end, (uint64_t)PAGE_SIZE);
                 if (candidate > offset) {
                     next_offset = MIN(next_offset, candidate);
                 }
@@ -1426,10 +1426,10 @@ static void virtio_gpu_bo_destroy_slot(virtio_gpu_device_t *gpu_dev,
     if (bo->addr) {
         uint64_t free_size = bo->alloc_size;
         if (free_size == 0 && bo->size != 0) {
-            free_size = PADDING_UP(bo->size, (uint64_t)DEFAULT_PAGE_SIZE);
+            free_size = PADDING_UP(bo->size, (uint64_t)PAGE_SIZE);
         }
         if (free_size) {
-            free_frames(bo->addr, free_size / DEFAULT_PAGE_SIZE);
+            free_frames(bo->addr, free_size / PAGE_SIZE);
         }
     }
 
@@ -1482,7 +1482,7 @@ static void virtio_gpu_framebuffer_release(virtio_gpu_device_t *gpu_dev,
     virtio_gpu_unref_resource(gpu_dev, fb->resource_id);
 
     if (fb->addr && fb->size) {
-        free_frames(fb->addr, fb->size / DEFAULT_PAGE_SIZE);
+        free_frames(fb->addr, fb->size / PAGE_SIZE);
     }
 
     memset(fb, 0, sizeof(*fb));
@@ -1578,7 +1578,7 @@ virtio_gpu_find_host_visible_bo(virtio_gpu_device_t *gpu_dev, uint64_t offset,
         if (size == 0) {
             continue;
         }
-        size = PADDING_UP(size, (uint64_t)DEFAULT_PAGE_SIZE);
+        size = PADDING_UP(size, (uint64_t)PAGE_SIZE);
 
         uint64_t start =
             gpu_dev->host_visible_shm_paddr + bo->host_visible_offset;
@@ -2442,8 +2442,7 @@ static int virtio_gpu_create_dumb(drm_device_t *drm_dev,
     args->pitch = PADDING_UP(args->width * bytes_per_pixel, 64);
     args->size = args->height * args->pitch;
 
-    uint64_t alloc_size =
-        PADDING_UP((uint64_t)args->size, (uint64_t)DEFAULT_PAGE_SIZE);
+    uint64_t alloc_size = PADDING_UP((uint64_t)args->size, (uint64_t)PAGE_SIZE);
 
     for (uint32_t i = 0; i < 32; i++) {
         if (gpu_dev->framebuffers[i].resource_id == 0) {
@@ -2460,7 +2459,7 @@ static int virtio_gpu_create_dumb(drm_device_t *drm_dev,
             }
 
             gpu_dev->framebuffers[i].addr =
-                alloc_frames(alloc_size / DEFAULT_PAGE_SIZE);
+                alloc_frames(alloc_size / PAGE_SIZE);
             if (!gpu_dev->framebuffers[i].addr) {
                 virtio_gpu_unref_resource(gpu_dev, resource_id);
                 return -ENOMEM;
@@ -2474,7 +2473,7 @@ static int virtio_gpu_create_dumb(drm_device_t *drm_dev,
                                             args->pitch * args->height);
             if (ret != 0) {
                 free_frames(gpu_dev->framebuffers[i].addr,
-                            alloc_size / DEFAULT_PAGE_SIZE);
+                            alloc_size / PAGE_SIZE);
                 gpu_dev->framebuffers[i].addr = 0;
                 virtio_gpu_unref_resource(gpu_dev, resource_id);
                 return -EIO;
@@ -3667,7 +3666,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
             uint64_t depth = req->depth ? req->depth : 1;
             size = (uint64_t)req->width * req->height * depth * 4;
         }
-        size = MAX(size, (uint64_t)DEFAULT_PAGE_SIZE);
+        size = MAX(size, (uint64_t)PAGE_SIZE);
         if (size > UINT32_MAX) {
             if (!reuse_bo) {
                 memset(bo, 0, sizeof(*bo));
@@ -3686,8 +3685,8 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
             addr = shared->addr;
             alloc_size = max_size;
         } else {
-            alloc_size = PADDING_UP(size, (uint64_t)DEFAULT_PAGE_SIZE);
-            addr = alloc_frames(alloc_size / DEFAULT_PAGE_SIZE);
+            alloc_size = PADDING_UP(size, (uint64_t)PAGE_SIZE);
+            addr = alloc_frames(alloc_size / PAGE_SIZE);
             if (!addr) {
                 memset(bo, 0, sizeof(*bo));
                 return -ENOMEM;
@@ -3702,7 +3701,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
             req->nr_samples, req->flags);
         if (ret != 0) {
             if (!reuse_bo) {
-                free_frames(addr, alloc_size / DEFAULT_PAGE_SIZE);
+                free_frames(addr, alloc_size / PAGE_SIZE);
                 memset(bo, 0, sizeof(*bo));
             }
             return ret;
@@ -3713,7 +3712,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
         if (ret != 0) {
             virtio_gpu_unref_resource(gpu_dev, resource_id);
             if (!reuse_bo) {
-                free_frames(addr, alloc_size / DEFAULT_PAGE_SIZE);
+                free_frames(addr, alloc_size / PAGE_SIZE);
                 memset(bo, 0, sizeof(*bo));
             }
             return ret;
@@ -3724,7 +3723,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
             virtio_gpu_detach_backing(gpu_dev, resource_id);
             virtio_gpu_unref_resource(gpu_dev, resource_id);
             if (!reuse_bo) {
-                free_frames(addr, alloc_size / DEFAULT_PAGE_SIZE);
+                free_frames(addr, alloc_size / PAGE_SIZE);
                 memset(bo, 0, sizeof(*bo));
             }
             return ret;
@@ -3736,7 +3735,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
             if (bo_handle == 0) {
                 virtio_gpu_detach_backing(gpu_dev, resource_id);
                 virtio_gpu_unref_resource(gpu_dev, resource_id);
-                free_frames(addr, alloc_size / DEFAULT_PAGE_SIZE);
+                free_frames(addr, alloc_size / PAGE_SIZE);
                 memset(bo, 0, sizeof(*bo));
                 return -ENOSPC;
             }
@@ -3856,8 +3855,8 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
                 addr = shared->addr;
                 alloc_size = max_size;
             } else {
-                alloc_size = PADDING_UP(req->size, (uint64_t)DEFAULT_PAGE_SIZE);
-                addr = alloc_frames(alloc_size / DEFAULT_PAGE_SIZE);
+                alloc_size = PADDING_UP(req->size, (uint64_t)PAGE_SIZE);
+                addr = alloc_frames(alloc_size / PAGE_SIZE);
                 if (!addr) {
                     memset(bo, 0, sizeof(*bo));
                     return -ENOMEM;
@@ -3867,7 +3866,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
         } else if (reuse_bo && (shared->alloc_size || shared->size)) {
             alloc_size = shared->alloc_size ? shared->alloc_size : shared->size;
         } else {
-            alloc_size = PADDING_UP(req->size, (uint64_t)DEFAULT_PAGE_SIZE);
+            alloc_size = PADDING_UP(req->size, (uint64_t)PAGE_SIZE);
         }
 
         uint32_t create_ctx_id = 0;
@@ -3876,7 +3875,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
                                                 fd);
             if (ret != 0) {
                 if (!reuse_bo && addr) {
-                    free_frames(addr, alloc_size / DEFAULT_PAGE_SIZE);
+                    free_frames(addr, alloc_size / PAGE_SIZE);
                 }
                 if (!reuse_bo) {
                     memset(bo, 0, sizeof(*bo));
@@ -3891,7 +3890,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
                                                   &cmd_data);
             if (ret != 0) {
                 if (!reuse_bo && addr) {
-                    free_frames(addr, alloc_size / DEFAULT_PAGE_SIZE);
+                    free_frames(addr, alloc_size / PAGE_SIZE);
                 }
                 if (!reuse_bo) {
                     memset(bo, 0, sizeof(*bo));
@@ -3904,7 +3903,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
             free(cmd_data);
             if (ret != 0) {
                 if (!reuse_bo && addr) {
-                    free_frames(addr, alloc_size / DEFAULT_PAGE_SIZE);
+                    free_frames(addr, alloc_size / PAGE_SIZE);
                 }
                 if (!reuse_bo) {
                     memset(bo, 0, sizeof(*bo));
@@ -3918,7 +3917,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
             req->size, addr, create_ctx_id);
         if (ret != 0) {
             if (!reuse_bo && addr) {
-                free_frames(addr, alloc_size / DEFAULT_PAGE_SIZE);
+                free_frames(addr, alloc_size / PAGE_SIZE);
             }
             if (!reuse_bo) {
                 memset(bo, 0, sizeof(*bo));
@@ -3932,7 +3931,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
             if (ret != 0) {
                 virtio_gpu_unref_resource(gpu_dev, resource_id);
                 if (!reuse_bo && addr) {
-                    free_frames(addr, alloc_size / DEFAULT_PAGE_SIZE);
+                    free_frames(addr, alloc_size / PAGE_SIZE);
                 }
                 if (!reuse_bo) {
                     memset(bo, 0, sizeof(*bo));
@@ -3951,7 +3950,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
                 }
                 virtio_gpu_unref_resource(gpu_dev, resource_id);
                 if (addr) {
-                    free_frames(addr, alloc_size / DEFAULT_PAGE_SIZE);
+                    free_frames(addr, alloc_size / PAGE_SIZE);
                 }
                 memset(bo, 0, sizeof(*bo));
                 return -ENOSPC;
@@ -4286,7 +4285,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
 
         uint64_t size = shared->size ? shared->size : shared->alloc_size;
         if (size == 0) {
-            size = DEFAULT_PAGE_SIZE;
+            size = PAGE_SIZE;
         }
 
         ssize_t fd_ret = drm_primefd_create(drm_dev, prime->handle,

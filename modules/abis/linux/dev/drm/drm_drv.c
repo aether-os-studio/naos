@@ -329,7 +329,7 @@ void *drm_map(void *data, void *addr, uint64_t offset, uint64_t len) {
             return (void *)(int64_t)ret;
         }
     }
-    if (offset < DEFAULT_PAGE_SIZE) {
+    if (offset < PAGE_SIZE) {
         return (void *)-EINVAL;
     }
 

@@ -12,11 +12,11 @@ static inline uint64_t tmpfs_mem_align(uint64_t size) {
     if (size == 0)
         return 0;
 
-    return PADDING_UP(size, DEFAULT_PAGE_SIZE);
+    return PADDING_UP(size, PAGE_SIZE);
 }
 
 static inline uint64_t tmpfs_mem_limit(void) {
-    return PADDING_DOWN(memory_size / 2, DEFAULT_PAGE_SIZE);
+    return PADDING_DOWN(memory_size / 2, PAGE_SIZE);
 }
 
 int tmpfs_mem_resize_reserve(uint64_t old_size, uint64_t new_size);

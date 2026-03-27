@@ -1,7 +1,7 @@
 #include <fs/proc/proc.h>
 #include <libs/string_builder.h>
-
-#define MEMINFO_TODO 0ULL // Things to do in the future ;)
+#include <mm/cache.h>
+#include <mm/mm.h>
 
 char *meminfo_origin[] = {
     "MemTotal:\t\t%llu kB\n",       "MemFree:\t\t%llu kB\n",
@@ -34,54 +34,69 @@ char *meminfo_origin[] = {
     "DirectMap1G:\t%llu kB\n"};
 
 char *proc_gen_meminfo(size_t *context_len) {
+    const size_t field_count =
+        sizeof(meminfo_origin) / sizeof(meminfo_origin[0]);
+    uint64_t values[55] = {0};
+    uint64_t managed_pages = 0;
+    uint64_t free_pages = 0;
+    uint64_t reclaimable_pages = 0;
+    cache_stats_t cache_stats = {0};
+    const uint64_t page_kb = PAGE_SIZE / 1024;
+
+    for (int i = 0; i < __MAX_NR_ZONES; i++) {
+        zone_t *zone = zones[i];
+        if (!zone)
+            continue;
+        managed_pages += zone->managed_pages;
+        free_pages += zone->free_pages;
+    }
+
+    cache_get_stats(&cache_stats);
+    reclaimable_pages = cache_stats.block_pages + cache_stats.page_pages;
+
+    values[0] = managed_pages * page_kb;
+    values[1] = free_pages * page_kb;
+    values[2] = (free_pages + reclaimable_pages) * page_kb;
+    values[3] = cache_stats.block_pages * page_kb;
+    values[4] = cache_stats.page_pages * page_kb;
+    values[6] =
+        (cache_stats.dirty_pages + cache_stats.writeback_pages) * page_kb;
+    values[7] = (reclaimable_pages >
+                 cache_stats.dirty_pages + cache_stats.writeback_pages)
+                    ? (reclaimable_pages - cache_stats.dirty_pages -
+                       cache_stats.writeback_pages) *
+                          page_kb
+                    : 0;
+    values[10] = values[6];
+    values[11] = (cache_stats.page_pages >
+                  cache_stats.dirty_pages + cache_stats.writeback_pages)
+                     ? (cache_stats.page_pages - cache_stats.dirty_pages -
+                        cache_stats.writeback_pages) *
+                           page_kb
+                     : 0;
+    values[18] = cache_stats.dirty_pages * page_kb;
+    values[19] = cache_stats.writeback_pages * page_kb;
+    values[21] = cache_stats.page_pages * page_kb;
+    values[23] = reclaimable_pages * page_kb;
+    values[25] = reclaimable_pages * page_kb;
+    values[33] = values[0];
+    values[51] = 2048;
+    values[53] = values[0];
+
     string_builder_t *builder = create_string_builder(4096);
     if (builder == NULL)
         return NULL;
 
-    bool status = false;
-    for (size_t i = 0; i < 55; i++) {
-        status &=
-            string_builder_append(builder, meminfo_origin[i], MEMINFO_TODO);
+    bool status = true;
+    for (size_t i = 0; i < field_count; i++) {
+        status &= string_builder_append(builder, meminfo_origin[i], values[i]);
     }
 
-    //    int length = sprintf(result, meminfo_origin,
-    //                         get_memory_size() / 1024, // MemTotal
-    //                         (get_memory_size() - get_used_memory()) / 1024,
-    //                         // MemFree get_available_memory() / 1024, //
-    //                         MemAvailable MEMINFO_TODO, // Buffers
-    //                         MEMINFO_TODO, // Cached MEMINFO_TODO, //
-    //                         SwapCached MEMINFO_TODO, // Active MEMINFO_TODO,
-    //                         // Inactive MEMINFO_TODO, // Active(anon)
-    //                         MEMINFO_TODO, // Inactive(anon) MEMINFO_TODO, //
-    //                         Active(file) MEMINFO_TODO, // Inactive(file)
-    //                         MEMINFO_TODO, // Unevictable MEMINFO_TODO, //
-    //                         Mlocked MEMINFO_TODO, // SwapTotal MEMINFO_TODO,
-    //                         // SwapFree MEMINFO_TODO, // Zswap MEMINFO_TODO,
-    //                         // Zswapped MEMINFO_TODO, // Dirty MEMINFO_TODO,
-    //                         // Writeback MEMINFO_TODO, // AnonPages
-    //                         MEMINFO_TODO, // Mapped MEMINFO_TODO, // Shmem
-    //                         MEMINFO_TODO, // KReclaimable MEMINFO_TODO, //
-    //                         Slab MEMINFO_TODO, // SReclaimable MEMINFO_TODO,
-    //                         // SUnreclaim MAX_STACK_SIZE, // KernelStack
-    //                         MEMINFO_TODO, // PageTables MEMINFO_TODO, //
-    //                         SecPageTables MEMINFO_TODO, // NFS_Unstable
-    //                         MEMINFO_TODO, // Bounce MEMINFO_TODO, //
-    //                         WritebackTmp MEMINFO_TODO, // CommitLimit
-    //                         MEMINFO_TODO, // Committed_AS MEMINFO_TODO, //
-    //                         VmallocTotal MEMINFO_TODO, // VmallocUsed
-    //                         MEMINFO_TODO, // VmallocChunk MEMINFO_TODO, //
-    //                         Percpu MEMINFO_TODO, // HardwareCorrupted
-    //                         MEMINFO_TODO, // AnonHugePages MEMINFO_TODO, //
-    //                         ShmemHugePages MEMINFO_TODO, // ShmemPmdMapped
-    //                         MEMINFO_TODO, // FileHugePages MEMINFO_TODO, //
-    //                         FilePmdMapped MEMINFO_TODO, // Unaccepted
-    //                         MEMINFO_TODO, // HugePages_Total MEMINFO_TODO, //
-    //                         HugePages_Free MEMINFO_TODO, // HugePages_Rsvd
-    //                         MEMINFO_TODO, // HugePages_Surp MEMINFO_TODO, //
-    //                         Hugepagesize MEMINFO_TODO, // Hugetlb
-    //                         MEMINFO_TODO, // DirectMap4k MEMINFO_TODO, //
-    //                         DirectMap2M MEMINFO_TODO // DirectMap1G
-    //    );
+    if (!status) {
+        free(builder->data);
+        free(builder);
+        return NULL;
+    }
 
     *context_len = builder->size;
     char *data = builder->data;

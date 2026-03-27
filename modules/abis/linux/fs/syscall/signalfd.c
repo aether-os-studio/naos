@@ -203,7 +203,7 @@ fs_t signalfdfs = {
     .name = "signalfdfs",
     .magic = 0,
     .ops = &signalfd_callbacks,
-    .flags = FS_FLAGS_HIDDEN,
+    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN,
 };
 
 void signalfd_init() { signalfdfs_id = vfs_regist(&signalfdfs); }

@@ -90,7 +90,6 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->ctx->rflags = (1UL << 9);
     context->fsbase = 0;
     context->gsbase = 0;
-    context->dead = false;
     if (user_mode) {
         context->rip = (uint64_t)ret_to_user;
         context->rsp = (uint64_t)context->ctx;
@@ -133,14 +132,12 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
 
     dst->fsbase = src->fsbase;
     dst->gsbase = src->gsbase;
-    dst->dead = false;
 }
 
 void arch_context_free(arch_context_t *context) {
     if (context->fpu_ctx) {
         free_frames_bytes(context->fpu_ctx, x64_fpu_state_size());
     }
-    context->dead = true;
 }
 
 task_t *arch_get_current() {
@@ -153,9 +150,6 @@ void arch_set_current(task_t *current) { x64_cpu_local_set_current(current); }
 extern tss_t tss[MAX_CPU_NUM];
 
 void __switch_to(task_t *prev, task_t *next) {
-    task_mark_on_cpu(prev, false);
-    task_mark_on_cpu(next, true);
-
     prev->arch_context->fsbase = read_fsbase();
     prev->arch_context->gsbase = read_gsbase();
 
@@ -167,6 +161,9 @@ void __switch_to(task_t *prev, task_t *next) {
 
     write_fsbase(next->arch_context->fsbase);
     write_gsbase(next->arch_context->gsbase);
+
+    task_mark_on_cpu(prev, false);
+    task_mark_on_cpu(next, true);
 }
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,

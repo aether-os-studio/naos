@@ -21,8 +21,7 @@ static void proc_stat_counts(size_t *processes, size_t *running,
                 continue;
 
             task_t *task = (task_t *)entry->value;
-            if (!task || task->state == TASK_DIED || !task->arch_context ||
-                task->arch_context->dead) {
+            if (!task || task->state == TASK_DIED) {
                 continue;
             }
 

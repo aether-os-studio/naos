@@ -439,11 +439,10 @@ int plainfb_create_dumb(drm_device_t *drm_dev,
             gpu_dev->dumbbuffers[i].pitch = args->pitch;
 
             // Allocate memory for framebuffer
-            gpu_dev->dumbbuffers[i].addr = alloc_frames(
-                (args->size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE);
+            gpu_dev->dumbbuffers[i].addr =
+                alloc_frames((args->size + PAGE_SIZE - 1) / PAGE_SIZE);
             memset((void *)phys_to_virt(gpu_dev->dumbbuffers[i].addr), 0,
-                   (args->size + DEFAULT_PAGE_SIZE - 1) &
-                       ~(DEFAULT_PAGE_SIZE - 1));
+                   (args->size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
 
             args->handle = i + 1;
             return 0;
@@ -479,8 +478,8 @@ static int plainfb_destroy_dumb(drm_device_t *drm_dev, uint32_t handle,
         free_frames(gpu_dev->dumbbuffers[idx].addr,
                     (gpu_dev->dumbbuffers[idx].pitch *
                          gpu_dev->dumbbuffers[idx].height +
-                     DEFAULT_PAGE_SIZE - 1) /
-                        DEFAULT_PAGE_SIZE);
+                     PAGE_SIZE - 1) /
+                        PAGE_SIZE);
         gpu_dev->dumbbuffers[idx].direct_backed = false;
         gpu_dev->dumbbuffers[idx].used = false;
     }

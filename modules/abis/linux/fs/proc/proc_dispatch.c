@@ -32,13 +32,13 @@ size_t procfs_task_region_read(task_t *task, uint64_t start, uint64_t end,
     size_t copied = 0;
 
     while (copied < remain) {
-        uint64_t page_va = PADDING_DOWN(va, DEFAULT_PAGE_SIZE);
+        uint64_t page_va = PADDING_DOWN(va, PAGE_SIZE);
         uint64_t pa = translate_address(page_table, page_va);
         if (!pa)
             break;
 
-        size_t page_off = va & (DEFAULT_PAGE_SIZE - 1);
-        size_t chunk = MIN(remain - copied, DEFAULT_PAGE_SIZE - page_off);
+        size_t page_off = va & (PAGE_SIZE - 1);
+        size_t chunk = MIN(remain - copied, PAGE_SIZE - page_off);
         memcpy((char *)addr + copied, (void *)(phys_to_virt(pa) + page_off),
                chunk);
         va += chunk;

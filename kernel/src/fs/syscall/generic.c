@@ -5,6 +5,7 @@
 #include <boot/boot.h>
 #include <net/socket.h>
 #include <drivers/kernel_logger.h>
+#include <mm/cache.h>
 #include <task/task_syscall.h>
 
 static uint64_t do_unlink(const char *name);
@@ -650,7 +651,15 @@ uint64_t sys_fsync(uint64_t fd) {
 
     vfs_node_t *node = self->fd_info->fds[fd]->node;
 
-    return 0;
+    if (!node)
+        return (uint64_t)-EBADF;
+
+    int ret = cache_page_writeback_node(node);
+    if (ret < 0)
+        return (uint64_t)ret;
+
+    ret = vfs_fsync(node);
+    return ret < 0 ? (uint64_t)ret : 0;
 }
 
 uint64_t sys_close(uint64_t fd) {
@@ -1023,21 +1032,20 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
 
     size_t remaining = count;
 
-    char *buffer = (char *)alloc_frames_bytes(DEFAULT_PAGE_SIZE);
+    char *buffer = (char *)alloc_frames_bytes(PAGE_SIZE);
     if (buffer == NULL) {
         return -ENOMEM;
     }
 
     while (remaining > 0) {
-        size_t bytes_to_read =
-            remaining < DEFAULT_PAGE_SIZE ? remaining : DEFAULT_PAGE_SIZE;
+        size_t bytes_to_read = remaining < PAGE_SIZE ? remaining : PAGE_SIZE;
         size_t bytes_read;
         size_t bytes_written;
         bytes_read =
             vfs_read_fd(in_handle, buffer, current_offset, bytes_to_read);
         if (bytes_read <= 0) {
             if (bytes_read == (size_t)-1 && total_sent == 0) {
-                free_frames_bytes(buffer, DEFAULT_PAGE_SIZE);
+                free_frames_bytes(buffer, PAGE_SIZE);
                 return -EIO;
             }
             break;
@@ -1049,7 +1057,7 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
             vfs_write_fd(out_handle, buffer, out_offset, bytes_read);
         if (bytes_written == (size_t)-1) {
             if (total_sent == 0) {
-                free_frames_bytes(buffer, DEFAULT_PAGE_SIZE);
+                free_frames_bytes(buffer, PAGE_SIZE);
                 return -EIO;
             }
             break;
@@ -1062,7 +1070,7 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
         total_sent += bytes_read;
         remaining -= bytes_read;
     }
-    free_frames_bytes(buffer, DEFAULT_PAGE_SIZE);
+    free_frames_bytes(buffer, PAGE_SIZE);
     if (offset_ptr != NULL) {
         *offset_ptr = current_offset;
     } else {
@@ -2546,8 +2554,8 @@ uint64_t sys_sysinfo(struct sysinfo *info_user) {
     info->loads[0] = 0;
     info->loads[1] = 0;
     info->loads[2] = 0;
-    info->totalram = memory_size / DEFAULT_PAGE_SIZE;
-    info->mem_unit = DEFAULT_PAGE_SIZE;
+    info->totalram = memory_size / PAGE_SIZE;
+    info->mem_unit = PAGE_SIZE;
     info->freeram = 0;
     info->procs = task_count();
 

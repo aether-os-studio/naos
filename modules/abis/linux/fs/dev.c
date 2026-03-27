@@ -203,7 +203,7 @@ int devtmpfs_mkfile(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     if (node->handle) {
         return -EEXIST;
     }
-    devtmpfs_node_t *handle = devtmpfs_alloc_handle(node, DEFAULT_PAGE_SIZE);
+    devtmpfs_node_t *handle = devtmpfs_alloc_handle(node, PAGE_SIZE);
     if (!handle)
         return -ENOMEM;
     node->handle = handle;
@@ -218,7 +218,7 @@ int devtmpfs_mknod(vfs_node_t *parent, const char *name, vfs_node_t *node,
     if (node->handle) {
         return -EEXIST;
     }
-    devtmpfs_node_t *handle = devtmpfs_alloc_handle(node, DEFAULT_PAGE_SIZE);
+    devtmpfs_node_t *handle = devtmpfs_alloc_handle(node, PAGE_SIZE);
     if (!handle)
         return -ENOMEM;
     node->handle = handle;
@@ -231,7 +231,7 @@ int devtmpfs_symlink(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     if (node->handle) {
         return -EEXIST;
     }
-    devtmpfs_node_t *handle = devtmpfs_alloc_handle(node, DEFAULT_PAGE_SIZE);
+    devtmpfs_node_t *handle = devtmpfs_alloc_handle(node, PAGE_SIZE);
     if (!handle)
         return -ENOMEM;
     int len = strlen(name);

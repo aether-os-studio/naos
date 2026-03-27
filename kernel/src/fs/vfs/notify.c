@@ -385,7 +385,7 @@ fs_t notifyfs_fs = {
     .name = "notifyfs",
     .magic = 0,
     .ops = &notifyfs_callbacks,
-    .flags = FS_FLAGS_HIDDEN,
+    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN,
 };
 
 bool notifyfs_initialized = false;

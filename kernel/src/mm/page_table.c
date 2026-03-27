@@ -89,7 +89,7 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
             if (a == 0) {
                 return a;
             }
-            memset((uint64_t *)phys_to_virt(a), 0, DEFAULT_PAGE_SIZE);
+            memset((uint64_t *)phys_to_virt(a), 0, PAGE_SIZE);
             pgdir[index] = ARCH_MAKE_PTE(a, ARCH_PT_TABLE_FLAGS
 #if !defined(__riscv__) && !defined(__loongarch64__)
                                                 | (flags & ARCH_PT_FLAG_USER)
@@ -125,7 +125,7 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
             printk("Cannot allocate frame\n");
             return (uint64_t)-1;
         }
-        memset((void *)phys_to_virt(phys), 0, DEFAULT_PAGE_SIZE);
+        memset((void *)phys_to_virt(phys), 0, PAGE_SIZE);
         paddr = phys;
     } else if (paddr && (!had_old_mapping || old_paddr != paddr) &&
                !address_ref(paddr)) {
@@ -294,7 +294,7 @@ static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level,
         return NULL;
 
     uint64_t *new_table = (uint64_t *)phys_to_virt(frame);
-    memset(new_table, 0, DEFAULT_PAGE_SIZE);
+    memset(new_table, 0, PAGE_SIZE);
 
     uint64_t entries = (1UL << ARCH_PT_OFFSET_PER_LEVEL);
 #if defined(__x86_64__) || defined(__riscv__)
@@ -384,7 +384,7 @@ static void free_page_table_recursive(uint64_t *table, int level) {
                 address_release(paddr);
             }
         }
-        free_frames(table_phys, 1);
+        address_release(table_phys);
         return;
     }
 
@@ -397,7 +397,7 @@ static void free_page_table_recursive(uint64_t *table, int level) {
             (uint64_t *)phys_to_virt(ARCH_READ_PTE(entry));
         free_page_table_recursive(page_table_next, level - 1);
     }
-    free_frames(table_phys, 1);
+    address_release(table_phys);
 }
 
 task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
@@ -437,8 +437,7 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
 
 #if defined(__x86_64__) || defined(__riscv__)
     memcpy(new_root + ((1UL << ARCH_PT_OFFSET_PER_LEVEL) >> 1),
-           old_root + ((1UL << ARCH_PT_OFFSET_PER_LEVEL) >> 1),
-           DEFAULT_PAGE_SIZE / 2);
+           old_root + ((1UL << ARCH_PT_OFFSET_PER_LEVEL) >> 1), PAGE_SIZE / 2);
 #endif
 
     new_mm->page_table_addr = virt_to_phys((uint64_t)new_root);
@@ -501,7 +500,7 @@ void page_table_init() {
     setup_mair();
 #endif
 #if defined(__x86_64__) || defined(__riscv__)
-    memset(get_current_page_dir(false), 0, DEFAULT_PAGE_SIZE / 2);
+    memset(get_current_page_dir(false), 0, PAGE_SIZE / 2);
 #endif
     kernel_page_dir = get_current_page_dir(false);
 }

@@ -82,8 +82,8 @@ int virtio_blk_init(virtio_driver_t *driver) {
     snprintf(name, sizeof(name), "virtioblk%d", virtioblk_drive_id++);
 
     regist_blkdev(name, blk_device, blk_device->block_size,
-                  config.capacity * blk_device->sector_size,
-                  DEFAULT_PAGE_SIZE * 32, virtio_read, virtio_write);
+                  config.capacity * blk_device->sector_size, PAGE_SIZE * 32,
+                  virtio_read, virtio_write);
 
     return 0;
 }

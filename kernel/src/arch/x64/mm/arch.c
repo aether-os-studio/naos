@@ -34,7 +34,7 @@ uint64_t get_arch_page_table_flags(uint64_t flags) {
 }
 
 void arch_flush_tlb(uint64_t vaddr) {
-    asm volatile("invlpg (%0)" ::"r"(PADDING_DOWN(vaddr, DEFAULT_PAGE_SIZE))
+    asm volatile("invlpg (%0)" ::"r"(PADDING_DOWN(vaddr, PAGE_SIZE))
                  : "memory");
 }
 

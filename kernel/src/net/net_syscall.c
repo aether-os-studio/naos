@@ -298,7 +298,7 @@ uint64_t sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen) {
     if (!is_socket(node))
         return -ENOTSOCK;
 
-    void *kaddr = calloc(1, DEFAULT_PAGE_SIZE);
+    void *kaddr = calloc(1, PAGE_SIZE);
     socklen_t kaddrlen = user_len;
 
     socket_handle_t *handle = node->node->handle;
@@ -343,7 +343,7 @@ uint64_t sys_getsockname(int sockfd, struct sockaddr_un *addr,
     if (!is_socket(node))
         return -ENOTSOCK;
 
-    void *kaddr = calloc(1, DEFAULT_PAGE_SIZE);
+    void *kaddr = calloc(1, PAGE_SIZE);
     socklen_t kaddrlen = user_len;
 
     socket_handle_t *handle = node->node->handle;

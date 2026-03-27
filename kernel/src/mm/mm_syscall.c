@@ -211,8 +211,7 @@ static uint64_t membarrier_supported_mask(void) {
 static bool membarrier_task_matches_mm(task_t *task, task_mm_info_t *mm,
                                        task_t *self) {
     return task && task != self && task->mm == mm &&
-           task->current_state == TASK_RUNNING && task->state != TASK_DIED &&
-           task->arch_context && !task->arch_context->dead;
+           task->current_state == TASK_RUNNING && task->state != TASK_DIED;
 }
 
 static void membarrier_collect_target_cpus(task_mm_info_t *mm, task_t *self,
@@ -356,8 +355,8 @@ static uint64_t find_unmapped_area_in_window(vma_manager_t *mgr,
                                              uint64_t window_start,
                                              uint64_t window_end,
                                              uint64_t len) {
-    window_start = PADDING_UP(window_start, DEFAULT_PAGE_SIZE);
-    window_end = PADDING_DOWN(window_end, DEFAULT_PAGE_SIZE);
+    window_start = PADDING_UP(window_start, PAGE_SIZE);
+    window_end = PADDING_DOWN(window_end, PAGE_SIZE);
 
     if (window_start >= window_end)
         return (uint64_t)-ENOMEM;
@@ -385,7 +384,7 @@ static uint64_t find_unmapped_area_in_window(vma_manager_t *mgr,
                 best = gap_end - len;
         }
 
-        cursor = PADDING_UP(vma->vm_end, DEFAULT_PAGE_SIZE);
+        cursor = PADDING_UP(vma->vm_end, PAGE_SIZE);
         if (cursor < vma->vm_end || cursor >= window_end)
             return best;
     }
@@ -400,14 +399,14 @@ uint64_t find_unmapped_area(vma_manager_t *mgr, uint64_t hint, uint64_t len) {
     if (len == 0)
         return (uint64_t)-ENOMEM;
 
-    len = PADDING_UP(len, DEFAULT_PAGE_SIZE);
+    len = PADDING_UP(len, PAGE_SIZE);
     if (len == 0)
         return (uint64_t)-ENOMEM;
     if (len > USER_MMAP_END - USER_MMAP_START)
         return (uint64_t)-ENOMEM;
 
     if (hint) {
-        hint = PADDING_DOWN(hint, DEFAULT_PAGE_SIZE);
+        hint = PADDING_DOWN(hint, PAGE_SIZE);
         if (hint >= USER_MMAP_START && hint <= USER_MMAP_END - len) {
             if (!vma_find_intersection(mgr, hint, hint + len))
                 return hint;
@@ -563,15 +562,15 @@ uint64_t sys_brk(uint64_t brk) {
     task_mm_info_t *mm = current_task->mm;
     vma_manager_t *mgr = &mm->task_vma_mgr;
     uint64_t old_brk = mm->brk_current;
-    uint64_t heap_base = PADDING_DOWN(mm->brk_start, DEFAULT_PAGE_SIZE);
+    uint64_t heap_base = PADDING_DOWN(mm->brk_start, PAGE_SIZE);
 
     if (brk == 0)
         return old_brk;
     if (brk < mm->brk_start || brk > mm->brk_end)
         return old_brk;
 
-    uint64_t old_map_end = PADDING_UP(old_brk, DEFAULT_PAGE_SIZE);
-    uint64_t new_map_end = PADDING_UP(brk, DEFAULT_PAGE_SIZE);
+    uint64_t old_map_end = PADDING_UP(old_brk, PAGE_SIZE);
+    uint64_t new_map_end = PADDING_UP(brk, PAGE_SIZE);
 
     spin_lock(&mgr->lock);
 
@@ -638,9 +637,9 @@ fail:
 
 uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
                   uint64_t fd, uint64_t offset) {
-    const uint64_t page_mask = DEFAULT_PAGE_SIZE - 1;
+    const uint64_t page_mask = PAGE_SIZE - 1;
     uint64_t map_type = flags & MAP_TYPE;
-    uint64_t aligned_len = PADDING_UP(len, DEFAULT_PAGE_SIZE);
+    uint64_t aligned_len = PADDING_UP(len, PAGE_SIZE);
     bool anonymous = (flags & MAP_ANONYMOUS) != 0;
     bool fixed = (flags & (MAP_FIXED | MAP_FIXED_NOREPLACE)) != 0;
     bool no_replace = (flags & MAP_FIXED_NOREPLACE) != 0;
@@ -739,7 +738,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
     } else {
         uint64_t hint = 0;
         if (addr >= USER_MMAP_START && addr < USER_MMAP_END)
-            hint = PADDING_DOWN(addr, DEFAULT_PAGE_SIZE);
+            hint = PADDING_DOWN(addr, PAGE_SIZE);
 
         start_addr = find_unmapped_area(mgr, hint, aligned_len);
         if ((int64_t)start_addr < 0) {
@@ -822,8 +821,8 @@ out_map_fd_error:
 }
 
 static uint64_t do_munmap_locked(uint64_t addr, uint64_t size) {
-    addr = PADDING_DOWN(addr, DEFAULT_PAGE_SIZE);
-    size = PADDING_UP(size, DEFAULT_PAGE_SIZE);
+    addr = PADDING_DOWN(addr, PAGE_SIZE);
+    size = PADDING_UP(size, PAGE_SIZE);
 
     if (size == 0)
         return (uint64_t)-EINVAL;
@@ -866,7 +865,7 @@ static uint64_t do_munmap_locked(uint64_t addr, uint64_t size) {
 }
 
 uint64_t sys_munmap(uint64_t addr, uint64_t size) {
-    if (addr & (DEFAULT_PAGE_SIZE - 1))
+    if (addr & (PAGE_SIZE - 1))
         return (uint64_t)-EINVAL;
 
     vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
@@ -877,12 +876,12 @@ uint64_t sys_munmap(uint64_t addr, uint64_t size) {
 }
 
 uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
-    if (addr & (DEFAULT_PAGE_SIZE - 1))
+    if (addr & (PAGE_SIZE - 1))
         return (uint64_t)-EINVAL;
     if (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC))
         return (uint64_t)-EINVAL;
 
-    len = PADDING_UP(len, DEFAULT_PAGE_SIZE);
+    len = PADDING_UP(len, PAGE_SIZE);
     if (len == 0)
         return (uint64_t)-EINVAL;
     if (!user_range_valid(addr, len))
@@ -1197,10 +1196,8 @@ static int copy_user_range_mapped(uint64_t dst, uint64_t src, uint64_t size) {
             return -EFAULT;
         }
 
-        uint64_t src_chunk =
-            DEFAULT_PAGE_SIZE - (src_addr & (DEFAULT_PAGE_SIZE - 1));
-        uint64_t dst_chunk =
-            DEFAULT_PAGE_SIZE - (dst_addr & (DEFAULT_PAGE_SIZE - 1));
+        uint64_t src_chunk = PAGE_SIZE - (src_addr & (PAGE_SIZE - 1));
+        uint64_t dst_chunk = PAGE_SIZE - (dst_addr & (PAGE_SIZE - 1));
         uint64_t chunk = MIN(remain, MIN(src_chunk, dst_chunk));
 
         memcpy((void *)phys_to_virt(dst_pa), (const void *)phys_to_virt(src_pa),
@@ -1400,10 +1397,10 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
     const uint64_t supported_flags =
         MREMAP_MAYMOVE | MREMAP_FIXED | MREMAP_DONTUNMAP;
 
-    uint64_t old_addr_aligned = PADDING_DOWN(old_addr, DEFAULT_PAGE_SIZE);
-    uint64_t new_addr_aligned = PADDING_DOWN(new_addr, DEFAULT_PAGE_SIZE);
-    uint64_t old_size_aligned = PADDING_UP(old_size, DEFAULT_PAGE_SIZE);
-    uint64_t new_size_aligned = PADDING_UP(new_size, DEFAULT_PAGE_SIZE);
+    uint64_t old_addr_aligned = PADDING_DOWN(old_addr, PAGE_SIZE);
+    uint64_t new_addr_aligned = PADDING_DOWN(new_addr, PAGE_SIZE);
+    uint64_t old_size_aligned = PADDING_UP(old_size, PAGE_SIZE);
+    uint64_t new_size_aligned = PADDING_UP(new_size, PAGE_SIZE);
 
     if (flags & ~supported_flags)
         return (uint64_t)-EINVAL;
@@ -1508,9 +1505,9 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
     if (prot & PROT_EXEC)
         final_pt_flags |= PT_FLAG_X;
 
-    uint64_t map_addr = PADDING_DOWN(addr, DEFAULT_PAGE_SIZE);
+    uint64_t map_addr = PADDING_DOWN(addr, PAGE_SIZE);
     uint64_t page_off = addr - map_addr;
-    uint64_t map_len = PADDING_UP(len + page_off, DEFAULT_PAGE_SIZE);
+    uint64_t map_len = PADDING_UP(len + page_off, PAGE_SIZE);
     uint64_t load_pt_flags = final_pt_flags | PT_FLAG_W;
     task_mm_info_t *mm = current_task->mm;
     uint64_t *pgdir = mm_pgdir(mm);
@@ -1558,23 +1555,27 @@ static uint64_t msync_writeback_file_range(vfs_node_t *node, uint64_t vm_start,
     if (!node || sync_start >= sync_end || vm_offset < 0)
         return 0;
 
+    fs_t *fs = all_fs[node->fsid];
+    const vfs_operations_t *ops = fs ? fs->ops : NULL;
+    if (!ops || !ops->write)
+        return 0;
+
     task_mm_info_t *mm = current_task->mm;
     uint64_t *pgdir = mm_pgdir(mm);
     uint64_t cursor = sync_start;
     uint64_t file_size = node->size;
-    uint8_t *bounce = alloc_frames_bytes(DEFAULT_PAGE_SIZE);
+    uint8_t *bounce = alloc_frames_bytes(PAGE_SIZE);
     if (!bounce)
         return (uint64_t)-ENOMEM;
 
     while (cursor < sync_end) {
-        uint64_t page_va = PADDING_DOWN(cursor, DEFAULT_PAGE_SIZE);
+        uint64_t page_va = PADDING_DOWN(cursor, PAGE_SIZE);
         uint64_t in_page = cursor - page_va;
-        uint64_t scan_chunk =
-            MIN(sync_end - cursor, DEFAULT_PAGE_SIZE - in_page);
+        uint64_t scan_chunk = MIN(sync_end - cursor, PAGE_SIZE - in_page);
         uint64_t vma_delta = cursor - vm_start;
 
         if ((uint64_t)vm_offset > UINT64_MAX - vma_delta) {
-            free_frames_bytes(bounce, DEFAULT_PAGE_SIZE);
+            free_frames_bytes(bounce, PAGE_SIZE);
             return (uint64_t)-EINVAL;
         }
 
@@ -1599,15 +1600,27 @@ static uint64_t msync_writeback_file_range(vfs_node_t *node, uint64_t vm_start,
         }
 
         uint64_t written = 0;
+        fd_shared_t shared = {
+            .offset = file_off,
+            .flags = O_WRONLY,
+            .ref_count = 1,
+        };
+        fd_t fd = {
+            .node = node,
+            .shared = &shared,
+            .close_on_exec = false,
+        };
         while (written < io_chunk) {
-            ssize_t ret = vfs_write(node, bounce + written, file_off + written,
-                                    io_chunk - written);
+            ssize_t ret = ops->write(&fd, bounce + written, file_off + written,
+                                     io_chunk - written);
             if (ret < 0) {
-                free_frames_bytes(bounce, DEFAULT_PAGE_SIZE);
+                free_frames_bytes(bounce, PAGE_SIZE);
+                if (ret == -ENOSYS)
+                    ret = 0;
                 return (uint64_t)ret;
             }
             if (ret == 0) {
-                free_frames_bytes(bounce, DEFAULT_PAGE_SIZE);
+                free_frames_bytes(bounce, PAGE_SIZE);
                 return (uint64_t)-EIO;
             }
             written += (uint64_t)ret;
@@ -1618,15 +1631,16 @@ static uint64_t msync_writeback_file_range(vfs_node_t *node, uint64_t vm_start,
             break;
     }
 
-    free_frames_bytes(bounce, DEFAULT_PAGE_SIZE);
+    free_frames_bytes(bounce, PAGE_SIZE);
 
-    return 0;
+    int sync_ret = vfs_fsync(node);
+    return sync_ret < 0 ? (sync_ret == -ENOSYS ? 0 : (uint64_t)sync_ret) : 0;
 }
 
 uint64_t sys_msync(uint64_t addr, uint64_t size, uint64_t flags) {
     const uint64_t supported_flags = 0x1 | 0x2 | 0x4;
 
-    if (addr & (DEFAULT_PAGE_SIZE - 1))
+    if (addr & (PAGE_SIZE - 1))
         return (uint64_t)-EINVAL;
     if (size == 0)
         return 0;
@@ -1688,14 +1702,14 @@ uint64_t sys_msync(uint64_t addr, uint64_t size, uint64_t flags) {
 }
 
 uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
-    if (addr & (DEFAULT_PAGE_SIZE - 1))
+    if (addr & (PAGE_SIZE - 1))
         return (uint64_t)-EINVAL;
     if (size == 0)
         return 0;
     if (!user_range_valid(addr, size))
         return (uint64_t)-ENOMEM;
 
-    uint64_t num_pages = (size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
+    uint64_t num_pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
     if (check_user_overflow(vec, num_pages))
         return (uint64_t)-EFAULT;
 
@@ -1713,7 +1727,7 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
     spin_unlock(&mgr->lock);
 
     for (uint64_t index = 0, cursor = addr; index < num_pages;
-         index++, cursor += DEFAULT_PAGE_SIZE) {
+         index++, cursor += PAGE_SIZE) {
         uint8_t value = translate_address(page_dir, cursor) ? 1 : 0;
         if (copy_to_user((void *)vec + index, &value, 1)) {
             return (uint64_t)-EFAULT;
@@ -1725,7 +1739,7 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec) {
 
 static uint64_t madvise_validate_range(uint64_t addr, uint64_t len,
                                        uint64_t *len_out, uint64_t *end_out) {
-    if (addr & (DEFAULT_PAGE_SIZE - 1))
+    if (addr & (PAGE_SIZE - 1))
         return (uint64_t)-EINVAL;
     if (len == 0) {
         if (len_out)
@@ -1737,7 +1751,7 @@ static uint64_t madvise_validate_range(uint64_t addr, uint64_t len,
     if (check_user_overflow(addr, len))
         return (uint64_t)-ENOMEM;
 
-    uint64_t aligned_len = PADDING_UP(len, DEFAULT_PAGE_SIZE);
+    uint64_t aligned_len = PADDING_UP(len, PAGE_SIZE);
     if (aligned_len == 0 || !user_range_valid(addr, aligned_len))
         return (uint64_t)-ENOMEM;
 
@@ -1783,8 +1797,7 @@ static int madvise_check_vmas(uint64_t addr, uint64_t end) {
 
 static uint64_t madvise_prefault_range(uint64_t addr, uint64_t len,
                                        uint64_t fault_flags) {
-    for (uint64_t cursor = addr; cursor < addr + len;
-         cursor += DEFAULT_PAGE_SIZE) {
+    for (uint64_t cursor = addr; cursor < addr + len; cursor += PAGE_SIZE) {
         page_fault_result_t fault =
             handle_page_fault_flags(current_task, cursor, fault_flags);
         if (fault == PF_RES_NOMEM)
@@ -1886,8 +1899,8 @@ static uint64_t mlock_validate_range(uint64_t addr, uint64_t len,
     if (check_user_overflow(addr, len))
         return (uint64_t)-ENOMEM;
 
-    uint64_t start = PADDING_DOWN(addr, DEFAULT_PAGE_SIZE);
-    uint64_t end = PADDING_UP(addr + len, DEFAULT_PAGE_SIZE);
+    uint64_t start = PADDING_DOWN(addr, PAGE_SIZE);
+    uint64_t end = PADDING_UP(addr + len, PAGE_SIZE);
     if (end <= start)
         return (uint64_t)-ENOMEM;
     if (!user_range_valid(start, end - start))
@@ -1919,7 +1932,7 @@ uint64_t sys_mlock(uint64_t addr, uint64_t len) {
 
     uint64_t *pgdir = mm_pgdir(current_task->mm);
     for (uint64_t cursor = start; cursor < start + aligned_len;
-         cursor += DEFAULT_PAGE_SIZE) {
+         cursor += PAGE_SIZE) {
         if (translate_address(pgdir, cursor))
             continue;
 

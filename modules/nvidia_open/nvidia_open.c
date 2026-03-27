@@ -793,7 +793,7 @@ static int nvidia_fb_index(const nvidia_fb_t *fb) {
 }
 
 static uint64_t nvidia_pages_for_size(uint64_t size) {
-    return (size + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
+    return (size + PAGE_SIZE - 1) / PAGE_SIZE;
 }
 
 static int nvidia_validate_fb_geometry(const nvidia_fb_t *fb, uint32_t width,
@@ -2289,27 +2289,27 @@ int nvidia_drm_mmap(drm_device_t *drm_dev, uint64_t addr, uint64_t offset,
 
     uint64_t *pgdir =
         (uint64_t *)phys_to_virt(current_task->mm->page_table_addr);
-    uint64_t pages = (len + DEFAULT_PAGE_SIZE - 1) / DEFAULT_PAGE_SIZE;
+    uint64_t pages = (len + PAGE_SIZE - 1) / PAGE_SIZE;
     uint64_t mapped = 0;
     int ret = 0;
 
     for (uint64_t p = 0; p < pages; p++) {
-        uint64_t map_va = (uint64_t)target_fb->scanout + p * DEFAULT_PAGE_SIZE;
+        uint64_t map_va = (uint64_t)target_fb->scanout + p * PAGE_SIZE;
         uint64_t phys = translate_address(get_current_page_dir(false), map_va);
         if (!phys) {
             ret = -EFAULT;
             break;
         }
 
-        map_page_range(pgdir, addr + p * DEFAULT_PAGE_SIZE, phys,
-                       DEFAULT_PAGE_SIZE, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
+        map_page_range(pgdir, addr + p * PAGE_SIZE, phys, PAGE_SIZE,
+                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
 
         mapped++;
     }
 
     if (ret != 0) {
         if (mapped) {
-            unmap_page_range(pgdir, addr, mapped * DEFAULT_PAGE_SIZE);
+            unmap_page_range(pgdir, addr, mapped * PAGE_SIZE);
         }
         return ret;
     }
@@ -2687,10 +2687,10 @@ int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
                 continue;
             }
             nv_dev->nv_.bars[nvBarIndex].cpu_address =
-                dev->bars[i].address & ~(DEFAULT_PAGE_SIZE - 1);
+                dev->bars[i].address & ~(PAGE_SIZE - 1);
             nv_dev->nv_.bars[nvBarIndex].size = dev->bars[i].size;
             nv_dev->nv_.bars[nvBarIndex].offset =
-                dev->bars[i].address & (DEFAULT_PAGE_SIZE - 1);
+                dev->bars[i].address & (PAGE_SIZE - 1);
             nv_dev->nv_.bars[nvBarIndex].map = NULL;
             nv_dev->nv_.bars[nvBarIndex].map_u = NULL;
             nvBarIndex++;

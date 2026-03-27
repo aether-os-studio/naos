@@ -3,7 +3,7 @@
 #include <fs/sys.h>
 
 static int eventn = 0;
-#define INPUT_EVENT_RING_SIZE (DEFAULT_PAGE_SIZE * 32)
+#define INPUT_EVENT_RING_SIZE (PAGE_SIZE * 32)
 
 spinlock_t inputdev_regist_lock = SPIN_INIT;
 
