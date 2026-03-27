@@ -100,6 +100,7 @@ virtqueue_t *virt_queue_new(virtio_driver_t *driver, uint16_t queue_idx,
 void virt_queue_set_dev_notify(virtqueue_t *queue, bool enable);
 bool virt_queue_should_notify(virtqueue_t *queue);
 bool virt_queue_can_pop(virtqueue_t *queue);
+uint16_t virt_queue_count_free_desc(virtqueue_t *queue);
 uint16_t virt_queue_get_free_desc(virtqueue_t *queue);
 void virt_queue_free_desc(virtqueue_t *queue, uint16_t desc_idx);
 uint16_t virt_queue_add_buf(virtqueue_t *queue, virtio_buffer_t *bufs,

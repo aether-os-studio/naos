@@ -31,4 +31,13 @@ dbus-uuidgen --ensure
 
 udevd &
 
-exec dbus-run-session seatd-launch -- weston --xwayland
+exec dbus-run-session -- bash -c '
+    pipewire &
+    while [ ! -e "$XDG_RUNTIME_DIR/pipewire-0" ]; do
+        sleep 0.1
+    done
+    pipewire-pulse &
+    wireplumber &
+    
+    exec seatd-launch -- weston --xwayland
+'

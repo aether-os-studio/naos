@@ -14,15 +14,16 @@ enum device_type_t {
 
 // 设备子类型
 enum device_subtype_t {
-    DEV_TTY = 4,    // TTY 设备
-    DEV_PART = 8,   // 磁盘分区
-    DEV_INPUT = 13, // 输入设备
-    DEV_FB,         // 帧缓冲
-    DEV_DISK,       // 磁盘
-    DEV_NETIF,      // 网卡
-    DEV_SYSDEV,     // 系统设备
-    DEV_USB,        // USB userspace node
-    DEV_GPU = 226,  // 显卡
+    DEV_TTY = 4,     // TTY 设备
+    DEV_PART = 8,    // 磁盘分区
+    DEV_SOUND = 116, // 声卡 / ALSA
+    DEV_INPUT = 13,  // 输入设备
+    DEV_FB,          // 帧缓冲
+    DEV_DISK,        // 磁盘
+    DEV_NETIF,       // 网卡
+    DEV_SYSDEV,      // 系统设备
+    DEV_USB,         // USB userspace node
+    DEV_GPU = 226,   // 显卡
     DEV_MAX,
 };
 

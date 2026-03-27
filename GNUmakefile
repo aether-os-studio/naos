@@ -230,6 +230,8 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all
 		-device ide-hd,drive=harddisk,bus=ahci.0 \
 		-device nvme,drive=rootdisk,serial=5678 \
 		-nic user,model=virtio-net-pci \
+		-device virtio-sound-pci,audiodev=virtio_audio \
+		-audiodev sdl,id=virtio_audio \
 		-rtc base=utc \
 		-display sdl \
 		$(QEMUFLAGS)

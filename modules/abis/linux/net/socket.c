@@ -2183,6 +2183,9 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
         sock->passcred = *(int *)optval;
         break;
 
+    case SO_PRIORITY:
+        break;
+
     case SO_PEERCRED:
         return -ENOPROTOOPT; // 只读
 

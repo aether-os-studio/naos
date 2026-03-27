@@ -161,6 +161,20 @@ bool virt_queue_can_pop(virtqueue_t *queue) {
     return queue->last_used_idx != queue->used->index;
 }
 
+uint16_t virt_queue_count_free_desc(virtqueue_t *queue) {
+    if (!queue) {
+        return 0;
+    }
+
+    uint16_t count = 0;
+    uint16_t idx = queue->free_head;
+    while (idx != 0xFFFF && count < queue->size) {
+        count++;
+        idx = queue->desc[idx].next;
+    }
+    return count;
+}
+
 uint16_t virt_queue_get_free_desc(virtqueue_t *queue) {
     if (queue->free_head == 0xFFFF) {
         return 0xFFFF; // No free descriptors
@@ -174,55 +188,74 @@ uint16_t virt_queue_get_free_desc(virtqueue_t *queue) {
 
 void virt_queue_free_desc(virtqueue_t *queue, uint16_t desc_idx) {
     uint16_t current_idx = desc_idx;
-    uint16_t last_idx = desc_idx;
+    uint16_t chain[SIZE];
+    uint16_t chain_len = 0;
 
-    // Find the end of the descriptor chain
-    while (queue->desc[current_idx].flags & DESC_FLAGS_NEXT) {
-        last_idx = current_idx;
-        current_idx = queue->desc[current_idx].next;
-        if (current_idx == 0xFFFF)
-            break;
+    while (current_idx != 0xFFFF && chain_len < queue->size) {
+        uint16_t next_idx = (queue->desc[current_idx].flags & DESC_FLAGS_NEXT)
+                                ? queue->desc[current_idx].next
+                                : 0xFFFF;
+        chain[chain_len++] = current_idx;
+        current_idx = next_idx;
     }
 
-    // Link the last descriptor in the chain to the current free head
-    if (current_idx != 0xFFFF) {
-        queue->desc[current_idx].next = queue->free_head;
-        queue->free_head = desc_idx;
-    } else {
-        // Chain was broken, just add the original descriptor
-        queue->desc[desc_idx].next = queue->free_head;
-        queue->free_head = desc_idx;
+    if (chain_len == 0) {
+        return;
     }
+
+    for (uint16_t i = 0; i < chain_len; i++) {
+        uint16_t idx = chain[i];
+        queue->desc[idx].flags = 0;
+        queue->desc[idx].len = 0;
+        queue->desc[idx].addr = 0;
+        if (i + 1 < chain_len) {
+            queue->desc[idx].next = chain[i + 1];
+        } else {
+            queue->desc[idx].next = queue->free_head;
+        }
+    }
+
+    queue->free_head = chain[0];
+    dma_sync_cpu_to_device(queue->desc, virt_queue_desc_bytes(queue));
 }
 
 uint16_t virt_queue_add_buf(virtqueue_t *queue, virtio_buffer_t *bufs,
                             uint16_t num_bufs, bool *device_writable) {
-    if (num_bufs == 0 || queue->free_head == 0xFFFF) {
+    if (num_bufs == 0 || queue->free_head == 0xFFFF ||
+        virt_queue_count_free_desc(queue) < num_bufs) {
         return 0xFFFF;
     }
 
     uint16_t head_idx = queue->free_head;
     uint16_t current_idx = head_idx;
     uint16_t next_idx;
+    uint16_t reserved[SIZE];
+    uint16_t reserved_count = 0;
 
-    // Build the descriptor chain
     for (uint16_t i = 0; i < num_bufs; i++) {
         if (current_idx == 0xFFFF) {
-            // Not enough descriptors, return error
+            for (uint16_t j = 0; j < reserved_count; j++) {
+                uint16_t idx = reserved[j];
+                queue->desc[idx].flags = 0;
+                queue->desc[idx].len = 0;
+                queue->desc[idx].addr = 0;
+                queue->desc[idx].next =
+                    (j + 1 < reserved_count) ? reserved[j + 1] : 0xFFFF;
+            }
+            queue->free_head = head_idx;
+            dma_sync_cpu_to_device(queue->desc, virt_queue_desc_bytes(queue));
             return 0xFFFF;
         }
 
-        // Get the next free descriptor before we modify current one
         next_idx = queue->desc[current_idx].next;
+        reserved[reserved_count++] = current_idx;
 
-        // Set up the current descriptor
         virtio_descriptor_set_buf(
             &queue->desc[current_idx], (void *)bufs[i].addr, bufs[i].size,
             device_writable[i] ? VIRTIO_DESC_BUFFER_DIR_DEVICE_TO_DRIVER
                                : VIRTIO_DESC_BUFFER_DIR_DRIVER_TO_DEVICE,
             i < num_bufs - 1 ? DESC_FLAGS_NEXT : 0);
 
-        // Set the next pointer for chaining (except for the last descriptor)
         if (i < num_bufs - 1) {
             queue->desc[current_idx].next = next_idx;
         } else {
@@ -232,7 +265,6 @@ uint16_t virt_queue_add_buf(virtqueue_t *queue, virtio_buffer_t *bufs,
         current_idx = next_idx;
     }
 
-    // Update the free head to point to the next available descriptor
     queue->free_head = current_idx;
     dma_sync_cpu_to_device(queue->desc, virt_queue_desc_bytes(queue));
 

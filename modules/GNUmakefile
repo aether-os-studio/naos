@@ -1,7 +1,8 @@
+GLOBAL_CFLAGS := -fno-stack-protector -Wno-address-of-packed-member -fPIC -fno-builtin -nostdinc -nostdlib -I$(shell pwd)/ -I$(shell pwd)/../kernel/src -I$(shell pwd)/../kernel/src/libs/fdt -I$(shell pwd)/../kernel/freestnd-c-hdrs -I$(shell pwd)/abis/$(SYSTEM_ABI)
 ifeq ($(BUILD_MODE), debug)
-CFLAGS := -g3 -O0 -fno-stack-protector -Wno-address-of-packed-member -fPIC -fno-builtin -nostdinc -nostdlib -I$(shell pwd)/../kernel/src -I$(shell pwd)/../kernel/src/libs/fdt -I$(shell pwd)/../kernel/freestnd-c-hdrs -I$(shell pwd)/abis/$(SYSTEM_ABI)
+CFLAGS := -g3 -O0 $(GLOBAL_CFLAGS)
 else
-CFLAGS := -O3 -fno-stack-protector -Wno-address-of-packed-member -fPIC -fno-builtin -nostdinc -nostdlib -I$(shell pwd)/../kernel/src -I$(shell pwd)/../kernel/src/libs/fdt -I$(shell pwd)/../kernel/freestnd-c-hdrs -I$(shell pwd)/abis/$(SYSTEM_ABI)
+CFLAGS := -O3 $(GLOBAL_CFLAGS)
 endif
 export CFLAGS
 
@@ -85,6 +86,8 @@ endif
 endif
 
 	$(MAKE) -C abis
+
+	$(MAKE) -C sound
 
 	$(MAKE) -C nvme
 
