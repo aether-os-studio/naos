@@ -263,6 +263,7 @@ uint64_t sys_timerfd_create(int clockid, int flags) {
     node->type = file_stream;
     node->fsid = timerfdfs_id;
     node->handle = tfd;
+    node->flags |= VFS_NODE_FLAGS_FREE_AFTER_USE;
     tfd->node = node;
 
     int fd = -1;

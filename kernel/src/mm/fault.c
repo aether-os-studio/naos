@@ -202,6 +202,7 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
     spin_unlock(&mgr->lock);
 
     address_release(page_paddr);
+
     return PF_RES_OK;
 }
 

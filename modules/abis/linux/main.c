@@ -451,6 +451,7 @@ void signal_notify_signalfd(task_t *task, int sig, const siginfo_t *info) {
     bool irq_state = arch_interrupt_enabled();
 
     arch_disable_interrupt();
+
     for (int i = 0; i < MAX_FD_NUM; i++) {
         fd_t *fd = task->fd_info->fds[i];
         if (!fd || !fd->node || fd->node->fsid != signalfdfs_id) {
@@ -640,6 +641,7 @@ void x64_register_syscalls() {
     // regist_syscall_handler(SYS_CREAT, (syscall_handle_t)sys_creat);
     regist_syscall_handler(SYS_LINK, (syscall_handle_t)sys_link);
     regist_syscall_handler(SYS_SYMLINK, (syscall_handle_t)sys_symlink);
+    regist_syscall_handler(SYS_UNLINK, (syscall_handle_t)sys_unlink);
     regist_syscall_handler(SYS_READLINK, (syscall_handle_t)sys_readlink);
     regist_syscall_handler(SYS_CHMOD, (syscall_handle_t)sys_chmod);
     regist_syscall_handler(SYS_FCHMOD, (syscall_handle_t)sys_fchmod);

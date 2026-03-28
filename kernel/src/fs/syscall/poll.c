@@ -98,7 +98,7 @@ static void poll_disarm_waiters(vfs_poll_wait_t *waits, int nfds) {
     }
 }
 
-size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
+static size_t do_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
     if (nfds < 0)
         return (size_t)-EINVAL;
     if (nfds > 0 && !fds)
@@ -192,35 +192,101 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
     return ready;
 }
 
+size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
+    if (nfds < 0)
+        return (size_t)-EINVAL;
+    if (nfds > 0 && (!fds || check_user_overflow(
+                                 (uint64_t)fds, (size_t)nfds * sizeof(*fds)))) {
+        return (size_t)-EFAULT;
+    }
+
+    struct pollfd *kfds = NULL;
+    if (nfds > 0) {
+        kfds = malloc((size_t)nfds * sizeof(*kfds));
+        if (!kfds)
+            return (size_t)-ENOMEM;
+        if (copy_from_user(kfds, fds, (size_t)nfds * sizeof(*kfds))) {
+            free(kfds);
+            return (size_t)-EFAULT;
+        }
+    }
+
+    size_t ret = do_poll(kfds, nfds, timeout);
+
+    if (kfds) {
+        if ((int64_t)ret >= 0 &&
+            copy_to_user(fds, kfds, (size_t)nfds * sizeof(*kfds))) {
+            free(kfds);
+            return (size_t)-EFAULT;
+        }
+        free(kfds);
+    }
+
+    return ret;
+}
+
 uint64_t sys_ppoll(struct pollfd *fds, uint64_t nfds,
                    const struct timespec *timeout_ts, const sigset_t *sigmask,
                    size_t sigsetsize) {
+    if (nfds > INT32_MAX)
+        return (uint64_t)-EINVAL;
     if (nfds > 0 &&
-        (!fds ||
-         check_user_overflow((uint64_t)fds, nfds * sizeof(struct pollfd)))) {
+        (!fds || check_user_overflow((uint64_t)fds,
+                                     (size_t)nfds * sizeof(struct pollfd)))) {
         return (uint64_t)-EFAULT;
     }
     if (sigmask && sigsetsize < sizeof(sigset_t)) {
         return (uint64_t)-EINVAL;
     }
 
+    struct pollfd *kfds = NULL;
+    if (nfds > 0) {
+        kfds = malloc((size_t)nfds * sizeof(*kfds));
+        if (!kfds)
+            return (uint64_t)-ENOMEM;
+        if (copy_from_user(kfds, fds, (size_t)nfds * sizeof(*kfds))) {
+            free(kfds);
+            return (uint64_t)-EFAULT;
+        }
+    }
+
     int timeout = -1;
     if (timeout_ts) {
-        if (timeout_ts->tv_sec < 0 || timeout_ts->tv_nsec < 0 ||
-            timeout_ts->tv_nsec >= 1000000000LL)
+        struct timespec ts;
+        if (copy_from_user(&ts, timeout_ts, sizeof(ts))) {
+            free(kfds);
+            return (uint64_t)-EFAULT;
+        }
+        if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000LL) {
+            free(kfds);
             return (uint64_t)-EINVAL;
-        timeout = timeout_ts->tv_sec * 1000 + timeout_ts->tv_nsec / 1000000;
+        }
+        timeout = ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
     }
 
     sigset_t origmask;
+    sigset_t newmask;
     if (sigmask) {
-        sys_ssetmask(SIG_SETMASK, sigmask, &origmask, sizeof(sigset_t));
+        if (copy_from_user(&newmask, sigmask, sizeof(newmask))) {
+            free(kfds);
+            return (uint64_t)-EFAULT;
+        }
+        sys_ssetmask(SIG_SETMASK, &newmask, &origmask, sizeof(sigset_t));
     }
 
-    uint64_t ret = sys_poll(fds, nfds, timeout);
+    uint64_t ret = do_poll(kfds, (int)nfds, timeout);
 
     if (sigmask) {
         sys_ssetmask(SIG_SETMASK, &origmask, NULL, sizeof(sigset_t));
+    }
+
+    if (kfds) {
+        if ((int64_t)ret >= 0 &&
+            copy_to_user(fds, kfds, (size_t)nfds * sizeof(*kfds))) {
+            free(kfds);
+            return (uint64_t)-EFAULT;
+        }
+        free(kfds);
     }
 
     return ret;
@@ -287,7 +353,7 @@ size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
     if (except)
         memset(except, 0, toZero);
 
-    size_t res = sys_poll(
+    size_t res = do_poll(
         comp, compIndex,
         timeout ? (timeout->tv_sec * 1000 + (timeout->tv_usec + 1000) / 1000)
                 : -1);
@@ -337,11 +403,19 @@ uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds,
     }
 
     size_t sigsetsize = 0;
+    sigset_t newmask = 0;
     sigset_t *sigmask = NULL;
     sigset_t origmask = 0;
     if (weird_pselect6) {
-        sigsetsize = weird_pselect6->ss_len;
-        sigmask = weird_pselect6->ss;
+        weird_pselect6_t args;
+        if (copy_from_user(&args, weird_pselect6, sizeof(args)))
+            return (size_t)-EFAULT;
+        sigsetsize = args.ss_len;
+        if (args.ss) {
+            if (copy_from_user(&newmask, args.ss, sizeof(newmask)))
+                return (size_t)-EFAULT;
+            sigmask = &newmask;
+        }
 
         if (sigmask)
             sys_ssetmask(SIG_SETMASK, sigmask, &origmask, sigsetsize);
@@ -349,9 +423,11 @@ uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds,
 
     struct timeval timeoutConv;
     if (timeout) {
-        timeoutConv =
-            (struct timeval){.tv_sec = timeout->tv_sec,
-                             .tv_usec = (timeout->tv_nsec + 1000) / 1000};
+        struct timespec ts;
+        if (copy_from_user(&ts, timeout, sizeof(ts)))
+            return (size_t)-EFAULT;
+        timeoutConv = (struct timeval){.tv_sec = ts.tv_sec,
+                                       .tv_usec = (ts.tv_nsec + 1000) / 1000};
     } else {
         timeoutConv =
             (struct timeval){.tv_sec = (uint64_t)-1, .tv_usec = (uint64_t)-1};

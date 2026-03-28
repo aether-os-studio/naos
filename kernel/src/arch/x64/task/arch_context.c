@@ -116,7 +116,6 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
                        uint64_t clone_flags) {
     (void)clone_flags;
 
-    arch_flush_tlb_all();
     dst->ctx = (struct pt_regs *)stack - 1;
     dst->rip = (uint64_t)ret_from_fork;
     dst->rsp = (uint64_t)dst->ctx;

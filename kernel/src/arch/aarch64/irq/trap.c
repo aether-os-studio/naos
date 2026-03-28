@@ -27,13 +27,16 @@ static inline bool aarch64_user_mode_frame(const struct pt_regs *frame) {
 static uint64_t aarch64_fault_flags(uint32_t ec, uint32_t iss) {
     uint64_t flags = 0;
 
-    if (ec == ESR_ELx_EC_DABT_LOW)
+    if (ec == ESR_ELx_EC_DABT_LOW || ec == ESR_ELx_EC_IABT_LOW)
         flags |= PF_ACCESS_USER;
 
-    if (iss & (1U << 6))
+    if (ec == ESR_ELx_EC_IABT_LOW || ec == ESR_ELx_EC_IABT_CUR) {
+        flags |= PF_ACCESS_EXEC;
+    } else if (iss & (1U << 6)) {
         flags |= PF_ACCESS_WRITE;
-    else
+    } else {
         flags |= PF_ACCESS_READ;
+    }
 
     return flags;
 }
@@ -158,6 +161,8 @@ void traceback(struct pt_regs *regs) {
 }
 
 void show_frame(struct pt_regs *regs) {
+    traceback(regs);
+
     printk("Exception:\r\n");
     printk("X00:%#018lx X01:%#018lx X02:%#018lx X03:%#018lx\r\n", regs->x0,
            regs->x1, regs->x2, regs->x3);
@@ -178,8 +183,6 @@ void show_frame(struct pt_regs *regs) {
     printk("SP_EL0:%#018lx\r\n", regs->sp_el0);
     printk("SPSR  :%#018lx\r\n", regs->cpsr);
     printk("EPC   :%#018lx\r\n", regs->pc);
-
-    traceback(regs);
 }
 
 static void data_abort(unsigned long far, unsigned long iss) {
@@ -342,7 +345,7 @@ void process_exception(struct pt_regs *frame, unsigned long esr,
     printk("esr.EC :0x%02x\r\n", ec);
     printk("esr.IL :0x%02x\r\n", (unsigned char)((esr >> 25) & 0x01U));
     printk("esr.ISS:0x%08x\r\n", iss);
-    printk("epc    :0x%016p\r\n", epc);
+    printk("epc    :%#018lx\r\n", epc);
     switch (ec) {
     case 0x00:
         printk("Exceptions with an unknow reason\r\n");
@@ -447,8 +450,13 @@ void handle_exception(struct pt_regs *frame) {
         return;
     }
 
-    if (ec == ESR_ELx_EC_DABT_LOW || ec == ESR_ELx_EC_DABT_CUR) {
-        asm volatile("mrs %0, far_el1" : "=r"(fault_addr));
+    if (ec == ESR_ELx_EC_DABT_LOW || ec == ESR_ELx_EC_DABT_CUR ||
+        ec == ESR_ELx_EC_IABT_LOW || ec == ESR_ELx_EC_IABT_CUR) {
+        if (ec == ESR_ELx_EC_IABT_LOW || ec == ESR_ELx_EC_IABT_CUR)
+            fault_addr = frame->pc;
+        else
+            asm volatile("mrs %0, far_el1" : "=r"(fault_addr));
+
         uint64_t fault_flags = aarch64_fault_flags(ec, iss);
         page_fault_result_t result =
             handle_page_fault_flags(current_task, fault_addr, fault_flags);
@@ -466,13 +474,14 @@ void handle_exception(struct pt_regs *frame) {
                 return;
             }
 
-            printk("Segmentation fault in kernel space\r\n");
+            show_frame(frame);
             task_exit(SIGSEGV + 128);
         } else if (result == PF_RES_NOMEM) {
             printk("Out of memory in kernel space\r\n");
             task_exit(SIGKILL + 128);
         } else {
             printk("Unknown page fault result\r\n");
+            show_frame(frame);
             task_exit(SIGKILL + 128);
         }
     }

@@ -26,6 +26,7 @@ void *realloc(void *ptr, size_t size) {
 
 void *aligned_alloc(size_t alignment, size_t size) {
     spin_lock(&heap_lock);
+    size = PADDING_UP(size, alignment);
     void *ptr = liballoc_aligned_alloc(alignment, size);
     spin_unlock(&heap_lock);
     return ptr;

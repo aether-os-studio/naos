@@ -44,7 +44,7 @@ static inline uint64_t cache_hash_key(cache_kind_t kind, uint64_t key0,
 
 static inline size_t cache_bucket_index(cache_kind_t kind, uint64_t key0,
                                         uint64_t key1) {
-    return (size_t)(cache_hash_key(kind, key0, key1) &
+    return (size_t)(cache_hash_key(kind, key0, key1) %
                     (CACHE_BUCKET_COUNT - 1));
 }
 

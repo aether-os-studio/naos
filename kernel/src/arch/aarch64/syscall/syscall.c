@@ -1,6 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <task/signal.h>
+#include <task/task_syscall.h>
 #include <fs/vfs/fcntl.h>
 #include <net/net_syscall.h>
 
@@ -13,6 +14,15 @@ char machine[] = "aarch64";
 
 syscall_handle_t syscall_handlers[MAX_SYSCALL_NUM] = {NULL};
 
+static uint64_t aarch64_sys_clone(struct pt_regs *frame, uint64_t flags,
+                                  uint64_t newsp, uint64_t parent_tid,
+                                  uint64_t tls, uint64_t child_tid,
+                                  uint64_t unused) {
+    (void)unused;
+    return sys_clone(frame, flags, newsp, (int *)parent_tid, (int *)child_tid,
+                     tls);
+}
+
 void aarch64_do_syscall(struct pt_regs *frame) {
     uint64_t ret = 0;
 
@@ -23,7 +33,6 @@ void aarch64_do_syscall(struct pt_regs *frame) {
     uint64_t arg4 = frame->x3;
     uint64_t arg5 = frame->x4;
     uint64_t arg6 = frame->x5;
-    uint64_t seccomp_args[6] = {arg1, arg2, arg3, arg4, arg5, arg6};
 
     if (idx > MAX_SYSCALL_NUM) {
         frame->x0 = (uint64_t)-ENOSYS;
@@ -36,7 +45,10 @@ void aarch64_do_syscall(struct pt_regs *frame) {
         goto done;
     }
 
-    if (idx == SYS_CLONE || idx == SYS_CLONE3 || idx == SYS_RT_SIGRETURN) {
+    if (idx == SYS_CLONE) {
+        frame->x0 =
+            aarch64_sys_clone(frame, arg1, arg2, arg3, arg4, arg5, arg6);
+    } else if (idx == SYS_CLONE3 || idx == SYS_RT_SIGRETURN) {
         special_syscall_handle_t h = (special_syscall_handle_t)handler;
         frame->x0 = h(frame, arg1, arg2, arg3, arg4, arg5, arg6);
     } else {

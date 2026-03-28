@@ -77,21 +77,6 @@ uint64_t get_memory_size() {
     return all_memory_size;
 }
 
-static uintptr_t get_zone_boundary(enum zone_type type) {
-    switch (type) {
-#if defined(__x86_64__)
-    case ZONE_DMA:
-        return ZONE_DMA_END;
-#endif
-    case ZONE_DMA32:
-        return ZONE_DMA32_END;
-    case ZONE_NORMAL:
-        return UINTPTR_MAX;
-    default:
-        return 0;
-    }
-}
-
 // 处理单个内存区域，正确处理不连续的可用帧
 static void process_memory_region(uintptr_t start, uintptr_t end) {
     // 页对齐
@@ -104,46 +89,30 @@ static void process_memory_region(uintptr_t start, uintptr_t end) {
     uintptr_t current = start;
 
     while (current < end) {
-        // 确定当前位置所属的 zone
-        enum zone_type type = phys_to_zone_type(current);
-
-        // 找到同一 zone 的边界
-        uintptr_t zone_boundary = get_zone_boundary(type);
-        uintptr_t zone_end = MIN(zone_boundary, end);
-
-        // 在当前 zone 内查找连续的可用区域
         uintptr_t region_current = current;
 
-        while (region_current < zone_end) {
-            size_t frame = region_current / PAGE_SIZE;
-
-            // 跳过不可用的帧
-            while (region_current < zone_end &&
-                   !bitmap_get(&usable_regions, region_current / PAGE_SIZE)) {
-                region_current += PAGE_SIZE;
-            }
-
-            if (region_current >= zone_end)
-                break;
-
-            // 找到连续可用区域的起始
-            uintptr_t usable_start = region_current;
-
-            // 找到连续可用区域的结束
-            while (region_current < zone_end &&
-                   bitmap_get(&usable_regions, region_current / PAGE_SIZE)) {
-                region_current += PAGE_SIZE;
-            }
-
-            uintptr_t usable_end = region_current;
-
-            // 添加这段连续可用的区域到 buddy 分配器
-            if (usable_end > usable_start) {
-                add_memory_region(usable_start, usable_end, type);
-            }
+        while (region_current < end &&
+               !bitmap_get(&usable_regions, region_current / PAGE_SIZE)) {
+            region_current += PAGE_SIZE;
         }
 
-        current = zone_end;
+        if (region_current >= end)
+            break;
+
+        uintptr_t usable_start = region_current;
+
+        while (region_current < end &&
+               bitmap_get(&usable_regions, region_current / PAGE_SIZE)) {
+            region_current += PAGE_SIZE;
+        }
+
+        uintptr_t usable_end = region_current;
+
+        if (usable_end > usable_start) {
+            add_memory_region(usable_start, usable_end, ZONE_NORMAL);
+        }
+
+        current = region_current;
     }
 }
 

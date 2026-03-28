@@ -17,18 +17,7 @@ typedef struct buddy_allocator {
     spinlock_t lock;
 } buddy_allocator_t;
 
-enum zone_type {
-#if defined(__x86_64__)
-    ZONE_DMA, // 0-16MB
-#endif
-    ZONE_DMA32,  // 0-4GB
-    ZONE_NORMAL, // 4GB+
-    __MAX_NR_ZONES
-};
-
-// Zone 边界
-#define ZONE_DMA_END (16UL << 20)  // 16MB
-#define ZONE_DMA32_END (4UL << 30) // 4GB
+enum zone_type { ZONE_NORMAL, __MAX_NR_ZONES };
 
 // GFP 标志
 #define GFP_DMA (1 << 0)
@@ -47,7 +36,6 @@ typedef struct zone {
     uint64_t zone_start_pfn;
     uint64_t zone_end_pfn;
     uint64_t managed_pages;
-    uint64_t free_pages;
     enum zone_type type;
     const char *name;
 } zone_t;
@@ -68,4 +56,5 @@ void buddy_free_zone(zone_t *zone, uintptr_t addr, size_t order);
 // 辅助函数
 zone_t *get_zone(enum zone_type type);
 bool zone_has_memory(zone_t *zone);
+uint64_t zone_free_pages(zone_t *zone);
 enum zone_type phys_to_zone_type(uintptr_t phys);

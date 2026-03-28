@@ -48,7 +48,7 @@ char *proc_gen_meminfo(size_t *context_len) {
         if (!zone)
             continue;
         managed_pages += zone->managed_pages;
-        free_pages += zone->free_pages;
+        free_pages += zone_free_pages(zone);
     }
 
     cache_get_stats(&cache_stats);
@@ -104,12 +104,7 @@ char *proc_gen_meminfo(size_t *context_len) {
     return data;
 }
 
-size_t proc_meminfo_stat(proc_handle_t *handle) {
-    size_t content_len = 0;
-    char *content = proc_gen_meminfo(&content_len);
-    free(content);
-    return content_len;
-}
+size_t proc_meminfo_stat(proc_handle_t *handle) { return 0; }
 
 size_t proc_meminfo_read(proc_handle_t *handle, void *addr, size_t offset,
                          size_t size) {

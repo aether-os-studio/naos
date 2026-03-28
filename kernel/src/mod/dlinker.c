@@ -28,6 +28,7 @@ static void *find_symbol_address(const char *symbol_name, Elf64_Ehdr *ehdr,
 static bool get_elf_symbol_table(Elf64_Ehdr *ehdr, Elf64_Sym **symtab,
                                  char **strtab, size_t *num_symbols);
 static bool elf_symbol_is_exported(const Elf64_Sym *sym);
+static inline uint64_t dlinker_call_ifunc_resolver(uint64_t resolver_addr);
 
 typedef struct {
     const char **exports;
@@ -97,7 +98,7 @@ static bool mmap_phdr_segment(Elf64_Ehdr *ehdr, Elf64_Phdr *phdrs,
     }
 
     if (load_size) {
-        *load_size = load_max - load_min;
+        *load_size = load_max - offset;
     }
 
     return true;
@@ -655,7 +656,7 @@ static bool handle_relocations(Elf64_Rela *rela_start, Elf64_Sym *symtab,
                 return false;
             }
 
-            *target_addr = sym_addr;
+            *target_addr = sym_addr + rela->r_addend;
         } else if (type == R_AARCH64_RELATIVE) {
             *target_addr = offset + rela->r_addend;
         } else if (type == R_AARCH64_ABS64) {
@@ -668,6 +669,14 @@ static bool handle_relocations(Elf64_Rela *rela_start, Elf64_Sym *symtab,
             }
 
             *target_addr = sym_addr + rela->r_addend;
+        } else if (type == R_AARCH64_IRELATIVE) {
+            uint64_t resolver_addr = offset + rela->r_addend;
+            *target_addr = dlinker_call_ifunc_resolver(resolver_addr);
+        } else if (type != R_AARCH64_NONE) {
+            serial_fprintk(
+                "Unsupported AArch64 relocation type %u for %s at %p\n", type,
+                sym_name, target_addr);
+            return false;
         }
 #elif defined(__riscv) && (__riscv_xlen == 64)
         if (type == R_RISCV_JUMP_SLOT) {
@@ -726,6 +735,11 @@ static bool handle_relocations(Elf64_Rela *rela_start, Elf64_Sym *symtab,
     }
 
     return true;
+}
+
+static inline uint64_t dlinker_call_ifunc_resolver(uint64_t resolver_addr) {
+    uint64_t (*resolver)(void) = (uint64_t (*)(void))resolver_addr;
+    return resolver();
 }
 
 static void *find_symbol_address(const char *symbol_name, Elf64_Ehdr *ehdr,

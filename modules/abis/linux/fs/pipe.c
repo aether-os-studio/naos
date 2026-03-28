@@ -200,7 +200,7 @@ bool pipefs_close(vfs_node_t *node) {
 
     if (pipe->write_fds == 0 && pipe->read_fds == 0) {
         spin_unlock(&pipe->lock);
-        free_frames_bytes(pipe->buf, PIPE_BUFF);
+        free(pipe->buf);
         free(pipe);
         return true;
     }
@@ -287,7 +287,7 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     node_output->refcount++;
 
     pipe_info_t *info = (pipe_info_t *)calloc(1, sizeof(pipe_info_t));
-    info->buf = alloc_frames_bytes(PIPE_BUFF);
+    info->buf = malloc(PIPE_BUFF);
     memset(info->buf, 0, PIPE_BUFF);
     info->read_fds = 1;
     info->write_fds = 1;
@@ -349,7 +349,7 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     });
 
     if (ret < 0) {
-        free_frames_bytes(info->buf, PIPE_BUFF);
+        free(info->buf);
         free(info);
         vfs_free(node_input);
         vfs_free(node_output);

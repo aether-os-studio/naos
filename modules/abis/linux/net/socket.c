@@ -706,7 +706,7 @@ socket_t *unix_socket_alloc() {
     mutex_init(&sock->lock);
 
     sock->recv_size = BUFFER_SIZE;
-    sock->recv_buff = alloc_frames_bytes(BUFFER_SIZE);
+    sock->recv_buff = malloc(BUFFER_SIZE);
     if (!sock->recv_buff) {
         free(sock);
         return NULL;
@@ -775,7 +775,7 @@ void unix_socket_free(socket_t *sock) {
 
     // 释放资源
     if (sock->recv_buff)
-        free_frames_bytes(sock->recv_buff, sock->recv_size);
+        free(sock->recv_buff);
     if (sock->bindAddr)
         free(sock->bindAddr);
     if (sock->filename)
@@ -2162,7 +2162,7 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
                 new_size = BUFFER_SIZE;
 
             mutex_lock(&sock->lock);
-            void *newBuff = alloc_frames_bytes(new_size);
+            void *newBuff = malloc(new_size);
             if (!newBuff) {
                 mutex_unlock(&sock->lock);
                 return -ENOMEM;
@@ -2171,7 +2171,7 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
             if (preserved) {
                 unix_socket_recv_copy_out_locked(sock, 0, newBuff, preserved);
             }
-            free_frames_bytes(sock->recv_buff, sock->recv_size);
+            free(sock->recv_buff);
             sock->recv_buff = newBuff;
             sock->recv_size = new_size;
             sock->recv_head = 0;

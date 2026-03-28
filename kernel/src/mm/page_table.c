@@ -203,7 +203,7 @@ uint64_t unmap_page_defer_release(uint64_t *pgdir, uint64_t vaddr,
         }
 
         // 从底层向上检查并释放空页表
-        for (int level = ARCH_MAX_PT_LEVEL - 1; level > 0; level--) {
+        for (int level = ARCH_MAX_PT_LEVEL - 2; level > 0; level--) {
             uint64_t *current_table = table_ptrs[level];
             bool table_empty = true;
 
@@ -394,10 +394,11 @@ static void free_page_table_recursive(uint64_t *table, int level) {
     if (level == 1) {
         for (uint64_t i = 0; i < entries; i++) {
             uint64_t pte = table[i];
-            if (!(pte & ARCH_PT_FLAG_VALID))
-                continue;
 
             uint64_t paddr = ARCH_READ_PTE(pte);
+            uint64_t flags = ARCH_READ_PTE_FLAG(pte);
+            if (!(flags & ARCH_PT_FLAG_VALID))
+                continue;
             if (paddr) {
                 address_release(paddr);
             }
@@ -408,8 +409,9 @@ static void free_page_table_recursive(uint64_t *table, int level) {
             if (!ARCH_PT_IS_TABLE(entry))
                 continue;
 
-            uint64_t *page_table_next =
-                (uint64_t *)phys_to_virt(ARCH_READ_PTE(entry));
+            uint64_t paddr = ARCH_READ_PTE(entry);
+
+            uint64_t *page_table_next = (uint64_t *)phys_to_virt(paddr);
             free_page_table_recursive(page_table_next, level - 1);
         }
     }

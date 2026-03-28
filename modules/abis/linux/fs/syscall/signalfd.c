@@ -147,6 +147,7 @@ uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask,
     node->type = file_stream;
     node->fsid = signalfdfs_id;
     node->handle = ctx;
+    node->flags |= VFS_NODE_FLAGS_FREE_AFTER_USE;
     ctx->node = node;
 
     int fd = -1;

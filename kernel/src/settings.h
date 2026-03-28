@@ -10,13 +10,14 @@
 #define MAX_CPU_NUM 128
 #define MAX_WORKER_NUM MAX_CPU_NUM
 #define MAX_IO_CPU_NUM 8
-#define STACK_SIZE (128 * 1024)
+#define STACK_SIZE (256 * 1024)
 
 #define BUILD_VERSION "0.10.0"
 
 #define MAX_TASK_NUM 16384
+
 #if defined(__x86_64__)
 #define SCHED_HZ 1000
 #else
-#define SCHED_HZ 100
+#define SCHED_HZ 250
 #endif

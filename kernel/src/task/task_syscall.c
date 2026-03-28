@@ -7,6 +7,7 @@
 
 extern hashmap_t task_parent_map;
 extern hashmap_t task_pgid_map;
+extern struct llist_header should_free_tasks;
 extern spinlock_t should_free_lock;
 
 static inline bool timer_clockid_supported(clockid_t clockid) {
@@ -446,6 +447,8 @@ void free_task(task_t *ptr) {
     free_frames_bytes((void *)(ptr->syscall_stack - STACK_SIZE), STACK_SIZE);
     free_frames_bytes((void *)(ptr->kernel_stack - STACK_SIZE), STACK_SIZE);
 
+    shm_exit(ptr);
+
     if (!ptr->is_kernel)
         free_page_table(ptr->mm);
 
@@ -454,7 +457,6 @@ void free_task(task_t *ptr) {
     ptr->env_start = 0;
     ptr->env_end = 0;
 
-    shm_exit(ptr);
     task_signal_free(ptr->signal);
     ptr->signal = NULL;
     arch_context_free(ptr->arch_context);
@@ -995,14 +997,8 @@ uint64_t task_execve(const char *path_user, const char **argv,
     }
 
     if (header_read < sizeof(Elf64_Ehdr)) {
-        for (int i = 0; i < argv_count; i++)
-            if (new_argv[i])
-                free(new_argv[i]);
-        free(new_argv);
-        for (int i = 0; i < envp_count; i++)
-            if (new_envp[i])
-                free(new_envp[i]);
-        free(new_envp);
+        task_execve_free_string_array(new_argv, argv_count);
+        task_execve_free_string_array(new_envp, envp_count);
         vfs_close(node);
         return (uint64_t)-ENOEXEC;
     }
@@ -1024,27 +1020,15 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
     uint64_t e_entry = real_load_start + ehdr->e_entry;
     if (e_entry == 0) {
-        for (int i = 0; i < argv_count; i++)
-            if (new_argv[i])
-                free(new_argv[i]);
-        free(new_argv);
-        for (int i = 0; i < envp_count; i++)
-            if (new_envp[i])
-                free(new_envp[i]);
-        free(new_envp);
+        task_execve_free_string_array(new_argv, argv_count);
+        task_execve_free_string_array(new_envp, envp_count);
         vfs_close(node);
         return (uint64_t)-EINVAL;
     }
 
     if (!arch_check_elf(ehdr)) {
-        for (int i = 0; i < argv_count; i++)
-            if (new_argv[i])
-                free(new_argv[i]);
-        free(new_argv);
-        for (int i = 0; i < envp_count; i++)
-            if (new_envp[i])
-                free(new_envp[i]);
-        free(new_envp);
+        task_execve_free_string_array(new_argv, argv_count);
+        task_execve_free_string_array(new_envp, envp_count);
         vfs_close(node);
         return (uint64_t)-ENOEXEC;
     }
@@ -1336,13 +1320,12 @@ exec_fail_restore_mm:
                  "dsb ish\n\t"
                  "isb\n\t");
 #elif defined(__riscv__)
-    {
-        uint64_t satp_old =
-            MAKE_SATP_PADDR(SATP_MODE_SV48, 0, old_mm->page_table_addr);
-        asm volatile("csrw satp, %0" : : "r"(satp_old) : "memory");
-        asm volatile("sfence.vma");
-        csr_set(sstatus, (1UL << 18));
-    }
+    uint64_t satp_old =
+        MAKE_SATP_PADDR(SATP_MODE_SV48, 0, old_mm->page_table_addr);
+    asm volatile("csrw satp, %0" : : "r"(satp_old) : "memory");
+    asm volatile("sfence.vma");
+    csr_set(sstatus, (1UL << 18));
+}
 #endif
     free_page_table(new_mm);
     if (interpreter_path)
@@ -1841,11 +1824,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     uint64_t user_sp = regs->rsp;
 #elif defined(__aarch64__)
     uint64_t user_sp = regs->sp_el0;
-#elif defined(__riscv__)
-    child->arch_context->ctx->ktp = (uint64_t)child;
-    uint64_t user_sp = regs->sp;
-#elif defined(__loongarch64__)
-    uint64_t user_sp = regs->usp;
 #endif
 
     if (newsp) {
@@ -1856,10 +1834,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     child->arch_context->ctx->rsp = user_sp;
 #elif defined(__aarch64__)
     child->arch_context->ctx->sp_el0 = user_sp;
-#elif defined(__riscv__)
-    child->arch_context->ctx->sp = user_sp;
-#elif defined(__loongarch64__)
-    regs->usp = user_sp;
 #endif
 
     child->is_kernel = false;
@@ -1917,8 +1891,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         child->arch_context->fsbase = tls;
 #elif defined(__aarch64__)
         child->arch_context->tpidr_el0 = tls;
-#elif defined(__riscv__)
-        child->arch_context->ctx->tp = tls;
 #endif
     }
 

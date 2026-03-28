@@ -161,6 +161,7 @@ size_t epoll_create1(int flags) {
     node->mode = 0700;
     node->handle = epoll;
     node->fsid = epollfs_id;
+    node->flags |= VFS_NODE_FLAGS_FREE_AFTER_USE;
 
     int ret = -EMFILE;
     with_fd_info_lock(current_task->fd_info, {
@@ -195,8 +196,8 @@ size_t epoll_create1(int flags) {
 
 uint64_t sys_epoll_create(int size) { return epoll_create1(0); }
 
-uint64_t epoll_wait(vfs_node_t *epollFd, struct epoll_event *events,
-                    int maxevents, int64_t timeout) {
+static uint64_t do_epoll_wait(vfs_node_t *epollFd, struct epoll_event *events,
+                              int maxevents, int64_t timeout) {
     if (maxevents < 1)
         return (uint64_t)-EINVAL;
     if (!epollFd || epollFd->fsid != epollfs_id)
@@ -302,7 +303,7 @@ uint64_t epoll_wait(vfs_node_t *epollFd, struct epoll_event *events,
 }
 
 size_t epoll_ctl(vfs_node_t *epollFd, int op, int fd,
-                 struct epoll_event *event) {
+                 const struct epoll_event *event) {
     if (op != EPOLL_CTL_ADD && op != EPOLL_CTL_DEL && op != EPOLL_CTL_MOD)
         return (uint64_t)(-EINVAL);
 
@@ -399,18 +400,13 @@ size_t epoll_ctl(vfs_node_t *epollFd, int op, int fd,
     return ret;
 }
 
-size_t epoll_pwait(vfs_node_t *epollFd, struct epoll_event *events,
-                   int maxevents, int64_t timeout, sigset_t *sigmask,
-                   size_t sigsetsize) {
-    if (check_user_overflow((uint64_t)events,
-                            maxevents * sizeof(struct epoll_event))) {
-        return (uint64_t)-EFAULT;
-    }
-
+static size_t do_epoll_pwait(vfs_node_t *epollFd, struct epoll_event *events,
+                             int maxevents, int64_t timeout,
+                             const sigset_t *sigmask, size_t sigsetsize) {
     sigset_t origmask;
     if (sigmask)
         sys_ssetmask(SIG_SETMASK, sigmask, &origmask, sizeof(sigset_t));
-    size_t epollRet = epoll_wait(epollFd, events, maxevents, timeout);
+    size_t epollRet = do_epoll_wait(epollFd, events, maxevents, timeout);
     if (sigmask)
         sys_ssetmask(SIG_SETMASK, &origmask, 0, sizeof(sigset_t));
 
@@ -419,8 +415,10 @@ size_t epoll_pwait(vfs_node_t *epollFd, struct epoll_event *events,
 
 uint64_t sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents,
                         int timeout) {
+    if (maxevents < 1)
+        return (uint64_t)-EINVAL;
     if (check_user_overflow((uint64_t)events,
-                            maxevents * sizeof(struct epoll_event))) {
+                            (size_t)maxevents * sizeof(struct epoll_event))) {
         return (uint64_t)-EFAULT;
     }
     if (epfd < 0 || epfd >= MAX_FD_NUM ||
@@ -436,7 +434,21 @@ uint64_t sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents,
     } else {
         timeout_ns = (uint64_t)timeout * 1000000ULL;
     }
-    return epoll_wait(node, events, maxevents, timeout_ns);
+    struct epoll_event *kevents =
+        calloc((size_t)maxevents, sizeof(struct epoll_event));
+    if (!kevents)
+        return (uint64_t)-ENOMEM;
+
+    uint64_t ret = do_epoll_wait(node, kevents, maxevents, timeout_ns);
+    if ((int64_t)ret >= 0 &&
+        copy_to_user(events, kevents,
+                     (size_t)maxevents * sizeof(struct epoll_event))) {
+        free(kevents);
+        return (uint64_t)-EFAULT;
+    }
+
+    free(kevents);
+    return ret;
 }
 
 uint64_t sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
@@ -451,13 +463,26 @@ uint64_t sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
     vfs_node_t *node = current_task->fd_info->fds[epfd]->node;
     if (!node)
         return (uint64_t)-EBADF;
-    return epoll_ctl(node, op, fd, event);
+
+    struct epoll_event k_event;
+    const struct epoll_event *event_ptr = NULL;
+    if (op == EPOLL_CTL_ADD || op == EPOLL_CTL_MOD) {
+        if (!event)
+            return (uint64_t)-EFAULT;
+        if (copy_from_user(&k_event, event, sizeof(k_event)))
+            return (uint64_t)-EFAULT;
+        event_ptr = &k_event;
+    }
+
+    return epoll_ctl(node, op, fd, event_ptr);
 }
 
 uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
                          int timeout, sigset_t *sigmask, size_t sigsetsize) {
+    if (maxevents < 1)
+        return (uint64_t)-EINVAL;
     if (check_user_overflow((uint64_t)events,
-                            maxevents * sizeof(struct epoll_event))) {
+                            (size_t)maxevents * sizeof(struct epoll_event))) {
         return (uint64_t)-EFAULT;
     }
     if (epfd < 0 || epfd >= MAX_FD_NUM ||
@@ -473,15 +498,42 @@ uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
     } else {
         timeout_ns = (int64_t)timeout * 1000000LL;
     }
-    return epoll_pwait(node, events, maxevents, timeout_ns, sigmask,
-                       sigsetsize);
+    if (sigmask && sigsetsize < sizeof(sigset_t))
+        return (uint64_t)-EINVAL;
+
+    sigset_t newmask = 0;
+    const sigset_t *sigmask_ptr = NULL;
+    if (sigmask) {
+        if (copy_from_user(&newmask, sigmask, sizeof(newmask)))
+            return (uint64_t)-EFAULT;
+        sigmask_ptr = &newmask;
+    }
+
+    struct epoll_event *kevents =
+        calloc((size_t)maxevents, sizeof(struct epoll_event));
+    if (!kevents)
+        return (uint64_t)-ENOMEM;
+
+    uint64_t ret = do_epoll_pwait(node, kevents, maxevents, timeout_ns,
+                                  sigmask_ptr, sigsetsize);
+    if ((int64_t)ret >= 0 &&
+        copy_to_user(events, kevents,
+                     (size_t)maxevents * sizeof(struct epoll_event))) {
+        free(kevents);
+        return (uint64_t)-EFAULT;
+    }
+
+    free(kevents);
+    return ret;
 }
 
 uint64_t sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
                           struct timespec *timeout, sigset_t *sigmask,
                           size_t sigsetsize) {
+    if (maxevents < 1)
+        return (uint64_t)-EINVAL;
     if (check_user_overflow((uint64_t)events,
-                            maxevents * sizeof(struct epoll_event))) {
+                            (size_t)maxevents * sizeof(struct epoll_event))) {
         return (uint64_t)-EFAULT;
     }
     if (epfd < 0 || epfd >= MAX_FD_NUM ||
@@ -495,14 +547,42 @@ uint64_t sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
     if (!timeout) {
         timeout_ns = -1;
     } else {
-        if (timeout->tv_sec < 0 || timeout->tv_nsec < 0 ||
-            timeout->tv_nsec >= 1000000000LL) {
+        struct timespec ts;
+        if (copy_from_user(&ts, timeout, sizeof(ts)))
+            return (uint64_t)-EFAULT;
+        if (ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000LL) {
             return (uint64_t)-EINVAL;
         }
-        timeout_ns = timeout->tv_sec * 1000000000LL + timeout->tv_nsec;
+        timeout_ns = ts.tv_sec * 1000000000LL + ts.tv_nsec;
     }
-    return epoll_pwait(node, events, maxevents, timeout_ns, sigmask,
-                       sigsetsize);
+
+    if (sigmask && sigsetsize < sizeof(sigset_t))
+        return (uint64_t)-EINVAL;
+
+    sigset_t newmask = 0;
+    const sigset_t *sigmask_ptr = NULL;
+    if (sigmask) {
+        if (copy_from_user(&newmask, sigmask, sizeof(newmask)))
+            return (uint64_t)-EFAULT;
+        sigmask_ptr = &newmask;
+    }
+
+    struct epoll_event *kevents =
+        calloc((size_t)maxevents, sizeof(struct epoll_event));
+    if (!kevents)
+        return (uint64_t)-ENOMEM;
+
+    uint64_t ret = do_epoll_pwait(node, kevents, maxevents, timeout_ns,
+                                  sigmask_ptr, sigsetsize);
+    if ((int64_t)ret >= 0 &&
+        copy_to_user(events, kevents,
+                     (size_t)maxevents * sizeof(struct epoll_event))) {
+        free(kevents);
+        return (uint64_t)-EFAULT;
+    }
+
+    free(kevents);
+    return ret;
 }
 
 uint64_t sys_epoll_create1(int flags) { return epoll_create1(flags); }
