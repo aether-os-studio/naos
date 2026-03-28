@@ -31,7 +31,7 @@ struct global_timer_state {
     _Bool initialized;
 };
 
-extern struct global_timer_state g_timer;
+extern struct global_timer_state global_timer;
 
 int timer_init();
 void timer_init_percpu();

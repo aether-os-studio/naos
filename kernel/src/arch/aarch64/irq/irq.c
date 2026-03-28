@@ -18,16 +18,16 @@ bool arch_interrupt_enabled() {
     return (daif & (1 << 1));
 }
 
-extern struct global_timer_state g_timer;
+extern struct global_timer_state global_timer;
 
 void irq_init() {
     if (timer_init()) {
         printk("timer init failure!!!\n");
     }
-    irq_regist_irq(g_timer.irq_num, timer_handler, 0, NULL, &gic_controller,
-                   "GENERIC TIMER", 0);
+    irq_regist_irq(global_timer.irq_num, timer_handler, 0, NULL,
+                   &gic_controller, "GENERIC TIMER", 0);
     timer_init_percpu();
-    printk("timer initialized with irq %d\n", g_timer.irq_num);
+    printk("timer initialized with irq %d\n", global_timer.irq_num);
 }
 
 extern void do_irq(struct pt_regs *regs, uint64_t irq_num);

@@ -54,4 +54,6 @@ typedef uint64_t (*special_syscall_handle_t)(struct pt_regs *regs,
                                              uint64_t arg3, uint64_t arg4,
                                              uint64_t arg5, uint64_t arg6);
 
+extern syscall_handle_t syscall_handlers[MAX_SYSCALL_NUM];
+
 void aarch64_do_syscall(struct pt_regs *frame);

@@ -62,6 +62,8 @@ void kmain(void) {
 
     task_init();
 
+    printk("Task initialized...\n");
+
     arch_init();
 
     while (1) {

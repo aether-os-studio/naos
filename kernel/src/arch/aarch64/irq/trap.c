@@ -3,7 +3,11 @@
 #include "irq.h"
 #include <arch/arch.h>
 #include <task/task.h>
+#include <task/signal.h>
 #include <mm/fault.h>
+
+#define SEGV_MAPERR 1
+#define SEGV_ACCERR 2
 
 extern const uint64_t kallsyms_address[] __attribute__((weak));
 extern const uint64_t kallsyms_num __attribute__((weak));
@@ -14,6 +18,22 @@ static bool kallsyms_available() {
     return (uintptr_t)kallsyms_address != 0 && (uintptr_t)&kallsyms_num != 0 &&
            (uintptr_t)kallsyms_names_index != 0 &&
            (uintptr_t)&kallsyms_names != 0;
+}
+
+static inline bool aarch64_user_mode_frame(const struct pt_regs *frame) {
+    return frame && ((frame->cpsr & 0xF) == 0);
+}
+
+static int aarch64_fault_si_code(uint32_t iss) {
+    switch (iss & 0x3F) {
+    case 0b000100:
+    case 0b000101:
+    case 0b000110:
+    case 0b000111:
+        return SEGV_MAPERR;
+    default:
+        return SEGV_ACCERR;
+    }
 }
 
 int lookup_kallsyms(uint64_t addr, int level) {
@@ -372,7 +392,18 @@ void handle_exception(struct pt_regs *frame) {
         if (result == PF_RES_OK) {
             return;
         } else if (result == PF_RES_SEGF) {
-            printk("Segmentation fault in user space\r\n");
+            if (aarch64_user_mode_frame(frame) && current_task) {
+                siginfo_t info;
+                memset(&info, 0, sizeof(info));
+                info.si_signo = SIGSEGV;
+                info.si_code = aarch64_fault_si_code((uint32_t)esr);
+                info._sifields._sigfault._addr = (void *)fault_addr;
+                task_commit_signal(current_task, SIGSEGV, &info);
+                task_signal(frame);
+                return;
+            }
+
+            printk("Segmentation fault in kernel space\r\n");
             task_exit(SIGSEGV + 128);
         } else if (result == PF_RES_NOMEM) {
             printk("Out of memory in kernel space\r\n");

@@ -1,21 +1,18 @@
 #include <arch/arch.h>
 #include <task/task.h>
+#include <task/signal.h>
 #include <fs/vfs/fcntl.h>
 #include <net/net_syscall.h>
 
-void syscall_init() {}
-
 // Beware the 65 character limit!
-char sysname[] = "Next Aether OS";
-char nodename[] = "Aether";
+char sysname[] = "NeoAetherOS";
+char nodename[] = "aether";
 char release[] = BUILD_VERSION;
 char version[] = BUILD_VERSION;
-char machine[] = "x86_64";
+char machine[] = "aarch64";
 
 syscall_handle_t syscall_handlers[MAX_SYSCALL_NUM];
 void syscall_handlers_init() { memset(syscall_handlers, 0, MAX_SYSCALL_NUM); }
-
-extern uint64_t sys_pipe(int pipefd[2], uint64_t flags);
 
 void aarch64_do_syscall(struct pt_regs *frame) {
     uint64_t ret = 0;
@@ -60,4 +57,6 @@ done:
         int len = sprintf(buf, "syscall %d not implemented\n", idx);
         serial_printk(buf, len);
     }
+
+    task_signal(frame);
 }

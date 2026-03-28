@@ -40,7 +40,7 @@ spinlock_t ap_startup_lock = SPIN_INIT;
 
 extern bool task_initialized;
 
-extern struct global_timer_state g_timer;
+extern struct global_timer_state global_timer;
 
 void ap_kmain(struct limine_mp_info *cpu) {
     arch_disable_interrupt();
@@ -61,7 +61,7 @@ void ap_kmain(struct limine_mp_info *cpu) {
         asm volatile("nop");
     }
 
-    while (!g_timer.initialized) {
+    while (!global_timer.initialized) {
         asm volatile("nop");
     }
 

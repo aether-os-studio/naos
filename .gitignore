@@ -18,5 +18,6 @@
 *.gz
 *.zst
 *.xz
+*.zip
 *.dtb
 *.log

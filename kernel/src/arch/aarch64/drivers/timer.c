@@ -5,7 +5,7 @@
 #include <drivers/kernel_logger.h>
 #include <drivers/fdt/fdt.h>
 
-struct global_timer_state g_timer = {0};
+struct global_timer_state global_timer = {0};
 
 static inline uint64_t read_cntfrq() {
     uint64_t val;
@@ -197,20 +197,20 @@ static int timer_init_from_dtb(void) {
 
     /* 优先使用 non-secure physical timer */
     if (timer_get_irq_from_dtb(fdt, timer_node, 1, &irq_num, &irq_flags) == 0) {
-        g_timer.active_type = TIMER_TYPE_PHYSICAL_NONSECURE;
-        g_timer.ops = &timer_ops_physical;
-        g_timer.irq_num = irq_num;
-        g_timer.irq_flags = irq_flags;
+        global_timer.active_type = TIMER_TYPE_PHYSICAL_NONSECURE;
+        global_timer.ops = &timer_ops_physical;
+        global_timer.irq_num = irq_num;
+        global_timer.irq_flags = irq_flags;
         printk("Timer: Using non-secure physical timer (PPI %d, IRQ %d)\n",
                irq_num - 16, irq_num);
     }
     /* 备选: virtual timer */
     else if (timer_get_irq_from_dtb(fdt, timer_node, 2, &irq_num, &irq_flags) ==
              0) {
-        g_timer.active_type = TIMER_TYPE_VIRTUAL;
-        g_timer.ops = &timer_ops_virtual;
-        g_timer.irq_num = irq_num;
-        g_timer.irq_flags = irq_flags;
+        global_timer.active_type = TIMER_TYPE_VIRTUAL;
+        global_timer.ops = &timer_ops_virtual;
+        global_timer.irq_num = irq_num;
+        global_timer.irq_flags = irq_flags;
         printk("Timer: Using virtual timer (PPI %d, IRQ %d)\n", irq_num - 16,
                irq_num);
     } else {
@@ -224,16 +224,16 @@ static int timer_init_from_dtb(void) {
                                                       : "high/rising");
 
     const void *always_on = fdt_getprop(fdt, timer_node, "always-on", NULL);
-    g_timer.always_on = (always_on != NULL);
+    global_timer.always_on = (always_on != NULL);
 
-    if (g_timer.always_on) {
+    if (global_timer.always_on) {
         printk("Timer: Marked as always-on\n");
     }
 
     /* 尝试从 DTB 获取频率 */
     uint64_t dtb_freq = timer_get_freq_from_dtb(fdt, timer_node);
     if (dtb_freq > 0) {
-        g_timer.frequency = dtb_freq;
+        global_timer.frequency = dtb_freq;
         printk("Timer: Clock frequency from DTB: %llu Hz (%llu.%03llu MHz)\n",
                dtb_freq, dtb_freq / 1000000, (dtb_freq % 1000000) / 1000);
         return 0; // 成功
@@ -249,34 +249,34 @@ static bool timer_is_available(uint32_t gsiv) { return gsiv != 0; }
  */
 static void timer_select_best_acpi(struct acpi_gtdt *gtdt) {
     if (timer_is_available(gtdt->el1_non_secure_gsiv)) {
-        g_timer.active_type = TIMER_TYPE_PHYSICAL_NONSECURE;
-        g_timer.ops = &timer_ops_physical;
-        g_timer.irq_num = gtdt->el1_non_secure_gsiv;
-        g_timer.irq_flags = gtdt->el1_non_secure_flags;
-        g_timer.always_on =
+        global_timer.active_type = TIMER_TYPE_PHYSICAL_NONSECURE;
+        global_timer.ops = &timer_ops_physical;
+        global_timer.irq_num = gtdt->el1_non_secure_gsiv;
+        global_timer.irq_flags = gtdt->el1_non_secure_flags;
+        global_timer.always_on =
             gtdt->el1_non_secure_flags & ACPI_GTDT_ALWAYS_ON_CAPABLE;
         printk("Timer: Using ACPI non-secure physical timer (GSIV %d)\n",
                gtdt->el1_non_secure_gsiv);
     } else if (timer_is_available(gtdt->el1_virtual_gsiv)) {
-        g_timer.active_type = TIMER_TYPE_VIRTUAL;
-        g_timer.ops = &timer_ops_virtual;
-        g_timer.irq_num = gtdt->el1_virtual_gsiv;
-        g_timer.irq_flags = gtdt->el1_virtual_flags;
-        g_timer.always_on =
+        global_timer.active_type = TIMER_TYPE_VIRTUAL;
+        global_timer.ops = &timer_ops_virtual;
+        global_timer.irq_num = gtdt->el1_virtual_gsiv;
+        global_timer.irq_flags = gtdt->el1_virtual_flags;
+        global_timer.always_on =
             gtdt->el1_virtual_flags & ACPI_GTDT_ALWAYS_ON_CAPABLE;
         printk("Timer: Using ACPI virtual timer (GSIV %d)\n",
                gtdt->el1_virtual_gsiv);
     } else {
         // 最后尝试安全定时器（通常不可用）
-        g_timer.active_type = TIMER_TYPE_PHYSICAL_SECURE;
-        g_timer.ops = &timer_ops_physical;
-        g_timer.irq_num = gtdt->el1_secure_gsiv;
-        g_timer.irq_flags = gtdt->el1_secure_flags;
+        global_timer.active_type = TIMER_TYPE_PHYSICAL_SECURE;
+        global_timer.ops = &timer_ops_physical;
+        global_timer.irq_num = gtdt->el1_secure_gsiv;
+        global_timer.irq_flags = gtdt->el1_secure_flags;
         printk("Timer: Using ACPI secure physical timer (GSIV %d)\n",
                gtdt->el1_secure_gsiv);
     }
 
-    printk("Timer: ACPI flags = 0x%x\n", g_timer.irq_flags);
+    printk("Timer: ACPI flags = 0x%x\n", global_timer.irq_flags);
 }
 
 static int timer_init_from_acpi(void) {
@@ -315,15 +315,13 @@ int timer_init(void) {
         if (ret == 0) {
             from_dtb = true;
             printk("Timer: Configured from DTB\n");
-        }
-        /* 使用硬编码默认值 */
-        else {
+        } else {
             printk("Timer: Using hardcoded defaults\n");
-            g_timer.active_type = TIMER_TYPE_PHYSICAL_NONSECURE;
-            g_timer.ops = &timer_ops_physical;
-            g_timer.irq_num = 30;  // PPI 14 + 16
-            g_timer.irq_flags = 0; // 电平触发，高电平有效
-            g_timer.always_on = false;
+            global_timer.active_type = TIMER_TYPE_PHYSICAL_NONSECURE;
+            global_timer.ops = &timer_ops_physical;
+            global_timer.irq_num = 30;  // PPI 14 + 16
+            global_timer.irq_flags = 0; // 电平触发，高电平有效
+            global_timer.always_on = false;
         }
     }
 
@@ -332,36 +330,38 @@ int timer_init(void) {
     printk("Timer: Hardware CNTFRQ_EL0 = %llu Hz\n", hw_freq);
 
     /* 如果已经从 DTB 获取了频率，优先使用 DTB 的值 */
-    if (from_dtb && g_timer.frequency > 0) {
-        printk("Timer: Using frequency from DTB: %llu Hz\n", g_timer.frequency);
+    if (from_dtb && global_timer.frequency > 0) {
+        printk("Timer: Using frequency from DTB: %llu Hz\n",
+               global_timer.frequency);
 
         /* 但是检查硬件寄存器是否一致 */
-        if (hw_freq > 0 && hw_freq != g_timer.frequency) {
+        if (hw_freq > 0 && hw_freq != global_timer.frequency) {
             printk("Timer: WARNING - DTB freq (%llu) != HW freq (%llu)\n",
-                   g_timer.frequency, hw_freq);
+                   global_timer.frequency, hw_freq);
         }
     } else {
         /* 使用硬件寄存器的值 */
         if (hw_freq > 0) {
-            g_timer.frequency = hw_freq;
+            global_timer.frequency = hw_freq;
         } else {
             /* 硬件寄存器也是 0，使用默认值 */
             printk("Timer: WARNING - CNTFRQ_EL0 is 0\n");
-            g_timer.frequency = 54000000; // Raspberry Pi 400 default
+            global_timer.frequency = 54000000; // Raspberry Pi 400 default
         }
     }
 
     printk("Timer: Final configuration:\n");
-    printk("  Type: %s\n", g_timer.ops->name);
-    printk("  IRQ: %d\n", g_timer.irq_num);
-    printk("  Flags: 0x%x\n", g_timer.irq_flags);
-    printk("  Frequency: %llu Hz (%llu.%03llu MHz)\n", g_timer.frequency,
-           g_timer.frequency / 1000000, (g_timer.frequency % 1000000) / 1000);
-    printk("  Always-on: %s\n", g_timer.always_on ? "yes" : "no");
+    printk("  Type: %s\n", global_timer.ops->name);
+    printk("  IRQ: %d\n", global_timer.irq_num);
+    printk("  Flags: 0x%x\n", global_timer.irq_flags);
+    printk("  Frequency: %llu Hz (%llu.%03llu MHz)\n", global_timer.frequency,
+           global_timer.frequency / 1000000,
+           (global_timer.frequency % 1000000) / 1000);
+    printk("  Always-on: %s\n", global_timer.always_on ? "yes" : "no");
     printk("  Source: %s\n",
            from_acpi ? "ACPI" : (from_dtb ? "DTB" : "Hardcoded"));
 
-    g_timer.initialized = 1;
+    global_timer.initialized = 1;
 
     return 0;
 }
@@ -369,45 +369,45 @@ int timer_init(void) {
 extern void gic_enable_irq(uint32_t irq);
 
 void timer_init_percpu() {
-    if (!g_timer.initialized || !g_timer.ops)
+    if (!global_timer.initialized || !global_timer.ops)
         return;
 
-    gic_enable_irq(g_timer.irq_num);
+    gic_enable_irq(global_timer.irq_num);
 
     timer_set_next_tick_ns(1000000000ULL / SCHED_HZ);
 }
 
 uint64_t nano_time() {
-    if (!g_timer.ops) {
+    if (!global_timer.ops) {
         return 0;
     }
 
-    uint64_t ticks = g_timer.ops->read_counter();
+    uint64_t ticks = global_timer.ops->read_counter();
 
     /* 使用 128 位乘法避免溢出 */
     __uint128_t ns = (__uint128_t)ticks * 1000000000ULL;
-    return (uint64_t)(ns / g_timer.frequency);
+    return (uint64_t)(ns / global_timer.frequency);
 }
 
 void timer_set_next_tick_ns(uint64_t ns) {
-    if (!g_timer.ops) {
+    if (!global_timer.ops) {
         return;
     }
 
     /* 计算 tick 数 */
-    __uint128_t temp = (__uint128_t)ns * g_timer.frequency;
+    __uint128_t temp = (__uint128_t)ns * global_timer.frequency;
     uint64_t delta_ticks = (uint64_t)(temp / 1000000000ULL);
 
-    g_timer.ops->write_tval(delta_ticks);
-    g_timer.ops->write_ctl(1); // Enable
+    global_timer.ops->write_tval(delta_ticks);
+    global_timer.ops->write_ctl(1); // Enable
 }
 
-timer_type_t timer_get_active_type(void) { return g_timer.active_type; }
+timer_type_t timer_get_active_type(void) { return global_timer.active_type; }
 
 const char *timer_get_type_name(void) {
-    return g_timer.ops ? g_timer.ops->name : "None";
+    return global_timer.ops ? global_timer.ops->name : "None";
 }
 
-uint32_t timer_get_irq(void) { return g_timer.irq_num; }
+uint32_t timer_get_irq(void) { return global_timer.irq_num; }
 
-bool timer_is_always_on(void) { return g_timer.always_on; }
+bool timer_is_always_on(void) { return global_timer.always_on; }

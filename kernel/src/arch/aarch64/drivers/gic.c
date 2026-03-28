@@ -32,7 +32,7 @@ gic_version_t gic_detect_version(void) {
     bool has_gicr = false;
 
     uint64_t current = 0;
-    while (current + sizeof(struct acpi_madt) - 1 < madt->hdr.length) {
+    while (current + sizeof(struct acpi_madt) < madt->hdr.length) {
         struct acpi_entry_hdr *header =
             (struct acpi_entry_hdr *)((uint64_t)(&madt->entries) + current);
 
@@ -84,7 +84,7 @@ static void gic_parse_acpi(void) {
 
     // 解析GICC (GICv2) 或 GICR (GICv3)
     current = 0;
-    while (current + sizeof(struct acpi_madt) - 1 < madt->hdr.length) {
+    while (current + sizeof(struct acpi_madt) < madt->hdr.length) {
         struct acpi_entry_hdr *header =
             (struct acpi_entry_hdr *)((uint64_t)(&madt->entries) + current);
 
@@ -599,9 +599,6 @@ void gic_init(void) {
         // 解析ACPI
         gic_parse_acpi();
     }
-
-    printk("GICD base: phys=0x%llx virt=0x%llx\n", gicd_base_address,
-           gicd_base_virt);
 
     if (gicd_base_virt) {
         uint32_t gicd_typer =

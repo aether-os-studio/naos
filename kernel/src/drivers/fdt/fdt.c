@@ -6,6 +6,22 @@
 
 #if !defined(__x86_64__)
 
+fdt_driver_t *fdt_drivers[MAX_FDT_DRIVERS];
+int fdt_driver_count = 0;
+fdt_device_t fdt_devices[MAX_FDT_DEVICES];
+int fdt_device_count = 0;
+
+int regist_fdt_driver(fdt_driver_t *driver) {
+    if (!driver || !driver->compatible)
+        return -EINVAL;
+
+    if (fdt_driver_count >= MAX_FDT_DRIVERS)
+        return -ENOMEM;
+
+    fdt_drivers[fdt_driver_count++] = driver;
+    return 0;
+}
+
 static int fdt_match_compatible(const char **driver_compat,
                                 const char *device_compat) {
     for (int i = 0; driver_compat[i] != NULL; i++) {
@@ -68,6 +84,7 @@ void fdt_init() {
             fdt_device_t *dev = &fdt_devices[fdt_device_count];
             dev->name = strdup(path);
             dev->node = node;
+            dev->fdt = fdt;
             dev->driver = driver;
             dev->driver_data = NULL;
 

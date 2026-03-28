@@ -261,8 +261,9 @@ run-aarch64: assets/ovmf-code-$(ARCH).fd all
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
-		-device virtio-blk-pci,drive=harddisk \
-		-device usb-storage,drive=rootdisk \
+		-device nvme,drive=harddisk,serial=1234 \
+		-device nvme,drive=rootdisk,serial=5678 \
+		-display sdl \
 		$(QEMUFLAGS)
 
 .PHONY: run-aarch64-single
@@ -276,7 +277,8 @@ run-aarch64-single: assets/ovmf-code-$(ARCH).fd all-single
 		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=single-$(IMAGE_NAME).img,format=raw,id=harddisk \
-		-device usb-storage,drive=harddisk \
+		-device usb-storage,drive=harddisk,bus=xhci.0 \
+		-display sdl \
 		$(QEMUFLAGS)
 
 .PHONY: run-riscv64
@@ -352,7 +354,7 @@ assets/limine:
 
 assets/ovmf-code-$(ARCH).fd:
 	mkdir -p assets
-	curl -Lo assets/edk2-ovmf.tar.gz https://github.com/osdev0/edk2-ovmf-nightly/releases/download/nightly-20260213T020317Z/edk2-ovmf.tar.gz
+	curl -Lo assets/edk2-ovmf.tar.gz https://github.com/osdev0/edk2-ovmf-nightly/releases/download/nightly-20260328T015918Z/edk2-ovmf.tar.gz
 	tar -zxvf assets/edk2-ovmf.tar.gz -C assets/
 
 	cp -r assets/edk2-ovmf/ovmf-code-$(ARCH).fd $@

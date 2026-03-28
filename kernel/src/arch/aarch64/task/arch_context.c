@@ -16,7 +16,11 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
 
     uint32_t spsr = 0;
     if (user_mode) {
-        // todo
+        context->pc = (uint64_t)arch_context_switch_exit;
+        context->sp = (uint64_t)context->ctx;
+        context->ctx->pc = entry;
+        context->ctx->sp_el0 = stack;
+        context->ctx->x0 = initial_arg;
         spsr = 0x800003c0;
     } else {
         context->pc = (uint64_t)kernel_thread_func;

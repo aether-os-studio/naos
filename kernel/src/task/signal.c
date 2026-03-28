@@ -15,6 +15,15 @@
 #define SIGNAL_MAX_SIGSET_SIZE sizeof(sigset_t)
 #define SIGNAL_MAX_MASKED_SIG ((int)(sizeof(sigset_t) * 8 - 1))
 
+#if defined(__x86_64__) || defined(__aarch64__)
+typedef struct signal_kernel_sigaction {
+    sighandler_t handler;
+    unsigned long flags;
+    void (*restorer)(void);
+    sigset_t mask;
+} signal_kernel_sigaction_t;
+#endif
+
 #if defined(__x86_64__)
 #define SIGNAL_X64_SYSCALL_INS_LEN 2
 #define SIGNAL_X64_MAX_SYSCALL_NR 1024
@@ -27,12 +36,6 @@
 #define ERESTARTNOHAND 514
 #define ERESTART_RESTARTBLOCK 516
 
-typedef struct signal_x64_kernel_sigaction {
-    sighandler_t handler;
-    unsigned long flags;
-    void (*restorer)(void);
-    sigset_t mask;
-} signal_x64_kernel_sigaction_t;
 #endif
 
 signal_internal_t signal_internal_decisions[MAXSIG] = {0};
@@ -724,6 +727,195 @@ static bool signal_x64_setup_frame(task_t *task, struct pt_regs *regs, int sig,
 }
 #endif
 
+#if defined(__aarch64__)
+typedef struct signal_aarch64_user_sigset {
+    uint64_t __bits[16];
+} signal_aarch64_user_sigset_t;
+
+typedef struct signal_aarch64_mcontext {
+    uint64_t regs[31];
+    uint64_t sp;
+    uint64_t pc;
+    uint64_t pstate;
+    uint64_t fault_address;
+    uint64_t fpcr;
+    uint64_t fpsr;
+    uint64_t reserved[5];
+    uint64_t fpu[32];
+} signal_aarch64_mcontext_t;
+
+typedef struct signal_aarch64_ucontext {
+    uint64_t uc_flags;
+    struct signal_aarch64_ucontext *uc_link;
+    stack_t uc_stack;
+    signal_aarch64_user_sigset_t uc_sigmask;
+    signal_aarch64_mcontext_t uc_mcontext;
+} signal_aarch64_ucontext_t;
+
+typedef struct signal_aarch64_frame {
+    siginfo_t info;
+    signal_aarch64_ucontext_t ucontext;
+} signal_aarch64_frame_t;
+
+static inline uint64_t signal_aarch64_align_down(uint64_t value,
+                                                 uint64_t align) {
+    return value & ~(align - 1);
+}
+
+static inline void
+signal_aarch64_fill_ucontext(signal_aarch64_ucontext_t *ucontext,
+                             const struct pt_regs *regs, sigset_t blocked_mask,
+                             const stack_t *altstack, const siginfo_t *info) {
+    memset(ucontext, 0, sizeof(*ucontext));
+
+    if (altstack)
+        ucontext->uc_stack = *altstack;
+    ucontext->uc_sigmask.__bits[0] = sigset_kernel_to_user(blocked_mask);
+
+    ucontext->uc_mcontext.regs[0] = regs->x0;
+    ucontext->uc_mcontext.regs[1] = regs->x1;
+    ucontext->uc_mcontext.regs[2] = regs->x2;
+    ucontext->uc_mcontext.regs[3] = regs->x3;
+    ucontext->uc_mcontext.regs[4] = regs->x4;
+    ucontext->uc_mcontext.regs[5] = regs->x5;
+    ucontext->uc_mcontext.regs[6] = regs->x6;
+    ucontext->uc_mcontext.regs[7] = regs->x7;
+    ucontext->uc_mcontext.regs[8] = regs->x8;
+    ucontext->uc_mcontext.regs[9] = regs->x9;
+    ucontext->uc_mcontext.regs[10] = regs->x10;
+    ucontext->uc_mcontext.regs[11] = regs->x11;
+    ucontext->uc_mcontext.regs[12] = regs->x12;
+    ucontext->uc_mcontext.regs[13] = regs->x13;
+    ucontext->uc_mcontext.regs[14] = regs->x14;
+    ucontext->uc_mcontext.regs[15] = regs->x15;
+    ucontext->uc_mcontext.regs[16] = regs->x16;
+    ucontext->uc_mcontext.regs[17] = regs->x17;
+    ucontext->uc_mcontext.regs[18] = regs->x18;
+    ucontext->uc_mcontext.regs[19] = regs->x19;
+    ucontext->uc_mcontext.regs[20] = regs->x20;
+    ucontext->uc_mcontext.regs[21] = regs->x21;
+    ucontext->uc_mcontext.regs[22] = regs->x22;
+    ucontext->uc_mcontext.regs[23] = regs->x23;
+    ucontext->uc_mcontext.regs[24] = regs->x24;
+    ucontext->uc_mcontext.regs[25] = regs->x25;
+    ucontext->uc_mcontext.regs[26] = regs->x26;
+    ucontext->uc_mcontext.regs[27] = regs->x27;
+    ucontext->uc_mcontext.regs[28] = regs->x28;
+    ucontext->uc_mcontext.regs[29] = regs->x29;
+    ucontext->uc_mcontext.regs[30] = regs->x30;
+    ucontext->uc_mcontext.sp = regs->sp_el0;
+    ucontext->uc_mcontext.pc = regs->pc;
+    ucontext->uc_mcontext.pstate = regs->cpsr;
+    ucontext->uc_mcontext.fpcr = regs->fpcr;
+    ucontext->uc_mcontext.fpsr = regs->fpsr;
+    memcpy(ucontext->uc_mcontext.fpu, regs->fpu, sizeof(regs->fpu));
+
+    if (info && info->si_signo == SIGSEGV)
+        ucontext->uc_mcontext.fault_address =
+            (uint64_t)info->_sifields._sigfault._addr;
+}
+
+static inline void
+signal_aarch64_restore_ptregs(struct pt_regs *regs,
+                              const signal_aarch64_ucontext_t *ucontext) {
+    regs->x0 = ucontext->uc_mcontext.regs[0];
+    regs->x1 = ucontext->uc_mcontext.regs[1];
+    regs->x2 = ucontext->uc_mcontext.regs[2];
+    regs->x3 = ucontext->uc_mcontext.regs[3];
+    regs->x4 = ucontext->uc_mcontext.regs[4];
+    regs->x5 = ucontext->uc_mcontext.regs[5];
+    regs->x6 = ucontext->uc_mcontext.regs[6];
+    regs->x7 = ucontext->uc_mcontext.regs[7];
+    regs->x8 = ucontext->uc_mcontext.regs[8];
+    regs->x9 = ucontext->uc_mcontext.regs[9];
+    regs->x10 = ucontext->uc_mcontext.regs[10];
+    regs->x11 = ucontext->uc_mcontext.regs[11];
+    regs->x12 = ucontext->uc_mcontext.regs[12];
+    regs->x13 = ucontext->uc_mcontext.regs[13];
+    regs->x14 = ucontext->uc_mcontext.regs[14];
+    regs->x15 = ucontext->uc_mcontext.regs[15];
+    regs->x16 = ucontext->uc_mcontext.regs[16];
+    regs->x17 = ucontext->uc_mcontext.regs[17];
+    regs->x18 = ucontext->uc_mcontext.regs[18];
+    regs->x19 = ucontext->uc_mcontext.regs[19];
+    regs->x20 = ucontext->uc_mcontext.regs[20];
+    regs->x21 = ucontext->uc_mcontext.regs[21];
+    regs->x22 = ucontext->uc_mcontext.regs[22];
+    regs->x23 = ucontext->uc_mcontext.regs[23];
+    regs->x24 = ucontext->uc_mcontext.regs[24];
+    regs->x25 = ucontext->uc_mcontext.regs[25];
+    regs->x26 = ucontext->uc_mcontext.regs[26];
+    regs->x27 = ucontext->uc_mcontext.regs[27];
+    regs->x28 = ucontext->uc_mcontext.regs[28];
+    regs->x29 = ucontext->uc_mcontext.regs[29];
+    regs->x30 = ucontext->uc_mcontext.regs[30];
+    regs->sp_el0 = ucontext->uc_mcontext.sp;
+    regs->pc = ucontext->uc_mcontext.pc;
+    regs->cpsr = ucontext->uc_mcontext.pstate;
+    regs->fpcr = ucontext->uc_mcontext.fpcr;
+    regs->fpsr = ucontext->uc_mcontext.fpsr;
+    memcpy(regs->fpu, ucontext->uc_mcontext.fpu, sizeof(regs->fpu));
+
+    if ((regs->cpsr & 0xF) != 0)
+        regs->cpsr &= ~0xFULL;
+}
+
+static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
+                                       int sig, const sigaction_t *action,
+                                       const siginfo_t *info) {
+    if (!(action->sa_flags & SA_RESTORER) || !action->sa_restorer)
+        return false;
+
+    struct pt_regs saved = *regs;
+
+    stack_t frame_altstack;
+    signal_altstack_format_old(&frame_altstack, &task->signal->altstack,
+                               saved.sp_el0);
+
+    uint64_t stack_top = saved.sp_el0;
+    bool use_altstack =
+        (action->sa_flags & SA_ONSTACK) &&
+        signal_altstack_config_enabled(&task->signal->altstack) &&
+        !signal_altstack_contains_sp(&task->signal->altstack, saved.sp_el0);
+    if (use_altstack) {
+        stack_top = signal_stack_base(&task->signal->altstack) +
+                    task->signal->altstack.ss_size;
+        if (task->signal->altstack.ss_flags & SS_AUTODISARM)
+            signal_altstack_disable(&task->signal->altstack);
+    }
+
+    if (stack_top <= sizeof(signal_aarch64_frame_t))
+        return false;
+
+    uint64_t frame_addr = signal_aarch64_align_down(
+        stack_top - sizeof(signal_aarch64_frame_t), 16);
+    if (!frame_addr)
+        return false;
+
+    signal_aarch64_frame_t frame;
+    memset(&frame, 0, sizeof(frame));
+    memcpy(&frame.info, info, sizeof(frame.info));
+    signal_aarch64_fill_ucontext(&frame.ucontext, &saved, task->signal->blocked,
+                                 &frame_altstack, info);
+
+    if (copy_to_user((void *)frame_addr, &frame, sizeof(frame)))
+        return false;
+
+    memset(regs, 0, sizeof(*regs));
+    regs->pc = (uint64_t)action->sa_handler;
+    regs->sp_el0 = frame_addr;
+    regs->x0 = sig;
+    if (action->sa_flags & SA_SIGINFO) {
+        regs->x1 = frame_addr + offsetof(signal_aarch64_frame_t, info);
+        regs->x2 = frame_addr + offsetof(signal_aarch64_frame_t, ucontext);
+    }
+    regs->x30 = (uint64_t)action->sa_restorer;
+    regs->cpsr = saved.cpsr;
+
+    return true;
+}
+#endif
+
 void signal_init() {
     for (int i = 0; i < MAXSIG; i++) {
         signal_internal_decisions[i] = SIGNAL_INTERNAL_TERM;
@@ -867,7 +1059,7 @@ uint64_t sys_sigaction(int sig, const void *action, void *oldaction,
     sigaction_t new_action;
     bool has_new = action != NULL;
     if (has_new) {
-        signal_x64_kernel_sigaction_t user_action;
+        signal_kernel_sigaction_t user_action;
         if (copy_from_user(&user_action, action, sizeof(user_action))) {
             return (uint64_t)-EFAULT;
         }
@@ -876,7 +1068,7 @@ uint64_t sys_sigaction(int sig, const void *action, void *oldaction,
         new_action.sa_flags = (int)user_action.flags;
         new_action.sa_restorer = user_action.restorer;
         new_action.sa_mask = sigset_user_to_kernel(user_action.mask);
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__aarch64__)
         if (new_action.sa_handler != SIG_DFL &&
             new_action.sa_handler != SIG_IGN &&
             ((new_action.sa_flags & SA_RESTORER) == 0 ||
@@ -900,7 +1092,7 @@ uint64_t sys_sigaction(int sig, const void *action, void *oldaction,
     spin_unlock(&current_task->signal->sighand->siglock);
 
     if (has_old) {
-        signal_x64_kernel_sigaction_t user_old = {
+        signal_kernel_sigaction_t user_old = {
             .handler = old_local.sa_handler,
             .flags = (unsigned long)old_local.sa_flags,
             .restorer = old_local.sa_restorer,
@@ -962,6 +1154,36 @@ uint64_t sys_sigreturn(struct pt_regs *regs) {
     regs->rcx = regs->rip;
 
     return regs->rax;
+#elif defined(__aarch64__)
+    arch_disable_interrupt();
+
+    task_t *self = current_task;
+    if (!self || !regs) {
+        return (uint64_t)-EFAULT;
+    }
+
+    signal_aarch64_frame_t frame;
+    if (copy_from_user(&frame, (void *)regs->sp_el0, sizeof(frame))) {
+        task_exit(128 + SIGSEGV);
+        return 0;
+    }
+
+    stack_t restore_altstack = frame.ucontext.uc_stack;
+    restore_altstack.ss_flags &= ~SS_ONSTACK;
+    if (signal_altstack_validate_new(&restore_altstack) < 0) {
+        task_exit(128 + SIGSEGV);
+        return 0;
+    }
+
+    signal_aarch64_restore_ptregs(regs, &frame.ucontext);
+
+    spin_lock(&self->signal->sighand->siglock);
+    self->signal->blocked =
+        sigset_user_to_kernel(frame.ucontext.uc_sigmask.__bits[0]);
+    signal_altstack_store(&self->signal->altstack, &restore_altstack);
+    spin_unlock(&self->signal->sighand->siglock);
+
+    return regs->x0;
 #else
     (void)regs;
     return (uint64_t)-ENOSYS;
@@ -1257,6 +1479,12 @@ __attribute__((used)) void task_signal(struct pt_regs *regs) {
 
 #if defined(__x86_64__)
         if (!signal_x64_setup_frame(self, regs, sig, &action, &info)) {
+            spin_unlock(&self->signal->sighand->siglock);
+            task_exit(128 + SIGSEGV);
+            return;
+        }
+#elif defined(__aarch64__)
+        if (!signal_aarch64_setup_frame(self, regs, sig, &action, &info)) {
             spin_unlock(&self->signal->sighand->siglock);
             task_exit(128 + SIGSEGV);
             return;

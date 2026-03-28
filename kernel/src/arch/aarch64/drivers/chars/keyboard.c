@@ -1,4 +1,5 @@
 #include <arch/aarch64/drivers/chars/keyboard.h>
+#include <drivers/bus/bus.h>
 #include <task/task.h>
 #include <libs/keys.h>
 

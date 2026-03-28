@@ -93,7 +93,7 @@ static int virtio_mmio_fdt_probe(fdt_device_t *fdt_dev,
     const uint32_t *reg_prop;
     const uint32_t *irq_prop;
 
-    reg_prop = fdt_getprop(get_dtb_ptr(), fdt_dev->node, "reg", &len);
+    reg_prop = fdt_getprop(fdt_dev->fdt, fdt_dev->node, "reg", &len);
     if (!reg_prop || len < 8) {
         printk("VirtIO MMIO: Failed to get reg property\n");
         return -1;
@@ -110,7 +110,7 @@ static int virtio_mmio_fdt_probe(fdt_device_t *fdt_dev,
     }
 
     uint32_t irq = 0;
-    irq_prop = fdt_getprop(get_dtb_ptr(), fdt_dev->node, "interrupts", &len);
+    irq_prop = fdt_getprop(fdt_dev->fdt, fdt_dev->node, "interrupts", &len);
     if (irq_prop && len >= 4) {
         irq = fdt32_to_cpu(irq_prop[0]);
     }
