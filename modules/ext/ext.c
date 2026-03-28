@@ -2611,6 +2611,9 @@ int ext_link(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     spin_lock(&rwlock);
     int ret = target ? ext_link_node_locked(fs, parent, target, node) : -ENOENT;
     spin_unlock(&rwlock);
+
+    vfs_close(target);
+
     return ret;
 }
 
@@ -2816,12 +2819,14 @@ int ext_rename(vfs_node_t *node, const char *new) {
     if (!fs) {
         free(path);
         spin_unlock(&rwlock);
+        vfs_close(new_parent);
         return -ENOENT;
     }
     ext_mount_ctx_t *new_fs = ext_find_mount(new_parent);
     if (new_fs != fs) {
         free(path);
         spin_unlock(&rwlock);
+        vfs_close(new_parent);
         return -EXDEV;
     }
 
@@ -2952,6 +2957,7 @@ int ext_rename(vfs_node_t *node, const char *new) {
 out:
     free(path);
     spin_unlock(&rwlock);
+    vfs_close(new_parent);
     return ret;
 }
 

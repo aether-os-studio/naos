@@ -1,11 +1,10 @@
+#include <arch/arch.h>
 #include <mm/buddy.h>
 #include <mm/bitmap.h>
 #include <mm/cache.h>
 #include <mm/page.h>
 
 extern Bitmap usable_regions;
-
-Bitmap using_regions;
 
 const char *zone_names[__MAX_NR_ZONES] = {
 #if defined(__x86_64__)
@@ -18,20 +17,16 @@ int nr_zones = 0;
 
 extern uint64_t memory_size;
 extern void *early_alloc(size_t size);
+#define PCP_HIGH 64
 
-typedef struct page_list {
-    size_t entry_num;
-    uintptr_t next_page;
-} page_list_t;
+typedef struct per_cpu_pages {
+    spinlock_t lock;
+    uint64_t head_pfn[__MAX_NR_ZONES];
+    uint16_t count[__MAX_NR_ZONES];
+} per_cpu_pages_t;
 
-#define PAGE_LIST_ENTRY_CAPACITY                                               \
-    ((PAGE_SIZE - sizeof(page_list_t)) / sizeof(uintptr_t))
-
-static uintptr_t metadata_pool_phys = 0;
-static size_t metadata_pool_pages = 0;
-static size_t metadata_pool_used = 0;
-static uintptr_t metadata_free_list = 0;
-static spinlock_t metadata_lock = SPIN_INIT;
+static per_cpu_pages_t per_cpu_pagesets[MAX_CPU_NUM];
+static bool percpu_caches_enabled = false;
 
 static inline size_t order_to_index(size_t order) { return order - MIN_ORDER; }
 
@@ -45,6 +40,18 @@ static inline bool order_valid(size_t order) {
     return order >= MIN_ORDER && order < MAX_ORDER;
 }
 
+static inline uint64_t phys_to_pfn(uintptr_t phys) { return phys / PAGE_SIZE; }
+
+static inline uintptr_t pfn_to_phys(uint64_t pfn) { return pfn * PAGE_SIZE; }
+
+static inline page_t *page_from_pfn(uint64_t pfn) {
+    return (pfn == PAGE_LIST_NONE) ? NULL : &page_maps[pfn];
+}
+
+static inline uint64_t page_to_pfn(page_t *page) {
+    return (uint64_t)(page - page_maps);
+}
+
 static inline uintptr_t zone_phys_start(zone_t *zone) {
     return zone->zone_start_pfn * PAGE_SIZE;
 }
@@ -53,55 +60,45 @@ static inline uintptr_t zone_phys_end(zone_t *zone) {
     return zone->zone_end_pfn * PAGE_SIZE;
 }
 
-static inline page_list_t *page_list_virt(uintptr_t phys) {
-    return phys ? (page_list_t *)phys_to_virt(phys) : NULL;
+static inline bool zone_contains_pfn(zone_t *zone, uint64_t pfn) {
+    return zone && pfn >= zone->zone_start_pfn && pfn < zone->zone_end_pfn;
 }
 
-static inline uintptr_t *page_list_entries(uintptr_t phys) {
-    return (uintptr_t *)((uint8_t *)phys_to_virt(phys) + sizeof(page_list_t));
+static inline void page_detach(page_t *page) {
+    page->buddy_prev_pfn = PAGE_LIST_NONE;
+    page->buddy_next_pfn = PAGE_LIST_NONE;
 }
 
-static uintptr_t metadata_page_alloc(void) {
-    uintptr_t phys = 0;
-
-    spin_lock(&metadata_lock);
-
-    if (metadata_free_list != 0) {
-        phys = metadata_free_list;
-        metadata_free_list = page_list_virt(phys)->next_page;
-    } else {
-        ASSERT(metadata_pool_used < metadata_pool_pages);
-        phys = metadata_pool_phys + metadata_pool_used * PAGE_SIZE;
-        metadata_pool_used++;
-    }
-
-    spin_unlock(&metadata_lock);
-
-    memset((void *)phys_to_virt(phys), 0, PAGE_SIZE);
-    return phys;
+static inline void page_mark_free(page_t *page, enum zone_type type,
+                                  size_t order, uint8_t flag) {
+    page->flags = flag;
+    page->buddy_order = (uint8_t)order;
+    page->zone_id = (uint8_t)type;
+    page_detach(page);
 }
 
-static void metadata_page_free(uintptr_t phys) {
-    page_list_t *list = page_list_virt(phys);
-    ASSERT(list != NULL);
+static inline void page_mark_allocated(page_t *page, enum zone_type type,
+                                       size_t order) {
+    page->flags = 0;
+    page->buddy_order = (uint8_t)order;
+    page->zone_id = (uint8_t)type;
+    page_detach(page);
+}
 
-    memset(list, 0, PAGE_SIZE);
-
-    spin_lock(&metadata_lock);
-    list->next_page = metadata_free_list;
-    metadata_free_list = phys;
-    spin_unlock(&metadata_lock);
+static inline bool page_is_buddy(page_t *page, size_t order) {
+    return page && (page->flags & PAGE_FLAG_BUDDY) &&
+           page->buddy_order == order;
 }
 
 static bool count_to_order(size_t count, size_t *order_out, size_t *pages_out) {
     if (!order_out || !pages_out || count == 0)
         return false;
 
-    size_t pages = 1;
-    size_t max_pages = (size_t)order_to_pages(MAX_ORDER - 1);
+    uint64_t pages = 1;
+    const uint64_t max_pages = order_to_pages(MAX_ORDER - 1);
 
     while (pages < count) {
-        if (pages > (SIZE_MAX >> 1))
+        if (pages > (UINT64_MAX >> 1))
             return false;
         pages <<= 1;
     }
@@ -110,17 +107,14 @@ static bool count_to_order(size_t count, size_t *order_out, size_t *pages_out) {
         return false;
 
     size_t order = MIN_ORDER;
-    size_t tmp = pages;
-    while (tmp > 1) {
-        tmp >>= 1;
+    while ((1ULL << (order - MIN_ORDER)) < pages)
         order++;
-    }
 
     if (!order_valid(order))
         return false;
 
     *order_out = order;
-    *pages_out = pages;
+    *pages_out = (size_t)pages;
     return true;
 }
 
@@ -133,10 +127,10 @@ static bool zone_block_valid(zone_t *zone, uintptr_t addr, size_t order) {
     if (!zone || !order_valid(order))
         return false;
 
-    uint64_t block_bytes = order_to_bytes(order);
-    uintptr_t start = zone_phys_start(zone);
-    uintptr_t end = zone_phys_end(zone);
-    uintptr_t block_end = addr + block_bytes;
+    const uint64_t block_bytes = order_to_bytes(order);
+    const uintptr_t start = zone_phys_start(zone);
+    const uintptr_t end = zone_phys_end(zone);
+    const uintptr_t block_end = addr + block_bytes;
 
     if (block_end < addr)
         return false;
@@ -147,160 +141,198 @@ static bool zone_block_valid(zone_t *zone, uintptr_t addr, size_t order) {
     return true;
 }
 
-static void page_list_push(zone_t *zone, size_t order, uintptr_t block_phys) {
-    size_t index = order_to_index(order);
-    uintptr_t head_phys = zone->allocator.free_area[index];
-    uintptr_t phys = head_phys;
-    uintptr_t prev_phys = 0;
-    page_list_t *list = NULL;
+static void free_area_add(zone_t *zone, size_t order, page_t *page) {
+    const size_t index = order_to_index(order);
+    free_area_t *area = &zone->allocator.free_area[index];
+    const uint64_t pfn = page_to_pfn(page);
 
-    while (phys) {
-        list = page_list_virt(phys);
-        if (list->entry_num < PAGE_LIST_ENTRY_CAPACITY)
-            break;
+    page_mark_free(page, zone->type, order, PAGE_FLAG_BUDDY);
 
-        uintptr_t next_phys = list->next_page;
-        if (prev_phys != 0 && list->entry_num == 0) {
-            page_list_virt(prev_phys)->next_page = next_phys;
-            metadata_page_free(phys);
-            phys = next_phys;
-            continue;
-        }
-
-        prev_phys = phys;
-        phys = next_phys;
+    if (area->head_pfn != PAGE_LIST_NONE) {
+        page_t *head = page_from_pfn(area->head_pfn);
+        head->buddy_prev_pfn = pfn;
+        page->buddy_next_pfn = area->head_pfn;
     }
 
-    if (!phys) {
-        uintptr_t new_head_phys = metadata_page_alloc();
-        page_list_t *new_head = page_list_virt(new_head_phys);
-        new_head->entry_num = 0;
-        new_head->next_page = head_phys;
-        zone->allocator.free_area[index] = new_head_phys;
-        list = new_head;
-        phys = new_head_phys;
-    }
-
-    uintptr_t *entries = page_list_entries(phys);
-    entries[list->entry_num++] = block_phys;
+    area->head_pfn = pfn;
+    area->nr_free++;
 }
 
-static uintptr_t page_list_pop(zone_t *zone, size_t order) {
-    size_t index = order_to_index(order);
-    uintptr_t head_phys = zone->allocator.free_area[index];
-    uintptr_t phys = head_phys;
-    uintptr_t prev_phys = 0;
+static void free_area_del(zone_t *zone, size_t order, page_t *page) {
+    const size_t index = order_to_index(order);
+    free_area_t *area = &zone->allocator.free_area[index];
 
-    while (phys) {
-        page_list_t *list = page_list_virt(phys);
-        uintptr_t next_phys = list->next_page;
-
-        if (list->entry_num != 0) {
-            uintptr_t *entries = page_list_entries(phys);
-            uintptr_t block = entries[list->entry_num - 1];
-            entries[list->entry_num - 1] = 0;
-            list->entry_num--;
-
-            if (list->entry_num == 0 && prev_phys != 0) {
-                page_list_virt(prev_phys)->next_page = next_phys;
-                metadata_page_free(phys);
-            }
-            return block;
-        }
-
-        if (prev_phys != 0) {
-            page_list_virt(prev_phys)->next_page = next_phys;
-            metadata_page_free(phys);
-            phys = next_phys;
-            continue;
-        }
-
-        prev_phys = phys;
-        phys = next_phys;
+    if (page->buddy_prev_pfn != PAGE_LIST_NONE) {
+        page_t *prev = page_from_pfn(page->buddy_prev_pfn);
+        prev->buddy_next_pfn = page->buddy_next_pfn;
+    } else {
+        area->head_pfn = page->buddy_next_pfn;
     }
 
-    return 0;
+    if (page->buddy_next_pfn != PAGE_LIST_NONE) {
+        page_t *next = page_from_pfn(page->buddy_next_pfn);
+        next->buddy_prev_pfn = page->buddy_prev_pfn;
+    }
+
+    if (area->nr_free != 0)
+        area->nr_free--;
+
+    page_mark_allocated(page, zone->type, order);
 }
 
-static bool page_list_take(zone_t *zone, size_t order, uintptr_t target_phys) {
-    size_t index = order_to_index(order);
-    uintptr_t phys = zone->allocator.free_area[index];
-    uintptr_t prev_phys = 0;
+static page_t *free_area_pop(zone_t *zone, size_t order) {
+    free_area_t *area = &zone->allocator.free_area[order_to_index(order)];
 
-    while (phys) {
-        page_list_t *list = page_list_virt(phys);
-        uintptr_t *entries = page_list_entries(phys);
-        uintptr_t next_phys = list->next_page;
+    if (area->head_pfn == PAGE_LIST_NONE)
+        return NULL;
 
-        for (size_t i = 0; i < list->entry_num; i++) {
-            if (entries[i] != target_phys)
-                continue;
-
-            entries[i] = entries[list->entry_num - 1];
-            entries[list->entry_num - 1] = 0;
-            list->entry_num--;
-
-            if (list->entry_num == 0 && prev_phys != 0) {
-                page_list_virt(prev_phys)->next_page = next_phys;
-                metadata_page_free(phys);
-            }
-            return true;
-        }
-
-        if (prev_phys != 0 && list->entry_num == 0) {
-            page_list_virt(prev_phys)->next_page = next_phys;
-            metadata_page_free(phys);
-            phys = next_phys;
-            continue;
-        }
-
-        prev_phys = phys;
-        phys = next_phys;
-    }
-
-    return false;
+    page_t *page = page_from_pfn(area->head_pfn);
+    free_area_del(zone, order, page);
+    return page;
 }
 
 static uintptr_t buddy_alloc_order_locked(zone_t *zone, size_t target_order) {
-    size_t source_order = target_order;
-    uintptr_t block_phys = 0;
+    size_t order = target_order;
+    page_t *page = NULL;
 
-    while (source_order < MAX_ORDER) {
-        block_phys = page_list_pop(zone, source_order);
-        if (block_phys != 0)
+    while (order < MAX_ORDER) {
+        page = free_area_pop(zone, order);
+        if (page)
             break;
-        source_order++;
-    }
-
-    if (block_phys == 0)
-        return 0;
-
-    while (source_order > target_order) {
-        source_order--;
-        uintptr_t buddy_phys = block_phys + order_to_bytes(source_order);
-        page_list_push(zone, source_order, buddy_phys);
-    }
-
-    return block_phys;
-}
-
-static void buddy_free_zone_locked(zone_t *zone, uintptr_t addr, size_t order) {
-    size_t base_order = order;
-
-    while (order < (MAX_ORDER - 1)) {
-        uintptr_t buddy_phys = addr ^ order_to_bytes(order);
-        if (!zone_block_valid(zone, buddy_phys, order))
-            break;
-        if (!page_list_take(zone, order, buddy_phys))
-            break;
-
-        if (buddy_phys < addr)
-            addr = buddy_phys;
         order++;
     }
 
-    page_list_push(zone, order, addr);
-    zone->free_pages += order_to_pages(base_order);
+    if (!page)
+        return 0;
+
+    while (order > target_order) {
+        order--;
+        const uint64_t right_pfn = page_to_pfn(page) + order_to_pages(order);
+        page_t *right = page_from_pfn(right_pfn);
+        free_area_add(zone, order, right);
+        page_mark_allocated(page, zone->type, order);
+    }
+
+    page_mark_allocated(page, zone->type, target_order);
+    return pfn_to_phys(page_to_pfn(page));
+}
+
+static void buddy_free_order_locked(zone_t *zone, uintptr_t addr,
+                                    size_t order) {
+    uint64_t pfn = phys_to_pfn(addr);
+    const uint64_t base_pages = order_to_pages(order);
+
+    while (order < (MAX_ORDER - 1)) {
+        const uint64_t buddy_pfn = pfn ^ order_to_pages(order);
+        const uintptr_t buddy_phys = pfn_to_phys(buddy_pfn);
+
+        if (!zone_contains_pfn(zone, buddy_pfn))
+            break;
+        if (!zone_block_valid(zone, buddy_phys, order))
+            break;
+
+        page_t *buddy = page_from_pfn(buddy_pfn);
+        if (!page_is_buddy(buddy, order))
+            break;
+
+        free_area_del(zone, order, buddy);
+        if (buddy_pfn < pfn)
+            pfn = buddy_pfn;
+        order++;
+    }
+
+    free_area_add(zone, order, page_from_pfn(pfn));
+    zone->free_pages += base_pages;
+}
+
+static bool percpu_cache_available(void) {
+    return percpu_caches_enabled && current_cpu_id < MAX_CPU_NUM;
+}
+
+static uintptr_t percpu_pop(zone_t *zone) {
+    if (!percpu_cache_available())
+        return 0;
+
+    per_cpu_pages_t *pcp = &per_cpu_pagesets[current_cpu_id];
+    uintptr_t phys = 0;
+
+    spin_lock(&pcp->lock);
+
+    uint64_t head_pfn = pcp->head_pfn[zone->type];
+    if (head_pfn != PAGE_LIST_NONE) {
+        page_t *page = page_from_pfn(head_pfn);
+        pcp->head_pfn[zone->type] = page->buddy_next_pfn;
+        if (pcp->head_pfn[zone->type] != PAGE_LIST_NONE) {
+            page_from_pfn(pcp->head_pfn[zone->type])->buddy_prev_pfn =
+                PAGE_LIST_NONE;
+        }
+        if (pcp->count[zone->type] != 0)
+            pcp->count[zone->type]--;
+        page_mark_allocated(page, zone->type, MIN_ORDER);
+        phys = pfn_to_phys(head_pfn);
+    }
+
+    spin_unlock(&pcp->lock);
+    return phys;
+}
+
+static void percpu_drain_one(zone_t *zone, per_cpu_pages_t *pcp) {
+    uint64_t pfn;
+
+    spin_lock(&pcp->lock);
+    pfn = pcp->head_pfn[zone->type];
+    if (pfn == PAGE_LIST_NONE) {
+        spin_unlock(&pcp->lock);
+        return;
+    }
+
+    page_t *page = page_from_pfn(pfn);
+    pcp->head_pfn[zone->type] = page->buddy_next_pfn;
+    if (pcp->head_pfn[zone->type] != PAGE_LIST_NONE) {
+        page_from_pfn(pcp->head_pfn[zone->type])->buddy_prev_pfn =
+            PAGE_LIST_NONE;
+    }
+    if (pcp->count[zone->type] != 0)
+        pcp->count[zone->type]--;
+    page_mark_allocated(page, zone->type, MIN_ORDER);
+    spin_unlock(&pcp->lock);
+
+    spin_lock(&zone->allocator.lock);
+    free_area_add(zone, MIN_ORDER, page);
+    spin_unlock(&zone->allocator.lock);
+}
+
+static bool percpu_push(zone_t *zone, uintptr_t addr) {
+    if (!percpu_cache_available())
+        return false;
+
+    per_cpu_pages_t *pcp = &per_cpu_pagesets[current_cpu_id];
+    page_t *page = get_page(addr);
+    const uint64_t pfn = phys_to_pfn(addr);
+    bool need_drain = false;
+
+    spin_lock(&pcp->lock);
+
+    page_mark_free(page, zone->type, MIN_ORDER, PAGE_FLAG_PCPU);
+    page->buddy_next_pfn = pcp->head_pfn[zone->type];
+    if (pcp->head_pfn[zone->type] != PAGE_LIST_NONE) {
+        page_from_pfn(pcp->head_pfn[zone->type])->buddy_prev_pfn = pfn;
+    }
+    pcp->head_pfn[zone->type] = pfn;
+    pcp->count[zone->type]++;
+    need_drain = pcp->count[zone->type] > PCP_HIGH;
+
+    spin_unlock(&pcp->lock);
+
+    while (need_drain) {
+        percpu_drain_one(zone, pcp);
+
+        spin_lock(&pcp->lock);
+        need_drain = pcp->count[zone->type] > PCP_HIGH;
+        spin_unlock(&pcp->lock);
+    }
+
+    return true;
 }
 
 enum zone_type phys_to_zone_type(uintptr_t phys) {
@@ -326,7 +358,7 @@ void buddy_free_zone(zone_t *zone, uintptr_t addr, size_t order) {
         return;
 
     spin_lock(&zone->allocator.lock);
-    buddy_free_zone_locked(zone, addr, order);
+    buddy_free_order_locked(zone, addr, order);
     spin_unlock(&zone->allocator.lock);
 }
 
@@ -338,6 +370,17 @@ uintptr_t buddy_alloc_zone(zone_t *zone, size_t count) {
     size_t required_pages = 0;
     if (!count_to_order(count, &order, &required_pages))
         return 0;
+
+    if (required_pages == 1) {
+        uintptr_t addr = percpu_pop(zone);
+        if (addr != 0) {
+            spin_lock(&zone->allocator.lock);
+            if (zone->free_pages != 0)
+                zone->free_pages--;
+            spin_unlock(&zone->allocator.lock);
+            return addr;
+        }
+    }
 
     spin_lock(&zone->allocator.lock);
 
@@ -368,8 +411,8 @@ static void init_zone(zone_t *zone, enum zone_type type, uint64_t start_pfn,
     spin_init(&zone->allocator.lock);
 
     for (size_t i = 0; i < ORDER_COUNT; i++) {
-        uintptr_t head_phys = metadata_page_alloc();
-        zone->allocator.free_area[i] = head_phys;
+        zone->allocator.free_area[i].head_pfn = PAGE_LIST_NONE;
+        zone->allocator.free_area[i].nr_free = 0;
     }
 }
 
@@ -390,27 +433,23 @@ static void create_zone(enum zone_type type, uint64_t start_pfn,
 
 void buddy_init(void) {
     memset(zones, 0, sizeof(zones));
+    memset(per_cpu_pagesets, 0, sizeof(per_cpu_pagesets));
     nr_zones = 0;
-    metadata_free_list = 0;
-    metadata_pool_used = 0;
-    spin_init(&metadata_lock);
+    percpu_caches_enabled = false;
 
-    size_t total_frames = memory_size / PAGE_SIZE;
-    size_t head_pages = ORDER_COUNT * __MAX_NR_ZONES;
-    metadata_pool_pages = (total_frames + PAGE_LIST_ENTRY_CAPACITY - 1) /
-                          PAGE_LIST_ENTRY_CAPACITY;
-    metadata_pool_pages += head_pages + 16;
+    for (uint32_t cpu = 0; cpu < MAX_CPU_NUM; cpu++) {
+        spin_init(&per_cpu_pagesets[cpu].lock);
+        for (size_t zone = 0; zone < __MAX_NR_ZONES; zone++) {
+            per_cpu_pagesets[cpu].head_pfn[zone] = PAGE_LIST_NONE;
+            per_cpu_pagesets[cpu].count[zone] = 0;
+        }
+    }
 
-    void *metadata_pool_virt = early_alloc(metadata_pool_pages * PAGE_SIZE);
-    ASSERT(metadata_pool_virt != NULL);
-    metadata_pool_phys = virt_to_phys((uint64_t)metadata_pool_virt);
-    metadata_pool_used = 0;
-
-    uint64_t max_pfn = memory_size / PAGE_SIZE;
-    uint64_t dma32_end_pfn = MIN(max_pfn, ZONE_DMA32_END / PAGE_SIZE);
+    const uint64_t max_pfn = memory_size / PAGE_SIZE;
+    const uint64_t dma32_end_pfn = MIN(max_pfn, ZONE_DMA32_END / PAGE_SIZE);
 
 #if defined(__x86_64__)
-    uint64_t dma_end_pfn = MIN(max_pfn, ZONE_DMA_END / PAGE_SIZE);
+    const uint64_t dma_end_pfn = MIN(max_pfn, ZONE_DMA_END / PAGE_SIZE);
 
     create_zone(ZONE_DMA, 0, dma_end_pfn);
     create_zone(ZONE_DMA32, dma_end_pfn, dma32_end_pfn);
@@ -419,20 +458,16 @@ void buddy_init(void) {
     create_zone(ZONE_DMA32, 0, dma32_end_pfn);
     create_zone(ZONE_NORMAL, dma32_end_pfn, max_pfn);
 #endif
-
-    size_t bitmap_bytes = (size_t)((max_pfn + 7) / 8);
-    if (bitmap_bytes == 0)
-        bitmap_bytes = 1;
-    void *bitmap_buffer = early_alloc(bitmap_bytes);
-    ASSERT(bitmap_buffer != NULL);
-    bitmap_init(&using_regions, (uint8_t *)bitmap_buffer, bitmap_bytes);
 }
+
+void buddy_enable_percpu_caches(void) { percpu_caches_enabled = true; }
 
 static size_t floor_order_for_size(uint64_t bytes) {
     size_t order = MIN_ORDER;
-    while (order + 1 < MAX_ORDER && (1ULL << (order + 1)) <= bytes)
+    while (order < MAX_ORDER && (1ULL << order) <= bytes) {
         order++;
-    return order;
+    }
+    return order - 1;
 }
 
 void add_memory_region(uintptr_t start, uintptr_t end, enum zone_type type) {
@@ -458,9 +493,9 @@ void add_memory_region(uintptr_t start, uintptr_t end, enum zone_type type) {
 
     uintptr_t current = start;
     while (current < end) {
-        uint64_t remaining = end - current;
-        size_t order_by_size = floor_order_for_size(remaining);
-        size_t order_by_align =
+        const uint64_t remaining = end - current;
+        const size_t order_by_size = floor_order_for_size(remaining);
+        const size_t order_by_align =
             (current == 0)
                 ? (MAX_ORDER - 1)
                 : MIN((size_t)__builtin_ctzll((unsigned long long)current),
@@ -470,13 +505,39 @@ void add_memory_region(uintptr_t start, uintptr_t end, enum zone_type type) {
         if (order < MIN_ORDER)
             order = MIN_ORDER;
 
-        buddy_free_zone_locked(zone, current, order);
+        buddy_free_order_locked(zone, current, order);
         zone->managed_pages += order_to_pages(order);
         current += order_to_bytes(order);
     }
 
     spin_unlock(&zone->allocator.lock);
 }
+
+static bool claim_last_page_refs(uintptr_t addr, size_t pages) {
+    for (size_t offset = 0; offset < pages; offset++) {
+        page_t *page = get_page(addr + offset * PAGE_SIZE);
+        if (page && page_try_release_last(page))
+            continue;
+
+        for (size_t rollback = 0; rollback < offset; rollback++)
+            page_ref(get_page(addr + rollback * PAGE_SIZE));
+        return false;
+    }
+
+    return true;
+}
+
+static bool pages_are_unreferenced(uintptr_t addr, size_t pages) {
+    for (size_t offset = 0; offset < pages; offset++) {
+        page_t *page = get_page(addr + offset * PAGE_SIZE);
+        if (!page || page_refcount_read(page) != 0)
+            return false;
+    }
+
+    return true;
+}
+
+extern void task_reap_deferred(size_t budget);
 
 uintptr_t alloc_frames(size_t count) {
     if (count == 0)
@@ -509,50 +570,32 @@ uintptr_t alloc_frames(size_t count) {
         }
 #endif
 
-        if (attempt == 0 && cache_reclaim_pages(required_pages * 32) != 0)
+        if (attempt == 0) {
+            if (cache_reclaim_pages(required_pages * 32) != 0)
+                continue;
+            task_reap_deferred(16);
             continue;
+        }
         break;
     }
 
     if (addr == 0)
-        return 0;
-
-    size_t page_index = addr / PAGE_SIZE;
-    bitmap_set_range(&using_regions, page_index, page_index + required_pages,
-                     true);
+        ASSERT(!"No memory can be allocated\n");
 
     for (size_t offset = 0; offset < required_pages; offset++) {
         page_t *page = get_page(addr + offset * PAGE_SIZE);
-        if (page)
+        if (page) {
+            page_mark_allocated(page, phys_to_zone_type(addr), MIN_ORDER);
             page_ref(page);
+        }
     }
+
+    page_t *head = get_page(addr);
+    if (head)
+        head->buddy_order =
+            (uint8_t)(MIN_ORDER + __builtin_ctzll(required_pages));
 
     return addr;
-}
-
-static bool claim_last_page_refs(uintptr_t addr, size_t pages) {
-    for (size_t offset = 0; offset < pages; offset++) {
-        page_t *page = get_page(addr + offset * PAGE_SIZE);
-        if (page && page_try_release_last(page))
-            continue;
-
-        for (size_t rollback = 0; rollback < offset; rollback++) {
-            page_ref(get_page(addr + rollback * PAGE_SIZE));
-        }
-        return false;
-    }
-
-    return true;
-}
-
-static bool pages_are_unreferenced(uintptr_t addr, size_t pages) {
-    for (size_t offset = 0; offset < pages; offset++) {
-        page_t *page = get_page(addr + offset * PAGE_SIZE);
-        if (!page || page_refcount_read(page) != 0)
-            return false;
-    }
-
-    return true;
 }
 
 static void free_frames_common(uintptr_t addr, size_t count,
@@ -561,7 +604,7 @@ static void free_frames_common(uintptr_t addr, size_t count,
         return;
     if ((addr & (PAGE_SIZE - 1)) != 0)
         return;
-    if (addr > memory_size)
+    if (addr >= memory_size)
         return;
 
     size_t required_order = 0;
@@ -583,39 +626,37 @@ static void free_frames_common(uintptr_t addr, size_t count,
 
     size_t start_page_index = addr / PAGE_SIZE;
     if (start_page_index + required_pages < start_page_index ||
-        start_page_index + required_pages > using_regions.length ||
         start_page_index + required_pages > usable_regions.length)
         return;
 
-    spin_lock(&zone->allocator.lock);
-
     for (size_t offset = 0; offset < required_pages; offset++) {
-        if (!bitmap_get(&using_regions, start_page_index + offset)) {
-            spin_unlock(&zone->allocator.lock);
+        if (!bitmap_get(&usable_regions, start_page_index + offset))
             return;
-        }
-        if (!bitmap_get(&usable_regions, start_page_index + offset)) {
-            spin_unlock(&zone->allocator.lock);
-            return;
-        }
     }
 
     if (refs_already_released) {
-        if (!pages_are_unreferenced(addr, required_pages)) {
-            spin_unlock(&zone->allocator.lock);
+        if (!pages_are_unreferenced(addr, required_pages))
             return;
-        }
     } else {
-        if (!claim_last_page_refs(addr, required_pages)) {
-            spin_unlock(&zone->allocator.lock);
+        if (!claim_last_page_refs(addr, required_pages))
             return;
-        }
     }
 
-    bitmap_set_range(&using_regions, start_page_index,
-                     start_page_index + required_pages, false);
-    buddy_free_zone_locked(zone, addr, required_order);
+    page_t *head = get_page(addr);
+    if (!head)
+        return;
+    if (head->flags & (PAGE_FLAG_BUDDY | PAGE_FLAG_PCPU))
+        return;
 
+    if (required_pages == 1 && percpu_push(zone, addr)) {
+        spin_lock(&zone->allocator.lock);
+        zone->free_pages++;
+        spin_unlock(&zone->allocator.lock);
+        return;
+    }
+
+    spin_lock(&zone->allocator.lock);
+    buddy_free_order_locked(zone, addr, required_order);
     spin_unlock(&zone->allocator.lock);
 }
 
@@ -625,54 +666,4 @@ void free_frames(uintptr_t addr, size_t count) {
 
 void free_frames_released(uintptr_t addr, size_t count) {
     free_frames_common(addr, count, true);
-}
-
-uintptr_t alloc_frames_dma32(size_t count) {
-    if (count == 0)
-        return 0;
-
-    size_t required_pages = 0;
-    if (!count_to_pages(count, &required_pages))
-        return 0;
-
-    uintptr_t addr = 0;
-
-    for (int attempt = 0; attempt < 2; attempt++) {
-        if (zones[ZONE_DMA32] && zone_has_memory(zones[ZONE_DMA32])) {
-            addr = buddy_alloc_zone(zones[ZONE_DMA32], count);
-            if (addr != 0)
-                break;
-        }
-
-#if defined(__x86_64__)
-        if (zones[ZONE_DMA] && zone_has_memory(zones[ZONE_DMA])) {
-            addr = buddy_alloc_zone(zones[ZONE_DMA], count);
-            if (addr != 0)
-                break;
-        }
-#endif
-
-        if (attempt == 0 && cache_reclaim_pages(required_pages) != 0)
-            continue;
-        break;
-    }
-
-    if (addr == 0)
-        return 0;
-
-    size_t page_index = addr / PAGE_SIZE;
-    bitmap_set_range(&using_regions, page_index, page_index + required_pages,
-                     true);
-
-    for (size_t offset = 0; offset < required_pages; offset++) {
-        page_t *page = get_page(addr + offset * PAGE_SIZE);
-        if (page)
-            page_ref(page);
-    }
-
-    return addr;
-}
-
-void free_frames_dma32(uintptr_t addr, size_t count) {
-    free_frames(addr, count);
 }

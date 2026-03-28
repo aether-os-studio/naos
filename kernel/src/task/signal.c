@@ -521,10 +521,8 @@ static bool signal_x64_copy_fpstate_to_user(task_t *task,
         return false;
 
     uint64_t saved_bytes = signal_x64_saved_fpstate_bytes();
-    void *image = alloc_frames_bytes(fpstate_bytes);
-    uint64_t image_phys = image ? virt_to_phys((uint64_t)image) : 0;
-
-    if (!image_phys)
+    void *image = malloc(fpstate_bytes);
+    if (!image)
         return false;
 
     memset(image, 0, fpstate_bytes);
@@ -552,7 +550,7 @@ static bool signal_x64_copy_fpstate_to_user(task_t *task,
     }
 
     bool ok = !copy_to_user((void *)user_fpstate_addr, image, fpstate_bytes);
-    free_frames_bytes(image, fpstate_bytes);
+    free(image);
     return ok;
 }
 

@@ -48,6 +48,17 @@ void *early_alloc(size_t size) {
     return ptr;
 }
 
+void *alloc_frames_bytes(uint64_t bytes) {
+    uint64_t addr =
+        phys_to_virt(alloc_frames(PADDING_UP(bytes, PAGE_SIZE) / PAGE_SIZE));
+    return (void *)addr;
+}
+
+void free_frames_bytes(void *ptr, uint64_t bytes) {
+    free_frames(virt_to_phys((uint64_t)ptr),
+                PADDING_UP(bytes, PAGE_SIZE) / PAGE_SIZE);
+}
+
 uint64_t get_memory_size() {
     uint64_t all_memory_size = 0;
     boot_memory_map_t *memory_map = boot_get_memory_map();

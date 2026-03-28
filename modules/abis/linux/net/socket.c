@@ -114,6 +114,7 @@ static void unix_socket_unlink_bound_path(const char *path) {
     if (!node)
         return;
 
+    vfs_close(node);
     vfs_delete(node);
 }
 
@@ -1142,6 +1143,7 @@ int socket_bind(uint64_t fd, const struct sockaddr_un *addr,
             free(safe);
             return -EADDRINUSE;
         }
+        vfs_close(existing);
         int mkret = vfs_mknod(safe, S_IFSOCK | 0666, 0);
         if (mkret < 0) {
             free(safe);
@@ -1415,6 +1417,7 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
                 ret = -ECONNREFUSED;
                 vfs_close(path_node);
             }
+            vfs_close(path_node);
         }
         free(safe);
         return ret;

@@ -134,7 +134,9 @@ uint64_t sys_inotify_add_watch(uint64_t notifyfd, const char *path_user,
     if (!node)
         return (uint64_t)-ENOENT;
     if (!(mask & IN_DONT_FOLLOW)) {
-        node = vfs_get_real_node(node);
+        vfs_node_t *target_node = vfs_get_real_node(node);
+        vfs_close(node);
+        node = target_node;
         if (!node)
             return (uint64_t)-ENOENT;
     }

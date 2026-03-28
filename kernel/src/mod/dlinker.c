@@ -1031,4 +1031,5 @@ void dlinker_init() {
     free(plans);
     free(loaded_flags);
     free(modules);
+    vfs_close(modules_root);
 }

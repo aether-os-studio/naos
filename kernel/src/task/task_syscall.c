@@ -233,7 +233,7 @@ static int map_task_elf_segment(task_t *task, vfs_node_t *node,
         return -EINVAL;
     }
 
-    map_page_range((uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
+    map_page_range((uint64_t *)phys_to_virt(task->mm->page_table_addr),
                    aligned_addr, (uint64_t)-1, alloc_size, load_flags);
 
     int ret = read_task_file_into_user_memory(task, node, aligned_addr,
@@ -250,8 +250,8 @@ static int map_task_elf_segment(task_t *task, vfs_node_t *node,
 
     if (load_flags != final_flags) {
         map_change_attribute_range(
-            (uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
-            aligned_addr, alloc_size, final_flags);
+            (uint64_t *)phys_to_virt(task->mm->page_table_addr), aligned_addr,
+            alloc_size, final_flags);
     }
 
     return 0;
@@ -448,10 +448,6 @@ void free_task(task_t *ptr) {
 
     if (!ptr->is_kernel)
         free_page_table(ptr->mm);
-
-    if (ptr->cmdline)
-        free(ptr->cmdline);
-    ptr->cmdline = NULL;
 
     ptr->arg_start = 0;
     ptr->arg_end = 0;
@@ -657,6 +653,11 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
 
     PUSH_TO_STACK(tmp_stack, uint64_t, argv_count);
 
+    if (argv_addrs)
+        free(argv_addrs);
+    if (envp_addrs)
+        free(envp_addrs);
+
     return tmp_stack;
 }
 
@@ -750,6 +751,8 @@ static int task_execve_dethread(task_t *self) {
 uint64_t task_execve(const char *path_user, const char **argv,
                      const char **envp) {
     task_t *self = current_task;
+    uint64_t exec_fail_ret = (uint64_t)-ENOEXEC;
+    char *cmdline = NULL;
 
     char path[128];
     strncpy(path, path_user, sizeof(path));
@@ -836,6 +839,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
         if (++shebang_depth > 4) {
             task_execve_free_string_array(new_argv, argv_count);
             task_execve_free_string_array(new_envp, envp_count);
+            vfs_close(node);
             return (uint64_t)-ELOOP;
         }
 
@@ -878,6 +882,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
         if (line_start == line_end) {
             task_execve_free_string_array(new_argv, argv_count);
             task_execve_free_string_array(new_envp, envp_count);
+            vfs_close(node);
             return (uint64_t)-ENOEXEC;
         }
 
@@ -892,12 +897,14 @@ uint64_t task_execve(const char *path_user, const char **argv,
             interpreter_end == line_end) {
             task_execve_free_string_array(new_argv, argv_count);
             task_execve_free_string_array(new_envp, envp_count);
+            vfs_close(node);
             return (uint64_t)-ENOEXEC;
         }
 
         if (interpreter_end == interpreter_name) {
             task_execve_free_string_array(new_argv, argv_count);
             task_execve_free_string_array(new_envp, envp_count);
+            vfs_close(node);
             return (uint64_t)-ENOEXEC;
         }
 
@@ -921,6 +928,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
         if (!replaced_argv) {
             task_execve_free_string_array(new_argv, argv_count);
             task_execve_free_string_array(new_envp, envp_count);
+            vfs_close(node);
             return (uint64_t)-ENOMEM;
         }
 
@@ -932,6 +940,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
             task_execve_free_string_array(replaced_argv, replaced_index);
             task_execve_free_string_array(new_argv, argv_count);
             task_execve_free_string_array(new_envp, envp_count);
+            vfs_close(node);
             return (uint64_t)-ENOMEM;
         }
 
@@ -941,6 +950,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 task_execve_free_string_array(replaced_argv, replaced_index);
                 task_execve_free_string_array(new_argv, argv_count);
                 task_execve_free_string_array(new_envp, envp_count);
+                vfs_close(node);
                 return (uint64_t)-ENOMEM;
             }
         }
@@ -950,6 +960,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
             task_execve_free_string_array(replaced_argv, replaced_index);
             task_execve_free_string_array(new_argv, argv_count);
             task_execve_free_string_array(new_envp, envp_count);
+            vfs_close(node);
             return (uint64_t)-ENOMEM;
         }
 
@@ -959,6 +970,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 task_execve_free_string_array(replaced_argv, replaced_index);
                 task_execve_free_string_array(new_argv, argv_count);
                 task_execve_free_string_array(new_envp, envp_count);
+                vfs_close(node);
                 return (uint64_t)-ENOMEM;
             }
         }
@@ -968,6 +980,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
             task_execve_free_string_array(replaced_argv, replaced_index);
             task_execve_free_string_array(new_argv, argv_count);
             task_execve_free_string_array(new_envp, envp_count);
+            vfs_close(node);
             return (uint64_t)-ENOENT;
         }
 
@@ -977,6 +990,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
         strncpy(path, interpreter_name, sizeof(path));
         path[sizeof(path) - 1] = '\0';
+        vfs_close(node);
         node = interpreter_node;
     }
 
@@ -989,6 +1003,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
             if (new_envp[i])
                 free(new_envp[i]);
         free(new_envp);
+        vfs_close(node);
         return (uint64_t)-ENOEXEC;
     }
 
@@ -998,6 +1013,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     if (dethread_ret < 0) {
         task_execve_free_string_array(new_argv, argv_count);
         task_execve_free_string_array(new_envp, envp_count);
+        vfs_close(node);
         return (uint64_t)dethread_ret;
     }
 
@@ -1016,6 +1032,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
             if (new_envp[i])
                 free(new_envp[i]);
         free(new_envp);
+        vfs_close(node);
         return (uint64_t)-EINVAL;
     }
 
@@ -1028,6 +1045,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
             if (new_envp[i])
                 free(new_envp[i]);
         free(new_envp);
+        vfs_close(node);
         return (uint64_t)-ENOEXEC;
     }
 
@@ -1079,10 +1097,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
     self->mm = new_mm;
 
-    if (!self->is_kernel) {
-        free_page_table(old_mm);
-    }
-
     uint64_t load_start = UINT64_MAX;
     uint64_t load_end = 0;
     uint64_t interpreter_entry = 0;
@@ -1100,17 +1114,8 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
             vfs_node_t *interpreter_node = vfs_open(interp_name, 0);
             if (!interpreter_node) {
-                if (phdr_allocated)
-                    free(phdr);
-                for (int i = 0; i < argv_count; i++)
-                    if (new_argv[i])
-                        free(new_argv[i]);
-                free(new_argv);
-                for (int i = 0; i < envp_count; i++)
-                    if (new_envp[i])
-                        free(new_envp[i]);
-                free(new_envp);
-                return (uint64_t)-ENOENT;
+                exec_fail_ret = (uint64_t)-ENOENT;
+                goto exec_fail_restore_mm;
             }
 
             Elf64_Ehdr interp_ehdr;
@@ -1140,6 +1145,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
             interpreter_entry = INTERPRETER_BASE_ADDR + interp_ehdr.e_entry;
             free(interp_phdr);
+            vfs_close(interpreter_node);
 
         } else if (phdr[i].p_type == PT_LOAD) {
             uint64_t seg_addr = real_load_start + phdr[i].p_vaddr;
@@ -1173,99 +1179,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
     if (phdr_allocated) {
         free(phdr);
     }
-
-    vfs_node_t *old_exec_node = self->exec_node;
-    vfs_node_ref_get(node);
-    self->exec_node = node;
-    if (old_exec_node)
-        vfs_close(old_exec_node);
-
-    map_page_range((uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
-                   USER_STACK_END - PAGE_SIZE * 8, (uint64_t)-1, PAGE_SIZE * 8,
-                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
-
-    uint64_t stack = push_infos(
-        self, USER_STACK_END, (char **)new_argv, argv_count, (char **)new_envp,
-        envp_count, e_entry, phdr_vaddr, ehdr->e_phnum,
-        interpreter_entry ? INTERPRETER_BASE_ADDR : 0, path);
-
-    if (self->clone_flags & CLONE_FILES) {
-        fd_info_t *old = self->fd_info;
-        fd_info_t *new = calloc(1, sizeof(fd_info_t));
-        new->ref_count++;
-
-        mutex_init(&new->fdt_lock);
-        with_fd_info_lock(old, {
-            for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-                fd_t *fd = old->fds[i];
-
-                if (fd) {
-                    new->fds[i] = vfs_dup(fd);
-                } else {
-                    new->fds[i] = NULL;
-                }
-            }
-        });
-
-        self->fd_info = new;
-        task_fd_info_put(old, self);
-    }
-
-    string_builder_t *builder = create_string_builder(PAGE_SIZE * 8);
-    for (int i = 0; i < argv_count; i++) {
-        string_builder_append(builder, new_argv[i]);
-        if (i != argv_count - 1)
-            string_builder_append(builder, " ");
-    }
-    char *cmdline = builder->data;
-    free(builder);
-
-    for (int i = 0; i < argv_count; i++) {
-        if (new_argv[i]) {
-            free(new_argv[i]);
-        }
-    }
-    free(new_argv);
-    for (int i = 0; i < envp_count; i++) {
-        if (new_envp[i]) {
-            free(new_envp[i]);
-        }
-    }
-    free(new_envp);
-
-    with_fd_info_lock(self->fd_info, {
-        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-            if (!self->fd_info->fds[i])
-                continue;
-
-            if (self->fd_info->fds[i]->close_on_exec) {
-                fd_t *entry = self->fd_info->fds[i];
-                self->fd_info->fds[i] = NULL;
-                on_close_file_call(self, i, entry);
-                fd_release(entry);
-            }
-        }
-    });
-
-    task_signal_info_t *new_signal = task_signal_reset_after_exec(self);
-    if (!new_signal)
-        return (uint64_t)-ENOMEM;
-    task_signal_free(self->signal);
-    self->signal = new_signal;
-
-    char *old_cmdline = self->cmdline;
-    self->cmdline = strdup(cmdline);
-    free(cmdline);
-    if (old_cmdline)
-        free(old_cmdline);
-    self->load_start = load_start;
-    self->load_end = load_end;
-
-    if (interpreter_path)
-        free(interpreter_path);
-
-    strncpy(self->name, path, TASK_NAME_MAX);
-    self->name[TASK_NAME_MAX - 1] = '\0';
 
     vma_t *stack_guard_vma = vma_alloc();
     vma_t *region =
@@ -1304,6 +1217,104 @@ uint64_t task_execve(const char *path_user, const char **argv,
         }
     }
 
+    uint64_t stack = push_infos(
+        self, USER_STACK_END, (char **)new_argv, argv_count, (char **)new_envp,
+        envp_count, e_entry, phdr_vaddr, ehdr->e_phnum,
+        interpreter_entry ? INTERPRETER_BASE_ADDR : 0, path);
+
+    if (self->clone_flags & CLONE_FILES) {
+        fd_info_t *old = self->fd_info;
+        fd_info_t *new = calloc(1, sizeof(fd_info_t));
+        new->ref_count++;
+
+        mutex_init(&new->fdt_lock);
+        with_fd_info_lock(old, {
+            for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+                fd_t *fd = old->fds[i];
+
+                if (fd) {
+                    new->fds[i] = vfs_dup(fd);
+                } else {
+                    new->fds[i] = NULL;
+                }
+            }
+        });
+
+        self->fd_info = new;
+        task_fd_info_put(old, self);
+    }
+
+    string_builder_t *builder = create_string_builder(PAGE_SIZE * 8);
+    for (int i = 0; i < argv_count; i++) {
+        string_builder_append(builder, new_argv[i]);
+        if (i != argv_count - 1)
+            string_builder_append(builder, " ");
+    }
+    cmdline = builder->data;
+    free(builder);
+
+    for (int i = 0; i < argv_count; i++) {
+        if (new_argv[i]) {
+            free(new_argv[i]);
+        }
+    }
+    free(new_argv);
+    new_argv = NULL;
+    for (int i = 0; i < envp_count; i++) {
+        if (new_envp[i]) {
+            free(new_envp[i]);
+        }
+    }
+    free(new_envp);
+    new_envp = NULL;
+
+    with_fd_info_lock(self->fd_info, {
+        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+            if (!self->fd_info->fds[i])
+                continue;
+
+            if (self->fd_info->fds[i]->close_on_exec) {
+                fd_t *entry = self->fd_info->fds[i];
+                self->fd_info->fds[i] = NULL;
+                on_close_file_call(self, i, entry);
+                fd_release(entry);
+            }
+        }
+    });
+
+    task_signal_info_t *new_signal = task_signal_reset_after_exec(self);
+    if (!new_signal) {
+        exec_fail_ret = (uint64_t)-ENOMEM;
+        goto exec_fail_restore_mm;
+    }
+
+    vfs_node_t *old_exec_node = self->exec_node;
+    vfs_node_ref_get(node);
+    self->exec_node = node;
+    vfs_close(node);
+    if (old_exec_node)
+        vfs_close(old_exec_node);
+
+    if (!self->is_kernel)
+        free_page_table(old_mm);
+
+    task_signal_free(self->signal);
+    self->signal = new_signal;
+
+    self->load_start = load_start;
+    self->load_end = load_end;
+
+    if (interpreter_path)
+        free(interpreter_path);
+
+    strncpy(self->name, path, TASK_NAME_MAX);
+    self->name[TASK_NAME_MAX - 1] = '\0';
+
+    if (cmdline) {
+        free(cmdline);
+        cmdline = NULL;
+    }
+
     task_complete_vfork(self);
     self->clone_flags = 0;
     self->is_clone = false;
@@ -1313,6 +1324,38 @@ uint64_t task_execve(const char *path_user, const char **argv,
                       interpreter_entry ? interpreter_entry : e_entry, stack);
 
     return (uint64_t)-EAGAIN;
+
+exec_fail_restore_mm:
+    self->mm = old_mm;
+#if defined(__x86_64__)
+    asm volatile("movq %0, %%cr3" ::"r"(old_mm->page_table_addr));
+#elif defined(__aarch64__)
+    asm volatile("msr TTBR0_EL1, %0" : : "r"(old_mm->page_table_addr));
+    asm volatile("dsb ishst\n\t"
+                 "tlbi vmalle1is\n\t"
+                 "dsb ish\n\t"
+                 "isb\n\t");
+#elif defined(__riscv__)
+    {
+        uint64_t satp_old =
+            MAKE_SATP_PADDR(SATP_MODE_SV48, 0, old_mm->page_table_addr);
+        asm volatile("csrw satp, %0" : : "r"(satp_old) : "memory");
+        asm volatile("sfence.vma");
+        csr_set(sstatus, (1UL << 18));
+    }
+#endif
+    free_page_table(new_mm);
+    if (interpreter_path)
+        free(interpreter_path);
+    if (cmdline)
+        free(cmdline);
+    if (phdr_allocated)
+        free(phdr);
+    task_execve_free_string_array(new_argv, argv_count);
+    task_execve_free_string_array(new_envp, envp_count);
+    vfs_close(node);
+
+    return exec_fail_ret;
 }
 
 uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
@@ -1777,11 +1820,14 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     if (!self->mm) {
         printk("src->mm == NULL!!! src = %#018lx\n", self);
+        return -ENOMEM;
     }
     child->mm = clone_page_table(self->mm, flags);
     if (!child->mm) {
         printk("dst->mm == NULL!!! dst = %#018lx\n", child);
+        return -ENOMEM;
     }
+
     child->arch_context = malloc(sizeof(arch_context_t));
     memset(child->arch_context, 0, sizeof(arch_context_t));
     arch_context_t orig_context;
@@ -1790,8 +1836,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     arch_context_copy(child->arch_context, &orig_context, child->kernel_stack,
                       flags);
     shm_fork(self, child);
-
-    arch_flush_tlb_all();
 
 #if defined(__x86_64__)
     uint64_t user_sp = regs->rsp;
@@ -1832,7 +1876,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     child->priority = NORMAL_PRIORITY;
 
-    child->cmdline = self->cmdline ? strdup(self->cmdline) : NULL;
     child->arg_start = self->arg_start;
     child->arg_end = self->arg_end;
     child->env_start = self->env_start;
@@ -1866,8 +1909,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     task_parent_index_attach_locked(child);
     task_pgid_index_attach_locked(child);
     spin_unlock(&task_queue_lock);
-
-    child->shm_ids = NULL;
 
     child->signal->signal = 0;
 

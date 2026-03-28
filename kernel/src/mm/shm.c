@@ -130,17 +130,24 @@ static int shm_create_dev_node_locked(shm_t *shm) {
         vfs_mkdir("/dev/shm");
         shm_dir = vfs_open("/dev/shm", 0);
     }
-    if (!shm_dir || !(shm_dir->type & file_dir))
+    if (!shm_dir || !(shm_dir->type & file_dir)) {
+        if (shm_dir)
+            vfs_close(shm_dir);
         return -ENOENT;
+    }
 
     sprintf(shm->node_name, "sysv_%d", shm->shmid);
 
-    if (vfs_child_find(shm_dir, shm->node_name))
+    if (vfs_child_find(shm_dir, shm->node_name)) {
+        vfs_close(shm_dir);
         return -EEXIST;
+    }
 
     vfs_node_t *node = vfs_node_alloc(shm_dir, shm->node_name);
-    if (!node)
+    if (!node) {
+        vfs_close(shm_dir);
         return -ENOMEM;
+    }
     node->handle = shm;
 
     node->type = file_none;
@@ -152,6 +159,7 @@ static int shm_create_dev_node_locked(shm_t *shm) {
     node->handle = shm;
 
     shm->node = node;
+    vfs_close(shm_dir);
 
     return 0;
 }
@@ -368,9 +376,14 @@ static void *shmfs_map(fd_t *file, void *addr, size_t offset, size_t size,
     if (!(pt_flags & (PT_FLAG_R | PT_FLAG_W | PT_FLAG_X)))
         pt_flags |= PT_FLAG_R;
 
-    map_page_range_mm(current_task->mm, (uint64_t)addr,
-                      virt_to_phys((uint64_t)shm->addr + offset), size,
-                      pt_flags);
+    uint64_t start = (uint64_t)addr;
+    uint64_t *pgdir = get_current_page_dir(true);
+    for (uint64_t ptr = start; ptr < start + size; ptr += PAGE_SIZE) {
+        map_page_range_mm(current_task->mm, ptr,
+                          translate_address(pgdir, (uint64_t)shm->addr +
+                                                       offset + ptr - start),
+                          PAGE_SIZE, pt_flags);
+    }
 
     spin_unlock(&shm_op_lock);
     return addr;
@@ -540,9 +553,15 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
     if (shmflg & SHM_EXEC)
         flags |= PT_FLAG_X;
 
+    uint64_t start = (uint64_t)addr;
+    uint64_t *pgdir = get_current_page_dir(true);
     spin_lock(&current_task->mm->lock);
-    map_page_range_mm(current_task->mm, addr, virt_to_phys((uint64_t)shm->addr),
-                      shm->size, flags);
+    for (uint64_t ptr = start; ptr < start + shm->size; ptr += PAGE_SIZE) {
+        map_page_range_mm(
+            current_task->mm, ptr,
+            translate_address(pgdir, (uint64_t)shm->addr + ptr - start),
+            PAGE_SIZE, flags);
+    }
     spin_unlock(&current_task->mm->lock);
 
     vma_t *vma = vma_alloc();

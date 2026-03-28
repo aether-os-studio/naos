@@ -1342,7 +1342,7 @@ int nvidia_destroy_dumb(drm_device_t *drm_dev, uint32_t handle, fd_t *fd) {
         return 0;
     }
 
-    free_frames(fb->map_offset, 1);
+    address_release(fb->map_offset);
     if (fb->surface) {
         nvKms->destroySurface(nv_dev->kmsdev, fb->surface);
     }

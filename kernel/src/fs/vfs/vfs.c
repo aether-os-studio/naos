@@ -339,6 +339,9 @@ void vfs_merge_nodes_to(vfs_node_t *dest, vfs_node_t *source) {
     free(nodes);
 }
 
+static vfs_node_t *vfs_open_at_impl(vfs_node_t *start, const char *_path,
+                                    uint64_t flags, bool take_ref);
+
 vfs_node_t *vfs_get_real_node(vfs_node_t *node) {
     if (!node)
         return NULL;
@@ -352,7 +355,7 @@ vfs_node_t *vfs_get_real_node(vfs_node_t *node) {
         return NULL;
     target_path[len] = '\0';
     vfs_node_t *target_node =
-        vfs_open_at(node->parent, (const char *)target_path, 0);
+        vfs_open_at_impl(node->parent, (const char *)target_path, 0, true);
 
     return target_node;
 }
@@ -1354,6 +1357,7 @@ int vfs_chmod(const char *path, uint16_t mode) {
     int ret = vfs_ops_of(node)->chmod(node, mode);
     if (ret >= 0)
         vfs_on_new_event(node, IN_ATTRIB);
+    vfs_close(node);
     return ret;
 }
 
@@ -1392,7 +1396,8 @@ int vfs_regist(fs_t *fs) {
 
 extern vfs_node_t *procfs_root;
 
-vfs_node_t *vfs_open_at(vfs_node_t *start, const char *_path, uint64_t flags) {
+static vfs_node_t *vfs_open_at_impl(vfs_node_t *start, const char *_path,
+                                    uint64_t flags, bool take_ref) {
     if (!start)
         return NULL;
 
@@ -1408,6 +1413,8 @@ vfs_node_t *vfs_open_at(vfs_node_t *start, const char *_path, uint64_t flags) {
     char *path;
     if (_path[0] == '/') {
         if (_path[1] == '\0') {
+            if (take_ref)
+                vfs_node_ref_get(root);
             return root;
         }
         current = root;
@@ -1464,8 +1471,6 @@ vfs_node_t *vfs_open_at(vfs_node_t *start, const char *_path, uint64_t flags) {
         }
 
         if (current->type & file_symlink) {
-            vfs_node_t *symlink_node = current;
-            vfs_node_ref_get(symlink_node);
             char target_path[512];
             int len = vfs_readlink(current, target_path, sizeof(target_path));
             if (len <= 0) {
@@ -1474,8 +1479,8 @@ vfs_node_t *vfs_open_at(vfs_node_t *start, const char *_path, uint64_t flags) {
                 goto err;
             }
             target_path[len] = '\0';
-            vfs_node_t *target_node =
-                vfs_open_at(current->parent, (const char *)target_path, 0);
+            vfs_node_t *target_node = vfs_open_at_impl(
+                current->parent, (const char *)target_path, 0, false);
 
             if (!target_node)
                 goto err;
@@ -1505,8 +1510,6 @@ vfs_node_t *vfs_open_at(vfs_node_t *start, const char *_path, uint64_t flags) {
             // current->handle = target->handle;
             // current->root = target->root;
             current->mode = target_mode;
-            uint64_t symlink_flags = symlink_node->flags;
-
             char *p = strdup(save_ptr);
             char *ptr = p;
             const char *buf = pathtok(&ptr);
@@ -1519,20 +1522,22 @@ vfs_node_t *vfs_open_at(vfs_node_t *start, const char *_path, uint64_t flags) {
             free(p);
 
             current = target;
-
-            if (symlink_flags & VFS_NODE_FLAGS_FREE_AFTER_USE) {
-                vfs_close(symlink_node);
-            }
         }
     }
 
 done:
+    if (current && take_ref)
+        vfs_node_ref_get(current);
     free(path);
     return current;
 
 err:
     free(path);
     return NULL;
+}
+
+vfs_node_t *vfs_open_at(vfs_node_t *start, const char *_path, uint64_t flags) {
+    return vfs_open_at_impl(start, _path, flags, true);
 }
 
 vfs_node_t *vfs_open(const char *_path, uint64_t flags) {
@@ -1668,6 +1673,9 @@ void vfs_delete_mount_point_by_dir(vfs_node_t *dir) {
     free(target);
 }
 
+static ssize_t vfs_read_fd_impl(fd_t *fd, void *addr, size_t offset,
+                                size_t size, bool allow_cache);
+
 ssize_t vfs_read(vfs_node_t *file, void *addr, size_t offset, size_t size) {
     fd_shared_t shared = {
         .offset = offset,
@@ -1679,10 +1687,34 @@ ssize_t vfs_read(vfs_node_t *file, void *addr, size_t offset, size_t size) {
         .shared = &shared,
         .close_on_exec = false,
     };
-    return vfs_read_fd(&fd, addr, offset, size);
+    return vfs_read_fd_impl(&fd, addr, offset, size, true);
+}
+
+ssize_t vfs_read_nocache(vfs_node_t *file, void *addr, size_t offset,
+                         size_t size) {
+    fd_shared_t shared = {
+        .offset = offset,
+        .flags = O_RDONLY,
+        .ref_count = 1,
+    };
+    fd_t fd = {
+        .node = file,
+        .shared = &shared,
+        .close_on_exec = false,
+    };
+    return vfs_read_fd_impl(&fd, addr, offset, size, false);
 }
 
 ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size) {
+    return vfs_read_fd_impl(fd, addr, offset, size, true);
+}
+
+ssize_t vfs_read_fd_nocache(fd_t *fd, void *addr, size_t offset, size_t size) {
+    return vfs_read_fd_impl(fd, addr, offset, size, false);
+}
+
+static ssize_t vfs_read_fd_impl(fd_t *fd, void *addr, size_t offset,
+                                size_t size, bool allow_cache) {
     do_update(fd->node);
     const vfs_operations_t *ops = vfs_ops_of(fd->node);
     uint64_t file_flags = fd_get_flags(fd);
@@ -1706,10 +1738,14 @@ ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size) {
             return -ENOENT;
         do_update(linknode);
 
-        return vfs_read(linknode, addr, offset, size);
+        ssize_t read_ret = allow_cache
+                               ? vfs_read(linknode, addr, offset, size)
+                               : vfs_read_nocache(linknode, addr, offset, size);
+        vfs_close(linknode);
+        return read_ret;
     }
 
-    ssize_t ret = vfs_node_is_cacheable(fd->node)
+    ssize_t ret = allow_cache && vfs_node_is_cacheable(fd->node)
                       ? cache_page_read(fd->node, fd, ops, addr, offset, size)
                       : ops->read(fd, addr, offset, size);
     if (ret > 0) {
@@ -1763,7 +1799,9 @@ ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size) {
             return -ENOENT;
         do_update(linknode);
 
-        return vfs_write(linknode, addr, offset, size);
+        ssize_t write_ret = vfs_write(linknode, addr, offset, size);
+        vfs_close(linknode);
+        return write_ret;
     }
 
     ssize_t write_bytes = 0;
@@ -1783,12 +1821,16 @@ int vfs_unmount(const char *path) {
     vfs_node_t *node = vfs_open(path, 0);
     if (node == NULL)
         return -ENOENT;
-    if (!(node->type & file_dir))
+    if (!(node->type & file_dir)) {
+        vfs_close(node);
         return -ENOTDIR;
+    }
     uint32_t fsid = 0;
     fsid = node->fsid;
-    if (fsid == 0)
+    if (fsid == 0) {
+        vfs_close(node);
         return -EINVAL;
+    }
     vfs_ops_of(node)->unmount(node);
     vfs_delete_mount_point_by_dir(node);
     return 0;
@@ -1976,6 +2018,8 @@ int vfs_rename(vfs_node_t *node, const char *new) {
     vfs_node_t *old_parent = node->parent;
     vfs_node_t *new_parent = vfs_open(parent_path, 0);
     if (!new_parent) {
+        if (replaced_node)
+            vfs_close(replaced_node);
         free(new_name);
         free(path);
         return -ENOENT;
@@ -1983,12 +2027,17 @@ int vfs_rename(vfs_node_t *node, const char *new) {
 
     if (new_parent == old_parent && node->name &&
         !strcmp(node->name, new_name)) {
+        if (replaced_node)
+            vfs_close(replaced_node);
+        vfs_close(new_parent);
         free(new_name);
         free(path);
         return 0;
     }
 
     if (replaced_node && replaced_node->inode == node->inode) {
+        vfs_close(replaced_node);
+        vfs_close(new_parent);
         free(new_name);
         free(path);
         return 0;
@@ -1996,6 +2045,9 @@ int vfs_rename(vfs_node_t *node, const char *new) {
 
     int ret = vfs_ops_of(node)->rename(node, new);
     if (ret < 0) {
+        if (replaced_node)
+            vfs_close(replaced_node);
+        vfs_close(new_parent);
         free(new_name);
         free(path);
         return ret;
@@ -2004,6 +2056,7 @@ int vfs_rename(vfs_node_t *node, const char *new) {
     if (replaced_node) {
         vfs_on_new_event(replaced_node, IN_DELETE_SELF);
         vfs_forget_cached_node(replaced_node);
+        vfs_close(replaced_node);
     }
 
     uint32_t cookie = vfs_next_notify_cookie();
@@ -2018,6 +2071,7 @@ int vfs_rename(vfs_node_t *node, const char *new) {
     vfs_on_named_child_event(new_parent, node, new_name, IN_MOVED_TO, cookie);
     vfs_on_new_event(node, IN_MOVE_SELF);
 
+    vfs_close(new_parent);
     free(old_name);
     free(path);
     return ret;

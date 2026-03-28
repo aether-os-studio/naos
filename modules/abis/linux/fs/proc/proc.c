@@ -604,18 +604,23 @@ void procfs_on_new_task(task_t *task) {
     char tgid_name[MAX_PID_NAME_LEN];
     sprintf(tgid_name, "%d", (int)tgid);
 
+    bool close_proc_root = false;
     vfs_node_t *proc_root =
         task->pid == tgid ? node : vfs_open_at(procfs_root, tgid_name, 0);
     if (!proc_root) {
         task->procfs_thread_node = NULL;
         return;
     }
+    close_proc_root = task->pid != tgid;
 
+    bool close_task_root = false;
     vfs_node_t *task_root = vfs_open_at(proc_root, "task", 0);
     if (!task_root) {
         task_root = vfs_node_alloc(proc_root, "task");
         task_root->type = file_dir;
         task_root->mode = 0555;
+    } else {
+        close_task_root = true;
     }
 
     vfs_node_t *thread_node = vfs_node_alloc(task_root, name);
@@ -625,6 +630,11 @@ void procfs_on_new_task(task_t *task) {
 
     thread_node->refcount++;
     task->procfs_thread_node = thread_node;
+
+    if (close_task_root)
+        vfs_close(task_root);
+    if (close_proc_root)
+        vfs_close(proc_root);
 }
 
 void procfs_on_open_file(task_t *task, int fd) {
@@ -644,12 +654,14 @@ void procfs_on_exit_task(task_t *task) {
     vfs_node_t *procfs_thread_node = task->procfs_thread_node;
     task->procfs_thread_node = NULL;
     if (procfs_thread_node) {
+        vfs_close(procfs_thread_node);
         vfs_free(procfs_thread_node);
     }
 
     vfs_node_t *procfs_node = task->procfs_node;
     task->procfs_node = NULL;
     if (procfs_node) {
+        vfs_close(procfs_node);
         vfs_free(procfs_node);
     }
 }

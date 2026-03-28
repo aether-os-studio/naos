@@ -41,8 +41,6 @@ void frame_init();
 // 分配/释放（高层接口）
 uintptr_t alloc_frames(size_t count);
 void free_frames(uintptr_t addr, size_t count);
-uintptr_t alloc_frames_dma32(size_t count);
-void free_frames_dma32(uintptr_t addr, size_t count);
 void free_frames_released(uintptr_t addr, size_t count);
 
 static inline uint64_t *task_mm_pgdir(task_mm_info_t *mm) {
@@ -85,32 +83,8 @@ void unmap_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t size);
 uint64_t map_change_attribute_range_mm(task_mm_info_t *mm, uint64_t vaddr,
                                        uint64_t len, uint64_t flags);
 
-typedef struct {
-    uintptr_t addr;
-    size_t actual_count; // 实际分配的页数
-} alloc_result_t;
-
-static inline void *alloc_frames_bytes(uint64_t bytes) {
-    uint64_t addr =
-        phys_to_virt(alloc_frames((bytes + PAGE_SIZE - 1) / PAGE_SIZE));
-    return (void *)addr;
-}
-
-static inline void free_frames_bytes(void *ptr, uint64_t bytes) {
-    free_frames(virt_to_phys((uint64_t)ptr),
-                (bytes + PAGE_SIZE - 1) / PAGE_SIZE);
-}
-
-static inline void *alloc_frames_bytes_dma32(uint64_t bytes) {
-    uint64_t addr =
-        phys_to_virt(alloc_frames_dma32((bytes + PAGE_SIZE - 1) / PAGE_SIZE));
-    return (void *)addr;
-}
-
-static inline void free_frames_bytes_dma32(void *ptr, uint64_t bytes) {
-    free_frames_dma32(virt_to_phys((uint64_t)ptr),
-                      (bytes + PAGE_SIZE - 1) / PAGE_SIZE);
-}
+void *alloc_frames_bytes(uint64_t bytes);
+void free_frames_bytes(void *ptr, uint64_t bytes);
 
 extern void dcache_clean_range(void *addr, size_t size);
 extern void dcache_invalidate_range(void *addr, size_t size);

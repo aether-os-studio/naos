@@ -249,7 +249,9 @@ int ramfs_link(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     vfs_node_t *target = vfs_open(name, O_NOFOLLOW);
     if (!target)
         return -ENOENT;
-    return ramfs_link_target(parent, target, node);
+    int ret = ramfs_link_target(parent, target, node);
+    vfs_close(target);
+    return ret;
 }
 
 int ramfs_mount(uint64_t dev, vfs_node_t *node) {
@@ -362,10 +364,14 @@ void *ramfs_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
     if (!(pt_flags & (PT_FLAG_R | PT_FLAG_W | PT_FLAG_X)))
         pt_flags |= PT_FLAG_R;
 
-    map_page_range((uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
-                   (uint64_t)addr,
-                   virt_to_phys((uint64_t)handle->content + offset), size,
-                   pt_flags);
+    uint64_t start = (uint64_t)addr;
+    uint64_t *pgdir = get_current_page_dir(true);
+    for (uint64_t ptr = start; ptr < start + size; ptr += PAGE_SIZE) {
+        map_page_range(pgdir, ptr,
+                       translate_address(pgdir, (uint64_t)handle->content +
+                                                    offset + ptr - start),
+                       PAGE_SIZE, pt_flags);
+    }
 
     return addr;
 }

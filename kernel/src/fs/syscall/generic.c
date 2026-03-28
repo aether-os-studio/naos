@@ -307,53 +307,85 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
 
     if (flags & MS_MOVE) {
         if (flags & (MS_REMOUNT | MS_BIND)) {
+            vfs_close(dir);
             return (uint64_t)-EINVAL;
         }
         if (!current_task || !current_task->nsproxy ||
             !current_task->nsproxy->mnt_ns) {
+            vfs_close(dir);
             return (uint64_t)-EINVAL;
         }
 
         vfs_node_t *old_mount = vfs_open((const char *)devname, 0);
-        if (!old_mount)
+        if (!old_mount) {
+            vfs_close(dir);
             return (uint64_t)-EINVAL;
-        if (!(old_mount->type & file_dir))
+        }
+        if (!(old_mount->type & file_dir)) {
+            vfs_close(old_mount);
+            vfs_close(dir);
             return (uint64_t)-ENOTDIR;
+        }
 
         struct mount_point *mnt = task_mnt_namespace_find_mount_by_root(
             current_task->nsproxy->mnt_ns, old_mount);
         if (!mnt)
             mnt = task_mnt_namespace_find_mount(current_task->nsproxy->mnt_ns,
                                                 old_mount);
-        if (!mnt)
+        if (!mnt) {
+            vfs_close(old_mount);
+            vfs_close(dir);
             return (uint64_t)-EINVAL;
-        if (mnt->dir == target_dir)
+        }
+        if (mnt->dir == target_dir) {
+            vfs_close(old_mount);
+            vfs_close(dir);
             return 0;
-        if (vfs_is_ancestor(mnt->root_node, dir))
+        }
+        if (vfs_is_ancestor(mnt->root_node, dir)) {
+            vfs_close(old_mount);
+            vfs_close(dir);
             return (uint64_t)-EINVAL;
+        }
 
-        if (!(target_dir->type & file_dir))
+        if (!(target_dir->type & file_dir)) {
+            vfs_close(old_mount);
+            vfs_close(dir);
             return (uint64_t)-ENOTDIR;
+        }
 
-        return task_mnt_namespace_move_mount(current_task->nsproxy->mnt_ns,
-                                             mnt->dir, target_dir);
+        uint64_t move_ret = task_mnt_namespace_move_mount(
+            current_task->nsproxy->mnt_ns, mnt->dir, target_dir);
+        vfs_close(old_mount);
+        vfs_close(dir);
+        return move_ret;
     }
 
     if (flags & MS_REMOUNT) {
-        if (flags & (MS_MOVE | MS_BIND))
+        if (flags & (MS_MOVE | MS_BIND)) {
+            vfs_close(dir);
             return (uint64_t)-EINVAL;
+        }
         if (!current_task || !current_task->nsproxy ||
-            !current_task->nsproxy->mnt_ns)
+            !current_task->nsproxy->mnt_ns) {
+            vfs_close(dir);
             return (uint64_t)-EINVAL;
+        }
         if (!task_mnt_namespace_find_mount_by_root(
                 current_task->nsproxy->mnt_ns, dir) &&
-            !task_mnt_namespace_find_mount(current_task->nsproxy->mnt_ns, dir))
+            !task_mnt_namespace_find_mount(current_task->nsproxy->mnt_ns,
+                                           dir)) {
+            vfs_close(dir);
             return (uint64_t)-EINVAL;
+        }
+        vfs_close(dir);
         return 0;
     }
 
-    if (target_dir == target_dir->root)
+    if (target_dir == target_dir->root) {
+        vfs_close(dir);
         return -EBUSY;
+    }
 
     uint64_t dev_nr = 0;
     vfs_node_t *dev = vfs_open((const char *)devname, 0);
@@ -363,21 +395,35 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
 
     if (mnt_ns) {
         vfs_node_t *root_node = vfs_create_detached_mount_root(target_dir);
-        if (!root_node)
+        if (!root_node) {
+            if (dev)
+                vfs_close(dev);
+            vfs_close(dir);
             return -ENOMEM;
+        }
 
         int ret = vfs_mount(dev_nr, root_node, (const char *)type);
         if (ret < 0) {
             vfs_free(root_node);
+            if (dev)
+                vfs_close(dev);
+            vfs_close(dir);
             return ret;
         }
 
         task_mnt_namespace_add_mount(mnt_ns, all_fs[root_node->fsid],
                                      target_dir, root_node, devname);
+        if (dev)
+            vfs_close(dev);
+        vfs_close(dir);
         return ret;
     }
 
-    return vfs_mount(dev_nr, dir, (const char *)type);
+    int mount_ret = vfs_mount(dev_nr, dir, (const char *)type);
+    if (dev)
+        vfs_close(dev);
+    vfs_close(dir);
+    return mount_ret;
 }
 
 uint64_t sys_umount2(const char *target, uint64_t flags) {
@@ -401,20 +447,26 @@ uint64_t sys_umount2(const char *target, uint64_t flags) {
 
     int ret = 0;
     if (mnt && mnt->root_node) {
-        if (!mnt->fs || !mnt->fs->ops || !mnt->fs->ops->unmount)
+        if (!mnt->fs || !mnt->fs->ops || !mnt->fs->ops->unmount) {
+            vfs_close(node);
             return (uint64_t)-EINVAL;
+        }
         mnt->fs->ops->unmount(mnt->root_node);
         task_mnt_namespace_remove_mount(current_task->nsproxy->mnt_ns,
                                         mnt->root_node);
+        vfs_close(node);
         return 0;
     } else {
         ret = vfs_unmount(target_k);
-        if (ret < 0)
+        if (ret < 0) {
+            vfs_close(node);
             return (uint64_t)ret;
+        }
     }
 
     if (current_task && current_task->nsproxy && current_task->nsproxy->mnt_ns)
         task_mnt_namespace_remove_mount(current_task->nsproxy->mnt_ns, node);
+    vfs_close(node);
     return 0;
 }
 
@@ -441,10 +493,12 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
 
     vfs_node_t *node = vfs_open(name, flags & O_NOFOLLOW);
     if (node && create_mode && (flags & O_EXCL)) {
+        vfs_close(node);
         return (uint64_t)-EEXIST;
     }
 
     if (node && (flags & O_DIRECTORY) && !(node->type & file_dir)) {
+        vfs_close(node);
         return (uint64_t)-ENOTDIR;
     }
 
@@ -477,6 +531,7 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
 have_node:
     if ((node->type & file_dir) &&
         (acc_mode == O_WRONLY || acc_mode == O_RDWR)) {
+        vfs_close(node);
         return (uint64_t)-EISDIR;
     }
 
@@ -502,10 +557,12 @@ have_node:
             break;
         }
         self->fd_info->fds[i] = new_fd;
-        vfs_node_ref_get(node);
         on_open_file_call(self, i);
         ret = i;
     });
+
+    if ((int64_t)ret < 0)
+        vfs_close(node);
 
     return ret;
 }
@@ -559,6 +616,7 @@ uint64_t sys_name_to_handle_at(int dfd, const char *name,
 
     if (handle->handle_bytes < required_size) {
         handle->handle_bytes = required_size;
+        vfs_close(node);
         return (uint64_t)-EOVERFLOW;
     }
 
@@ -566,18 +624,22 @@ uint64_t sys_name_to_handle_at(int dfd, const char *name,
     handle->handle_type = 1; // Generic file handle type
 
     if (check_user_overflow((uint64_t)handle->f_handle, required_size)) {
+        vfs_close(node);
         return (uint64_t)-EFAULT;
     }
 
     if (copy_to_user(handle->f_handle, &node->inode, sizeof(uint64_t))) {
+        vfs_close(node);
         return (uint64_t)-EFAULT;
     }
+
+    int mount_id = (int)node->fsid;
+    vfs_close(node);
 
     if (mnt_id) {
         if (check_user_overflow((uint64_t)mnt_id, sizeof(int))) {
             return (uint64_t)-EFAULT;
         }
-        int mount_id = (int)node->fsid;
         if (copy_to_user(mnt_id, &mount_id, sizeof(int))) {
             return (uint64_t)-EFAULT;
         }
@@ -1345,12 +1407,20 @@ uint64_t sys_chdir(const char *dname) {
     if (!new_cwd)
         return (uint64_t)-ENOENT;
     if (new_cwd->type & file_symlink) {
+        vfs_node_t *symlink = new_cwd;
         new_cwd = vfs_get_real_node(new_cwd);
+        vfs_close(symlink);
+        if (!new_cwd)
+            return (uint64_t)-ENOENT;
     }
-    if (!(new_cwd->type & file_dir))
+    if (!(new_cwd->type & file_dir)) {
+        vfs_close(new_cwd);
         return (uint64_t)-ENOTDIR;
+    }
 
-    return task_fs_chdir(current_task, new_cwd);
+    int ret = task_fs_chdir(current_task, new_cwd);
+    vfs_close(new_cwd);
+    return ret;
 }
 
 uint64_t sys_chroot(const char *dname) {
@@ -1362,18 +1432,29 @@ uint64_t sys_chroot(const char *dname) {
     vfs_node_t *new_root = vfs_open(dirname, 0);
     if (!new_root)
         return (uint64_t)-ENOENT;
-    if (new_root->type & file_symlink)
+    if (new_root->type & file_symlink) {
+        vfs_node_t *symlink = new_root;
         new_root = vfs_get_real_node(new_root);
-    if (!(new_root->type & file_dir))
+        vfs_close(symlink);
+        if (!new_root)
+            return (uint64_t)-ENOENT;
+    }
+    if (!(new_root->type & file_dir)) {
+        vfs_close(new_root);
         return (uint64_t)-ENOTDIR;
+    }
 
     int ret = task_fs_chroot(current_task, new_root);
-    if (ret < 0)
+    if (ret < 0) {
+        vfs_close(new_root);
         return (uint64_t)ret;
+    }
 
     if (!vfs_is_ancestor(new_root, task_fs_cwd(current_task))) {
         task_fs_chdir(current_task, new_root);
     }
+
+    vfs_close(new_root);
 
     return 0;
 }
@@ -1650,6 +1731,7 @@ uint64_t do_stat_path(const char *path, struct stat *buf) {
     buf->st_blksize = node->blksz;
     buf->st_size = node->size;
     buf->st_blocks = (buf->st_size + buf->st_blksize - 1) / buf->st_blksize;
+    vfs_close(node);
 
     return 0;
 }
@@ -1768,6 +1850,7 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
     task_t *self = current_task;
 
     vfs_node_t *node = NULL;
+    bool opened_node = false;
 
     if (flags & AT_EMPTY_PATH) {
         if (dirfd >= MAX_FD_NUM || !self->fd_info->fds[dirfd])
@@ -1786,14 +1869,17 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
         uint64_t ret = do_stat_path(resolved, &simple);
 
         node = vfs_open(resolved, O_NOFOLLOW);
+        opened_node = node != NULL;
 
         free(resolved);
 
         if (!node)
             return (uint64_t)-ENOENT;
 
-        if ((int64_t)ret < 0)
+        if ((int64_t)ret < 0) {
+            vfs_close(node);
             return ret;
+        }
     }
 
     buff->stx_mask = mask;
@@ -1832,8 +1918,14 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
 
     // todo: special devices
 
-    if (copy_to_user(buff_user, buff, sizeof(struct statx)))
+    if (copy_to_user(buff_user, buff, sizeof(struct statx))) {
+        if (opened_node)
+            vfs_close(node);
         return (uint64_t)-EFAULT;
+    }
+
+    if (opened_node)
+        vfs_close(node);
 
     return 0;
 }
@@ -1901,10 +1993,12 @@ uint64_t do_readlink(char *path, char *buf, uint64_t size) {
     }
 
     if (!(node->type & file_symlink)) {
+        vfs_close(node);
         return (uint64_t)-EINVAL;
     }
 
     ssize_t result = vfs_readlink(node, buf, (size_t)size);
+    vfs_close(node);
 
     return result;
 }
@@ -1990,14 +2084,18 @@ uint64_t sys_rmdir(const char *name_user) {
     vfs_node_t *node = vfs_open(name, O_NOFOLLOW);
     if (!node)
         return -ENOENT;
-    if (!(node->type & file_dir))
+    if (!(node->type & file_dir)) {
+        vfs_close(node);
         return -ENOTDIR;
+    }
 
     if (node == node->root) {
+        vfs_close(node);
         return -EBUSY;
     }
 
     uint64_t ret = vfs_delete(node);
+    vfs_close(node);
 
     return ret;
 }
@@ -2008,6 +2106,7 @@ static uint64_t do_unlink(const char *name) {
         return -ENOENT;
 
     uint64_t ret = vfs_delete(node);
+    vfs_close(node);
 
     return ret;
 }
@@ -2043,6 +2142,7 @@ uint64_t do_rename(const char *old, const char *new) {
     if (!node)
         return -ENOENT;
     int ret = vfs_rename(node, new);
+    vfs_close(node);
     if (ret < 0)
         return ret;
 
@@ -2457,7 +2557,9 @@ uint64_t sys_truncate(const char *path_user, uint64_t length) {
         return (uint64_t)-ENOENT;
     }
 
-    return vfs_resize(node, length);
+    uint64_t ret = vfs_resize(node, length);
+    vfs_close(node);
+    return ret;
 }
 
 uint64_t sys_ftruncate(int fd, uint64_t length) {

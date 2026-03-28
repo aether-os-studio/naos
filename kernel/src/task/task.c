@@ -786,11 +786,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     arch_context_init(task->arch_context,
                       virt_to_phys((uint64_t)get_kernel_page_dir()),
                       (uint64_t)entry, task->kernel_stack, false, arg);
-#if defined(__riscv__)
-    task->arch_context->ctx->ktp = (uint64_t)task;
-    task->arch_context->ctx->tp = (uint64_t)task;
-    task->arch_context->ctx->gp = cpuid_to_hartid[task->cpu_id];
-#endif
+
     task->signal->signal = 0;
     task->status = 0;
     task->fs = task_fs_create(rootdir, rootdir);
@@ -825,7 +821,6 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     strncpy(task->name, name, TASK_NAME_MAX);
     task->shm_ids = NULL;
 
-    task->cmdline = NULL;
     task->arg_start = 0;
     task->arg_end = 0;
     task->env_start = 0;

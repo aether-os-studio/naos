@@ -284,7 +284,9 @@ int devtmpfs_link(vfs_node_t *parent, const char *name, vfs_node_t *node) {
     vfs_node_t *target = vfs_open(name, O_NOFOLLOW);
     if (!target)
         return -ENOENT;
-    return devtmpfs_link_target(parent, target, node);
+    int ret = devtmpfs_link_target(parent, target, node);
+    vfs_close(target);
+    return ret;
 }
 
 int devtmpfs_mount(uint64_t dev, vfs_node_t *node) {
@@ -413,10 +415,14 @@ void *devtmpfs_map(fd_t *file, void *addr, size_t offset, size_t size,
     if (!(pt_flags & (PT_FLAG_R | PT_FLAG_W | PT_FLAG_X)))
         pt_flags |= PT_FLAG_R;
 
-    map_page_range((uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
-                   (uint64_t)addr,
-                   virt_to_phys((uint64_t)handle->content + offset), size,
-                   pt_flags);
+    uint64_t start = (uint64_t)addr;
+    uint64_t *pgdir = get_current_page_dir(true);
+    for (uint64_t ptr = start; ptr < start + size; ptr += PAGE_SIZE) {
+        map_page_range(pgdir, ptr,
+                       translate_address(pgdir, (uint64_t)handle->content +
+                                                    offset + ptr - start),
+                       PAGE_SIZE, pt_flags);
+    }
 
     return addr;
 }
@@ -810,6 +816,7 @@ void devfs_register_device(device_t *device) {
         device_tnode->size =
             512ULL * (part->ending_lba - part->starting_lba + 1);
         device_node->size = device_tnode->size;
+        vfs_close(device_node);
     }
 }
 
@@ -826,6 +833,7 @@ void devfs_unregister_device(device_t *device) {
     if (!node)
         return;
 
+    vfs_close(node);
     vfs_free(node);
 }
 
@@ -836,6 +844,7 @@ void devtmpfs_init() {
 
     vfs_node_t *exist = vfs_open("/dev", O_NOFOLLOW);
     if (exist) {
+        vfs_close(exist);
         vfs_free(exist);
     }
 
@@ -919,7 +928,8 @@ void setup_console_symlinks() {
     vfs_mknod("/dev/console", 0600 | S_IFCHR, tty_node->rdev);
 
     vfs_mknod("/dev/tty", 0600 | S_IFCHR, tty_node->rdev);
-    if (vfs_open("/dev/tty0", 0) == NULL)
+    vfs_node_t *tty0_node = vfs_open("/dev/tty0", 0);
+    if (tty0_node == NULL)
         vfs_mknod("/dev/tty0", 0600 | S_IFCHR, tty_node->rdev);
     vfs_mknod("/dev/tty1", 0600 | S_IFCHR, tty_node->rdev);
 
@@ -928,6 +938,8 @@ void setup_console_symlinks() {
     vfs_mknod("/dev/stderr", 0600 | S_IFCHR, tty_node->rdev);
 
     vfs_mknod("/dev/kmsg", 0600 | S_IFCHR, tty_node->rdev);
+
+    vfs_close(tty_node);
 }
 
 void devfs_nodes_init() {

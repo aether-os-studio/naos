@@ -425,6 +425,8 @@ static void drm_device_setup_sysfs(int major, int card_minor, int render_minor,
 
     sysfs_child_append_symlink(card_root, "device", pci_device_path);
 
+    vfs_close(card_root);
+
     vfs_node_t *drm_dir = sysfs_child_append(pci_device_dir, "drm", true);
 
     char content[128];
@@ -465,6 +467,8 @@ static void drm_device_setup_sysfs(int major, int card_minor, int render_minor,
         vfs_write(render_root_dev, devnum_content, 0, strlen(devnum_content));
 
         sysfs_child_append_symlink(render_root, "device", pci_device_path);
+
+        vfs_close(render_root);
 
         char render_node_name[16];
         sprintf(render_node_name, "renderD%d", render_minor);

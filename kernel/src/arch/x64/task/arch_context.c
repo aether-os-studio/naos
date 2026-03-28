@@ -137,6 +137,7 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
 void arch_context_free(arch_context_t *context) {
     if (context->fpu_ctx) {
         free_frames_bytes(context->fpu_ctx, x64_fpu_state_size());
+        context->fpu_ctx = NULL;
     }
 }
 

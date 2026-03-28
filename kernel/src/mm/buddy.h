@@ -7,8 +7,13 @@
 #define MIN_ORDER 12 // 4KB = 2^12
 #define ORDER_COUNT (MAX_ORDER - MIN_ORDER)
 
+typedef struct free_area {
+    uint64_t head_pfn;
+    uint64_t nr_free;
+} free_area_t;
+
 typedef struct buddy_allocator {
-    uintptr_t free_area[ORDER_COUNT];
+    free_area_t free_area[ORDER_COUNT];
     spinlock_t lock;
 } buddy_allocator_t;
 
@@ -53,6 +58,7 @@ extern const char *zone_names[__MAX_NR_ZONES];
 
 // 初始化
 void buddy_init(void);
+void buddy_enable_percpu_caches(void);
 void add_memory_region(uintptr_t start, uintptr_t end, enum zone_type type);
 
 // 分配/释放（底层接口）

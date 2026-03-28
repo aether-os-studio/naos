@@ -574,6 +574,8 @@ int vfs_chown(const char *path, uint64_t uid, uint64_t gid);
  *\return 0 成功，-1 失败
  */
 ssize_t vfs_read(vfs_node_t *file, void *addr, size_t offset, size_t size);
+ssize_t vfs_read_nocache(vfs_node_t *file, void *addr, size_t offset,
+                         size_t size);
 /**
  *\brief 写入文件
  *
@@ -587,6 +589,7 @@ ssize_t vfs_write(vfs_node_t *file, const void *addr, size_t offset,
                   size_t size);
 
 ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size);
+ssize_t vfs_read_fd_nocache(fd_t *fd, void *addr, size_t offset, size_t size);
 ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size);
 
 /**

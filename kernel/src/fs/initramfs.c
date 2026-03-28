@@ -84,8 +84,11 @@ void initramfs_init() {
             break;
         if (!strcmp(name, "."))
             goto next;
-        if (vfs_open(name, 0))
+        vfs_node_t *existing = vfs_open(name, 0);
+        if (existing) {
+            vfs_close(existing);
             goto next;
+        }
 
         if ((mode & type_mask) == directory_type) {
             vfs_mkdir(name);
@@ -101,6 +104,7 @@ void initramfs_init() {
             vfs_chmod(name, mode & 0777);
             vfs_node_t *node = vfs_open(name, 0);
             vfs_write(node, data, 0, file_size);
+            vfs_close(node);
         }
 
     next:

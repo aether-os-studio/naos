@@ -370,9 +370,10 @@ dev_input_event_t *regist_input_dev(const char *device_name,
         }
     }
 
-    sysfs_regist_dev('c', (dev >> 8) & 0xFF, dev & 0xFF, sysfs_path, dirpath,
-                     uevent, "/sys/class/input", "/sys/class/input", dirname,
-                     parent_device_path);
+    vfs_node_t *node = sysfs_regist_dev(
+        'c', (dev >> 8) & 0xFF, dev & 0xFF, sysfs_path, dirpath, uevent,
+        "/sys/class/input", "/sys/class/input", dirname, parent_device_path);
+    vfs_close(node);
     input_sysfs_publish_metadata(input_event, input_dir_path, input_dirname);
 
     eventn++;

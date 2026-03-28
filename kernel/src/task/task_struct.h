@@ -322,7 +322,6 @@ typedef struct task {
     shm_mapping_t *shm_ids;
     vfs_node_t *procfs_node;
     vfs_node_t *procfs_thread_node;
-    char *cmdline;
     uint64_t arg_start;
     uint64_t arg_end;
     uint64_t env_start;

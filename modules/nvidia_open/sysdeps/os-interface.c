@@ -854,7 +854,7 @@ void NV_API_CALL os_close_file(void *file) {
     if (!file) {
         return;
     }
-    // vfs_close((vfs_node_t *)file);
+    vfs_close((vfs_node_t *)file);
 }
 
 NV_STATUS NV_API_CALL os_write_file(void *file, NvU8 *buf, NvU64 count,
@@ -1320,6 +1320,9 @@ nv_get_firmware(nv_state_t *nv, nv_firmware_type_t fw_type,
     nv_firmware_handle_t *handle = malloc(sizeof(nv_firmware_handle_t));
     handle->addr = addr;
     handle->size = node->size;
+
+    vfs_close(node);
+
     return (const void *)handle;
 }
 

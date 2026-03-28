@@ -2,9 +2,10 @@
 #include <fs/vfs/vfs.h>
 #include <libs/llist.h>
 #include <mm/mm.h>
+#include <mm/page.h>
 #include <mm/cache.h>
 
-#define CACHE_BUCKET_COUNT 4096
+#define CACHE_BUCKET_COUNT 8192
 
 typedef enum cache_kind {
     CACHE_KIND_BLOCK = 1,
@@ -88,7 +89,7 @@ static void cache_entry_destroy(cache_entry_t *entry) {
         return;
 
     if (entry->page_phys)
-        free_frames(entry->page_phys, 1);
+        address_release(entry->page_phys);
     free(entry);
 }
 

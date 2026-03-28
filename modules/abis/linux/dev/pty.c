@@ -1147,7 +1147,7 @@ fs_t ptmxfs = {
     .name = "ptmx",
     .magic = 0,
     .ops = &ptmx_vfs_ops,
-    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN,
+    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN | FS_FLAGS_ALWAYS_OPEN,
 };
 
 void ptmx_init() {
@@ -1165,7 +1165,7 @@ fs_t ptsfs = {
     .name = "ptsfs",
     .magic = 0,
     .ops = &pts_vfs_ops,
-    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN,
+    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN | FS_FLAGS_ALWAYS_OPEN,
 };
 
 void pts_init() {

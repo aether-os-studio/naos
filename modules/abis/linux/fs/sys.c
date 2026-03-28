@@ -430,6 +430,7 @@ vfs_node_t *sysfs_regist_dev(char t, int major, int minor,
             snprintf(dev_content, sizeof(dev_content), "%d:%d\n", major, minor);
         vfs_write(dev_node, dev_content, 0, dev_len);
     }
+    vfs_close(dev_node);
 
     if (subsystem_path && subsystem_path[0]) {
         char subsystem_link[256];
@@ -483,6 +484,8 @@ vfs_node_t *sysfs_regist_dev(char t, int major, int minor,
              "MAJOR=%d\nMINOR=%d\nDEVNAME=%s\nDEVPATH=%s\n%s", major, minor,
              dev_name, devpath_for_event, extra);
     vfs_write(uevent_node, uevent_content, 0, strlen(uevent_content));
+
+    vfs_close(uevent_node);
 
     free(fullpath);
 

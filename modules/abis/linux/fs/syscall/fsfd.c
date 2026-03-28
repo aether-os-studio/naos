@@ -165,6 +165,8 @@ uint64_t sys_statfs(const char *path, struct statfs *buf) {
     if (!fs)
         return -ENOENT;
 
+    vfs_close(node);
+
     buf->f_type = fs->magic;
     buf->f_flags = 0;
 
@@ -319,6 +321,7 @@ static int fsconfig_set_string(fs_context_t *ctx, const char *key,
             ctx->source_node = source_node;
             ctx->source_dev = source_node->rdev;
         }
+        vfs_close(source_node);
         return 0;
     }
 
@@ -705,8 +708,11 @@ uint64_t sys_move_mount(int from_dfd, const char *from_pathname_user,
             return -ENOENT;
 
         /* Must be a mount root */
-        if (!source_mount->root || source_mount->root != source_mount)
+        if (!source_mount->root || source_mount->root != source_mount) {
+            vfs_close(source_mount);
             return -EINVAL;
+        }
+        vfs_close(source_mount);
     }
 
     /* Resolve the target directory */
@@ -737,8 +743,11 @@ uint64_t sys_move_mount(int from_dfd, const char *from_pathname_user,
             return -EINVAL;
         struct mount_point *target_mnt = task_mnt_namespace_find_mount_by_root(
             current_task->nsproxy->mnt_ns, target_dir);
-        if (target_mnt)
+        if (target_mnt) {
+            vfs_close(target_dir);
             target_dir = target_mnt->dir;
+            vfs_node_ref_get(target_dir);
+        }
         if (vfs_is_ancestor(mnt_handle->root_node, target_dir))
             return -EINVAL;
 
@@ -746,7 +755,10 @@ uint64_t sys_move_mount(int from_dfd, const char *from_pathname_user,
             current_task->nsproxy->mnt_ns, mnt_handle->fs, target_dir,
             mnt_handle->root_node,
             mnt_handle->source ? mnt_handle->source : "none");
+        vfs_close(target_dir);
+
         mnt_handle->attached = true;
+
         return 0;
     }
 
