@@ -22,8 +22,8 @@ typedef struct arch_context {
     struct pt_regs *ctx;
     uint64_t pc;
     uint64_t sp;
+    uint64_t tpidr_el0;
     bool usermode;
-    bool dead;
 } arch_context_t;
 
 typedef struct fpu_context {

@@ -1047,6 +1047,7 @@ void aarch64_register_syscalls() {
     regist_syscall_handler(SYS_WRITE, (syscall_handle_t)sys_write);
     regist_syscall_handler(SYS_CLOSE, (syscall_handle_t)sys_close);
     regist_syscall_handler(SYS_FSTAT, (syscall_handle_t)sys_fstat);
+    regist_syscall_handler(SYS_FSTATAT, (syscall_handle_t)sys_newfstatat);
     regist_syscall_handler(SYS_LSEEK, (syscall_handle_t)sys_lseek);
     regist_syscall_handler(SYS_MMAP, (syscall_handle_t)sys_mmap);
     regist_syscall_handler(SYS_MPROTECT, (syscall_handle_t)sys_mprotect);

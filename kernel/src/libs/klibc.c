@@ -2,6 +2,7 @@
 #include <task/task.h>
 #include <drivers/kernel_logger.h>
 #include <arch/arch.h>
+#include <mm/vma.h>
 #include <mm/fault.h>
 #include <mm/page_table.h>
 
@@ -131,10 +132,7 @@ static uint64_t user_translate_access(uint64_t *pgdir, uint64_t uaddr,
             uint64_t flags = ARCH_READ_PTE_FLAG(entry);
             if (!(flags & ARCH_PT_FLAG_USER))
                 return 0;
-#if defined(__aarch64__)
-            if (write && (flags & ARCH_PT_FLAG_READONLY))
-                return 0;
-#else
+#if !defined(__aarch64__)
             if (write && !(flags & ARCH_PT_FLAG_WRITEABLE))
                 return 0;
 #endif
@@ -153,10 +151,7 @@ static uint64_t user_translate_access(uint64_t *pgdir, uint64_t uaddr,
     uint64_t flags = ARCH_READ_PTE_FLAG(pte);
     if (!(flags & ARCH_PT_FLAG_USER))
         return 0;
-#if defined(__aarch64__)
-    if (write && (flags & ARCH_PT_FLAG_READONLY))
-        return 0;
-#else
+#if !defined(__aarch64__)
     if (write && !(flags & ARCH_PT_FLAG_WRITEABLE))
         return 0;
 #endif

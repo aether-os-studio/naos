@@ -11,8 +11,7 @@ char release[] = BUILD_VERSION;
 char version[] = BUILD_VERSION;
 char machine[] = "aarch64";
 
-syscall_handle_t syscall_handlers[MAX_SYSCALL_NUM];
-void syscall_handlers_init() { memset(syscall_handlers, 0, MAX_SYSCALL_NUM); }
+syscall_handle_t syscall_handlers[MAX_SYSCALL_NUM] = {NULL};
 
 void aarch64_do_syscall(struct pt_regs *frame) {
     uint64_t ret = 0;
@@ -52,10 +51,8 @@ void aarch64_do_syscall(struct pt_regs *frame) {
         frame->x0 = 0;
 
 done:
-    if (frame->x0 == (uint64_t)-ENOSYS) {
-        char buf[32];
-        int len = sprintf(buf, "syscall %d not implemented\n", idx);
-        serial_printk(buf, len);
+    if (idx != SYS_BRK && idx != SYS_RSEQ && frame->x0 == (uint64_t)-ENOSYS) {
+        serial_fprintk("syscall %d not implemented\n", idx);
     }
 
     task_signal(frame);

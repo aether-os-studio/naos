@@ -1915,6 +1915,8 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     if (flags & CLONE_SETTLS) {
 #if defined(__x86_64__)
         child->arch_context->fsbase = tls;
+#elif defined(__aarch64__)
+        child->arch_context->tpidr_el0 = tls;
 #elif defined(__riscv__)
         child->arch_context->ctx->tp = tls;
 #endif

@@ -6,13 +6,22 @@
 extern void kernel_thread_func();
 extern void arch_context_switch_exit();
 
+static inline uint64_t aarch64_read_tpidr_el0(void) {
+    uint64_t value;
+    asm volatile("mrs %0, TPIDR_EL0" : "=r"(value));
+    return value;
+}
+
+static inline void aarch64_write_tpidr_el0(uint64_t value) {
+    asm volatile("msr TPIDR_EL0, %0" : : "r"(value));
+}
+
 void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
                        uint64_t entry, uint64_t stack, bool user_mode,
                        uint64_t initial_arg) {
     context->ctx = (struct pt_regs *)((stack - sizeof(struct pt_regs)));
     memset(context->ctx, 0, sizeof(struct pt_regs));
-
-    context->dead = false;
+    context->tpidr_el0 = 0;
 
     uint32_t spsr = 0;
     if (user_mode) {
@@ -37,17 +46,22 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->usermode = user_mode;
 }
 
+extern void ret_from_fork();
+
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
                        uint64_t clone_flags) {
     dst->usermode = src->usermode;
+    if (!src->tpidr_el0)
+        src->tpidr_el0 = aarch64_read_tpidr_el0();
+    dst->tpidr_el0 = src->tpidr_el0;
     dst->ctx = (struct pt_regs *)stack - 1;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
     dst->ctx->x0 = 0;
-    dst->pc = (uint64_t)arch_context_switch_exit;
+    dst->pc = (uint64_t)ret_from_fork;
     dst->sp = (uint64_t)dst->ctx;
 }
 
-void arch_context_free(arch_context_t *context) { context->dead = true; }
+void arch_context_free(arch_context_t *context) {}
 
 task_t *arch_get_current() {
     uint64_t tpidr_el1;
@@ -64,12 +78,16 @@ extern void arch_context_switch_with_prev_next(arch_context_t *prev,
                                                arch_context_t *next);
 
 void __switch_to(task_t *prev, task_t *next) {
+    prev->arch_context->tpidr_el0 = aarch64_read_tpidr_el0();
+    aarch64_write_tpidr_el0(next->arch_context->tpidr_el0);
+
     task_mark_on_cpu(prev, false);
     task_mark_on_cpu(next, true);
 }
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
                                uint64_t stack) {
+    context->tpidr_el0 = 0;
     memset(context->ctx, 0, sizeof(struct pt_regs));
     context->usermode = true;
     context->pc = (uint64_t)arch_context_switch_exit;
@@ -84,6 +102,7 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry,
     arch_disable_interrupt();
 
     arch_context_to_user_mode(context, entry, stack);
+    aarch64_write_tpidr_el0(context->tpidr_el0);
 
     asm volatile("dsb ishst\n\t"
                  "tlbi vmalle1is\n\t"

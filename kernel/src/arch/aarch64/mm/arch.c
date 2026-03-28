@@ -35,8 +35,6 @@ uint64_t get_arch_page_table_flags(uint64_t flags) {
     uint64_t attr = ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_4K_PAGE |
                     ARCH_PT_FLAG_INNER_SH | ARCH_PT_FLAG_ACCESS;
 
-    if ((flags & PT_FLAG_W) == 0)
-        attr |= ARCH_PT_FLAG_READONLY;
     if ((flags & PT_FLAG_X) == 0)
         attr |= ARCH_PT_FLAG_XN;
     if (flags & PT_FLAG_U)

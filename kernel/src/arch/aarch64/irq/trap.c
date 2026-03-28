@@ -24,6 +24,20 @@ static inline bool aarch64_user_mode_frame(const struct pt_regs *frame) {
     return frame && ((frame->cpsr & 0xF) == 0);
 }
 
+static uint64_t aarch64_fault_flags(uint32_t ec, uint32_t iss) {
+    uint64_t flags = 0;
+
+    if (ec == ESR_ELx_EC_DABT_LOW)
+        flags |= PF_ACCESS_USER;
+
+    if (iss & (1U << 6))
+        flags |= PF_ACCESS_WRITE;
+    else
+        flags |= PF_ACCESS_READ;
+
+    return flags;
+}
+
 static int aarch64_fault_si_code(uint32_t iss) {
     switch (iss & 0x3F) {
     case 0b000100:
@@ -37,26 +51,8 @@ static int aarch64_fault_si_code(uint32_t iss) {
 }
 
 int lookup_kallsyms(uint64_t addr, int level) {
-    if (!kallsyms_available() || kallsyms_num == 0) {
-        return -1;
-    }
-
-    const char *str = kallsyms_names;
-
-    uint64_t index = 0;
-    for (index = 0; index < kallsyms_num - 1; ++index) {
-        if (addr > kallsyms_address[index] &&
-            addr <= kallsyms_address[index + 1])
-            break;
-    }
-
-    if (index < kallsyms_num) {
-        printk("function:%s() \t(+) %04d address:%#018lx\n",
-               &str[kallsyms_names_index[index]],
-               addr - kallsyms_address[index], addr);
-        return 0;
-    } else
-        return -1;
+    printk("function:<unknown>() \t(+) 0000 address:%#018lx\n", addr);
+    return 0;
 }
 
 void traceback(struct pt_regs *regs) {
@@ -98,6 +94,67 @@ void traceback(struct pt_regs *regs) {
     }
 
     printk("======== Kernel traceback end =======\n");
+
+    pc = regs->pc;
+
+    if (pc >= get_physical_memory_offset())
+        return;
+
+    printk("======== User traceback =======\n");
+
+    task_t *self = current_task;
+
+    if (self) {
+        rb_node_t *node = rb_first(&self->mm->task_vma_mgr.vma_tree);
+
+        while (node) {
+            vma_t *vma = rb_entry(node, vma_t, vm_rb);
+            if (vma->vm_name) {
+                if (pc >= vma->vm_start && pc <= vma->vm_end) {
+                    printk("Fault in this vma: %s, vma->vm_start = %#018lx, "
+                           "offset_in_vma = %#018lx\n",
+                           vma->vm_name, vma->vm_start, pc - vma->vm_start);
+                } else {
+                    printk("Faulting task vma: %s, vma->vm_start = %#018lx\n",
+                           vma->vm_name, vma->vm_start);
+                }
+            }
+
+            node = rb_next(node);
+        }
+
+        struct pt_regs *syscall_regs =
+            (struct pt_regs *)self->syscall_stack - 1;
+
+        printk("Last syscall registers:\n");
+        printk("X00:%#018lx X01:%#018lx X02:%#018lx X03:%#018lx\r\n", regs->x0,
+               syscall_regs->x1, syscall_regs->x2, syscall_regs->x3);
+        printk("X04:%#018lx X05:%#018lx X06:%#018lx X07:%#018lx\r\n",
+               syscall_regs->x4, syscall_regs->x5, syscall_regs->x6,
+               syscall_regs->x7);
+        printk("X08:%#018lx X09:%#018lx X10:%#018lx X11:%#018lx\r\n",
+               syscall_regs->x8, syscall_regs->x9, syscall_regs->x10,
+               syscall_regs->x11);
+        printk("X12:%#018lx X13:%#018lx X14:%#018lx X15:%#018lx\r\n",
+               syscall_regs->x12, syscall_regs->x13, syscall_regs->x14,
+               syscall_regs->x15);
+        printk("X16:%#018lx X17:%#018lx X18:%#018lx X19:%#018lx\r\n",
+               syscall_regs->x16, syscall_regs->x17, syscall_regs->x18,
+               syscall_regs->x19);
+        printk("X20:%#018lx X21:%#018lx X22:%#018lx X23:%#018lx\r\n",
+               syscall_regs->x20, syscall_regs->x21, syscall_regs->x22,
+               syscall_regs->x23);
+        printk("X24:%#018lx X25:%#018lx X26:%#018lx X27:%#018lx\r\n",
+               syscall_regs->x24, syscall_regs->x25, syscall_regs->x26,
+               syscall_regs->x27);
+        printk("X28:%#018lx X29:%#018lx X30:%#018lx\r\n", syscall_regs->x28,
+               syscall_regs->x29, syscall_regs->x30);
+        printk("SP_EL0:%#018lx\r\n", syscall_regs->sp_el0);
+        printk("SPSR  :%#018lx\r\n", syscall_regs->cpsr);
+        printk("EPC   :%#018lx\r\n", syscall_regs->pc);
+    }
+
+    printk("======== User traceback end =======\n");
 }
 
 void show_frame(struct pt_regs *regs) {
@@ -373,22 +430,28 @@ void process_exception(struct pt_regs *frame, unsigned long esr,
 void handle_exception(struct pt_regs *frame) {
     unsigned long esr;
     unsigned char ec;
+    uint32_t iss;
     unsigned long fault_addr;
 
     asm volatile("mrs %0, esr_el1" : "=r"(esr));
     ec = (unsigned char)((esr >> 26) & 0x3fU);
+    iss = (uint32_t)(esr & 0x00ffffffU);
 
     if (ec == ESR_ELx_EC_SVC64) /* is 64bit syscall ? */
     {
-        /* never return here */
-        aarch64_do_syscall(frame);
+        struct pt_regs *syscall_frame =
+            (struct pt_regs *)current_task->syscall_stack - 1;
+        memcpy(syscall_frame, frame, sizeof(struct pt_regs));
+        aarch64_do_syscall(syscall_frame);
+        memcpy(frame, syscall_frame, sizeof(struct pt_regs));
         return;
     }
 
     if (ec == ESR_ELx_EC_DABT_LOW || ec == ESR_ELx_EC_DABT_CUR) {
         asm volatile("mrs %0, far_el1" : "=r"(fault_addr));
+        uint64_t fault_flags = aarch64_fault_flags(ec, iss);
         page_fault_result_t result =
-            handle_page_fault_flags(current_task, fault_addr, PF_ACCESS_READ);
+            handle_page_fault_flags(current_task, fault_addr, fault_flags);
         if (result == PF_RES_OK) {
             return;
         } else if (result == PF_RES_SEGF) {

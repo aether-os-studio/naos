@@ -15,11 +15,7 @@ void arch_early_init() {
 
 extern task_t *idle_tasks[MAX_CPU_NUM];
 
-extern void syscall_handlers_init();
-
 void arch_init() {
-    syscall_handlers_init();
-
     gic_init();
 
     irq_init();

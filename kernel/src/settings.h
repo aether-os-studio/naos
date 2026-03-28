@@ -15,4 +15,8 @@
 #define BUILD_VERSION "0.10.0"
 
 #define MAX_TASK_NUM 16384
+#if defined(__x86_64__)
 #define SCHED_HZ 1000
+#else
+#define SCHED_HZ 100
+#endif

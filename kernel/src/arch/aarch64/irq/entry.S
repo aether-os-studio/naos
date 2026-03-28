@@ -188,7 +188,7 @@ vectors:
 
 	   Note: 我们暂时只实现IRQ中断
 	 */
-	vtentry el1_sync_invalid
+	vtentry el1_sync
 	vtentry el1_irq
 	vtentry el1_fiq_invalid
 	vtentry el1_error_invalid
@@ -257,12 +257,21 @@ el0_irq:
 	B arch_context_switch_exit
 
 .align 3
+el1_sync:
+	SAVE_CONTEXT
+	MOV X19, SP
+	MOV X0, SP
+	BL trap_dispatch
+	MOV SP, X19
+	B arch_context_switch_exit
+
+.align 3
 el0_sync:
 	SAVE_CONTEXT
-	STP X0, X1, [SP, #-0x10]!
+	MOV X19, SP
+	MOV X0, SP
     BL trap_dispatch
-    LDP X0, X1, [SP], #0x10
-    MOV SP, X0
+    MOV SP, X19
 	B arch_context_switch_exit
 
 .align 3
