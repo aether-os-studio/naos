@@ -533,9 +533,11 @@ static uint64_t populate_anon_vma(uint64_t vm_flags, uint64_t addr,
         pt_flags |= PT_FLAG_W;
 
     spin_lock(&mm->lock);
-    map_page_range_mm(mm, addr, (uint64_t)-1, len, pt_flags);
+    uint64_t ret = map_page_range_mm(mm, addr, (uint64_t)-1, len, pt_flags);
+    if (ret != 0)
+        unmap_page_range_mm(mm, addr, len);
     spin_unlock(&mm->lock);
-    return addr;
+    return ret == 0 ? addr : (uint64_t)-ENOMEM;
 }
 
 static bool should_eager_map_file(vma_t *vma, uint64_t flags) {
@@ -1510,11 +1512,15 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
     uint64_t map_len = PADDING_UP(len + page_off, PAGE_SIZE);
     uint64_t load_pt_flags = final_pt_flags | PT_FLAG_W;
     task_mm_info_t *mm = current_task->mm;
-    uint64_t *pgdir = mm_pgdir(mm);
 
     spin_lock(&mm->lock);
-    map_page_range_mm(mm, map_addr, (uint64_t)-1, map_len, load_pt_flags);
+    uint64_t map_ret =
+        map_page_range_mm(mm, map_addr, (uint64_t)-1, map_len, load_pt_flags);
+    if (map_ret != 0)
+        unmap_page_range_mm(mm, map_addr, map_len);
     spin_unlock(&mm->lock);
+    if (map_ret != 0)
+        return (void *)(uint64_t)-ENOMEM;
 
     uint64_t remaining = len;
     uint64_t file_off = offset;

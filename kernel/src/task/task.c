@@ -754,8 +754,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     }
     task->signal = task_signal_create_empty();
     if (!task->signal) {
-        can_schedule = true;
-        return NULL;
+        goto fail;
     }
     task->parent = NULL;
     task->uid = 0;
@@ -768,12 +767,23 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->tgid = task->pid;
     task->sid = 0;
     task->priority = priority;
-    task->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
-    task->syscall_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
+    task->is_kernel = true;
+
+    void *kernel_stack_base = alloc_frames_bytes(STACK_SIZE);
+    if (!kernel_stack_base)
+        goto fail;
+    task->kernel_stack = (uint64_t)kernel_stack_base + STACK_SIZE;
+
+    void *syscall_stack_base = alloc_frames_bytes(STACK_SIZE);
+    if (!syscall_stack_base)
+        goto fail;
+    task->syscall_stack = (uint64_t)syscall_stack_base + STACK_SIZE;
+
     memset((void *)(task->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(task->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
-    task->mm = malloc(sizeof(task_mm_info_t));
-    memset(task->mm, 0, sizeof(task_mm_info_t));
+    task->mm = calloc(1, sizeof(task_mm_info_t));
+    if (!task->mm)
+        goto fail;
     task->mm->page_table_addr = virt_to_phys((uint64_t)get_kernel_page_dir());
     task->mm->ref_count = 1;
     spin_init(&task->mm->lock);
@@ -781,8 +791,9 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->mm->brk_start = USER_BRK_START;
     task->mm->brk_current = task->mm->brk_start;
     task->mm->brk_end = USER_BRK_END;
-    task->arch_context = malloc(sizeof(arch_context_t));
-    memset(task->arch_context, 0, sizeof(arch_context_t));
+    task->arch_context = calloc(1, sizeof(arch_context_t));
+    if (!task->arch_context)
+        goto fail;
     arch_context_init(task->arch_context,
                       virt_to_phys((uint64_t)get_kernel_page_dir()),
                       (uint64_t)entry, task->kernel_stack, false, arg);
@@ -791,19 +802,15 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->status = 0;
     task->fs = task_fs_create(rootdir, rootdir);
     if (!task->fs) {
-        can_schedule = true;
-        return NULL;
+        goto fail;
     }
     task->nsproxy = task_ns_proxy_create_initial();
     if (!task->nsproxy) {
-        task_fs_put(task->fs);
-        task->fs = NULL;
-        can_schedule = true;
-        return NULL;
+        goto fail;
     }
-    task->fd_info = malloc(sizeof(fd_info_t));
-    memset(task->fd_info, 0, sizeof(fd_info_t));
-    memset(task->fd_info->fds, 0, sizeof(task->fd_info->fds));
+    task->fd_info = calloc(1, sizeof(fd_info_t));
+    if (!task->fd_info)
+        goto fail;
     mutex_init(&task->fd_info->fdt_lock);
     vfs_node_t *stdin_node = vfs_open("/dev/console", 0);
     vfs_node_t *stdout_node = vfs_open("/dev/console", 0);
@@ -838,17 +845,24 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
 
     task->parent_death_sig = (uint64_t)-1;
 
-    on_new_task_call(task);
-
     task->state = TASK_READY;
     task->current_state = TASK_READY;
 
     task->sched_info = calloc(1, sizeof(struct sched_entity));
+    if (!task->sched_info)
+        goto fail;
     add_sched_entity(task, schedulers[task->cpu_id]);
+
+    on_new_task_call(task);
 
     can_schedule = true;
 
     return task;
+
+fail:
+    can_schedule = true;
+    task_cleanup_partial(task, true);
+    return NULL;
 }
 
 void idle_entry(uint64_t arg) {

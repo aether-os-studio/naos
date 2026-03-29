@@ -97,8 +97,11 @@ static page_fault_result_t map_anon_fault_page(task_t *task, vma_t *vma,
         return PF_RES_OK;
     }
 
-    map_page_range_mm(task->mm, aligned_vaddr, (uint64_t)-1, PAGE_SIZE,
-                      pt_flags);
+    if (map_page_range_mm(task->mm, aligned_vaddr, (uint64_t)-1, PAGE_SIZE,
+                          pt_flags) != 0) {
+        spin_unlock(&task->mm->lock);
+        return PF_RES_NOMEM;
+    }
 
     spin_unlock(&task->mm->lock);
 
@@ -195,8 +198,13 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
         return PF_RES_OK;
     }
 
-    map_page_range_mm(task->mm, aligned_vaddr, page_paddr, PAGE_SIZE,
-                      final_pt_flags);
+    if (map_page_range_mm(task->mm, aligned_vaddr, page_paddr, PAGE_SIZE,
+                          final_pt_flags) != 0) {
+        spin_unlock(&task->mm->lock);
+        spin_unlock(&mgr->lock);
+        address_release(page_paddr);
+        return PF_RES_NOMEM;
+    }
 
     spin_unlock(&task->mm->lock);
     spin_unlock(&mgr->lock);

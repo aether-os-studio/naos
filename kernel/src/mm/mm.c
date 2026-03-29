@@ -1,7 +1,6 @@
 #include <arch/arch.h>
 #include <boot/boot.h>
 #include <mm/bitmap.h>
-#include <mm/buddy.h>
 #include <mm/mm.h>
 #include <mm/page.h>
 #include <stdbool.h>
@@ -109,7 +108,7 @@ static void process_memory_region(uintptr_t start, uintptr_t end) {
         uintptr_t usable_end = region_current;
 
         if (usable_end > usable_start) {
-            add_memory_region(usable_start, usable_end, ZONE_NORMAL);
+            tlsf_add_region(usable_start, usable_end);
         }
 
         current = region_current;
@@ -187,10 +186,10 @@ void frame_init(void) {
 
     page_init();
 
-    // 初始化 buddy 分配器
-    buddy_init();
+    // 初始化 TLSF 物理页分配器
+    tlsf_init();
 
-    // 将可用内存添加到 buddy 分配器
+    // 将可用内存添加到 TLSF 分配器
     for (uint64_t i = 0; i < memory_map->entry_count; i++) {
         boot_memory_map_entry_t *region = &memory_map->entries[i];
 
@@ -226,46 +225,59 @@ void frame_init(void) {
     }
 }
 
-void map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
-                    uint64_t size, uint64_t flags) {
+uint64_t map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
+                        uint64_t size, uint64_t flags) {
     ASSERT((vaddr & 0xfff) == 0);
     ASSERT(paddr == (uint64_t)-1 || (paddr & 0xfff) == 0);
 
     for (uint64_t va = vaddr; va < vaddr + size; va += PAGE_SIZE) {
+        uint64_t ret;
         if (paddr == (uint64_t)-1) {
-            map_page(pml4, va, (uint64_t)-1, get_arch_page_table_flags(flags),
-                     true);
+            ret = map_page(pml4, va, (uint64_t)-1,
+                           get_arch_page_table_flags(flags), true);
         } else {
-            map_page(pml4, va, paddr + (va - vaddr),
-                     get_arch_page_table_flags(flags), true);
+            ret = map_page(pml4, va, paddr + (va - vaddr),
+                           get_arch_page_table_flags(flags), true);
         }
+
+        if (ret != 0)
+            return ret;
     }
+
+    return 0;
 }
 
-void map_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t paddr,
-                       uint64_t size, uint64_t flags) {
-    map_page_range(task_mm_pgdir(mm), vaddr, paddr, size, flags);
+uint64_t map_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t paddr,
+                           uint64_t size, uint64_t flags) {
+    return map_page_range(task_mm_pgdir(mm), vaddr, paddr, size, flags);
 }
 
-void map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
-                            uint64_t size, uint64_t flags) {
+uint64_t map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
+                                uint64_t size, uint64_t flags) {
     ASSERT((vaddr & 0xfff) == 0);
     ASSERT(paddr == (uint64_t)-1 || (paddr & 0xfff) == 0);
 
     for (uint64_t va = vaddr; va < vaddr + size; va += PAGE_SIZE) {
+        uint64_t ret;
         if (paddr == (uint64_t)-1) {
-            map_page(pml4, va, (uint64_t)-1, get_arch_page_table_flags(flags),
-                     false);
+            ret = map_page(pml4, va, (uint64_t)-1,
+                           get_arch_page_table_flags(flags), false);
         } else {
-            map_page(pml4, va, paddr + (va - vaddr),
-                     get_arch_page_table_flags(flags), false);
+            ret = map_page(pml4, va, paddr + (va - vaddr),
+                           get_arch_page_table_flags(flags), false);
         }
+
+        if (ret != 0)
+            return ret;
     }
+
+    return 0;
 }
 
-void map_page_range_unforce_mm(task_mm_info_t *mm, uint64_t vaddr,
-                               uint64_t paddr, uint64_t size, uint64_t flags) {
-    map_page_range_unforce(task_mm_pgdir(mm), vaddr, paddr, size, flags);
+uint64_t map_page_range_unforce_mm(task_mm_info_t *mm, uint64_t vaddr,
+                                   uint64_t paddr, uint64_t size,
+                                   uint64_t flags) {
+    return map_page_range_unforce(task_mm_pgdir(mm), vaddr, paddr, size, flags);
 }
 
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size) {

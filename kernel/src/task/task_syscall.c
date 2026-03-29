@@ -234,19 +234,29 @@ static int map_task_elf_segment(task_t *task, vfs_node_t *node,
         return -EINVAL;
     }
 
-    map_page_range((uint64_t *)phys_to_virt(task->mm->page_table_addr),
-                   aligned_addr, (uint64_t)-1, alloc_size, load_flags);
+    uint64_t map_ret =
+        map_page_range((uint64_t *)phys_to_virt(task->mm->page_table_addr),
+                       aligned_addr, (uint64_t)-1, alloc_size, load_flags);
+    if (map_ret != 0)
+        return -ENOMEM;
 
     int ret = read_task_file_into_user_memory(task, node, aligned_addr,
                                               aligned_offset, file_map_size);
-    if (ret != 0)
+    if (ret != 0) {
+        unmap_page_range((uint64_t *)phys_to_virt(task->mm->page_table_addr),
+                         aligned_addr, alloc_size);
         return ret;
+    }
 
     if (mem_map_size > file_map_size) {
         ret = zero_task_user_memory(task, aligned_addr + file_map_size,
                                     mem_map_size - file_map_size);
-        if (ret != 0)
+        if (ret != 0) {
+            unmap_page_range(
+                (uint64_t *)phys_to_virt(task->mm->page_table_addr),
+                aligned_addr, alloc_size);
             return ret;
+        }
     }
 
     if (load_flags != final_flags) {
@@ -400,6 +410,84 @@ static void task_fd_info_put(fd_info_t *fd_info, task_t *task) {
     });
 
     free(fd_info);
+}
+
+void task_cleanup_partial(task_t *task, bool kernel_mm) {
+    if (!task)
+        return;
+
+    spin_lock(&task_queue_lock);
+    task_pid_index_remove_locked(task);
+    task_parent_index_detach_locked(task, true);
+    task_pgid_index_detach_locked(task);
+    spin_unlock(&task_queue_lock);
+
+    if (task->shm_ids && task->arch_context && task->mm)
+        shm_exit(task);
+
+    if (task->fd_info) {
+        task_fd_info_put(task->fd_info, task);
+        task->fd_info = NULL;
+    }
+
+    if (task->exec_node) {
+        vfs_close(task->exec_node);
+        task->exec_node = NULL;
+    }
+
+    if (task->fs) {
+        task_fs_put(task->fs);
+        task->fs = NULL;
+    }
+
+    if (task->nsproxy) {
+        task_ns_proxy_put(task->nsproxy);
+        task->nsproxy = NULL;
+    }
+
+    if (task->signal) {
+        task_signal_free(task->signal);
+        task->signal = NULL;
+    }
+
+    if (task->arch_context) {
+        arch_context_free(task->arch_context);
+        free(task->arch_context);
+        task->arch_context = NULL;
+    }
+
+    if (task->mm) {
+        if (kernel_mm) {
+            free(task->mm);
+        } else {
+            free_page_table(task->mm);
+        }
+        task->mm = NULL;
+    }
+
+    if (task->syscall_stack) {
+        free_frames_bytes((void *)(task->syscall_stack - STACK_SIZE),
+                          STACK_SIZE);
+        task->syscall_stack = 0;
+    }
+
+    if (task->kernel_stack) {
+        free_frames_bytes((void *)(task->kernel_stack - STACK_SIZE),
+                          STACK_SIZE);
+        task->kernel_stack = 0;
+    }
+
+    if (task->sched_info) {
+        free(task->sched_info);
+        task->sched_info = NULL;
+    }
+
+    if (task->pid == 0 && task->cpu_id < MAX_CPU_NUM &&
+        idle_tasks[task->cpu_id] == task) {
+        idle_tasks[task->cpu_id] = NULL;
+    }
+
+    free(task);
 }
 
 static inline void task_fill_rusage(task_t *task, bool include_children,
@@ -1114,10 +1202,15 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 if (interp_phdr[j].p_type != PT_LOAD)
                     continue;
 
-                if (map_task_elf_segment(self, interpreter_node,
-                                         INTERPRETER_BASE_ADDR,
-                                         &interp_phdr[j]) != 0) {
+                int seg_ret = map_task_elf_segment(self, interpreter_node,
+                                                   INTERPRETER_BASE_ADDR,
+                                                   &interp_phdr[j]);
+                if (seg_ret != 0) {
                     printk("Failed to map interpreter PT_LOAD segment\n");
+                    exec_fail_ret = (uint64_t)seg_ret;
+                    free(interp_phdr);
+                    vfs_close(interpreter_node);
+                    goto exec_fail_restore_mm;
                 }
 
                 if (register_elf_load_vma(
@@ -1142,9 +1235,12 @@ uint64_t task_execve(const char *path_user, const char **argv,
             if (aligned_addr + alloc_size > load_end)
                 load_end = aligned_addr + alloc_size;
 
-            if (map_task_elf_segment(self, node, real_load_start, &phdr[i]) !=
-                0) {
+            int seg_ret =
+                map_task_elf_segment(self, node, real_load_start, &phdr[i]);
+            if (seg_ret != 0) {
                 printk("Failed to map executable PT_LOAD segment\n");
+                exec_fail_ret = (uint64_t)seg_ret;
+                goto exec_fail_restore_mm;
             }
 
             if (register_elf_load_vma(self, node, path, real_load_start,
@@ -1756,9 +1852,10 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         return (uint64_t)-EFAULT;
     }
 
+    uint64_t ret = (uint64_t)-ENOMEM;
     task_t *child = get_free_task();
     if (child == NULL) {
-        return (uint64_t)-ENOMEM;
+        return ret;
     }
 
     task_t *self = current_task;
@@ -1767,23 +1864,17 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     child->signal = task_signal_clone(self, flags);
     if (!child->signal) {
-        return (uint64_t)-ENOMEM;
+        goto fail;
     }
 
     child->nsproxy = task_ns_proxy_clone(self, flags);
     if (!child->nsproxy) {
-        task_signal_free(child->signal);
-        child->signal = NULL;
-        return (uint64_t)-ENOMEM;
+        goto fail;
     }
 
     child->fs = task_fs_clone(self, flags);
     if (!child->fs) {
-        task_ns_proxy_put(child->nsproxy);
-        child->nsproxy = NULL;
-        task_signal_free(child->signal);
-        child->signal = NULL;
-        return (uint64_t)-ENOMEM;
+        goto fail;
     }
 
     if ((flags & CLONE_NEWNS) && child->nsproxy->mnt_ns &&
@@ -1795,24 +1886,32 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     child->cpu_id = (flags & CLONE_VM) ? self->cpu_id : alloc_cpu_id();
 
-    child->kernel_stack = (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
-    child->syscall_stack =
-        (uint64_t)alloc_frames_bytes(STACK_SIZE) + STACK_SIZE;
+    void *kernel_stack_base = alloc_frames_bytes(STACK_SIZE);
+    if (!kernel_stack_base)
+        goto fail;
+    child->kernel_stack = (uint64_t)kernel_stack_base + STACK_SIZE;
+
+    void *syscall_stack_base = alloc_frames_bytes(STACK_SIZE);
+    if (!syscall_stack_base)
+        goto fail;
+    child->syscall_stack = (uint64_t)syscall_stack_base + STACK_SIZE;
+
     memset((void *)(child->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
     memset((void *)(child->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
 
     if (!self->mm) {
         printk("src->mm == NULL!!! src = %#018lx\n", self);
-        return -ENOMEM;
+        goto fail;
     }
     child->mm = clone_page_table(self->mm, flags);
     if (!child->mm) {
         printk("dst->mm == NULL!!! dst = %#018lx\n", child);
-        return -ENOMEM;
+        goto fail;
     }
 
-    child->arch_context = malloc(sizeof(arch_context_t));
-    memset(child->arch_context, 0, sizeof(arch_context_t));
+    child->arch_context = calloc(1, sizeof(arch_context_t));
+    if (!child->arch_context)
+        goto fail;
     arch_context_t orig_context;
     memcpy(&orig_context, self->arch_context, sizeof(arch_context_t));
     orig_context.ctx = regs;
@@ -1864,6 +1963,9 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
 
     child->fd_info =
         (flags & CLONE_FILES) ? self->fd_info : calloc(1, sizeof(fd_info_t));
+    if (!child->fd_info)
+        goto fail;
+
     if (!(flags & CLONE_FILES)) {
         mutex_init(&child->fd_info->fdt_lock);
         for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
@@ -1902,13 +2004,6 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
         child->tgid = child->pid;
     }
 
-    on_new_task_call(child);
-    for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-        if (child->fd_info->fds[i]) {
-            on_open_file_call(child, i);
-        }
-    }
-
     int child_tid_value = (int)child->pid;
 
     if (flags & CLONE_PARENT_SETTID) {
@@ -1917,13 +2012,15 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     if (flags & CLONE_PIDFD) {
         uint64_t pidfd = pidfd_create_for_pid(child->pid, 0, true);
         if ((int64_t)pidfd < 0) {
-            return pidfd;
+            ret = pidfd;
+            goto fail;
         }
 
         int pidfd_value = (int)pidfd;
         if (copy_to_user(parent_tid, &pidfd_value, sizeof(pidfd_value))) {
             sys_close(pidfd);
-            return (uint64_t)-EFAULT;
+            ret = (uint64_t)-EFAULT;
+            goto fail;
         }
     }
 
@@ -1950,7 +2047,18 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     self->child_vfork_done = false;
 
     child->sched_info = calloc(1, sizeof(struct sched_entity));
+    if (!child->sched_info) {
+        ret = (uint64_t)-ENOMEM;
+        goto fail;
+    }
     add_sched_entity(child, schedulers[child->cpu_id]);
+
+    on_new_task_call(child);
+    for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+        if (child->fd_info->fds[i]) {
+            on_open_file_call(child, i);
+        }
+    }
 
     if ((flags & CLONE_VFORK)) {
         while (!self->child_vfork_done) {
@@ -1964,6 +2072,10 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     }
 
     return child->pid;
+
+fail:
+    task_cleanup_partial(child, false);
+    return ret;
 }
 
 uint64_t task_fork(struct pt_regs *regs, bool vfork) {

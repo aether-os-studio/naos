@@ -238,6 +238,7 @@ void task_refresh_tick_work_state(task_t *task);
 
 task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
                     int priority);
+void task_cleanup_partial(task_t *task, bool kernel_mm);
 void task_init();
 task_signal_info_t *task_signal_create_empty(void);
 task_signal_info_t *task_signal_clone(task_t *parent, uint64_t flags);

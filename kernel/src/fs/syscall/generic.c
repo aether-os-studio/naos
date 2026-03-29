@@ -2541,6 +2541,10 @@ uint64_t sys_fallocate(int fd, int mode, uint64_t offset, uint64_t len) {
 
     if (fd < 0 || fd >= MAX_FD_NUM || !self->fd_info->fds[fd])
         return -EBADF;
+    if (mode != 0)
+        return -EOPNOTSUPP;
+    if (offset > UINT64_MAX - len)
+        return -EFBIG;
 
     vfs_node_t *node = self->fd_info->fds[fd]->node;
 

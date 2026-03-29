@@ -85,7 +85,7 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
         uint64_t index = indexs[i];
         uint64_t addr = pgdir[index];
         if (ARCH_PT_IS_LARGE(addr)) {
-            return 0;
+            return (uint64_t)-1;
         }
 
         if (!ARCH_PT_IS_TABLE(addr)) {
@@ -202,8 +202,8 @@ uint64_t unmap_page_defer_release(uint64_t *pgdir, uint64_t vaddr,
             unmap_release_page(paddr);
         }
 
-        // 从底层向上检查并释放空页表
-        for (int level = ARCH_MAX_PT_LEVEL - 2; level > 0; level--) {
+        // 从最底层页表开始向上检查并释放空页表
+        for (int level = ARCH_MAX_PT_LEVEL - 1; level > 0; level--) {
             uint64_t *current_table = table_ptrs[level];
             bool table_empty = true;
 
@@ -326,13 +326,13 @@ static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level,
             continue;
 
         if (level == 1) {
-            if (!(entry & ARCH_PT_FLAG_VALID)) {
+            uint64_t flags = ARCH_READ_PTE_FLAG(entry);
+            if (!(flags & ARCH_PT_FLAG_VALID)) {
                 new_table[i] = entry;
                 continue;
             }
 
             uint64_t paddr = ARCH_READ_PTE(entry);
-            uint64_t flags = ARCH_READ_PTE_FLAG(entry);
             bool managed = paddr && address_is_managed(paddr);
 
             if (managed && !address_ref(paddr)) {
