@@ -498,6 +498,7 @@ static vma_t *alloc_mapping_vma(uint64_t start, uint64_t len, uint64_t prot,
     vma->vm_type = VMA_TYPE_FILE;
     vma->node = node;
     vma->vm_offset = offset;
+    vma->vm_file_len = len;
     vma->vm_file_flags = file_flags;
     if (node)
         vfs_node_ref_get(node);
@@ -1117,7 +1118,16 @@ static vma_t *duplicate_vma(vma_t *src, uint64_t start, uint64_t size) {
     dst->shm = src->shm;
     dst->shm_id = src->shm_id;
     dst->vm_offset = src->vm_offset;
+    dst->vm_file_len = src->vm_file_len;
     dst->vm_file_flags = src->vm_file_flags;
+
+    if (src->vm_type == VMA_TYPE_FILE) {
+        uint64_t src_len = src->vm_end - src->vm_start;
+        if (src->vm_file_len == src_len)
+            dst->vm_file_len = size;
+        else
+            dst->vm_file_len = MIN(src->vm_file_len, size);
+    }
 
     if (dst->node)
         vfs_node_ref_get(dst->node);
@@ -1313,6 +1323,8 @@ static uint64_t mremap_expand_inplace_locked(vma_manager_t *mgr, vma_t *vma,
     }
 
     vma->vm_end = new_end;
+    if (vma->vm_type == VMA_TYPE_FILE && vma->vm_file_len == old_size)
+        vma->vm_file_len = new_size;
     mgr->vm_used += grow;
     return old_addr;
 }

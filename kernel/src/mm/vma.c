@@ -192,6 +192,7 @@ int vma_split(vma_manager_t *mgr, vma_t *vma, uint64_t addr) {
 
     uint64_t old_start = vma->vm_start;
     uint64_t old_end = vma->vm_end;
+    uint64_t old_file_len = vma->vm_file_len;
 
     new_vma->vm_start = addr;
     new_vma->vm_end = old_end;
@@ -203,10 +204,16 @@ int vma_split(vma_manager_t *mgr, vma_t *vma, uint64_t addr) {
     new_vma->shm = vma->shm;
     new_vma->shm_id = vma->shm_id;
     new_vma->vm_offset = vma->vm_offset;
+    new_vma->vm_file_len = vma->vm_file_len;
     new_vma->vm_file_flags = vma->vm_file_flags;
 
-    if (vma->vm_type == VMA_TYPE_FILE)
+    if (vma->vm_type == VMA_TYPE_FILE) {
+        uint64_t split_delta = addr - vma->vm_start;
         new_vma->vm_offset += addr - vma->vm_start;
+        new_vma->vm_file_len =
+            vma->vm_file_len > split_delta ? vma->vm_file_len - split_delta : 0;
+        vma->vm_file_len = MIN(vma->vm_file_len, split_delta);
+    }
 
     if (vma->vm_name)
         new_vma->vm_name = strdup(vma->vm_name);
@@ -221,6 +228,7 @@ int vma_split(vma_manager_t *mgr, vma_t *vma, uint64_t addr) {
 
     if (vma_insert(mgr, vma) != 0) {
         vma->vm_end = old_end;
+        vma->vm_file_len = old_file_len;
         vma_insert(mgr, vma);
         vma_free(new_vma);
         return -1;
@@ -234,6 +242,7 @@ int vma_split(vma_manager_t *mgr, vma_t *vma, uint64_t addr) {
         vma->vm_rb.rb_right = NULL;
 
         vma->vm_end = old_end;
+        vma->vm_file_len = old_file_len;
         vma_insert(mgr, vma);
         vma_free(new_vma);
         return -1;
@@ -257,6 +266,17 @@ int vma_merge(vma_manager_t *mgr, vma_t *vma1, vma_t *vma2) {
         return -1;
     }
 
+    if (vma1->vm_type == VMA_TYPE_FILE) {
+        uint64_t vma1_len = vma1->vm_end - vma1->vm_start;
+        uint64_t merged_file_len = vma1->vm_file_len + vma2->vm_file_len;
+        uint64_t merged_len = vma2->vm_end - vma1->vm_start;
+
+        if (merged_file_len < vma1->vm_file_len || merged_file_len > merged_len)
+            return -1;
+        if (vma1->vm_file_len < vma1_len && vma2->vm_file_len != 0)
+            return -1;
+    }
+
     if (!vma1->vm_name && vma2->vm_name) {
         vma1->vm_name = vma2->vm_name;
         vma2->vm_name = NULL;
@@ -275,9 +295,13 @@ int vma_merge(vma_manager_t *mgr, vma_t *vma1, vma_t *vma2) {
     vma1->vm_rb.rb_right = NULL;
 
     vma1->vm_end = new_end;
+    if (vma1->vm_type == VMA_TYPE_FILE)
+        vma1->vm_file_len += vma2->vm_file_len;
 
     if (vma_insert(mgr, vma1) != 0) {
         vma1->vm_end = old_end;
+        if (vma1->vm_type == VMA_TYPE_FILE)
+            vma1->vm_file_len -= vma2->vm_file_len;
         vma_insert(mgr, vma1);
         vma2->vm_rb.rb_parent_color = 0;
         vma2->vm_rb.rb_left = NULL;
@@ -377,6 +401,7 @@ static vma_t *vma_copy(vma_t *src) {
         vfs_node_ref_get(dst->node);
     dst->shm = src->shm;
     dst->vm_offset = src->vm_offset;
+    dst->vm_file_len = src->vm_file_len;
     dst->vm_file_flags = src->vm_file_flags;
     dst->shm_id = src->shm_id;
 

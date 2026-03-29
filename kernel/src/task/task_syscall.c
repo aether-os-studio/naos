@@ -762,8 +762,15 @@ static int register_elf_load_vma(task_t *task, vfs_node_t *node,
     uint64_t seg_addr = load_base + phdr->p_vaddr;
     uint64_t aligned_addr = PADDING_DOWN(seg_addr, PAGE_SIZE);
     uint64_t aligned_offset = PADDING_DOWN(phdr->p_offset, PAGE_SIZE);
-    uint64_t size_diff = seg_addr - aligned_addr;
-    uint64_t map_size = PADDING_UP(phdr->p_memsz + size_diff, PAGE_SIZE);
+    uint64_t page_prefix = seg_addr - aligned_addr;
+    uint64_t file_map_size = phdr->p_filesz + page_prefix;
+    uint64_t mem_map_size = phdr->p_memsz + page_prefix;
+    uint64_t map_size = PADDING_UP(mem_map_size, PAGE_SIZE);
+
+    if (file_map_size < phdr->p_filesz || mem_map_size < phdr->p_memsz ||
+        map_size < mem_map_size || phdr->p_filesz > phdr->p_memsz) {
+        return -EINVAL;
+    }
 
     vma_t *vma = vma_alloc();
     if (!vma)
@@ -774,6 +781,7 @@ static int register_elf_load_vma(task_t *task, vfs_node_t *node,
     vma->vm_flags = elf_segment_vma_flags(phdr->p_flags);
     vma->vm_type = VMA_TYPE_FILE;
     vma->vm_offset = aligned_offset;
+    vma->vm_file_len = file_map_size;
     vma->vm_file_flags = 0;
     vma->node = node;
     if (node)
@@ -1202,17 +1210,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 if (interp_phdr[j].p_type != PT_LOAD)
                     continue;
 
-                int seg_ret = map_task_elf_segment(self, interpreter_node,
-                                                   INTERPRETER_BASE_ADDR,
-                                                   &interp_phdr[j]);
-                if (seg_ret != 0) {
-                    printk("Failed to map interpreter PT_LOAD segment\n");
-                    exec_fail_ret = (uint64_t)seg_ret;
-                    free(interp_phdr);
-                    vfs_close(interpreter_node);
-                    goto exec_fail_restore_mm;
-                }
-
                 if (register_elf_load_vma(
                         self, interpreter_node, interpreter_path,
                         INTERPRETER_BASE_ADDR, &interp_phdr[j]) != 0) {
@@ -1234,14 +1231,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 load_start = aligned_addr;
             if (aligned_addr + alloc_size > load_end)
                 load_end = aligned_addr + alloc_size;
-
-            int seg_ret =
-                map_task_elf_segment(self, node, real_load_start, &phdr[i]);
-            if (seg_ret != 0) {
-                printk("Failed to map executable PT_LOAD segment\n");
-                exec_fail_ret = (uint64_t)seg_ret;
-                goto exec_fail_restore_mm;
-            }
 
             if (register_elf_load_vma(self, node, path, real_load_start,
                                       &phdr[i]) != 0) {

@@ -10,6 +10,7 @@ typedef struct fault_vma_snapshot {
     vma_type_t vm_type;
     vfs_node_t *node;
     int64_t vm_offset;
+    uint64_t vm_file_len;
     uint64_t vm_file_flags;
 } fault_vma_snapshot_t;
 
@@ -26,6 +27,7 @@ static bool fault_vma_snapshot_capture(vma_t *vma,
         .vm_type = vma->vm_type,
         .node = vma->node,
         .vm_offset = vma->vm_offset,
+        .vm_file_len = vma->vm_file_len,
         .vm_file_flags = vma->vm_file_flags,
     };
 
@@ -127,6 +129,7 @@ static bool fault_vma_matches_snapshot(vma_t *vma,
            vma->vm_flags == snapshot->vm_flags &&
            vma->vm_type == snapshot->vm_type && vma->node == snapshot->node &&
            vma->vm_offset == snapshot->vm_offset &&
+           vma->vm_file_len == snapshot->vm_file_len &&
            vma->vm_file_flags == snapshot->vm_file_flags;
 }
 
@@ -144,9 +147,14 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
         return PF_RES_SEGF;
 
     uint64_t file_off = (uint64_t)snapshot->vm_offset + page_off_in_vma;
+    uint64_t file_bytes_left = 0;
     uint64_t read_size = snapshot->vm_end - aligned_vaddr;
+    if (snapshot->vm_file_len > page_off_in_vma)
+        file_bytes_left = snapshot->vm_file_len - page_off_in_vma;
     if (read_size > PAGE_SIZE)
         read_size = PAGE_SIZE;
+    if (read_size > file_bytes_left)
+        read_size = file_bytes_left;
 
     uint64_t page_paddr = alloc_frames(1);
     if (!page_paddr)
