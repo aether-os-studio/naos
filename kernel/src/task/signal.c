@@ -652,7 +652,8 @@ static inline void signal_x64_restore_ptregs(struct pt_regs *regs,
 
 static bool signal_x64_setup_frame(task_t *task, struct pt_regs *regs, int sig,
                                    const sigaction_t *action,
-                                   const siginfo_t *info) {
+                                   const siginfo_t *info,
+                                   sigset_t restore_mask) {
     if (!(action->sa_flags & SA_RESTORER) || !action->sa_restorer) {
         return false;
     }
@@ -686,7 +687,7 @@ static bool signal_x64_setup_frame(task_t *task, struct pt_regs *regs, int sig,
 
     ucontext_t frame_ucontext;
     x64_fpu_save(task->arch_context->fpu_ctx);
-    signal_x64_fill_ucontext(&frame_ucontext, &saved, task->signal->blocked,
+    signal_x64_fill_ucontext(&frame_ucontext, &saved, restore_mask,
                              &frame_altstack, task->arch_context->fpu_ctx);
     if (sig == SIGSEGV && info) {
         frame_ucontext.uc_mcontext.gregs[X64_REG_TRAPNO] =
@@ -862,7 +863,8 @@ signal_aarch64_restore_ptregs(struct pt_regs *regs,
 
 static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
                                        int sig, const sigaction_t *action,
-                                       const siginfo_t *info) {
+                                       const siginfo_t *info,
+                                       sigset_t restore_mask) {
     if (!(action->sa_flags & SA_RESTORER) || !action->sa_restorer)
         return false;
 
@@ -895,7 +897,7 @@ static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
     signal_aarch64_frame_t frame;
     memset(&frame, 0, sizeof(frame));
     memcpy(&frame.info, info, sizeof(frame.info));
-    signal_aarch64_fill_ucontext(&frame.ucontext, &saved, task->signal->blocked,
+    signal_aarch64_fill_ucontext(&frame.ucontext, &saved, restore_mask,
                                  &frame_altstack, info);
 
     if (copy_to_user((void *)frame_addr, &frame, sizeof(frame)))
@@ -1335,6 +1337,8 @@ uint64_t sys_sigsuspend(const sigset_t *mask, size_t sigsetsize) {
     spin_lock(&current_task->signal->sighand->siglock);
     old_mask = current_task->signal->blocked;
     current_task->signal->blocked = sigset_user_to_kernel(user_mask);
+    current_task->signal->sigsuspend_old_mask = old_mask;
+    current_task->signal->sigsuspend_active = 1;
     spin_unlock(&current_task->signal->sighand->siglock);
 
     while (true) {
@@ -1342,16 +1346,16 @@ uint64_t sys_sigsuspend(const sigset_t *mask, size_t sigsetsize) {
         spin_lock(&current_task->signal->sighand->siglock);
         should_return =
             signal_has_deliverable_outside_set_locked(current_task, 0);
-        if (should_return) {
-            current_task->signal->blocked = old_mask;
-        }
         spin_unlock(&current_task->signal->sighand->siglock);
 
         if (should_return) {
             return (uint64_t)-EINTR;
         }
 
-        schedule(SCHED_FLAG_YIELD);
+        int ret = task_block(current_task, TASK_BLOCKING, -1, "sigsuspend");
+        if (ret == EOK || ret == ETIMEDOUT || ret >= 128) {
+            continue;
+        }
     }
 }
 
@@ -1451,6 +1455,11 @@ __attribute__((used)) void task_signal(struct pt_regs *regs) {
         signal_take_pending_locked(self, sig, &info);
 
         sigaction_t action = self->signal->sighand->actions[sig];
+        bool from_sigsuspend = self->signal->sigsuspend_active != 0;
+        sigset_t restore_mask = from_sigsuspend
+                                    ? self->signal->sigsuspend_old_mask
+                                    : self->signal->blocked;
+        self->signal->sigsuspend_active = 0;
 
         if (signal_action_ignored(sig, &action)) {
             continue;
@@ -1479,13 +1488,15 @@ __attribute__((used)) void task_signal(struct pt_regs *regs) {
         }
 
 #if defined(__x86_64__)
-        if (!signal_x64_setup_frame(self, regs, sig, &action, &info)) {
+        if (!signal_x64_setup_frame(self, regs, sig, &action, &info,
+                                    restore_mask)) {
             spin_unlock(&self->signal->sighand->siglock);
             task_exit(128 + SIGSEGV);
             return;
         }
 #elif defined(__aarch64__)
-        if (!signal_aarch64_setup_frame(self, regs, sig, &action, &info)) {
+        if (!signal_aarch64_setup_frame(self, regs, sig, &action, &info,
+                                        restore_mask)) {
             spin_unlock(&self->signal->sighand->siglock);
             task_exit(128 + SIGSEGV);
             return;

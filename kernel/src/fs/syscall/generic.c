@@ -8,6 +8,9 @@
 #include <mm/cache.h>
 #include <task/task_syscall.h>
 
+#define FIONBIO_INTERNAL_DISABLE ((ssize_t) - 1)
+#define FIONBIO_INTERNAL_ENABLE ((ssize_t) - 2)
+
 static uint64_t do_unlink(const char *name);
 static volatile uint64_t tmpfile_seq = 1;
 
@@ -1088,11 +1091,26 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
     if (out_handle == NULL || in_handle == NULL)
         return -EBADF;
 
-    uint64_t current_offset =
-        offset_ptr == NULL ? fd_get_offset(in_handle) : *offset_ptr;
+    uint64_t current_offset = fd_get_offset(in_handle);
     size_t total_sent = 0;
-
     size_t remaining = count;
+
+    if (offset_ptr != NULL) {
+        int user_offset = 0;
+
+        if (check_user_overflow((uint64_t)offset_ptr, sizeof(user_offset)) ||
+            check_unmapped((uint64_t)offset_ptr, sizeof(user_offset))) {
+            return -EFAULT;
+        }
+        if (copy_from_user(&user_offset, offset_ptr, sizeof(user_offset))) {
+            return -EFAULT;
+        }
+        if (user_offset < 0) {
+            return -EINVAL;
+        }
+
+        current_offset = (uint64_t)user_offset;
+    }
 
     char *buffer = (char *)alloc_frames_bytes(PAGE_SIZE);
     if (buffer == NULL) {
@@ -1101,14 +1119,14 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
 
     while (remaining > 0) {
         size_t bytes_to_read = remaining < PAGE_SIZE ? remaining : PAGE_SIZE;
-        size_t bytes_read;
-        size_t bytes_written;
+        ssize_t bytes_read = 0;
+        ssize_t bytes_written = 0;
         bytes_read =
             vfs_read_fd(in_handle, buffer, current_offset, bytes_to_read);
         if (bytes_read <= 0) {
-            if (bytes_read == (size_t)-1 && total_sent == 0) {
+            if (bytes_read < 0 && total_sent == 0) {
                 free_frames_bytes(buffer, PAGE_SIZE);
-                return -EIO;
+                return (uint64_t)bytes_read;
             }
             break;
         }
@@ -1117,10 +1135,10 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
             out_offset = out_handle->node->size;
         bytes_written =
             vfs_write_fd(out_handle, buffer, out_offset, bytes_read);
-        if (bytes_written == (size_t)-1) {
+        if (bytes_written <= 0) {
             if (total_sent == 0) {
                 free_frames_bytes(buffer, PAGE_SIZE);
-                return -EIO;
+                return bytes_written < 0 ? (uint64_t)bytes_written : 0;
             }
             break;
         }
@@ -1134,7 +1152,11 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
     }
     free_frames_bytes(buffer, PAGE_SIZE);
     if (offset_ptr != NULL) {
-        *offset_ptr = current_offset;
+        int out_offset =
+            current_offset > (uint64_t)INT_MAX ? INT_MAX : (int)current_offset;
+        if (copy_to_user(offset_ptr, &out_offset, sizeof(out_offset))) {
+            return -EFAULT;
+        }
     } else {
         fd_set_offset(in_handle, current_offset);
     }
@@ -1270,54 +1292,86 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
 }
 
 uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
-    if (!iovec ||
-        check_user_overflow((uint64_t)iovec, count * sizeof(struct iovec))) {
+    if (count == 0) {
+        return 0;
+    }
+    if (!iovec || count > SIZE_MAX / sizeof(struct iovec) ||
+        check_user_overflow((uint64_t)iovec, count * sizeof(struct iovec)) ||
+        check_unmapped((uint64_t)iovec, count * sizeof(struct iovec))) {
+        return (uint64_t)-EFAULT;
+    }
+
+    struct iovec *kiov = malloc(count * sizeof(struct iovec));
+    if (!kiov) {
+        return (uint64_t)-ENOMEM;
+    }
+    if (copy_from_user(kiov, iovec, count * sizeof(struct iovec))) {
+        free(kiov);
         return (uint64_t)-EFAULT;
     }
 
     ssize_t total_read = 0;
     for (uint64_t i = 0; i < count; i++) {
-        if (iovec[i].iov_base == NULL || iovec[i].len == 0)
+        if (kiov[i].iov_base == NULL || kiov[i].len == 0)
             continue;
 
-        ssize_t ret = sys_read(fd, iovec[i].iov_base, iovec[i].len);
+        ssize_t ret = sys_read(fd, kiov[i].iov_base, kiov[i].len);
         if (ret < 0) {
             if (total_read > 0 &&
                 (ret == -EAGAIN || ret == -EWOULDBLOCK || ret == -EINTR)) {
+                free(kiov);
                 return total_read;
             }
+            free(kiov);
             return (uint64_t)ret;
         }
         total_read += ret;
-        if ((size_t)ret < iovec[i].len)
+        if ((size_t)ret < kiov[i].len)
             break;
     }
+    free(kiov);
     return total_read;
 }
 
 uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count) {
-    if (!iovec ||
-        check_user_overflow((uint64_t)iovec, count * sizeof(struct iovec))) {
+    if (count == 0) {
+        return 0;
+    }
+    if (!iovec || count > SIZE_MAX / sizeof(struct iovec) ||
+        check_user_overflow((uint64_t)iovec, count * sizeof(struct iovec)) ||
+        check_unmapped((uint64_t)iovec, count * sizeof(struct iovec))) {
+        return (uint64_t)-EFAULT;
+    }
+
+    struct iovec *kiov = malloc(count * sizeof(struct iovec));
+    if (!kiov) {
+        return (uint64_t)-ENOMEM;
+    }
+    if (copy_from_user(kiov, iovec, count * sizeof(struct iovec))) {
+        free(kiov);
         return (uint64_t)-EFAULT;
     }
 
     ssize_t total_written = 0;
     for (uint64_t i = 0; i < count; i++) {
-        if (iovec[i].iov_base == NULL || iovec[i].len == 0)
+        if (kiov[i].iov_base == NULL || kiov[i].len == 0)
             continue;
 
-        ssize_t ret = sys_write(fd, iovec[i].iov_base, iovec[i].len);
+        ssize_t ret = sys_write(fd, kiov[i].iov_base, kiov[i].len);
         if (ret < 0) {
             if (total_written > 0 &&
                 (ret == -EAGAIN || ret == -EWOULDBLOCK || ret == -EINTR)) {
+                free(kiov);
                 return total_written;
             }
+            free(kiov);
             return (uint64_t)ret;
         }
         total_written += ret;
-        if ((size_t)ret < iovec[i].len)
+        if ((size_t)ret < kiov[i].len)
             break;
     }
+    free(kiov);
     return total_written;
 }
 
@@ -1638,8 +1692,9 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         int ret = 0;
         if (self->fd_info->fds[fd]->node->type & file_socket) {
             int nonblock = !!(file_flags & O_NONBLOCK);
-            ret =
-                vfs_ioctl(self->fd_info->fds[fd], FIONBIO, (ssize_t)&nonblock);
+            ret = vfs_ioctl(self->fd_info->fds[fd], FIONBIO,
+                            nonblock ? FIONBIO_INTERNAL_ENABLE
+                                     : FIONBIO_INTERNAL_DISABLE);
             if (ret == -ENOTTY || ret == -ENOSYS)
                 ret = 0;
         }

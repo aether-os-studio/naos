@@ -272,6 +272,8 @@ typedef struct task_signal_info {
     sigset_t signal;
     pending_signal_t pending_signal;
     sigset_t blocked;
+    sigset_t sigsuspend_old_mask;
+    uint8_t sigsuspend_active;
     stack_t altstack;
     task_sighand_t *sighand;
 } task_signal_info_t;

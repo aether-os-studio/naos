@@ -2,6 +2,9 @@
 #include <lwip/err.h>
 #include <init/callbacks.h>
 
+#define FIONBIO_INTERNAL_DISABLE ((ssize_t) - 1)
+#define FIONBIO_INTERNAL_ENABLE ((ssize_t) - 2)
+
 extern int err_to_errno(err_t err);
 
 int lwip_socket_fsid = 0;
@@ -1504,8 +1507,9 @@ static int lwip_socket_accept(uint64_t fd, struct sockaddr_un *addr,
         return -EINVAL;
     }
 
-    if (netconn_accept(listener->conn, &accepted) != ERR_OK) {
-        return -EWOULDBLOCK;
+    err_t accept_err = netconn_accept(listener->conn, &accepted);
+    if (accept_err != ERR_OK) {
+        return lwip_errno_from_err(accept_err);
     }
 
     sock = lwip_socket_alloc(accepted, listener->domain, listener->type,
@@ -1808,10 +1812,17 @@ static int lwip_socket_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
     if (cmd == FIONBIO) {
         int value = 0;
 
-        if (!arg || check_unmapped(arg, sizeof(value))) {
-            return -EFAULT;
+        if (arg == FIONBIO_INTERNAL_DISABLE) {
+            value = 0;
+        } else if (arg == FIONBIO_INTERNAL_ENABLE) {
+            value = 1;
+        } else {
+            if (!arg || check_user_overflow((uint64_t)arg, sizeof(value)) ||
+                check_unmapped((uint64_t)arg, sizeof(value)) ||
+                copy_from_user(&value, (const void *)arg, sizeof(value))) {
+                return -EFAULT;
+            }
         }
-        value = *(int *)arg;
 
         netconn_set_nonblocking(sock->conn, value ? 1 : 0);
         return 0;
@@ -1829,8 +1840,8 @@ static bool lwip_socket_close(vfs_node_t *node) {
     }
 
     sock->closed = true;
-    sock->node = NULL;
     lwip_socket_notify(sock, EPOLLIN | EPOLLHUP | EPOLLERR | EPOLLRDHUP);
+    sock->node = NULL;
     lwip_socket_release_conn(sock);
 
     free(sock);
