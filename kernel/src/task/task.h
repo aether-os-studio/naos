@@ -235,6 +235,7 @@ void sched_defer_tick(void);
 void sched_wake_worker(uint32_t cpu_id);
 void sched_check_wakeup();
 void task_refresh_tick_work_state(task_t *task);
+void task_schedule_reap(void);
 
 task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
                     int priority);
@@ -264,7 +265,7 @@ void task_complete_vfork(task_t *task);
 size_t task_count(void);
 int task_kill_all(int sig);
 int task_kill_process_group(int pgid, int sig);
-void task_reap_deferred(size_t budget);
+size_t task_reap_deferred(size_t budget);
 extern spinlock_t task_queue_lock;
 
 extern task_t *idle_tasks[MAX_CPU_NUM];

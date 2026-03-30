@@ -279,7 +279,7 @@ map_cow_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
         flags &= ~ARCH_PT_FLAG_COW;
 
         pgdir[index] = ARCH_MAKE_PTE(old_paddr, flags);
-        arch_flush_tlb(vaddr);
+        arch_flush_tlb(aligned_vaddr);
 
         spin_unlock(&task->mm->lock);
         return PF_RES_OK;
@@ -302,7 +302,7 @@ map_cow_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
     flags &= ~ARCH_PT_FLAG_COW;
 
     pgdir[index] = ARCH_MAKE_PTE(new_paddr, flags);
-    arch_flush_tlb(vaddr);
+    arch_flush_tlb(aligned_vaddr);
 
     spin_unlock(&task->mm->lock);
 

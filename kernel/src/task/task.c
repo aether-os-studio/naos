@@ -39,6 +39,7 @@ spinlock_t worker_tick_locks[MAX_WORKER_NUM];
 uint32_t worker_slot_by_cpu[MAX_CPU_NUM];
 
 static void sched_update_itimer_task(task_t *task, uint64_t now_ms);
+static void task_reap_softirq(void);
 
 static inline uint64_t task_timer_current_time_ns(clockid_t clock_type) {
     if (clock_type == CLOCK_REALTIME) {
@@ -413,10 +414,35 @@ static void task_enqueue_should_free_locked(task_t *task) {
     llist_append(&should_free_tasks, &task->free_node);
 }
 
-void task_enqueue_should_free(task_t *task) {
+static bool task_should_free_pending(void) {
+    bool pending;
+
     spin_lock(&should_free_lock);
-    task_enqueue_should_free_locked(task);
+    pending = !llist_empty(&should_free_tasks);
     spin_unlock(&should_free_lock);
+
+    return pending;
+}
+
+static void task_schedule_reap_softirq(void) {
+    if (softirq_raise(SOFTIRQ_TASK_REAP))
+        sched_wake_worker(0);
+}
+
+void task_schedule_reap(void) { task_schedule_reap_softirq(); }
+
+void task_enqueue_should_free(task_t *task) {
+    bool queued = false;
+
+    spin_lock(&should_free_lock);
+    if (task && llist_empty(&task->free_node)) {
+        task_enqueue_should_free_locked(task);
+        queued = true;
+    }
+    spin_unlock(&should_free_lock);
+
+    if (queued)
+        task_schedule_reap_softirq();
 }
 
 task_t *task_dequeue_should_free(void) {
@@ -431,6 +457,14 @@ task_t *task_dequeue_should_free(void) {
     spin_unlock(&should_free_lock);
 
     return task;
+}
+
+static void task_reap_softirq(void) {
+    const size_t reap_budget = 64;
+    size_t reaped = task_reap_deferred(reap_budget);
+
+    if (reaped > 0 && task_should_free_pending())
+        task_schedule_reap_softirq();
 }
 
 size_t task_count(void) {
@@ -767,20 +801,21 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->tgid = task->pid;
     task->sid = 0;
     task->priority = priority;
-    task->is_kernel = true;
 
     void *kernel_stack_base = alloc_frames_bytes(STACK_SIZE);
     if (!kernel_stack_base)
         goto fail;
+    task->kernel_stack_base = kernel_stack_base;
     task->kernel_stack = (uint64_t)kernel_stack_base + STACK_SIZE;
 
     void *syscall_stack_base = alloc_frames_bytes(STACK_SIZE);
     if (!syscall_stack_base)
         goto fail;
+    task->syscall_stack_base = syscall_stack_base;
     task->syscall_stack = (uint64_t)syscall_stack_base + STACK_SIZE;
 
-    memset((void *)(task->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
-    memset((void *)(task->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
+    memset(task->kernel_stack_base, 0, STACK_SIZE);
+    memset(task->syscall_stack_base, 0, STACK_SIZE);
     task->mm = calloc(1, sizeof(task_mm_info_t));
     if (!task->mm)
         goto fail;
@@ -909,6 +944,7 @@ void task_init() {
     llist_init_head(&should_free_tasks);
     spin_init(&should_free_lock);
     softirq_register(SOFTIRQ_TIMER, task_timeout_softirq);
+    softirq_register(SOFTIRQ_TASK_REAP, task_reap_softirq);
     next_task_pid = 1;
 
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
@@ -1207,10 +1243,9 @@ uint64_t task_exit_thread(int64_t code) {
     can_schedule = true;
 
     while (1) {
+        arch_enable_interrupt();
         schedule(SCHED_FLAG_YIELD);
     }
-
-    return (uint64_t)-EAGAIN;
 }
 
 uint64_t task_exit(int64_t code) {
@@ -1255,10 +1290,9 @@ uint64_t task_exit(int64_t code) {
     can_schedule = true;
 
     while (1) {
+        arch_enable_interrupt();
         schedule(SCHED_FLAG_YIELD);
     }
-
-    return (uint64_t)-EAGAIN;
 }
 
 static void sched_update_itimer_task(task_t *task, uint64_t now_ms) {

@@ -54,6 +54,49 @@ static void lwip_socket_notify(lwip_socket_state_t *sock, uint32_t events) {
     }
 }
 
+static void lwip_socket_notify_ready_state(lwip_socket_state_t *sock) {
+    s16_t rcvevent = 0;
+    u16_t sendevent = 0;
+    u16_t errevent = 0;
+    int pending_error = 0;
+    bool peer_closed = false;
+    bool shut_rd = false;
+    bool shut_wr = false;
+    uint32_t events = 0;
+
+    if (!sock) {
+        return;
+    }
+
+    spin_lock(&sock->event_lock);
+    rcvevent = sock->rcvevent;
+    sendevent = sock->sendevent;
+    errevent = sock->errevent;
+    pending_error = sock->pending_error;
+    peer_closed = sock->peer_closed;
+    shut_rd = sock->shut_rd;
+    shut_wr = sock->shut_wr;
+    spin_unlock(&sock->event_lock);
+
+    if (rcvevent > 0 || lwip_socket_recv_avail(sock) > 0 || peer_closed ||
+        shut_rd) {
+        events |= EPOLLIN;
+    }
+    if (sendevent && !shut_wr) {
+        events |= EPOLLOUT;
+    }
+    if (errevent || pending_error != 0) {
+        events |= EPOLLERR;
+    }
+    if (sock->closed) {
+        events |= EPOLLHUP | EPOLLRDHUP;
+    } else if (peer_closed) {
+        events |= EPOLLRDHUP;
+    }
+
+    lwip_socket_notify(sock, events);
+}
+
 static int lwip_socket_take_pending_error(lwip_socket_state_t *sock) {
     int error = 0;
 
@@ -255,12 +298,56 @@ static void lwip_socket_set_shutdown(lwip_socket_state_t *sock, bool shut_rd,
     spin_unlock(&sock->event_lock);
 }
 
+static void lwip_socket_attach_conn(struct netconn *conn,
+                                    lwip_socket_state_t *sock) {
+    s16_t queued_rcvevent = 0;
+    err_t pending_err = ERR_OK;
+    SYS_ARCH_DECL_PROTECT(lev);
+
+    if (!conn || !sock) {
+        return;
+    }
+
+    SYS_ARCH_PROTECT(lev);
+    if (conn->callback_arg_type == NETCONN_CALLBACK_ARG_SOCKET &&
+        conn->callback_arg.socket < -1) {
+        queued_rcvevent = (s16_t)(-1 - conn->callback_arg.socket);
+    }
+    pending_err = conn->pending_err;
+    netconn_set_callback_arg(conn, sock);
+    SYS_ARCH_UNPROTECT(lev);
+
+    if (queued_rcvevent > 0) {
+        sock->rcvevent = queued_rcvevent;
+    }
+    if (pending_err != ERR_OK) {
+        sock->errevent = 1;
+        sock->pending_error = err_to_errno(pending_err);
+    }
+}
+
 static void lwip_socket_event_callback(struct netconn *conn,
                                        enum netconn_evt evt, u16_t len) {
-    lwip_socket_state_t *sock = conn ? netconn_get_callback_arg(conn) : NULL;
+    lwip_socket_state_t *sock = NULL;
     int pending_error = 0;
+    SYS_ARCH_DECL_PROTECT(lev);
 
     LWIP_UNUSED_ARG(len);
+
+    if (!conn) {
+        return;
+    }
+
+    SYS_ARCH_PROTECT(lev);
+    if (conn->callback_arg_type != NETCONN_CALLBACK_ARG_PTR) {
+        if (evt == NETCONN_EVT_RCVPLUS && conn->callback_arg.socket < 0) {
+            conn->callback_arg.socket--;
+        }
+        SYS_ARCH_UNPROTECT(lev);
+        return;
+    }
+    sock = conn->callback_arg.ptr;
+    SYS_ARCH_UNPROTECT(lev);
 
     if (!sock) {
         return;
@@ -395,7 +482,7 @@ static lwip_socket_state_t *lwip_socket_alloc(struct netconn *conn, int domain,
     spin_init(&sock->event_lock);
 
     if (conn) {
-        netconn_set_callback_arg(conn, sock);
+        lwip_socket_attach_conn(conn, sock);
     }
 
     return sock;
@@ -459,6 +546,7 @@ static int lwip_socket_install_fd(lwip_socket_state_t *sock, int open_type,
 
     handle = node->handle;
     handle->fd = current_task->fd_info->fds[slot];
+    lwip_socket_notify_ready_state(sock);
     return ret;
 }
 

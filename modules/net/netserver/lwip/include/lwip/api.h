@@ -263,6 +263,7 @@ struct netconn {
         all threads when closing while threads are waiting. */
     int mbox_threads_waiting;
 #endif
+    u8_t callback_arg_type;
     union {
         int socket;
         void *ptr;
@@ -409,11 +410,23 @@ err_t netconn_err(struct netconn *conn);
     } while (0)
 #define netconn_is_flag_set(conn, flag) (((conn)->flags & (flag)) != 0)
 
+#define NETCONN_CALLBACK_ARG_SOCKET 0
+#define NETCONN_CALLBACK_ARG_PTR 1
+
+#define netconn_set_callback_socket(conn, socket_num)                          \
+    do {                                                                       \
+        (conn)->callback_arg.socket = (socket_num);                            \
+        (conn)->callback_arg_type = NETCONN_CALLBACK_ARG_SOCKET;               \
+    } while (0)
 #define netconn_set_callback_arg(conn, arg)                                    \
     do {                                                                       \
         (conn)->callback_arg.ptr = (arg);                                      \
+        (conn)->callback_arg_type = NETCONN_CALLBACK_ARG_PTR;                  \
     } while (0)
-#define netconn_get_callback_arg(conn) ((conn)->callback_arg.ptr)
+#define netconn_get_callback_arg(conn)                                         \
+    (((conn)->callback_arg_type == NETCONN_CALLBACK_ARG_PTR)                   \
+         ? (conn)->callback_arg.ptr                                            \
+         : NULL)
 
 /** Set the blocking status of netconn calls (@todo: write/send is missing) */
 #define netconn_set_nonblocking(conn, val)                                     \

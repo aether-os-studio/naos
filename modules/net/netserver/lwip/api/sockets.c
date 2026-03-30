@@ -785,7 +785,7 @@ int lwip_accept(int s, struct sockaddr *addr, socklen_t *addrlen) {
      */
     SYS_ARCH_PROTECT(lev);
     recvevent = (s16_t)(-1 - newconn->callback_arg.socket);
-    newconn->callback_arg.socket = newsock;
+    netconn_set_callback_socket(newconn, newsock);
     SYS_ARCH_UNPROTECT(lev);
 
     if (newconn->callback) {
@@ -1899,7 +1899,7 @@ int lwip_socket(int domain, int type, int protocol) {
         set_errno(ENFILE);
         return -1;
     }
-    conn->callback_arg.socket = i;
+    netconn_set_callback_socket(conn, i);
     done_socket(&sockets[i - LWIP_SOCKET_OFFSET]);
     LWIP_DEBUGF(SOCKETS_DEBUG, ("%d\n", i));
     set_errno(0);

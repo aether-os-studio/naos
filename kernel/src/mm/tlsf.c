@@ -7,8 +7,6 @@
 extern Bitmap usable_regions;
 extern uint64_t memory_size;
 
-extern void task_reap_deferred(size_t budget);
-
 #define TLSF_FL_INDEX_COUNT 64
 #define TLSF_SL_INDEX_LOG2 4
 #define TLSF_SL_INDEX_COUNT (1U << TLSF_SL_INDEX_LOG2)
@@ -366,6 +364,85 @@ static bool pages_are_unreferenced(uintptr_t addr, size_t pages) {
     return true;
 }
 
+static size_t mark_releasable_pages(uintptr_t addr, size_t pages,
+                                    bool refs_already_released) {
+    size_t releasable_pages = 0;
+
+    for (size_t offset = 0; offset < pages; offset++) {
+        page_t *page = get_page(addr + offset * PAGE_SIZE);
+        bool releasable = false;
+
+        if (page) {
+            releasable = refs_already_released ? page_refcount_read(page) == 0
+                                               : page_try_release_last(page);
+            page->allocator_state = releasable ? 1 : 0;
+        }
+
+        if (releasable)
+            releasable_pages++;
+    }
+
+    return releasable_pages;
+}
+
+static void clear_page_release_marks(uint64_t pfn, uint32_t pages) {
+    for (uint32_t offset = 0; offset < pages; offset++) {
+        page_maps[pfn + offset].allocator_state = 0;
+    }
+}
+
+static void tlsf_release_block_locked(uint64_t pfn, uint32_t pages) {
+    uint64_t merged_pfn = pfn;
+    uint32_t merged_pages = pages;
+    uint64_t prev_pfn = 0;
+    uint64_t next_pfn = 0;
+    uint32_t prev_pages = 0;
+    uint32_t next_pages = 0;
+
+    if (tlsf_can_coalesce_prev(merged_pfn, &prev_pfn, &prev_pages)) {
+        tlsf_remove_free_block_locked(prev_pfn);
+        page_meta_clear(&page_maps[merged_pfn]);
+        page_meta_clear(&page_maps[merged_pfn - 1]);
+        merged_pfn = prev_pfn;
+        merged_pages += prev_pages;
+    }
+
+    if (tlsf_can_coalesce_next(merged_pfn, merged_pages, &next_pfn,
+                               &next_pages)) {
+        tlsf_remove_free_block_locked(next_pfn);
+        page_meta_clear(&page_maps[merged_pfn + merged_pages - 1]);
+        page_meta_clear(&page_maps[next_pfn]);
+        merged_pages += next_pages;
+    }
+
+    block_mark(merged_pfn, merged_pages, true);
+    tlsf_insert_free_block_locked(merged_pfn);
+    tlsf_allocator.free_pages += pages;
+}
+
+static void tlsf_release_partial_block(uint64_t pfn, uint32_t pages) {
+    uint32_t offset = 0;
+
+    while (offset < pages) {
+        bool releasable = page_maps[pfn + offset].allocator_state != 0;
+        uint32_t run_pages = 1;
+
+        while (offset + run_pages < pages &&
+               (page_maps[pfn + offset + run_pages].allocator_state != 0) ==
+                   releasable) {
+            run_pages++;
+        }
+
+        block_mark(pfn + offset, run_pages, false);
+        if (releasable)
+            tlsf_release_block_locked(pfn + offset, run_pages);
+
+        offset += run_pages;
+    }
+
+    clear_page_release_marks(pfn, pages);
+}
+
 uintptr_t alloc_frames(size_t count) {
     if (count == 0 || count > UINT32_MAX)
         return 0;
@@ -384,7 +461,6 @@ uintptr_t alloc_frames(size_t count) {
         if (attempt == 0) {
             if (cache_reclaim_pages(count * 32) != 0)
                 continue;
-            task_reap_deferred(16);
         }
     }
 
@@ -425,53 +501,47 @@ static void free_frames_common(uintptr_t addr, size_t count,
     }
 
     uint64_t pfn = phys_to_pfn(addr);
-    page_t *head = &page_maps[pfn];
-    page_t *tail = &page_maps[pfn + count - 1];
+    size_t processed = 0;
 
-    if (!page_is_block_head(head) || page_is_free_head(head) ||
-        head->span_pages != count || !page_is_block_tail(tail) ||
-        tail->span_pages != count) {
-        return;
-    }
-
-    if (refs_already_released) {
-        if (!pages_are_unreferenced(addr, count))
+    while (processed < count) {
+        uint64_t block_pfn = pfn + processed;
+        page_t *head = &page_maps[block_pfn];
+        if (!page_is_block_head(head) || page_is_free_head(head) ||
+            head->span_pages == 0) {
             return;
-    } else {
-        if (!claim_last_page_refs(addr, count))
+        }
+
+        uint32_t block_pages = head->span_pages;
+        if (processed + block_pages > count)
             return;
+
+        page_t *tail = &page_maps[block_pfn + block_pages - 1];
+        if (!page_is_block_tail(tail) || tail->span_pages != block_pages)
+            return;
+
+        processed += block_pages;
     }
 
-    spin_lock(&tlsf_allocator.lock);
+    processed = 0;
+    while (processed < count) {
+        uint64_t block_pfn = pfn + processed;
+        uint32_t block_pages = page_maps[block_pfn].span_pages;
 
-    uint64_t merged_pfn = pfn;
-    uint32_t merged_pages = (uint32_t)count;
-    uint64_t prev_pfn = 0;
-    uint64_t next_pfn = 0;
-    uint32_t prev_pages = 0;
-    uint32_t next_pages = 0;
+        size_t releasable_pages = mark_releasable_pages(
+            pfn_to_phys(block_pfn), block_pages, refs_already_released);
 
-    if (tlsf_can_coalesce_prev(merged_pfn, &prev_pfn, &prev_pages)) {
-        tlsf_remove_free_block_locked(prev_pfn);
-        page_meta_clear(&page_maps[merged_pfn]);
-        page_meta_clear(&page_maps[merged_pfn - 1]);
-        merged_pfn = prev_pfn;
-        merged_pages += prev_pages;
+        if (releasable_pages == 0) {
+            clear_page_release_marks(block_pfn, block_pages);
+            processed += block_pages;
+            continue;
+        }
+
+        spin_lock(&tlsf_allocator.lock);
+        tlsf_release_partial_block(block_pfn, block_pages);
+        spin_unlock(&tlsf_allocator.lock);
+
+        processed += block_pages;
     }
-
-    if (tlsf_can_coalesce_next(merged_pfn, merged_pages, &next_pfn,
-                               &next_pages)) {
-        tlsf_remove_free_block_locked(next_pfn);
-        page_meta_clear(&page_maps[merged_pfn + merged_pages - 1]);
-        page_meta_clear(&page_maps[next_pfn]);
-        merged_pages += next_pages;
-    }
-
-    block_mark(merged_pfn, merged_pages, true);
-    tlsf_insert_free_block_locked(merged_pfn);
-    tlsf_allocator.free_pages += count;
-
-    spin_unlock(&tlsf_allocator.lock);
 }
 
 void free_frames(uintptr_t addr, size_t count) {

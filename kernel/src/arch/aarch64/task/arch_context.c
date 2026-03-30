@@ -82,6 +82,8 @@ void __switch_to(task_t *prev, task_t *next) {
     aarch64_write_tpidr_el0(next->arch_context->tpidr_el0);
 
     task_mark_on_cpu(prev, false);
+    if (prev->state == TASK_DIED && task_is_reaped(prev))
+        task_schedule_reap();
     task_mark_on_cpu(next, true);
 }
 

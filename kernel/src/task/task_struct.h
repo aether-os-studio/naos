@@ -279,6 +279,8 @@ typedef struct task_signal_info {
 typedef struct task {
     uint64_t syscall_stack;
     uint64_t kernel_stack;
+    void *syscall_stack_base;
+    void *kernel_stack_base;
     struct llist_header free_node;
     struct llist_header parent_node;
     struct llist_header pgid_node;

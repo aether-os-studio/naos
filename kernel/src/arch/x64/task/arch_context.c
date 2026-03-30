@@ -163,6 +163,8 @@ void __switch_to(task_t *prev, task_t *next) {
     write_gsbase(next->arch_context->gsbase);
 
     task_mark_on_cpu(prev, false);
+    if (prev->state == TASK_DIED && task_is_reaped(prev))
+        task_schedule_reap();
     task_mark_on_cpu(next, true);
 }
 

@@ -466,14 +466,14 @@ void task_cleanup_partial(task_t *task, bool kernel_mm) {
     }
 
     if (task->syscall_stack) {
-        free_frames_bytes((void *)(task->syscall_stack - STACK_SIZE),
-                          STACK_SIZE);
+        free_frames_bytes(task->syscall_stack_base, STACK_SIZE);
+        task->syscall_stack_base = NULL;
         task->syscall_stack = 0;
     }
 
     if (task->kernel_stack) {
-        free_frames_bytes((void *)(task->kernel_stack - STACK_SIZE),
-                          STACK_SIZE);
+        free_frames_bytes(task->kernel_stack_base, STACK_SIZE);
+        task->kernel_stack_base = NULL;
         task->kernel_stack = 0;
     }
 
@@ -532,8 +532,10 @@ void free_task(task_t *ptr) {
     task_pgid_index_detach_locked(ptr);
     spin_unlock(&task_queue_lock);
 
-    free_frames_bytes((void *)(ptr->syscall_stack - STACK_SIZE), STACK_SIZE);
-    free_frames_bytes((void *)(ptr->kernel_stack - STACK_SIZE), STACK_SIZE);
+    free_frames_bytes(ptr->syscall_stack_base, STACK_SIZE);
+    ptr->syscall_stack_base = NULL;
+    free_frames_bytes(ptr->kernel_stack_base, STACK_SIZE);
+    ptr->kernel_stack_base = NULL;
 
     shm_exit(ptr);
 
@@ -559,14 +561,20 @@ void free_task(task_t *ptr) {
     free(ptr);
 }
 
-void task_reap_deferred(size_t budget) {
+size_t task_reap_deferred(size_t budget) {
+    size_t reaped = 0;
+
     for (size_t i = 0; i < budget; i++) {
         task_t *to_free = task_dequeue_should_free();
         if (!to_free)
             break;
 
+        if (!task_is_on_cpu(to_free))
+            reaped++;
         free_task(to_free);
     }
+
+    return reaped;
 }
 
 static void task_execve_free_string_array(char **strings, int count) {
@@ -1168,11 +1176,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
                  "tlbi vmalle1is\n\t"
                  "dsb ish\n\t"
                  "isb\n\t");
-#elif defined(__riscv__)
-    uint64_t satp = MAKE_SATP_PADDR(SATP_MODE_SV48, 0, new_mm->page_table_addr);
-    asm volatile("csrw satp, %0" : : "r"(satp) : "memory");
-    asm volatile("sfence.vma");
-    csr_set(sstatus, (1UL << 18));
 #endif
 
     self->mm = new_mm;
@@ -1404,13 +1407,6 @@ exec_fail_restore_mm:
                  "tlbi vmalle1is\n\t"
                  "dsb ish\n\t"
                  "isb\n\t");
-#elif defined(__riscv__)
-    uint64_t satp_old =
-        MAKE_SATP_PADDR(SATP_MODE_SV48, 0, old_mm->page_table_addr);
-    asm volatile("csrw satp, %0" : : "r"(satp_old) : "memory");
-    asm volatile("sfence.vma");
-    csr_set(sstatus, (1UL << 18));
-}
 #endif
     free_page_table(new_mm);
     if (interpreter_path)
@@ -1542,8 +1538,6 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
 
         task_enqueue_should_free(target);
     }
-
-    task_reap_deferred(64);
 
     return ret;
 }
@@ -1703,9 +1697,6 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
             __atomic_store_n(&target->exit_reaped, false, __ATOMIC_RELEASE);
         }
     }
-
-    if (!(options & WNOWAIT))
-        task_reap_deferred(64);
 
     return ret;
 }
@@ -1878,15 +1869,17 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     void *kernel_stack_base = alloc_frames_bytes(STACK_SIZE);
     if (!kernel_stack_base)
         goto fail;
+    child->kernel_stack_base = kernel_stack_base;
     child->kernel_stack = (uint64_t)kernel_stack_base + STACK_SIZE;
 
     void *syscall_stack_base = alloc_frames_bytes(STACK_SIZE);
     if (!syscall_stack_base)
         goto fail;
+    child->syscall_stack_base = syscall_stack_base;
     child->syscall_stack = (uint64_t)syscall_stack_base + STACK_SIZE;
 
-    memset((void *)(child->kernel_stack - STACK_SIZE), 0, STACK_SIZE);
-    memset((void *)(child->syscall_stack - STACK_SIZE), 0, STACK_SIZE);
+    memset(child->kernel_stack_base, 0, STACK_SIZE);
+    memset(child->syscall_stack_base, 0, STACK_SIZE);
 
     if (!self->mm) {
         printk("src->mm == NULL!!! src = %#018lx\n", self);

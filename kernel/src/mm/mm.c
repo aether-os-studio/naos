@@ -48,14 +48,13 @@ void *early_alloc(size_t size) {
 }
 
 void *alloc_frames_bytes(uint64_t bytes) {
-    uint64_t addr =
-        phys_to_virt(alloc_frames(PADDING_UP(bytes, PAGE_SIZE) / PAGE_SIZE));
-    return (void *)addr;
+    uint64_t paddr = alloc_frames(PADDING_UP(bytes, PAGE_SIZE) / PAGE_SIZE);
+    return (void *)phys_to_virt(paddr);
 }
 
 void free_frames_bytes(void *ptr, uint64_t bytes) {
-    free_frames(virt_to_phys((uint64_t)ptr),
-                PADDING_UP(bytes, PAGE_SIZE) / PAGE_SIZE);
+    uint64_t paddr = virt_to_phys((uint64_t)ptr);
+    free_frames(paddr, PADDING_UP(bytes, PAGE_SIZE) / PAGE_SIZE);
 }
 
 uint64_t get_memory_size() {

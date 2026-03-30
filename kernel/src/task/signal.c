@@ -944,8 +944,8 @@ void signal_init() {
 }
 
 void task_commit_signal(task_t *task, int sig, siginfo_t *info) {
-    if (!task || !task->signal || !signal_sig_in_range(sig) ||
-        task->state == TASK_DIED) {
+    if (!task || !task->signal || task->is_kernel ||
+        !signal_sig_in_range(sig) || task->state == TASK_DIED) {
         return;
     }
 

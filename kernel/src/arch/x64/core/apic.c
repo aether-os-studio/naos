@@ -24,8 +24,8 @@ static uint32_t lapic_periodic_ticks;
 static uint64_t lapic_next_deadline[MAX_CPU_NUM];
 
 void tss_init() {
-    uint64_t sp =
-        phys_to_virt(alloc_frames(STACK_SIZE / PAGE_SIZE)) + STACK_SIZE;
+    uint64_t paddr = alloc_frames(STACK_SIZE / PAGE_SIZE);
+    uint64_t sp = phys_to_virt(paddr) + STACK_SIZE;
     uint64_t offset = 10 + current_cpu_id * 2;
     set_tss64(&tss[current_cpu_id], sp, 0, 0, sp, 0, 0, 0, 0, 0, 0);
     set_tss_descriptor(offset, &tss[current_cpu_id]);
@@ -451,9 +451,10 @@ uint64_t general_ap_entry() {
 #if defined(MULTIBOOT2)
 void multiboot2_ap_entry() {
     asm volatile("movq %0, %%cr3" ::"r"(virt_to_phys(get_kernel_page_dir())));
-    void *new_stack = alloc_frames_bytes(STACK_SIZE);
-    asm volatile("movq %0, %%rsp" ::"r"(new_stack));
-    asm volatile("movq %0, %%rbp" ::"r"(new_stack));
+    uint8_t *new_stack_base = alloc_frames_bytes(STACK_SIZE);
+    uint8_t *new_stack_top = new_stack_base + STACK_SIZE;
+    asm volatile("movq %0, %%rsp" ::"r"(new_stack_top));
+    asm volatile("movq %0, %%rbp" ::"r"(new_stack_top));
     general_ap_entry();
 }
 #else
