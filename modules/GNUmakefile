@@ -1,4 +1,10 @@
-GLOBAL_CFLAGS := -fno-stack-protector -Wno-address-of-packed-member -fPIC -fno-builtin -nostdinc -nostdlib -I$(shell pwd)/ -I$(shell pwd)/../kernel/src -I$(shell pwd)/../kernel/src/libs/fdt -I$(shell pwd)/../kernel/freestnd-c-hdrs -I$(shell pwd)/abis/$(SYSTEM_ABI)
+GLOBAL_CFLAGS := -fno-stack-protector -Wno-address-of-packed-member -fPIC -fno-builtin -nostdinc -nostdlib \
+                    -I$(CURDIR)/ \
+                    -I$(CURDIR)/../kernel/src \
+                    -I$(CURDIR)/../kernel/src/libs/fdt \
+                    -I$(CURDIR)/../kernel/freestnd-c-hdrs \
+                    -I$(CURDIR)/abis/$(SYSTEM_ABI)
+
 ifeq ($(BUILD_MODE), debug)
 CFLAGS := -g3 -O0 $(GLOBAL_CFLAGS)
 else
@@ -76,7 +82,7 @@ ifeq ($(ARCH),loongarch64)
 endif
 
 all:
-	mkdir -p ../modules-$(ARCH)
+	mkdir -p $(PROJECT_ROOT)/modules-$(ARCH)
 
 	$(MAKE) -C abis
 	$(MAKE) -C drivers

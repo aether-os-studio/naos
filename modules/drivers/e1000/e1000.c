@@ -387,7 +387,7 @@ e1000_device_t *e1000_get_device(uint32_t index) {
 uint32_t e1000_get_device_count(void) { return e1000_device_count; }
 
 // PCI Driver Interface
-static int e1000_pci_probe(pci_device_t *pci_dev, uint32_t vendor_device_id) {
+static int e1000_pci_probe(pci_device_t *pci_dev) {
     if (pci_dev->device_id != 0x100e && pci_dev->device_id != 0x100f) {
         return 0;
     }
@@ -476,12 +476,13 @@ static void e1000_pci_shutdown(pci_device_t *pci_dev) {
 // PCI Driver Structure
 static pci_driver_t e1000_driver = {
     .name = "e1000",
-    .class_id = 0x00020000,         // Network controller class
-    .vendor_device_id = 0x80860000, // Intel vendor ID + E1000 device ID
+    .class_id = 0x00020000, // Network controller class
+    .match = NULL,
     .probe = e1000_pci_probe,
     .remove = e1000_pci_remove,
     .shutdown = e1000_pci_shutdown,
     .flags = 0,
+    .private_data = NULL,
 };
 
 // Module initialization function

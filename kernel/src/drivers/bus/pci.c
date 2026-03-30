@@ -904,18 +904,28 @@ void pci_controller_init() {
     }
 }
 
+static pci_driver_t *pci_current_probe_driver;
+
 void pci_init() {
     for (uint64_t i = 0; i < pci_device_number; i++) {
         pci_device_t *device = pci_devices[i];
 
         for (uint64_t d = 0; d < MAX_PCI_DRIVERS; d++) {
-            if (pci_drivers[d] &&
-                ((pci_drivers[d]->class_id == device->class_code) ||
-                 ((pci_drivers[d]->vendor_device_id & 0xFFFF0000) ==
-                  ((uint32_t)device->vendor_id << 16)))) {
-                int ret = pci_drivers[d]->probe(
-                    device,
-                    ((uint32_t)device->vendor_id << 16) | (device->device_id));
+            if (!pci_drivers[d]) {
+                continue;
+            }
+
+            bool matched = false;
+            if (pci_drivers[d]->match) {
+                matched = pci_drivers[d]->match(device, pci_drivers[d]);
+            } else if (pci_drivers[d]->class_id) {
+                matched = pci_drivers[d]->class_id == device->class_code;
+            }
+
+            if (matched) {
+                pci_current_probe_driver = pci_drivers[d];
+                int ret = pci_drivers[d]->probe(device);
+                pci_current_probe_driver = NULL;
                 if (ret < 0) {
                     printk("PCI driver %s probe failed!!!\n",
                            pci_drivers[d]->name);
@@ -936,4 +946,8 @@ int regist_pci_driver(pci_driver_t *driver) {
     }
 
     return 0;
+}
+
+pci_driver_t *pci_get_current_probe_driver(void) {
+    return pci_current_probe_driver;
 }

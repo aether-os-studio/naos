@@ -52,6 +52,8 @@ bus_device_t *bus_device_install_usb(void *dev_data, attribute_t **extra_attrs,
 #define USB_HUB_SNAPSHOT_MAX 64
 
 usb_driver_t *usb_drivers[MAX_USBDEV_NUM] = {NULL};
+static usb_driver_t *usb_current_probe_driver;
+static usb_driver_t *usb_current_remove_driver;
 
 static usb_bus_notifier_ops_t *usb_bus_notifier;
 static spinlock_t usb_notifier_lock = SPIN_INIT;
@@ -928,6 +930,14 @@ const char *usb_speed_name(uint8_t speed) {
     }
 }
 
+usb_driver_t *usb_get_current_probe_driver(void) {
+    return usb_current_probe_driver;
+}
+
+usb_driver_t *usb_get_current_remove_driver(void) {
+    return usb_current_remove_driver;
+}
+
 static inline void usb_delay_ms(uint64_t ms) {
     uint64_t timeout = nano_time() + ms * 1000000ULL;
     while (nano_time() < timeout) {
@@ -1520,10 +1530,13 @@ int usb_init_driver(usb_device_t *usbdev) {
         }
 
         for (int i = 0; i < candidate_count; i++) {
+            usb_current_probe_driver = candidates[i].driver;
             if (candidates[i].driver->probe(usbdev, candidates[i].iface) == 0) {
+                usb_current_probe_driver = NULL;
                 usb_bind_driver(usbdev, candidates[i].driver);
                 break;
             }
+            usb_current_probe_driver = NULL;
         }
 
         free(candidates);
@@ -1808,8 +1821,11 @@ static void usb_disconnect_device(usb_device_t *usbdev) {
 
     for (uint8_t i = 0; i < usbdev->bound_driver_count; i++) {
         usb_driver_t *driver = usbdev->bound_drivers[i];
-        if (driver && driver->remove)
+        if (driver && driver->remove) {
+            usb_current_remove_driver = driver;
             driver->remove(usbdev);
+            usb_current_remove_driver = NULL;
+        }
     }
 
     if (usbdev->online) {

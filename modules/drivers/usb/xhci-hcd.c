@@ -1391,9 +1391,7 @@ static void xhci_free_controller(usb_xhci_t *xhci) {
 
 #define XHCI_TIME_POSTPOWER 20
 
-int xhci_hcd_driver_probe(pci_device_t *pci_dev, uint32_t vendor_device_id) {
-    (void)vendor_device_id;
-
+int xhci_hcd_driver_probe(pci_device_t *pci_dev) {
     uint64_t mmio_base = 0;
     uint64_t mmio_size = 0;
 
@@ -1470,11 +1468,12 @@ void xhci_hcd_driver_shutdown(pci_device_t *dev) {
 pci_driver_t xhci_hcd_driver = {
     .name = "xhci_hcd",
     .class_id = 0x000C0330,
-    .vendor_device_id = 0x00000000,
+    .match = NULL,
     .probe = xhci_hcd_driver_probe,
     .remove = xhci_hcd_driver_remove,
     .shutdown = xhci_hcd_driver_shutdown,
     .flags = 0,
+    .private_data = NULL,
 };
 
 int dlmain() {

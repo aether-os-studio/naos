@@ -2612,9 +2612,12 @@ void nvidia_eventCallback(const struct NvKmsKapiEvent *event) {
     return;
 }
 
-int nvidia_probe(pci_device_t *dev, uint32_t vendor_device_id) {
-    (void)vendor_device_id;
+static bool nvidia_match(pci_device_t *dev, const pci_driver_t *driver) {
+    (void)driver;
+    return dev && dev->vendor_id == 0x10de;
+}
 
+int nvidia_probe(pci_device_t *dev) {
     if (!dev) {
         return -EINVAL;
     }
@@ -3328,12 +3331,13 @@ NvBool nvidia_open_open_gpu(NvU32 gpuId) {
 
 pci_driver_t nvidia_pci_driver = {
     .name = "nvidia_open",
-    .class_id = 0x00000000,
-    .vendor_device_id = 0x10de0000,
+    .class_id = 0,
+    .match = nvidia_match,
     .probe = nvidia_probe,
     .remove = nvidia_remove,
     .shutdown = nvidia_shutdown,
     .flags = 0,
+    .private_data = NULL,
 };
 
 int dlmain() {

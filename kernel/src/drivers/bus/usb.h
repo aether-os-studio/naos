@@ -445,3 +445,5 @@ struct usb_driver {
 };
 
 void regist_usb_driver(usb_driver_t *driver);
+usb_driver_t *usb_get_current_probe_driver(void);
+usb_driver_t *usb_get_current_remove_driver(void);

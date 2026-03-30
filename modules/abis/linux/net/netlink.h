@@ -73,6 +73,11 @@ struct netlink_buffer {
     spinlock_t lock;
 };
 
+struct nla_policy {
+    uint16_t type;
+    uint16_t len;
+};
+
 // Netlink socket operations
 extern socket_op_t netlink_ops;
 

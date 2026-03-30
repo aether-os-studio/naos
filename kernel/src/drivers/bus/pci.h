@@ -108,15 +108,22 @@ void pci_init();
 
 #define PCI_DRIVER_FLAGS_NEED_SYSFS (1 << 0)
 
+struct pci_driver;
+typedef bool (*pci_driver_match_t)(pci_device_t *dev,
+                                   const struct pci_driver *driver);
+
 typedef struct pci_driver {
     const char *name;
-    uint32_t class_id, vendor_device_id;
-    int (*probe)(pci_device_t *dev, uint32_t vendor_device_id);
+    uint32_t class_id;
+    pci_driver_match_t match;
+    int (*probe)(pci_device_t *dev);
     void (*remove)(pci_device_t *dev);
     void (*shutdown)(pci_device_t *dev);
     int flags;
+    void *private_data;
 } pci_driver_t;
 
 #define MAX_PCI_DRIVERS 256
 
 int regist_pci_driver(pci_driver_t *driver);
+pci_driver_t *pci_get_current_probe_driver(void);

@@ -867,7 +867,7 @@ uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
 }
 
 // Main probe function
-int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
+int nvme_probe(pci_device_t *device) {
     if (!nvme_platform_ops) {
         return -1;
     }
@@ -875,7 +875,7 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
         return -1;
 
     nvme_platform_ops->log("NVMe: Probing device %04x:%04x\n",
-                           vendor_device_id >> 16, vendor_device_id & 0xFFFF);
+                           device->vendor_id, device->device_id);
 
     // Allocate controller structure
     nvme_controller_t *ctrl = (nvme_controller_t *)nvme_platform_ops->dma_alloc(
@@ -1054,11 +1054,12 @@ void nvme_shutdown(pci_device_t *dev) {}
 pci_driver_t nvme_driver = {
     .name = "nvme_driver",
     .class_id = 0x00010802,
-    .vendor_device_id = 0x00000000,
+    .match = NULL,
     .probe = nvme_probe,
     .remove = nvme_remove,
     .shutdown = nvme_shutdown,
     .flags = 0,
+    .private_data = NULL,
 };
 
 int dlmain() {

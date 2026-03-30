@@ -42,9 +42,12 @@ void virtio_finish_init(virtio_driver_t *driver) {
     driver->op->set_status(driver->data, 1 | 2 | 4 | 8);
 }
 
-int virtio_probe(pci_device_t *dev, uint32_t vendor_device_id) {
-    uint16_t device_id = vendor_device_id & 0xFFFF;
+static bool virtio_match(pci_device_t *dev, const pci_driver_t *driver) {
+    (void)driver;
+    return dev && dev->vendor_id == 0x1AF4;
+}
 
+int virtio_probe(pci_device_t *dev) {
     virtio_driver_t *driver = virtio_pci_driver_op.init(dev);
     if (driver) {
         printk("Found virtio pci device. type = %d\n",
@@ -78,12 +81,13 @@ void virtio_shutdown(pci_device_t *dev) {}
 
 pci_driver_t virtio_pci_driver = {
     .name = "virtio",
-    .class_id = 0x00000000,
-    .vendor_device_id = 0x1AF40000,
+    .class_id = 0,
+    .match = virtio_match,
     .probe = virtio_probe,
     .remove = virtio_remove,
     .shutdown = virtio_shutdown,
     .flags = 0,
+    .private_data = NULL,
 };
 
 #if !defined(__x86_64__)

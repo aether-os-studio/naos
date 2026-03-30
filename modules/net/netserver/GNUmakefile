@@ -9,14 +9,7 @@ override SRCFILES := \
 	$(shell find ./lwip/core/ipv6 -maxdepth 1 -name "*.c" | LC_ALL=C sort) \
 	$(shell find ./lwip/netif -maxdepth 1 -name "ethernet.c" | LC_ALL=C sort)
 
-override CFILES := $(filter %.c,$(SRCFILES))
-override ASFILES := $(filter %.S,$(SRCFILES))
-override OBJ := $(addprefix ../../../obj-modules-$(ARCH)/$(KM_NAME)/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o))
+MODULE_INCLUDE_DIRS += $(CURDIR)/lwip/include
+MODULE_LINK_LIBS := $(PROJECT_ROOT)/libgcc_$(ARCH).a
 
-all: $(OBJ)
-	$(LD) $(LDFLAGS) -shared $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a -o ../../../modules-$(ARCH)/$(KM_NAME).ko
-
-# Compilation rules for *.c files.
-../../../obj-modules-$(ARCH)/$(KM_NAME)/%.c.o: %.c GNUmakefile
-	mkdir -p "$$(dirname $@)"
-	$(CC) $(CFLAGS) -I$(shell pwd)/ -I$(shell pwd)/lwip/include -c $< -o $@
+include $(PROJECT_ROOT)/modules/build/module.mk

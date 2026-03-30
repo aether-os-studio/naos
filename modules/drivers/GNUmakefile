@@ -16,4 +16,3 @@ endif
 	$(MAKE) -C hub
 	$(MAKE) -C hid
 	$(MAKE) -C msc
-

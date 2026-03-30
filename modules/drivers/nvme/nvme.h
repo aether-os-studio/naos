@@ -348,7 +348,7 @@ typedef struct {
 extern nvme_platform_ops_t *nvme_platform_ops;
 
 // Public API
-int nvme_probe(pci_device_t *device, uint32_t vendor_device_id);
+int nvme_probe(pci_device_t *device);
 int nvme_read_async(nvme_controller_t *ctrl, uint32_t nsid, uint64_t lba,
                     uint32_t block_count, void *buffer, uint64_t buffer_phys,
                     nvme_io_callback_t callback, void *ctx);
