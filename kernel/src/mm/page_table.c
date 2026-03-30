@@ -216,8 +216,7 @@ uint64_t unmap_page_defer_release(uint64_t *pgdir, uint64_t vaddr,
 
             if (table_empty) {
                 // 释放空页表
-                uint64_t table_phys_addr =
-                    virt_to_phys((uint64_t)current_table);
+                uint64_t table_phys_addr = virt_to_phys(current_table);
                 if (batch) {
                     unmap_batch_queue_table(batch, table_phys_addr);
                 } else {
@@ -366,7 +365,7 @@ static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level,
                 return NULL;
             }
 
-            new_table[i] = ARCH_MAKE_PTE(virt_to_phys((uint64_t)child_new),
+            new_table[i] = ARCH_MAKE_PTE(virt_to_phys(child_new),
                                          ARCH_READ_PTE_FLAG(entry));
             continue;
         }
@@ -381,7 +380,7 @@ static void free_page_table_recursive(uint64_t *table, int level) {
     if (!table)
         return;
 
-    uint64_t table_phys = virt_to_phys((uint64_t)table);
+    uint64_t table_phys = virt_to_phys(table);
     if (!table_phys)
         return;
 
@@ -444,7 +443,7 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
     spin_lock(&mgr->lock);
     spin_lock(&old->lock);
 
-    uint64_t *old_root = (uint64_t *)phys_to_virt(old->page_table_addr);
+    uint64_t *old_root = phys_to_virt(old->page_table_addr);
     uint64_t *new_root =
         copy_page_table_recursive(old_root, ARCH_MAX_PT_LEVEL, 0, mgr);
     if (!new_root) {
@@ -459,7 +458,7 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
            old_root + ((1UL << ARCH_PT_OFFSET_PER_LEVEL) >> 1), PAGE_SIZE / 2);
 #endif
 
-    new_mm->page_table_addr = virt_to_phys((uint64_t)new_root);
+    new_mm->page_table_addr = (uint64_t)virt_to_phys(new_root);
     new_mm->ref_count = 1;
 
     if (vma_manager_copy(&new_mm->task_vma_mgr, mgr) != 0) {

@@ -25,7 +25,7 @@ static uint64_t lapic_next_deadline[MAX_CPU_NUM];
 
 void tss_init() {
     uint64_t paddr = alloc_frames(STACK_SIZE / PAGE_SIZE);
-    uint64_t sp = phys_to_virt(paddr) + STACK_SIZE;
+    uint64_t sp = (uint64_t)phys_to_virt(paddr) + STACK_SIZE;
     uint64_t offset = 10 + current_cpu_id * 2;
     set_tss64(&tss[current_cpu_id], sp, 0, 0, sp, 0, 0, 0, 0, 0, 0);
     set_tss_descriptor(offset, &tss[current_cpu_id]);
@@ -194,7 +194,7 @@ void apic_handle_ioapic(struct acpi_madt_ioapic *ioapic_madt) {
     ioapic_count++;
 
     uint64_t mmio_phys = ioapic_madt->address;
-    uint64_t mmio_virt = phys_to_virt(mmio_phys);
+    uint64_t mmio_virt = (uint64_t)phys_to_virt(mmio_phys);
     map_page_range(get_current_page_dir(false), mmio_virt, mmio_phys, PAGE_SIZE,
                    PT_FLAG_R | PT_FLAG_W);
     ioapic->mmio_base = mmio_virt;
@@ -318,8 +318,8 @@ void apic_init() {
     if (status == UACPI_STATUS_OK) {
         struct acpi_madt *madt = (struct acpi_madt *)madt_table.ptr;
 
-        lapic_address =
-            phys_to_virt((uint64_t)madt->local_interrupt_controller_address);
+        lapic_address = (uint64_t)phys_to_virt(
+            (uint64_t)madt->local_interrupt_controller_address);
         map_page_range(get_current_page_dir(false), lapic_address,
                        madt->local_interrupt_controller_address, PAGE_SIZE,
                        PT_FLAG_R | PT_FLAG_W);

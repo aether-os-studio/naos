@@ -44,7 +44,7 @@ uint64_t get_mmio_address(uint32_t pci_address, uint16_t offset) {
     if (phys == 0) {
         return 0;
     }
-    uint64_t virt = phys_to_virt(phys);
+    uint64_t virt = (uint64_t)phys_to_virt(phys);
 
     return virt + offset;
 }
@@ -894,8 +894,8 @@ void pci_controller_init() {
             uint64_t region_size = bus_count * (1 << 20);
 
             map_page_range(get_kernel_page_dir(),
-                           phys_to_virt(region_base_addr), region_base_addr,
-                           region_size,
+                           (uint64_t)phys_to_virt(region_base_addr),
+                           region_base_addr, region_size,
                            PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
 
             uint16_t segment_group = mcfg_entries[i]->segment;

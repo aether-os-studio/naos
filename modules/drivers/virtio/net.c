@@ -195,7 +195,7 @@ int virtio_net_receive(virtio_net_device_t *net_dev, void *buffer,
     void *rx_data = net_dev->rx_buffers[desc_idx];
     if (!rx_data) {
         virtio_descriptor_t *desc = &net_dev->recv_queue->desc[desc_idx];
-        rx_data = phys_to_virt((void *)desc->addr);
+        rx_data = phys_to_virt(desc->addr);
     }
     dma_sync_device_to_cpu(rx_data, len);
 

@@ -53,7 +53,7 @@ void *alloc_frames_bytes(uint64_t bytes) {
 }
 
 void free_frames_bytes(void *ptr, uint64_t bytes) {
-    uint64_t paddr = virt_to_phys((uint64_t)ptr);
+    uint64_t paddr = virt_to_phys(ptr);
     free_frames(paddr, PADDING_UP(bytes, PAGE_SIZE) / PAGE_SIZE);
 }
 

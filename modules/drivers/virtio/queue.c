@@ -61,13 +61,11 @@ virtqueue_t *virt_queue_new(virtio_driver_t *driver, uint16_t queue_idx,
         driver->op->queue_set(driver->data, queue_idx, queue_size,
                               queue->inner.legacy->paddr, 0, 0);
 
-        desc = phys_to_virt((virtio_descriptor_t *)queue->inner.legacy->paddr);
-        avail = phys_to_virt(
-            (virtio_avail_ring_t *)(queue->inner.legacy->paddr +
-                                    queue->inner.legacy->avail_offset));
-        used = phys_to_virt(
-            (virtio_used_ring_t *)(queue->inner.legacy->paddr +
-                                   queue->inner.legacy->used_offset));
+        desc = (virtio_descriptor_t *)phys_to_virt(queue->inner.legacy->paddr);
+        avail = (virtio_avail_ring_t *)phys_to_virt(
+            (queue->inner.legacy->paddr + queue->inner.legacy->avail_offset));
+        used = (virtio_used_ring_t *)phys_to_virt(
+            (queue->inner.legacy->paddr + queue->inner.legacy->used_offset));
     } else {
         queue->is_modern = true;
         uint64_t desc_size, avail_size, used_size;
@@ -93,13 +91,13 @@ virtqueue_t *virt_queue_new(virtio_driver_t *driver, uint16_t queue_idx,
                                   queue->inner.modern->avail_offset,
                               queue->inner.modern->device_to_driver_paddr);
 
-        desc = phys_to_virt(
-            (virtio_descriptor_t *)queue->inner.modern->driver_to_device_paddr);
-        avail = phys_to_virt((
-            virtio_avail_ring_t *)(queue->inner.modern->driver_to_device_paddr +
-                                   queue->inner.modern->avail_offset));
-        used = phys_to_virt((
-            virtio_used_ring_t *)(queue->inner.modern->device_to_driver_paddr));
+        desc = (virtio_descriptor_t *)phys_to_virt(
+            queue->inner.modern->driver_to_device_paddr);
+        avail = (virtio_avail_ring_t *)phys_to_virt(
+            (queue->inner.modern->driver_to_device_paddr +
+             queue->inner.modern->avail_offset));
+        used = (virtio_used_ring_t *)phys_to_virt(
+            (queue->inner.modern->device_to_driver_paddr));
     }
 
     queue->desc = desc;

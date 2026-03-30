@@ -1196,7 +1196,7 @@ static void *sound_pcm_map(void *dev, void *addr, size_t offset, size_t size,
             mutex_unlock(&substream->lock);
             return (void *)(int64_t)-EBADFD;
         }
-        paddr = virt_to_phys((uint64_t)runtime->mmap_status);
+        paddr = virt_to_phys(runtime->mmap_status);
     } else if (offset == SNDRV_PCM_MMAP_OFFSET_CONTROL) {
         if (!runtime->mmap_control &&
             sound_runtime_allocate_control_pages(substream) < 0) {
@@ -1207,13 +1207,13 @@ static void *sound_pcm_map(void *dev, void *addr, size_t offset, size_t size,
             mutex_unlock(&substream->lock);
             return (void *)(int64_t)-EBADFD;
         }
-        paddr = virt_to_phys((uint64_t)runtime->mmap_control);
+        paddr = virt_to_phys(runtime->mmap_control);
     } else if (offset < runtime->buffer_bytes) {
         if (!runtime->configured || !runtime->dma_area) {
             mutex_unlock(&substream->lock);
             return (void *)(int64_t)-EBADFD;
         }
-        paddr = virt_to_phys((uint64_t)runtime->dma_area + offset);
+        paddr = virt_to_phys(runtime->dma_area + offset);
     } else {
         mutex_unlock(&substream->lock);
         return (void *)(int64_t)-EINVAL;

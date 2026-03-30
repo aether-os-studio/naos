@@ -888,7 +888,7 @@ int nvme_probe(pci_device_t *device, uint32_t vendor_device_id) {
     spin_init(&ctrl->cid_alloc_lock);
 
     ctrl->pci_dev = device;
-    ctrl->bar0 = phys_to_virt((volatile uint8_t *)device->bars[0].address);
+    ctrl->bar0 = (volatile uint8_t *)phys_to_virt(device->bars[0].address);
     map_page_range(get_current_page_dir(false), (uint64_t)ctrl->bar0,
                    device->bars[0].address, device->bars[0].size,
                    PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE |

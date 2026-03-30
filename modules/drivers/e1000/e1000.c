@@ -347,9 +347,8 @@ int e1000_receive(void *dev_desc, void *buffer, uint32_t buffer_size) {
     }
 
     // Copy packet data to user buffer
-    dma_sync_device_to_cpu(phys_to_virt((void *)desc->buffer_addr),
-                           desc->length);
-    memcpy(buffer, phys_to_virt((void *)desc->buffer_addr), packet_len);
+    dma_sync_device_to_cpu(phys_to_virt(desc->buffer_addr), desc->length);
+    memcpy(buffer, phys_to_virt(desc->buffer_addr), packet_len);
 
 cleanup:
     // Recycle the descriptor
@@ -412,7 +411,7 @@ static int e1000_pci_probe(pci_device_t *pci_dev, uint32_t vendor_device_id) {
     }
 
     // Map MMIO region
-    void *mmio_vaddr = (void *)phys_to_virt(mmio_base);
+    void *mmio_vaddr = phys_to_virt(mmio_base);
     map_page_range(get_current_page_dir(false), (uint64_t)mmio_vaddr, mmio_base,
                    mmio_size, PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
 

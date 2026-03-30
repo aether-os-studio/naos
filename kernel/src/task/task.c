@@ -819,7 +819,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->mm = calloc(1, sizeof(task_mm_info_t));
     if (!task->mm)
         goto fail;
-    task->mm->page_table_addr = virt_to_phys((uint64_t)get_kernel_page_dir());
+    task->mm->page_table_addr = (uint64_t)virt_to_phys(get_kernel_page_dir());
     task->mm->ref_count = 1;
     spin_init(&task->mm->lock);
     vma_manager_init(&task->mm->task_vma_mgr, false);
@@ -829,8 +829,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->arch_context = calloc(1, sizeof(arch_context_t));
     if (!task->arch_context)
         goto fail;
-    arch_context_init(task->arch_context,
-                      virt_to_phys((uint64_t)get_kernel_page_dir()),
+    arch_context_init(task->arch_context, virt_to_phys(get_kernel_page_dir()),
                       (uint64_t)entry, task->kernel_stack, false, arg);
 
     task->signal->signal = 0;

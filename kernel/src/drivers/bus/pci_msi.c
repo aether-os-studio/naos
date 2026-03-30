@@ -88,7 +88,8 @@ static inline int __msix_map_table(pci_device_t *pci_dev,
         return -ENOMEM;
     }
 
-    pci_dev->msix_mmio_vaddr = phys_to_virt((uint64_t)bar_physical_address);
+    pci_dev->msix_mmio_vaddr =
+        (uint64_t)phys_to_virt((uint64_t)bar_physical_address);
     map_page_range(get_current_page_dir(false), pci_dev->msix_mmio_vaddr,
                    bar_physical_address, pci_dev->bars[bir].size,
                    PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
