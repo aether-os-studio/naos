@@ -136,8 +136,8 @@ ssize_t pipefs_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
     void *file = fd->node->handle;
     const char *data = addr;
     size_t written = 0;
-    // POSIX only requires atomicity for short pipe writes.
-    bool atomic = size <= PIPE_ATOMIC_MAX;
+
+    bool atomic = (fd_get_flags(fd) & O_NONBLOCK) && size <= PIPE_ATOMIC_MAX;
 
     while (written < size) {
         ssize_t ret = pipe_write_inner(fd, file, data + written, size - written,
