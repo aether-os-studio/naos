@@ -2,6 +2,11 @@
 
 ![Screenshot](./images/naos.png?raw=true)
 
+![GitHub Repo stars](https://img.shields.io/github/stars/aether-os-studio/naos?style=flat-square)
+![GitHub issues](https://img.shields.io/github/issues/aether-os-studio/naos?style=flat-square)
+![GitHub License](https://img.shields.io/github/license/aether-os-studio/naos?style=flat-square)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/aether-os-studio/naos)
+
 ## LICENSE
 
 This project is licensed under GPLv3.
