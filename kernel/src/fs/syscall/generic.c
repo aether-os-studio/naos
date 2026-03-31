@@ -500,6 +500,10 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
         return (uint64_t)-EEXIST;
     }
 
+    if (node && (node->type & file_socket)) {
+        return (uint64_t)-ENXIO;
+    }
+
     if (node && (flags & O_DIRECTORY) && !(node->type & file_dir)) {
         vfs_close(node);
         return (uint64_t)-ENOTDIR;

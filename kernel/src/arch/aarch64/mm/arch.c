@@ -28,7 +28,7 @@ uint64_t *get_current_page_dir(bool user) {
         asm volatile("mrs %0, TTBR1_EL1" : "=r"(ttbr1_el1));
         page_table_base = ttbr1_el1 & 0xFFFFFFFFFFF0;
     }
-    return (uint64_t *)phys_to_virt(page_table_base);
+    return phys_to_virt(page_table_base);
 }
 
 uint64_t get_arch_page_table_flags(uint64_t flags) {

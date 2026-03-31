@@ -13,7 +13,7 @@ int init_serial() {
     uacpi_status status = uacpi_table_find_by_signature("SPCR", &spcr_table);
     if (status == UACPI_STATUS_OK) {
         struct acpi_spcr *spcr = spcr_table.ptr;
-        uint64_t virt = phys_to_virt(spcr->base_address.address);
+        uint64_t virt = (uint64_t)phys_to_virt(spcr->base_address.address);
         map_page_range(get_current_page_dir(false), virt,
                        spcr->base_address.address, PAGE_SIZE,
                        PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);

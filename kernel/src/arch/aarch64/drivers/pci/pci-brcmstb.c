@@ -615,7 +615,7 @@ static int pcie_brcmstb_probe(fdt_device_t *dev, const char *compatible) {
            brcmstb_ctx.bus_end);
 
     // 映射寄存器空间
-    uint64_t pcie_base_virt = phys_to_virt(pcie_base);
+    uint64_t pcie_base_virt = (uint64_t)phys_to_virt(pcie_base);
     map_page_range(get_current_page_dir(false), pcie_base_virt, pcie_base,
                    (pcie_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1),
                    PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);

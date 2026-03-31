@@ -14,7 +14,7 @@ mkdir -p "$(dirname "$XBPS_XZ_PATH")"
 [ -f "$XBPS_XZ_PATH" ] || wget "$XBPS_XZ_URI" -O "$XBPS_XZ_PATH"
 
 mkdir -p "$(dirname "$XBPS_INSTALL_PATH")"
-[ -d "$XBPS_INSTALL_PATH" ] || tar -xf $XBPS_XZ_PATH -C $XBPS_INSTALL_PATH
+[ -d "$XBPS_INSTALL_PATH" ] || mkdir -p "$XBPS_INSTALL_PATH" && tar -xf $XBPS_XZ_PATH -C $XBPS_INSTALL_PATH
 
 [ $ARCH == aarch64 ] && export ARCH_SPEC=aarch64
 
