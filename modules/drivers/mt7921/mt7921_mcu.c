@@ -68,7 +68,9 @@ static int mt7921_mcu_parse_response(uint32_t cmd, const uint8_t *pkt,
 
     if (cmd == MT7921_MCU_CMD_PATCH_SEM_CONTROL ||
         cmd == MT7921_MCU_CMD_PATCH_FINISH_REQ) {
-        uint8_t status = pkt_len > header_len ? pkt[header_len] : 0;
+
+        size_t status_off = header_len >= 4 ? header_len - 4 : 0;
+        uint8_t status = pkt_len > status_off ? pkt[status_off] : 0;
 
         if (resp && resp_len) {
             memset(resp, 0, resp_len);

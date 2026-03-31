@@ -299,9 +299,13 @@ static int mt7921_rx_decap_8023(const uint8_t *raw, size_t raw_len, void *out,
     memcpy(&rxd1, raw + 4, sizeof(rxd1));
     memcpy(&rxd2, raw + 8, sizeof(rxd2));
 
-    if (((rxd0 & MT_RXD0_PKT_TYPE_MASK) >> MT_RXD0_PKT_TYPE_SHIFT) !=
-        MT7921_PKT_TYPE_NORMAL) {
-        return -EOPNOTSUPP;
+    {
+        uint32_t pkt_type =
+            (rxd0 & MT_RXD0_PKT_TYPE_MASK) >> MT_RXD0_PKT_TYPE_SHIFT;
+        if (pkt_type != MT7921_PKT_TYPE_NORMAL &&
+            pkt_type != MT7921_PKT_TYPE_NORMAL_MCU) {
+            return -EOPNOTSUPP;
+        }
     }
     if (rxd1 & (MT_RXD1_NORMAL_ICV_ERR | MT_RXD1_NORMAL_TKIP_MIC_ERR |
                 MT_RXD1_NORMAL_FCS_ERR)) {

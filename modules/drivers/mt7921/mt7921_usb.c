@@ -272,8 +272,10 @@ static void mt7921_usb_handle_data_rx(mt7921_priv_t *priv, const void *data,
     pkt_type = (rxd0 & MT_RXD0_PKT_TYPE_MASK) >> MT_RXD0_PKT_TYPE_SHIFT;
     pkt_flag = (rxd0 & MT_RXD0_PKT_FLAG_MASK) >> MT_RXD0_PKT_FLAG_SHIFT;
 
-    if (pkt_type == MT7921_PKT_TYPE_RX_EVENT && pkt_flag == 0x1 &&
-        len >= sizeof(struct mt7921_mcu_rxd)) {
+    if (pkt_type == MT7921_PKT_TYPE_RX_EVENT && pkt_flag == 0x1) {
+        pkt_type = MT7921_PKT_TYPE_NORMAL_MCU;
+    } else if (pkt_type == MT7921_PKT_TYPE_RX_EVENT &&
+               len >= sizeof(struct mt7921_mcu_rxd)) {
         rxd = (const struct mt7921_mcu_rxd *)data;
         if (rxd->seq) {
             mt7921_resp_push(priv, data, len);
