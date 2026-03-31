@@ -18,6 +18,10 @@ export BUILD_NVIDIA ?= 0
 # Target architecture to build for. Default to x86_64.
 export ARCH ?= x86_64
 
+ifeq ($(filter $(ARCH),aarch64 loongarch64 riscv64 x86_64),)
+    $(error Architecture $(ARCH) not supported)
+endif
+
 ifeq ($(ARCH), x86_64)
 ARCH_DIR := x64
 else
@@ -368,6 +372,14 @@ assets/ovmf-code-$(ARCH).fd:
 modules:
 	$(MAKE) -C modules -j$(shell nproc)
 
+user/initramfs-$(ARCH)/lib/firmware/mediatek/WIFI_RAM_CODE_MT7961_1.bin:
+	sudo mkdir -p user/initramfs-$(ARCH)/lib/firmware/mediatek/
+	sudo wget https://github.com/astsam/mt7921/raw/refs/heads/main/fw/WIFI_RAM_CODE_MT7961_1.bin -O user/initramfs-$(ARCH)/lib/firmware/mediatek/WIFI_RAM_CODE_MT7961_1.bin
+
+user/initramfs-$(ARCH)/lib/firmware/mediatek/WIFI_MT7961_patch_mcu_1_2_hdr.bin:
+	sudo mkdir -p user/initramfs-$(ARCH)/lib/firmware/mediatek/
+	sudo wget https://github.com/astsam/mt7921/raw/refs/heads/main/fw/WIFI_MT7961_patch_mcu_1_2_hdr.bin -O user/initramfs-$(ARCH)/lib/firmware/mediatek/WIFI_MT7961_patch_mcu_1_2_hdr.bin
+
 .PHONY: initramfs-$(ARCH).img
-initramfs-$(ARCH).img: rootfs-$(ARCH).img
+initramfs-$(ARCH).img: rootfs-$(ARCH).img user/initramfs-$(ARCH)/lib/firmware/mediatek/WIFI_RAM_CODE_MT7961_1.bin user/initramfs-$(ARCH)/lib/firmware/mediatek/WIFI_MT7961_patch_mcu_1_2_hdr.bin
 	sh mkinitcpio.sh

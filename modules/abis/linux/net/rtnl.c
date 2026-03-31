@@ -200,6 +200,9 @@ static int rtnl_fill_link(char *buf, size_t buflen, struct net_device *dev,
 
     nla_put_string(&nla_b, IFLA_QDISC, dev->qdisc);
     nla_put(&nla_b, IFLA_STATS64, &dev->stats, sizeof(dev->stats));
+    if (dev->wireless_dump) {
+        dev->wireless_dump(dev, &nla_b);
+    }
 
     /* Fill nlmsghdr */
     nlh->nlmsg_len = NLMSG_HDRLEN + ifinfo_len + nla_b.offset;
@@ -426,7 +429,11 @@ static int rtnl_link_doit(struct nlmsghdr *nlh, uint32_t sender_pid,
 
         if (dev != NULL) {
             /* Modify existing device */
+            uint32_t old_flags = 0;
+            uint32_t new_flags = 0;
+
             spin_lock(&dev->lock);
+            old_flags = dev->flags;
 
             if (ifi->ifi_change & IFF_UP) {
                 if (ifi->ifi_flags & IFF_UP)
@@ -462,8 +469,17 @@ static int rtnl_link_doit(struct nlmsghdr *nlh, uint32_t sender_pid,
                 dev->operstate = IF_OPER_DOWN;
                 dev->flags &= ~(IFF_RUNNING | IFF_LOWER_UP);
             }
+            new_flags = dev->flags;
 
             spin_unlock(&dev->lock);
+
+            if (dev->link_change && old_flags != new_flags) {
+                int ret = dev->link_change(dev, old_flags, new_flags);
+                if (ret < 0) {
+                    rtnl_send_error(sender_sock, nlh, sender_pid, ret);
+                    return ret;
+                }
+            }
 
             if (attr_len > 0) {
                 struct nlattr *wireless_attr =
@@ -545,6 +561,8 @@ static int rtnl_link_doit(struct nlmsghdr *nlh, uint32_t sender_pid,
         /* Same as RTM_NEWLINK for existing device */
         struct net_device *dev = NULL;
         struct nlattr *wireless_attr = NULL;
+        uint32_t old_flags = 0;
+        uint32_t new_flags = 0;
 
         if (ifi->ifi_index > 0) {
             dev = rtnl_dev_get_by_index(ifi->ifi_index);
@@ -556,6 +574,7 @@ static int rtnl_link_doit(struct nlmsghdr *nlh, uint32_t sender_pid,
         }
 
         spin_lock(&dev->lock);
+        old_flags = dev->flags;
 
         uint32_t change = ifi->ifi_change;
         if (change) {
@@ -583,8 +602,17 @@ static int rtnl_link_doit(struct nlmsghdr *nlh, uint32_t sender_pid,
             dev->operstate = IF_OPER_DOWN;
             dev->flags &= ~(IFF_RUNNING | IFF_LOWER_UP);
         }
+        new_flags = dev->flags;
 
         spin_unlock(&dev->lock);
+
+        if (dev->link_change && old_flags != new_flags) {
+            int ret = dev->link_change(dev, old_flags, new_flags);
+            if (ret < 0) {
+                rtnl_send_error(sender_sock, nlh, sender_pid, ret);
+                return ret;
+            }
+        }
 
         if (wireless_attr && dev->wireless_cmd) {
             int ret = dev->wireless_cmd(dev, nla_data(wireless_attr),
@@ -1194,6 +1222,12 @@ void rtnl_dev_unregister(struct net_device *dev) {
 
 void rtnl_dev_set_wireless_handler(struct net_device *dev, void *priv,
                                    rtnl_wireless_cmd_t handler) {
+    rtnl_dev_set_wireless_ops(dev, priv, handler, NULL);
+}
+
+void rtnl_dev_set_wireless_ops(struct net_device *dev, void *priv,
+                               rtnl_wireless_cmd_t handler,
+                               rtnl_wireless_dump_t dump_handler) {
     if (!dev) {
         return;
     }
@@ -1201,6 +1235,18 @@ void rtnl_dev_set_wireless_handler(struct net_device *dev, void *priv,
     spin_lock(&dev->lock);
     dev->wireless_priv = priv;
     dev->wireless_cmd = handler;
+    dev->wireless_dump = dump_handler;
+    spin_unlock(&dev->lock);
+}
+
+void rtnl_dev_set_link_change_handler(struct net_device *dev,
+                                      rtnl_link_change_t handler) {
+    if (!dev) {
+        return;
+    }
+
+    spin_lock(&dev->lock);
+    dev->link_change = handler;
     spin_unlock(&dev->lock);
 }
 
