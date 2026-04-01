@@ -146,6 +146,7 @@ arch_context_switch_exit:
 .align 3
 el0_irq:
 	SAVE_CONTEXT
+	MOV X0, SP
 	BL aarch64_do_irq
 	B arch_context_switch_exit
 
@@ -166,6 +167,7 @@ el0_sync:
 .align 3
 el1_irq:
 	SAVE_CONTEXT
+	MOV X0, SP
 	BL aarch64_do_irq
 	B arch_context_switch_exit
 
