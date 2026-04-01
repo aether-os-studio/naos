@@ -48,11 +48,13 @@ int init_serial() {
                                  spcr->uart_clock_frequency, &config);
             if (ret)
                 return -1;
+
+            serial_initialized = true;
+            break;
         default:
             break;
         }
 
-        serial_initialized = true;
         return 0;
     }
     return -1;

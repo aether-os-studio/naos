@@ -18,6 +18,12 @@ drop_from_el2:
     // 配置HCR_EL2
     mov x0, #(1 << 31)      // RW=1: EL1是AArch64
     msr HCR_EL2, x0
+
+    // 允许 EL1 使用 GICv3 的 ICC_* system registers
+    mrs x0, ICC_SRE_EL2
+    orr x0, x0, #0xf        // SRE | DFB | DIB | Enable
+    msr ICC_SRE_EL2, x0
+    isb
     
     // 配置CNTHCTL_EL2
     mov x0, #3              // EL1PCTEN | EL1PCEN
@@ -37,15 +43,9 @@ drop_from_el2:
     eret
 
 already_el1:
-    mov     x1, sp
-
-    mov     x0, #1
-    msr     spsel, x0
-    mov     sp, x1
-
-    mrs     x0, cpacr_el1
-    orr     x0, x0, #(0x3 << 20)
-    msr     cpacr_el1, x0
+    mrs x0, cpacr_el1
+    orr x0, x0, #(0x3 << 20)
+    msr cpacr_el1, x0
 
     b kmain
 
@@ -67,6 +67,12 @@ drop_from_el2_ap:
     // 配置HCR_EL2
     mov x0, #(1 << 31)      // RW=1: EL1是AArch64
     msr HCR_EL2, x0
+
+    // 允许 EL1 使用 GICv3 的 ICC_* system registers
+    mrs x0, ICC_SRE_EL2
+    orr x0, x0, #0xf        // SRE | DFB | DIB | Enable
+    msr ICC_SRE_EL2, x0
+    isb
     
     // 配置CNTHCTL_EL2
     mov x0, #3              // EL1PCTEN | EL1PCEN
@@ -86,14 +92,8 @@ drop_from_el2_ap:
     eret
 
 already_el1_ap:
-    mov     x2, sp
-
-    mov     x1, #1
-    msr     spsel, x1
-    mov     sp, x2
-
-    mrs     x1, cpacr_el1
-    orr     x1, x1, #(0x3 << 20)
-    msr     cpacr_el1, x1
+    mrs x1, cpacr_el1
+    orr x1, x1, #(0x3 << 20)
+    msr cpacr_el1, x1
 
     b ap_kmain

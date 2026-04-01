@@ -19,6 +19,18 @@ gic_version_t gic_version = GIC_VERSION_UNKNOWN;
 #define isb() asm volatile("isb" : : : "memory")
 #define dmb(op) asm volatile("dmb " #op : : : "memory")
 
+#define ICC_SRE_SRE (1UL << 0)
+#define ICC_SRE_DFB (1UL << 1)
+#define ICC_SRE_DIB (1UL << 2)
+
+static inline void gic_cpu_relax(void) { asm volatile("yield" : : : "memory"); }
+
+static inline void gicd_wait_for_rwp(void) {
+    while (*(volatile uint32_t *)(gicd_base_virt + GICD_CTLR) & GICD_CTLR_RWP) {
+        gic_cpu_relax();
+    }
+}
+
 gic_version_t gic_detect_version(void) {
     struct uacpi_table madt_table;
     uacpi_status status = uacpi_table_find_by_signature("APIC", &madt_table);
@@ -111,21 +123,21 @@ static void gic_parse_acpi(void) {
         gicd_base_virt = (uint64_t)phys_to_virt(gicd_base_address);
         map_page_range(get_current_page_dir(false), gicd_base_virt,
                        gicd_base_address, 0x10000,
-                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
+                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
     }
 
     if (gic_version == GIC_VERSION_V2 && gicc_base_address) {
         gicc_base_virt = (uint64_t)phys_to_virt(gicc_base_address);
         map_page_range(get_current_page_dir(false), gicc_base_virt,
                        gicc_base_address, 0x2000,
-                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
+                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
     }
 
     if (gic_version >= GIC_VERSION_V3 && gicr_base_address) {
         gicr_base_virt = (uint64_t)phys_to_virt(gicr_base_address);
         map_page_range(get_current_page_dir(false), gicr_base_virt,
                        gicr_base_address, GICR_STRIDE * cpu_count,
-                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
+                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
     }
 }
 
@@ -350,21 +362,21 @@ static void gic_parse_dtb() {
             gicd_base_virt = (uint64_t)phys_to_virt(gicd_base_address);
             map_page_range(get_current_page_dir(false), gicd_base_virt,
                            gicd_base_address, gicd_base_size,
-                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
+                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
         }
 
         if (gic_version == GIC_VERSION_V2 && gicc_base_address) {
             gicc_base_virt = (uint64_t)phys_to_virt(gicc_base_address);
             map_page_range(get_current_page_dir(false), gicc_base_virt,
                            gicc_base_address, gicc_base_size,
-                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
+                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
         }
 
         if (gic_version >= GIC_VERSION_V3 && gicr_base_address) {
             gicr_base_virt = (uint64_t)phys_to_virt(gicr_base_address);
             map_page_range(get_current_page_dir(false), gicr_base_virt,
                            gicr_base_address, gicr_base_size,
-                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
+                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
         }
     }
 }
@@ -482,27 +494,49 @@ static void gic_v2_send_eoi(uint32_t irq) {
 }
 
 static void gicd_v3_init(void) {
+    uint32_t typer = *(volatile uint32_t *)(gicd_base_virt + GICD_TYPER);
+    uint32_t max_irq = ((typer & 0x1F) + 1) * 32;
+
+    if (max_irq > 1020) {
+        max_irq = 1020;
+    }
+
     // 禁用GICD
     *(volatile uint32_t *)(gicd_base_virt + GICD_CTLR) = 0;
     dsb(sy);
+    gicd_wait_for_rwp();
+
+    for (uint32_t i = 1; i < (max_irq / 32); i++) {
+        *(volatile uint32_t *)(gicd_base_virt + GICD_IGROUPR + i * 4) =
+            0xFFFFFFFF;
+        *(volatile uint32_t *)(gicd_base_virt + GICD_IGRPMODR + i * 4) = 0;
+        *(volatile uint32_t *)(gicd_base_virt + GICD_ICENABLER + i * 4) =
+            0xFFFFFFFF;
+        *(volatile uint32_t *)(gicd_base_virt + GICD_ICPENDR + i * 4) =
+            0xFFFFFFFF;
+        *(volatile uint32_t *)(gicd_base_virt + GICD_ICACTIVER + i * 4) =
+            0xFFFFFFFF;
+    }
+    gicd_wait_for_rwp();
 
     // 配置SPI中断路由（Affinity routing）
-    for (int intr = SPI_INTR_BASE; intr < 1020; intr++) {
+    for (uint32_t intr = SPI_INTR_BASE; intr < max_irq; intr++) {
         volatile uint64_t *route_reg =
             (uint64_t *)(gicd_base_virt + GICD_IROUTER + intr * 8);
         *route_reg = 0; // 路由到CPU0（可根据需要修改）
     }
 
     // 设置所有SPI中断优先级
-    for (int i = 8; i < 256; i++) {
+    for (uint32_t i = 8; i < (max_irq / 4); i++) {
         *(volatile uint32_t *)(gicd_base_virt + GICD_IPRIORITYR + i * 4) =
             0xA0A0A0A0;
     }
 
     // 启用GICD（Affinity Routing + Group1）
     *(volatile uint32_t *)(gicd_base_virt + GICD_CTLR) =
-        GICD_CTLR_ARE | GICD_CTLR_EN_GRP1NS | GICD_CTLR_DS;
+        GICD_CTLR_ARE_NS | GICD_CTLR_EN_GRP1NS;
     dsb(sy);
+    gicd_wait_for_rwp();
 }
 
 static void gicr_v3_init(uint32_t cpu_id) {
@@ -521,19 +555,39 @@ static void gicr_v3_init(uint32_t cpu_id) {
     // 清除pending状态
     *(volatile uint32_t *)(gicr_addr + GICR_ICPENDR0) = 0xFFFFFFFF;
 
+    // 清除active状态，避免继承到旧的虚拟CPU状态
+    *(volatile uint32_t *)(gicr_addr + GICR_ICACTIVER0) = 0xFFFFFFFF;
+
     // 配置PPI/SGI中断组为Group1 NS
     *(volatile uint32_t *)(gicr_addr + GICR_IGROUPR0) = 0xFFFFFFFF;
+    *(volatile uint32_t *)(gicr_addr + GICR_IGRPMODR0) = 0;
+
+    // PPI 默认使用电平触发，architected timer 依赖这个行为
+    *(volatile uint32_t *)(gicr_addr + GICR_ICFGR1) = 0;
 
     // 设置PPI优先级
     for (int i = 0; i < 8; i++) {
         *(volatile uint32_t *)(gicr_addr + GICR_IPRIORITYR + i * 4) =
             0xA0A0A0A0;
     }
+
+    dsb(sy);
 }
 
 static void cpu_interface_v3_init(void) {
+    uint64_t sre = 0;
+
+    // GICv3 的 CPU interface 通过 ICC_* system registers 访问；从 EL2
+    // 跳到 EL1 后，需要显式打开 SRE，否则在 KVM 下这些寄存器写入不会生效。
+    asm volatile("mrs %0, ICC_SRE_EL1" : "=r"(sre));
+    sre |= ICC_SRE_SRE | ICC_SRE_DFB | ICC_SRE_DIB;
+    asm volatile("msr ICC_SRE_EL1, %0" : : "r"(sre));
+    isb();
+
+    asm volatile("msr ICC_BPR1_EL1, %0" : : "r"((uint64_t)0));
+
     // 设置优先级掩码
-    asm volatile("msr ICC_PMR_EL1, %0" : : "r"((uint64_t)0xF0));
+    asm volatile("msr ICC_PMR_EL1, %0" : : "r"((uint64_t)0xFF));
 
     // 启用Group1中断
     asm volatile("msr ICC_IGRPEN1_EL1, %0" : : "r"((uint64_t)1));
@@ -578,6 +632,7 @@ static uint64_t gic_v3_get_irq(void) {
 
 static void gic_v3_send_eoi(uint32_t irq) {
     asm volatile("msr ICC_EOIR1_EL1, %0" : : "r"((uint64_t)irq));
+    asm volatile("msr ICC_DIR_EL1, %0" : : "r"((uint64_t)irq));
     isb();
 }
 

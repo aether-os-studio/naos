@@ -253,8 +253,7 @@ run-x86_64-single: assets/ovmf-code-$(ARCH).fd all-single
 run-aarch64: assets/ovmf-code-$(ARCH).fd all
 	qemu-system-$(ARCH) \
 		-M virt \
-		-cpu cortex-a72 \
-		-device ramfb \
+		-device virtio-gpu-pci \
 		-device qemu-xhci,id=xhci \
 		-device usb-kbd \
 		-device usb-mouse \
@@ -269,9 +268,8 @@ run-aarch64: assets/ovmf-code-$(ARCH).fd all
 .PHONY: run-aarch64-single
 run-aarch64-single: assets/ovmf-code-$(ARCH).fd all-single
 	qemu-system-$(ARCH) \
-		-M virt,gic-version=3 \
-		-cpu cortex-a76 \
-		-device ramfb \
+		-M virt \
+		-device virtio-gpu-pci \
 		-device qemu-xhci,id=xhci \
 		-device usb-kbd \
 		-device usb-mouse \
@@ -354,7 +352,7 @@ assets/limine:
 
 assets/ovmf-code-$(ARCH).fd:
 	mkdir -p assets
-	curl -Lo assets/edk2-ovmf.tar.gz https://github.com/osdev0/edk2-ovmf-nightly/releases/download/nightly-20260328T015918Z/edk2-ovmf.tar.gz
+	curl -Lo assets/edk2-ovmf.tar.gz https://github.com/osdev0/edk2-ovmf-nightly/releases/download/nightly-20260331T020914Z/edk2-ovmf.tar.gz
 	tar -zxvf assets/edk2-ovmf.tar.gz -C assets/
 
 	cp -r assets/edk2-ovmf/ovmf-code-$(ARCH).fd $@
