@@ -246,6 +246,8 @@ enum rtnl_wifi_cmd_type {
     RTNL_WIFI_CMD_CONNECT_OPEN = 3,
     RTNL_WIFI_CMD_DISCONNECT = 4,
     RTNL_WIFI_CMD_CONNECT_OPEN_BSSID = 5,
+    RTNL_WIFI_CMD_SCAN = 6,
+    RTNL_WIFI_CMD_CONNECT = 7,
 };
 
 struct rtnl_wifi_cmd_hdr {
@@ -278,6 +280,61 @@ struct rtnl_wifi_connect_open_bssid {
     uint8_t ssid_len;
     uint8_t reserved;
     char ssid[32];
+} __attribute__((packed));
+
+enum rtnl_wifi_auth_type {
+    RTNL_WIFI_AUTH_OPEN = 0,
+    RTNL_WIFI_AUTH_WPA_PSK = 1,
+    RTNL_WIFI_AUTH_WPA2_PSK = 2,
+    RTNL_WIFI_AUTH_WPA3_SAE = 3,
+};
+
+#define RTNL_WIFI_CONNECT_HAS_BSSID 0x1
+#define RTNL_WIFI_SNAPSHOT_HAS_BSSID 0x1
+#define RTNL_WIFI_SNAPSHOT_CONNECTED 0x2
+#define RTNL_WIFI_SNAPSHOT_ADMIN_UP 0x4
+#define RTNL_WIFI_SNAPSHOT_LINK_UP 0x8
+#define RTNL_WIFI_SNAPSHOT_MAX_BSS 8
+
+struct rtnl_wifi_connect {
+    uint8_t ssid_len;
+    uint8_t auth;
+    uint8_t flags;
+    uint8_t credential_len;
+    uint8_t bssid[6];
+    uint8_t channel_hint;
+    uint8_t reserved;
+    char ssid[32];
+    char credential[64];
+} __attribute__((packed));
+
+struct rtnl_wifi_scan_result {
+    uint8_t ssid_len;
+    uint8_t channel;
+    uint16_t freq_mhz;
+    int16_t signal_dbm;
+    uint16_t reserved;
+    uint32_t flags;
+    uint8_t bssid[6];
+    uint8_t pad[2];
+    char ssid[32];
+} __attribute__((packed));
+
+struct rtnl_wifi_snapshot {
+    uint32_t state;
+    uint32_t auth;
+    uint32_t flags;
+    uint32_t last_error;
+    uint32_t scan_generation;
+    uint32_t num_scan_results;
+    int16_t signal_dbm;
+    uint16_t freq_mhz;
+    uint8_t bssid[6];
+    uint8_t ssid_len;
+    uint8_t wlan_idx;
+    uint8_t own_mac_idx;
+    char ssid[32];
+    struct rtnl_wifi_scan_result scan_results[RTNL_WIFI_SNAPSHOT_MAX_BSS];
 } __attribute__((packed));
 
 /* Operational states */
@@ -521,6 +578,11 @@ struct net_device_addr {
 struct net_device;
 typedef int (*rtnl_wireless_cmd_t)(struct net_device *dev, const void *data,
                                    uint32_t len);
+struct nla_builder;
+typedef int (*rtnl_wireless_dump_t)(struct net_device *dev,
+                                    struct nla_builder *builder);
+typedef int (*rtnl_link_change_t)(struct net_device *dev, uint32_t old_flags,
+                                  uint32_t new_flags);
 
 struct net_device {
     char name[IFNAMSIZ];
@@ -546,6 +608,8 @@ struct net_device {
     spinlock_t lock;
     void *wireless_priv;
     rtnl_wireless_cmd_t wireless_cmd;
+    rtnl_wireless_dump_t wireless_dump;
+    rtnl_link_change_t link_change;
 };
 
 #define MAX_ROUTES 256
@@ -617,6 +681,11 @@ int rtnl_dev_register(struct net_device *dev);
 void rtnl_dev_unregister(struct net_device *dev);
 void rtnl_dev_set_wireless_handler(struct net_device *dev, void *priv,
                                    rtnl_wireless_cmd_t handler);
+void rtnl_dev_set_wireless_ops(struct net_device *dev, void *priv,
+                               rtnl_wireless_cmd_t handler,
+                               rtnl_wireless_dump_t dump_handler);
+void rtnl_dev_set_link_change_handler(struct net_device *dev,
+                                      rtnl_link_change_t handler);
 
 /* Address management */
 int rtnl_addr_add(int32_t ifindex, uint8_t family, const void *addr,

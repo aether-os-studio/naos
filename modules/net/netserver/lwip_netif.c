@@ -4,10 +4,23 @@
 
 typedef struct naos_lwip_link {
     netdev_t *netdev;
+    bool use_static_ipv4;
+    ip4_addr_t static_ipaddr;
+    ip4_addr_t static_netmask;
+    ip4_addr_t static_gw;
 } naos_lwip_link_t;
 
 static naos_lwip_link_t naos_link;
 struct netif naos_lwip_netif;
+
+typedef struct naos_lwip_netdev_event {
+    bool admin_up;
+    bool link_up;
+    bool use_static_ipv4;
+    ip4_addr_t static_ipaddr;
+    ip4_addr_t static_netmask;
+    ip4_addr_t static_gw;
+} naos_lwip_netdev_event_t;
 
 static void naos_lwip_log_dns_servers(void) {
     for (u8_t i = 0; i < DNS_MAX_SERVERS; i++) {
@@ -49,6 +62,101 @@ static void naos_lwip_status_callback(struct netif *netif) {
     naos_lwip_log_dns_servers();
 }
 
+static void naos_lwip_apply_link_state(void *arg) {
+    naos_lwip_netdev_event_t *event = (naos_lwip_netdev_event_t *)arg;
+    ip4_addr_t zero_addr;
+
+    if (!event) {
+        return;
+    }
+
+    ip4_addr_set_zero(&zero_addr);
+
+    if (!event->admin_up) {
+#if LWIP_IPV4 && LWIP_DHCP
+        if (!event->use_static_ipv4) {
+            netifapi_dhcp_release_and_stop(&naos_lwip_netif);
+            netifapi_netif_set_addr(&naos_lwip_netif, &zero_addr, &zero_addr,
+                                    &zero_addr);
+        }
+#endif
+        netifapi_netif_set_link_down(&naos_lwip_netif);
+        netifapi_netif_set_down(&naos_lwip_netif);
+        free(event);
+        return;
+    }
+
+    netifapi_netif_set_up(&naos_lwip_netif);
+
+    if (!event->link_up) {
+#if LWIP_IPV4 && LWIP_DHCP
+        if (!event->use_static_ipv4) {
+            netifapi_dhcp_release_and_stop(&naos_lwip_netif);
+            netifapi_netif_set_addr(&naos_lwip_netif, &zero_addr, &zero_addr,
+                                    &zero_addr);
+        }
+#endif
+        netifapi_netif_set_link_down(&naos_lwip_netif);
+        free(event);
+        return;
+    }
+
+    netifapi_netif_set_link_up(&naos_lwip_netif);
+
+#if LWIP_IPV4
+    if (event->use_static_ipv4) {
+        netifapi_netif_set_addr(&naos_lwip_netif, &event->static_ipaddr,
+                                &event->static_netmask, &event->static_gw);
+    }
+#if LWIP_DHCP
+    else {
+        netifapi_dhcp_start(&naos_lwip_netif);
+    }
+#endif
+#endif
+
+    naos_lwip_set_fallback_dns();
+    free(event);
+}
+
+static void naos_lwip_queue_link_state_update(const naos_lwip_link_t *link) {
+    naos_lwip_netdev_event_t *event = NULL;
+
+    if (!link || !link->netdev) {
+        return;
+    }
+
+    event = malloc(sizeof(*event));
+    if (!event) {
+        return;
+    }
+
+    event->admin_up = netdev_admin_is_up(link->netdev);
+    event->link_up = netdev_link_is_up(link->netdev);
+    event->use_static_ipv4 = link->use_static_ipv4;
+    event->static_ipaddr = link->static_ipaddr;
+    event->static_netmask = link->static_netmask;
+    event->static_gw = link->static_gw;
+
+    if (tcpip_callback(naos_lwip_apply_link_state, event) != ERR_OK) {
+        free(event);
+    }
+}
+
+static void naos_lwip_netdev_event(netdev_t *dev, uint32_t events, void *ctx) {
+    naos_lwip_link_t *link = (naos_lwip_link_t *)ctx;
+
+    if (!dev || !link || link->netdev != dev) {
+        return;
+    }
+    if (!(events & (NETDEV_EVENT_ADMIN_UP | NETDEV_EVENT_ADMIN_DOWN |
+                    NETDEV_EVENT_LINK_UP | NETDEV_EVENT_LINK_DOWN))) {
+        return;
+    }
+
+    naos_lwip_queue_link_state_update(link);
+}
+
 static err_t naos_lwip_linkoutput(struct netif *netif, struct pbuf *p) {
     naos_lwip_link_t *link = netif ? (naos_lwip_link_t *)netif->state : NULL;
     uint8_t *frame = NULL;
@@ -85,16 +193,27 @@ static err_t naos_lwip_netif_init(struct netif *netif) {
         return ERR_IF;
     }
 
-    netif->name[0] = 'e';
-    netif->name[1] = 'n';
+    if (link->netdev->type == NETDEV_TYPE_WIFI) {
+        netif->name[0] = 'w';
+        netif->name[1] = 'l';
+    } else {
+        netif->name[0] = 'e';
+        netif->name[1] = 'n';
+    }
     netif->hostname = "naos";
     netif->output = etharp_output;
     netif->linkoutput = naos_lwip_linkoutput;
     netif->mtu = (u16_t)link->netdev->mtu;
     netif->hwaddr_len = 6;
     memcpy(netif->hwaddr, link->netdev->mac, 6);
-    netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP |
-                   NETIF_FLAG_ETHERNET | NETIF_FLAG_LINK_UP | NETIF_FLAG_UP;
+    netif->flags =
+        NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_ETHERNET;
+    if (netdev_admin_is_up(link->netdev)) {
+        netif->flags |= NETIF_FLAG_UP;
+    }
+    if (netdev_link_is_up(link->netdev)) {
+        netif->flags |= NETIF_FLAG_LINK_UP;
+    }
 
 #if LWIP_IPV6
     netif_create_ip6_linklocal_address(netif, 1);
@@ -200,6 +319,10 @@ int lwip_module_init() {
         ip4_addr_set_u32(&netmask, naos_prefixlen_to_mask_u32(prefixlen));
         ip4_addr_set_u32(&gw, gateway);
         use_static_ipv4 = true;
+        naos_link.use_static_ipv4 = true;
+        naos_link.static_ipaddr = ipaddr;
+        naos_link.static_netmask = netmask;
+        naos_link.static_gw = gw;
         printk("netserver: adopting rtnl ipv4=%s/%u gw=%s ifindex=%d\n",
                ip4addr_ntoa(&ipaddr), prefixlen, ip4addr_ntoa(&gw), ifindex);
     } else {
@@ -218,12 +341,8 @@ int lwip_module_init() {
 #endif
 
     netifapi_netif_set_default(&naos_lwip_netif);
-    netifapi_netif_set_up(&naos_lwip_netif);
-    netifapi_netif_set_link_up(&naos_lwip_netif);
-    naos_lwip_set_fallback_dns();
-    if (!use_static_ipv4) {
-        netifapi_dhcp_start(&naos_lwip_netif);
-    }
+    netdev_register_listener(netdev, naos_lwip_netdev_event, &naos_link);
+    naos_lwip_queue_link_state_update(&naos_link);
 
     task_create("lwip-rx", naos_lwip_rx_thread, (uint64_t)&naos_link,
                 KTHREAD_PRIORITY);
