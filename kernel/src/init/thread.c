@@ -47,7 +47,10 @@ void init_thread(uint64_t arg) {
 
     printk("System initialized, ready to go to userland.\n");
 
-    system_abi->run_user_init("/init");
+    const char *argvs[2];
+    memset(argvs, 0, sizeof(argvs));
+    argvs[0] = "/init";
+    task_execve("/init", argvs, NULL);
 
     printk("run init failed\n");
 

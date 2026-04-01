@@ -253,7 +253,7 @@ run-x86_64-single: assets/ovmf-code-$(ARCH).fd all-single
 run-aarch64: assets/ovmf-code-$(ARCH).fd all
 	qemu-system-$(ARCH) \
 		-M virt \
-		-device virtio-gpu-pci \
+		-device ramfb \
 		-device qemu-xhci,id=xhci \
 		-device usb-kbd \
 		-device usb-mouse \
@@ -269,7 +269,7 @@ run-aarch64: assets/ovmf-code-$(ARCH).fd all
 run-aarch64-single: assets/ovmf-code-$(ARCH).fd all-single
 	qemu-system-$(ARCH) \
 		-M virt \
-		-device virtio-gpu-pci \
+		-device ramfb \
 		-device qemu-xhci,id=xhci \
 		-device usb-kbd \
 		-device usb-mouse \

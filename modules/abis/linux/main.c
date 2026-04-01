@@ -490,13 +490,6 @@ int linuxabi_on_send_signal(task_t *task, int sig, const siginfo_t *info) {
     return 0;
 }
 
-int linuxabi_run_user_init(const char *path) {
-    const char *argvs[2];
-    memset(argvs, 0, sizeof(argvs));
-    argvs[0] = path;
-    return task_execve(path, argvs, NULL);
-}
-
 int linuxabi_on_new_task(task_t *task) { procfs_on_new_task(task); }
 
 int linuxabi_on_exit_task(task_t *task) {
@@ -542,7 +535,6 @@ abi_t linux_abi = {
     .init_before_thread = linuxabi_init_before_thread,
     .init_after_thread = linuxabi_init_after_thread,
     .init_before_user = linuxabi_init_before_user,
-    .run_user_init = linuxabi_run_user_init,
     .regist_input_dev = linuxabi_regist_input_dev,
     .input_generate_event = input_generate_event,
 };
@@ -1081,6 +1073,7 @@ void aarch64_register_syscalls() {
     regist_syscall_handler(SYS_SENDFILE, (syscall_handle_t)sys_sendfile);
     regist_syscall_handler(SYS_SOCKET, (syscall_handle_t)sys_socket);
     regist_syscall_handler(SYS_CONNECT, (syscall_handle_t)sys_connect);
+    regist_syscall_handler(SYS_ACCEPT, (syscall_handle_t)sys_accept_normal);
     regist_syscall_handler(SYS_SENDTO, (syscall_handle_t)sys_send);
     regist_syscall_handler(SYS_RECVFROM, (syscall_handle_t)sys_recv);
     regist_syscall_handler(SYS_SENDMSG, (syscall_handle_t)sys_sendmsg);

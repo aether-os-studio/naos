@@ -12,7 +12,6 @@ typedef struct abi {
     void (*init_before_thread)(void);
     void (*init_after_thread)(void);
     void (*init_before_user)(void);
-    int (*run_user_init)(const char *path);
     void *(*regist_input_dev)(const char *device_name, void *arg);
     void (*input_generate_event)(void *item, uint16_t type, uint16_t code,
                                  int32_t value, uint64_t sec, uint64_t usecs);

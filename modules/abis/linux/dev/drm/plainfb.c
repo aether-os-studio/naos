@@ -1276,56 +1276,50 @@ void drm_plainfb_init() {
 
     memset(gpu_device->dumbbuffers, 0, sizeof(gpu_device->dumbbuffers));
 
-    pci_device_t *vga_pci_devices[8];
-    uint32_t count;
-    pci_find_class(vga_pci_devices, &count, 0x00030000);
+    pci_device_t *fake_gpu_device = pci_devices[0];
 
-    if (count > 0) {
-        // Register with DRM subsystem using PCI device
-        drm_device_t *drm_dev = drm_regist_pci_dev(
-            gpu_device, &plainfb_drm_device_op, vga_pci_devices[0]);
-        if (drm_dev) {
-            const char *driver_name = "simpledrm";
-            if (vga_pci_devices[0]->vendor_id == 0x1234 &&
-                vga_pci_devices[0]->device_id == 0x1111) {
-                driver_name = "bochs-drm";
-            }
-
-            drm_device_set_driver_info(drm_dev, driver_name, "20260310",
-                                       "NaOS plain framebuffer DRM");
-
-            char driver_root[128];
-            sprintf(driver_root, "/sys/bus/pci/drivers/%s", driver_name);
-            sysfs_ensure_dir(driver_root);
-
-            char pci_device_path[128];
-            sprintf(pci_device_path, "/sys/bus/pci/devices/%04x:%02x:%02x.%u",
-                    vga_pci_devices[0]->segment, vga_pci_devices[0]->bus,
-                    vga_pci_devices[0]->slot, vga_pci_devices[0]->func);
-
-            char driver_link_path[192];
-            sprintf(driver_link_path, "%s/driver", pci_device_path);
-            sysfs_ensure_symlink(driver_link_path, driver_root);
-
-            char reverse_link_path[192];
-            sprintf(reverse_link_path, "%s/%04x:%02x:%02x.%u", driver_root,
-                    vga_pci_devices[0]->segment, vga_pci_devices[0]->bus,
-                    vga_pci_devices[0]->slot, vga_pci_devices[0]->func);
-            sysfs_ensure_symlink(reverse_link_path, pci_device_path);
-
-            char pci_uevent_path[192];
-            sprintf(pci_uevent_path, "%s/uevent", pci_device_path);
-            vfs_node_t *pci_uevent = vfs_open(pci_uevent_path, 0);
-            if (pci_uevent) {
-                char uevent_content[256];
-                sprintf(uevent_content,
-                        "DRIVER=%s\nPCI_SLOT_NAME=%04x:%02x:%02x.%01x\n",
-                        driver_name, vga_pci_devices[0]->segment,
-                        vga_pci_devices[0]->bus, vga_pci_devices[0]->slot,
-                        vga_pci_devices[0]->func);
-                vfs_write(pci_uevent, uevent_content, 0,
-                          strlen(uevent_content));
-            }
+    // Register with DRM subsystem using PCI device
+    drm_device_t *drm_dev =
+        drm_regist_pci_dev(gpu_device, &plainfb_drm_device_op, fake_gpu_device);
+    if (drm_dev) {
+        const char *driver_name = "simpledrm";
+        if (fake_gpu_device->vendor_id == 0x1234 &&
+            fake_gpu_device->device_id == 0x1111) {
+            driver_name = "bochs-drm";
         }
-    };
+
+        drm_device_set_driver_info(drm_dev, driver_name, "20260310",
+                                   "NaOS plain framebuffer DRM");
+
+        char driver_root[128];
+        sprintf(driver_root, "/sys/bus/pci/drivers/%s", driver_name);
+        sysfs_ensure_dir(driver_root);
+
+        char pci_device_path[128];
+        sprintf(pci_device_path, "/sys/bus/pci/devices/%04x:%02x:%02x.%u",
+                fake_gpu_device->segment, fake_gpu_device->bus,
+                fake_gpu_device->slot, fake_gpu_device->func);
+
+        char driver_link_path[192];
+        sprintf(driver_link_path, "%s/driver", pci_device_path);
+        sysfs_ensure_symlink(driver_link_path, driver_root);
+
+        char reverse_link_path[192];
+        sprintf(reverse_link_path, "%s/%04x:%02x:%02x.%u", driver_root,
+                fake_gpu_device->segment, fake_gpu_device->bus,
+                fake_gpu_device->slot, fake_gpu_device->func);
+        sysfs_ensure_symlink(reverse_link_path, pci_device_path);
+
+        char pci_uevent_path[192];
+        sprintf(pci_uevent_path, "%s/uevent", pci_device_path);
+        vfs_node_t *pci_uevent = vfs_open(pci_uevent_path, 0);
+        if (pci_uevent) {
+            char uevent_content[256];
+            sprintf(uevent_content,
+                    "DRIVER=%s\nPCI_SLOT_NAME=%04x:%02x:%02x.%01x\n",
+                    driver_name, fake_gpu_device->segment, fake_gpu_device->bus,
+                    fake_gpu_device->slot, fake_gpu_device->func);
+            vfs_write(pci_uevent, uevent_content, 0, strlen(uevent_content));
+        }
+    }
 }

@@ -5,10 +5,10 @@
 struct pt_regs {
     uint64_t pc;
     uint64_t cpsr;
-    uint64_t sp_el0;
-    uint64_t x30;
     uint64_t origin_x0;
     uint64_t reserved;
+    uint64_t sp_el0;
+    uint64_t x30;
     uint64_t x28;
     uint64_t x29;
     uint64_t x26;
@@ -43,3 +43,15 @@ struct pt_regs {
 
 _Static_assert(sizeof(struct pt_regs) == 0x120,
                "aarch64 pt_regs must stay 16-byte aligned");
+_Static_assert(offsetof(struct pt_regs, pc) == 0x00,
+               "pt_regs.pc offset must match entry.S");
+_Static_assert(offsetof(struct pt_regs, cpsr) == 0x08,
+               "pt_regs.cpsr offset must match entry.S");
+_Static_assert(offsetof(struct pt_regs, origin_x0) == 0x10,
+               "pt_regs.origin_x0 offset must match entry.S");
+_Static_assert(offsetof(struct pt_regs, reserved) == 0x18,
+               "pt_regs.reserved offset must match entry.S");
+_Static_assert(offsetof(struct pt_regs, sp_el0) == 0x20,
+               "pt_regs.sp_el0 offset must match entry.S");
+_Static_assert(offsetof(struct pt_regs, x30) == 0x28,
+               "pt_regs.x30 offset must match entry.S");
