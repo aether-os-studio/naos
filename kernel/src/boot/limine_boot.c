@@ -1,5 +1,6 @@
 #include <boot/boot.h>
 #include <acpi/uacpi/acpi.h>
+#include <mm/hhdm.h>
 
 #define LIMINE_REQUEST __attribute__((used, section(".limine_requests")))
 
@@ -9,7 +10,7 @@ __attribute__((
     LIMINE_REQUESTS_START_MARKER;
 
 LIMINE_REQUEST static volatile uint64_t base_revision_request[4] =
-    LIMINE_BASE_REVISION(3);
+    LIMINE_BASE_REVISION(6);
 
 LIMINE_REQUEST static volatile struct limine_stack_size_request
     stack_size_request = {
@@ -72,7 +73,7 @@ boot_memory_map_t *boot_get_memory_map() {
 };
 
 uintptr_t boot_get_acpi_rsdp() {
-    return rsdp_request.response ? (uintptr_t)rsdp_request.response->address
+    return rsdp_request.response ? virt_to_phys(rsdp_request.response->address)
                                  : 0;
 }
 
