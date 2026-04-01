@@ -9,24 +9,27 @@ extern void ap_entry(struct limine_mp_info *cpu);
 
 uint64_t cpuid_to_mpidr[MAX_CPU_NUM];
 
+static inline uint64_t mpidr_affinity(uint64_t mpidr) {
+    return (mpidr & 0xFF) | (((mpidr >> 8) & 0xFF) << 8) |
+           (((mpidr >> 16) & 0xFF) << 16) | (((mpidr >> 32) & 0xFF) << 24);
+}
+
 uint64_t current_mpidr() {
     uint64_t mpidr;
     asm volatile("mrs %0, mpidr_el1" // 读取MPIDR_EL1寄存器
                  : "=r"(mpidr));
-    return mpidr & 0xFF;
+    return mpidr;
 }
 
 uint64_t get_cpuid_by_mpidr(uint64_t mpidr) {
-    for (uint64_t i = 0; i < cpu_count; i++)
-        if (cpuid_to_mpidr[i] == mpidr)
-            return i;
+    uint64_t affinity = mpidr_affinity(mpidr);
 
-    printk("Cannot get cpu id, mpidr = %d\n", mpidr);
+    for (uint64_t i = 0; i < cpu_count; i++)
+        if (mpidr_affinity(cpuid_to_mpidr[i]) == affinity)
+            return i;
 
     return 0;
 }
-
-void ap_kmain(struct limine_mp_info *cpu);
 
 extern void ap_entry();
 
@@ -48,14 +51,14 @@ void ap_kmain(struct limine_mp_info *cpu) {
     uint64_t kpgtable_phys = (uint64_t)virt_to_phys(get_kernel_page_dir());
 
     asm volatile("msr TTBR1_EL1, %0" : : "r"(kpgtable_phys) : "memory");
-    asm volatile("dsb ishst\n\t"
-                 "tlbi vmalle1is\n\t"
-                 "dsb ish\n\t"
-                 "isb\n\t");
+    arch_flush_tlb_all();
 
     setup_vectors();
 
     spin_unlock(&ap_startup_lock);
+
+    aarch64_cpu_local_init(get_cpuid_by_mpidr(current_mpidr()),
+                           current_mpidr());
 
     while (!task_initialized) {
         asm volatile("nop");

@@ -27,7 +27,7 @@ ifeq ($(filter $(ARCH),aarch64 loongarch64 riscv64 x86_64),)
     $(error Architecture $(ARCH) not supported)
 endif
 
-GLOBAL_CFLAGS := -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-cast-function-type -Wno-sign-compare -Wno-discarded-qualifiers -Wno-address-of-packed-member
+GLOBAL_CFLAGS := -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-cast-function-type -Wno-sign-compare -Wno-discarded-qualifiers -Wno-address-of-packed-member -znoexecstack
 
 # User controllable C flags.
 ifeq ($(BUILD_MODE), debug)
@@ -104,7 +104,7 @@ ifeq ($(ARCH),aarch64)
         override CC += \
             -target aarch64-unknown-none
     endif
-    override CFLAGS +=
+    override CFLAGS += -march=armv8-a+nofp -mgeneral-regs-only
     ifeq ($(CC_IS_CLANG),0)
         override LDFLAGS += \
             -Wl,-m,aarch64elf

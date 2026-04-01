@@ -43,6 +43,14 @@ drop_from_el2:
     eret
 
 already_el1:
+    mov x1, sp
+
+    mov x0, #1
+    msr spsel, x0
+    mov sp, x1
+
+    isb
+
     mrs x0, cpacr_el1
     orr x0, x0, #(0x3 << 20)
     msr cpacr_el1, x0
@@ -92,6 +100,12 @@ drop_from_el2_ap:
     eret
 
 already_el1_ap:
+    mov x2, sp
+
+    mov x1, #1
+    msr spsel, x1
+    mov sp, x2
+
     mrs x1, cpacr_el1
     orr x1, x1, #(0x3 << 20)
     msr cpacr_el1, x1

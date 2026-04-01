@@ -19,5 +19,4 @@ x64_cpu_local_t *x64_get_cpu_local(void);
 x64_cpu_local_t *x64_get_cpu_local_by_id(uint32_t cpu_id);
 void x64_cpu_local_init(uint32_t cpu_id, uint32_t lapic_id);
 void x64_cpu_local_set_current(task_t *current);
-void x64_cpu_local_sync_syscall_stack(task_t *task);
 uint32_t x64_current_cpu_id(void);

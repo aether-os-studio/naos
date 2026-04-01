@@ -32,25 +32,11 @@ void x64_cpu_local_init(uint32_t cpu_id, uint32_t lapic_id_value) {
 void x64_cpu_local_set_current(task_t *current) {
     x64_cpu_local_t *local = x64_get_cpu_local();
     if (!local) {
-        uint32_t lapic = (uint32_t)lapic_id();
-        uint32_t cpu_id = get_cpuid_by_lapic_id(lapic);
-        x64_cpu_local_init(cpu_id, lapic);
-        local = x64_get_cpu_local();
-        if (!local)
-            return;
+        return;
     }
 
     local->task_ptr = current;
     local->syscall_stack = current ? current->syscall_stack : 0;
-}
-
-void x64_cpu_local_sync_syscall_stack(task_t *task) {
-    x64_cpu_local_t *local = x64_get_cpu_local();
-    if (!local)
-        return;
-    if (!task || local->task_ptr != task)
-        return;
-    local->syscall_stack = task->syscall_stack;
 }
 
 uint32_t x64_current_cpu_id(void) {

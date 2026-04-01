@@ -739,10 +739,11 @@ typedef struct signal_aarch64_mcontext {
     uint64_t pc;
     uint64_t pstate;
     uint64_t fault_address;
+    uint64_t origin_x0;
     uint64_t fpcr;
     uint64_t fpsr;
-    uint64_t reserved[5];
-    uint64_t fpu[32];
+    uint64_t reserved[4];
+    uint64_t fpu[32][2];
 } signal_aarch64_mcontext_t;
 
 typedef struct signal_aarch64_ucontext {
@@ -766,7 +767,8 @@ static inline uint64_t signal_aarch64_align_down(uint64_t value,
 static inline void
 signal_aarch64_fill_ucontext(signal_aarch64_ucontext_t *ucontext,
                              const struct pt_regs *regs, sigset_t blocked_mask,
-                             const stack_t *altstack, const siginfo_t *info) {
+                             const stack_t *altstack, const siginfo_t *info,
+                             const fpu_context_t *fpu_ctx) {
     memset(ucontext, 0, sizeof(*ucontext));
 
     if (altstack)
@@ -807,9 +809,13 @@ signal_aarch64_fill_ucontext(signal_aarch64_ucontext_t *ucontext,
     ucontext->uc_mcontext.sp = regs->sp_el0;
     ucontext->uc_mcontext.pc = regs->pc;
     ucontext->uc_mcontext.pstate = regs->cpsr;
-    ucontext->uc_mcontext.fpcr = regs->fpcr;
-    ucontext->uc_mcontext.fpsr = regs->fpsr;
-    memcpy(ucontext->uc_mcontext.fpu, regs->fpu, sizeof(regs->fpu));
+    ucontext->uc_mcontext.origin_x0 = regs->origin_x0;
+    if (fpu_ctx) {
+        ucontext->uc_mcontext.fpcr = fpu_ctx->fpcr;
+        ucontext->uc_mcontext.fpsr = fpu_ctx->fpsr;
+        memcpy(ucontext->uc_mcontext.fpu, fpu_ctx->q,
+               sizeof(ucontext->uc_mcontext.fpu));
+    }
 
     if (info && info->si_signo == SIGSEGV)
         ucontext->uc_mcontext.fault_address =
@@ -818,7 +824,8 @@ signal_aarch64_fill_ucontext(signal_aarch64_ucontext_t *ucontext,
 
 static inline void
 signal_aarch64_restore_ptregs(struct pt_regs *regs,
-                              const signal_aarch64_ucontext_t *ucontext) {
+                              const signal_aarch64_ucontext_t *ucontext,
+                              fpu_context_t *fpu_ctx) {
     regs->x0 = ucontext->uc_mcontext.regs[0];
     regs->x1 = ucontext->uc_mcontext.regs[1];
     regs->x2 = ucontext->uc_mcontext.regs[2];
@@ -853,9 +860,13 @@ signal_aarch64_restore_ptregs(struct pt_regs *regs,
     regs->sp_el0 = ucontext->uc_mcontext.sp;
     regs->pc = ucontext->uc_mcontext.pc;
     regs->cpsr = ucontext->uc_mcontext.pstate;
-    regs->fpcr = ucontext->uc_mcontext.fpcr;
-    regs->fpsr = ucontext->uc_mcontext.fpsr;
-    memcpy(regs->fpu, ucontext->uc_mcontext.fpu, sizeof(regs->fpu));
+    regs->origin_x0 = ucontext->uc_mcontext.origin_x0;
+    if (fpu_ctx) {
+        fpu_ctx->fpcr = ucontext->uc_mcontext.fpcr;
+        fpu_ctx->fpsr = ucontext->uc_mcontext.fpsr;
+        memcpy(fpu_ctx->q, ucontext->uc_mcontext.fpu,
+               sizeof(ucontext->uc_mcontext.fpu));
+    }
 
     if ((regs->cpsr & 0xF) != 0)
         regs->cpsr &= ~0xFULL;
@@ -897,8 +908,10 @@ static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
     signal_aarch64_frame_t frame;
     memset(&frame, 0, sizeof(frame));
     memcpy(&frame.info, info, sizeof(frame.info));
+    aarch64_fpu_save(task->arch_context->fpu_ctx);
     signal_aarch64_fill_ucontext(&frame.ucontext, &saved, restore_mask,
-                                 &frame_altstack, info);
+                                 &frame_altstack, info,
+                                 task->arch_context->fpu_ctx);
 
     if (copy_to_user((void *)frame_addr, &frame, sizeof(frame)))
         return false;
@@ -906,6 +919,7 @@ static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
     memset(regs, 0, sizeof(*regs));
     regs->pc = (uint64_t)action->sa_handler;
     regs->sp_el0 = frame_addr;
+    regs->origin_x0 = saved.origin_x0;
     regs->x0 = sig;
     if (action->sa_flags & SA_SIGINFO) {
         regs->x1 = frame_addr + offsetof(signal_aarch64_frame_t, info);
@@ -1178,7 +1192,9 @@ uint64_t sys_sigreturn(struct pt_regs *regs) {
         return 0;
     }
 
-    signal_aarch64_restore_ptregs(regs, &frame.ucontext);
+    signal_aarch64_restore_ptregs(regs, &frame.ucontext,
+                                  self->arch_context->fpu_ctx);
+    aarch64_fpu_restore(self->arch_context->fpu_ctx);
 
     spin_lock(&self->signal->sighand->siglock);
     self->signal->blocked =
@@ -1186,7 +1202,7 @@ uint64_t sys_sigreturn(struct pt_regs *regs) {
     signal_altstack_store(&self->signal->altstack, &restore_altstack);
     spin_unlock(&self->signal->sighand->siglock);
 
-    return regs->x0;
+    return regs->origin_x0;
 #else
     (void)regs;
     return (uint64_t)-ENOSYS;

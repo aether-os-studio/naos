@@ -1,3 +1,5 @@
+.section .text
+
 .global ret_from_fork
 ret_from_fork:
     cli

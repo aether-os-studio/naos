@@ -42,7 +42,7 @@ ifeq ($(ARCH),aarch64)
         override CC += \
             -target aarch64-unknown-none
     endif
-    override CFLAGS +=
+    override CFLAGS += -march=armv8-a+nofp -mgeneral-regs-only
     override LDFLAGS += \
         -Wl,-m,aarch64elf
 endif

@@ -3,9 +3,21 @@
 #include <arch/arch.h>
 #include <task/task.h>
 
-void arch_enable_interrupt() { asm volatile("msr daifclr, #3"); }
+void arch_enable_interrupt() {
+    asm volatile("msr daifclr, #3\n\t"
+                 "isb"
+                 :
+                 :
+                 : "memory");
+}
 
-void arch_disable_interrupt() { asm volatile("msr daifset, #3"); }
+void arch_disable_interrupt() {
+    asm volatile("msr daifset, #3\n\t"
+                 "isb"
+                 :
+                 :
+                 : "memory");
+}
 
 bool arch_interrupt_enabled() {
 

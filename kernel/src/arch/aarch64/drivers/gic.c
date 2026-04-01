@@ -12,6 +12,7 @@ uint64_t gicd_base_virt = 0;
 uint64_t gicd_base_address = 0;
 uint64_t gicr_base_virt = 0;
 uint64_t gicr_base_address = 0;
+static uint64_t gicr_region_size = 0;
 gic_version_t gic_version = GIC_VERSION_UNKNOWN;
 
 // 内存屏障
@@ -29,6 +30,39 @@ static inline void gicd_wait_for_rwp(void) {
     while (*(volatile uint32_t *)(gicd_base_virt + GICD_CTLR) & GICD_CTLR_RWP) {
         gic_cpu_relax();
     }
+}
+
+static inline uint32_t gic_mpidr_to_affinity(uint64_t mpidr) {
+    return (uint32_t)((mpidr & 0xFF) | (((mpidr >> 8) & 0xFF) << 8) |
+                      (((mpidr >> 16) & 0xFF) << 16) |
+                      (((mpidr >> 32) & 0xFF) << 24));
+}
+
+static uint64_t gicr_v3_cpu_base(void) {
+    if (!gicr_base_virt) {
+        return 0;
+    }
+
+    uint32_t affinity = gic_mpidr_to_affinity(current_mpidr());
+
+    for (uint64_t offset = 0; offset + GICR_STRIDE <= gicr_region_size;
+         offset += GICR_STRIDE) {
+        uint64_t gicr_addr = gicr_base_virt + offset;
+        uint64_t typer = *(volatile uint64_t *)(gicr_addr + GICR_TYPER);
+
+        if ((uint32_t)(typer >> 32) == affinity) {
+            return gicr_addr;
+        }
+
+        if (typer & (1ULL << 4)) {
+            break;
+        }
+    }
+
+    uint64_t fallback = gicr_base_virt + current_cpu_id * GICR_STRIDE;
+    printk("GICv3: fallback MPIDR=0x%llx affinity=0x%x uses GICR=0x%llx\n",
+           current_mpidr(), affinity, fallback);
+    return fallback;
 }
 
 gic_version_t gic_detect_version(void) {
@@ -135,8 +169,9 @@ static void gic_parse_acpi(void) {
 
     if (gic_version >= GIC_VERSION_V3 && gicr_base_address) {
         gicr_base_virt = (uint64_t)phys_to_virt(gicr_base_address);
+        gicr_region_size = GICR_STRIDE * cpu_count;
         map_page_range(get_current_page_dir(false), gicr_base_virt,
-                       gicr_base_address, GICR_STRIDE * cpu_count,
+                       gicr_base_address, gicr_region_size,
                        PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
     }
 }
@@ -374,8 +409,9 @@ static void gic_parse_dtb() {
 
         if (gic_version >= GIC_VERSION_V3 && gicr_base_address) {
             gicr_base_virt = (uint64_t)phys_to_virt(gicr_base_address);
+            gicr_region_size = gicr_base_size;
             map_page_range(get_current_page_dir(false), gicr_base_virt,
-                           gicr_base_address, gicr_base_size,
+                           gicr_base_address, gicr_region_size,
                            PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
         }
     }
@@ -539,8 +575,8 @@ static void gicd_v3_init(void) {
     gicd_wait_for_rwp();
 }
 
-static void gicr_v3_init(uint32_t cpu_id) {
-    uint64_t gicr_addr = gicr_base_virt + cpu_id * GICR_STRIDE;
+static void gicr_v3_init(void) {
+    uint64_t gicr_addr = gicr_v3_cpu_base();
 
     // 唤醒Redistributor
     volatile uint32_t *waker = (uint32_t *)(gicr_addr + GICR_WAKER);
@@ -597,8 +633,7 @@ static void cpu_interface_v3_init(void) {
 static void gic_v3_enable_irq(uint32_t irq) {
     if (irq < 32) {
         // PPI/SGI
-        uint64_t reg =
-            gicr_base_virt + current_cpu_id * GICR_STRIDE + GICR_ISENABLER0;
+        uint64_t reg = gicr_v3_cpu_base() + GICR_ISENABLER0;
         *(volatile uint32_t *)reg = (1U << irq);
     } else {
         // SPI
@@ -612,8 +647,7 @@ static void gic_v3_enable_irq(uint32_t irq) {
 
 static void gic_v3_disable_irq(uint32_t irq) {
     if (irq < 32) {
-        uint64_t reg =
-            gicr_base_virt + current_cpu_id * GICR_STRIDE + GICR_ICENABLER0;
+        uint64_t reg = gicr_v3_cpu_base() + GICR_ICENABLER0;
         *(volatile uint32_t *)reg = (1U << irq);
     } else {
         uint32_t reg_idx = irq / 32;
@@ -681,7 +715,7 @@ void gic_init(void) {
         printk("GICR base: phys=0x%llx virt=0x%llx\n", gicr_base_address,
                gicr_base_virt);
         gicd_v3_init();
-        gicr_v3_init(current_cpu_id);
+        gicr_v3_init();
         cpu_interface_v3_init();
     }
 }
@@ -690,7 +724,7 @@ void gic_init_percpu(void) {
     if (gic_version == GIC_VERSION_V2) {
         gicc_v2_init();
     } else {
-        gicr_v3_init(current_cpu_id);
+        gicr_v3_init();
         cpu_interface_v3_init();
     }
 }

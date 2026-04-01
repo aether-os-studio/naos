@@ -472,8 +472,6 @@ uint32_t get_cpuid_by_lapic_id(uint32_t lapic_id) {
         }
     }
 
-    printk("Cannot get cpu id, lapic id = %d\n", lapic_id);
-
     return 0;
 }
 

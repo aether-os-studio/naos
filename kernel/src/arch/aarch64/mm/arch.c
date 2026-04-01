@@ -60,3 +60,10 @@ void arch_flush_tlb(uint64_t vaddr) {
     dsb(ish); // 等待TLB操作完成
     isb();    // 流水线同步
 }
+
+void arch_flush_tlb_all() {
+    asm volatile("dsb ishst\n\t"
+                 "tlbi vmalle1is\n\t"
+                 "dsb ish\n\t"
+                 "isb\n\t");
+}

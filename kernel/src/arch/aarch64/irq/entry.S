@@ -2,47 +2,8 @@
 
 // https://gitee.com/BookOS/nxos/blob/master/src/arch/aarch64/kernel/vector.S
 
-.macro SAVE_FPU, reg
-    STR Q0, [\reg, #-0x10]!
-    STR Q1, [\reg, #-0x10]!
-    STR Q2, [\reg, #-0x10]!
-    STR Q3, [\reg, #-0x10]!
-    STR Q4, [\reg, #-0x10]!
-    STR Q5, [\reg, #-0x10]!
-    STR Q6, [\reg, #-0x10]!
-    STR Q7, [\reg, #-0x10]!
-    STR Q8, [\reg, #-0x10]!
-    STR Q9, [\reg, #-0x10]!
-    STR Q10, [\reg, #-0x10]!
-    STR Q11, [\reg, #-0x10]!
-    STR Q12, [\reg, #-0x10]!
-    STR Q13, [\reg, #-0x10]!
-    STR Q14, [\reg, #-0x10]!
-    STR Q15, [\reg, #-0x10]!
-.endm
-
-.macro RESTORE_FPU, reg
-    LDR Q15, [\reg], #0x10
-    LDR Q14, [\reg], #0x10
-    LDR Q13, [\reg], #0x10
-    LDR Q12, [\reg], #0x10
-    LDR Q11, [\reg], #0x10
-    LDR Q10, [\reg], #0x10
-    LDR Q9, [\reg], #0x10
-    LDR Q8, [\reg], #0x10
-    LDR Q7, [\reg], #0x10
-    LDR Q6, [\reg], #0x10
-    LDR Q5, [\reg], #0x10
-    LDR Q4, [\reg], #0x10
-    LDR Q3, [\reg], #0x10
-    LDR Q2, [\reg], #0x10
-    LDR Q1, [\reg], #0x10
-    LDR Q0, [\reg], #0x10
-.endm
-
 .macro SAVE_CONTEXT
-    /* Save the entire context. */
-    SAVE_FPU SP
+    /* Save GPRs plus the minimum exception return state. */
     STP     X0, X1, [SP, #-0x10]!
     STP     X2, X3, [SP, #-0x10]!
     STP     X4, X5, [SP, #-0x10]!
@@ -58,11 +19,10 @@
     STP     X24, X25, [SP, #-0x10]!
     STP     X26, X27, [SP, #-0x10]!
     STP     X28, X29, [SP, #-0x10]!
-    MRS     X28, FPCR
-    MRS     X29, FPSR
-    STP     X28, X29, [SP, #-0x10]!
     MRS     X29, SP_EL0
     STP     X29, X30, [SP, #-0x10]!
+    MOV     X29, #0
+    STP     X0, X29, [SP, #-0x10]!
 
     MRS     X3, SPSR_EL1
     MRS     X2, ELR_EL1
@@ -72,51 +32,18 @@
     MOV     X0, SP   /* Move SP into X0 for saving. */
 .endm
 
-.macro SAVE_CONTEXT_FROM_EL1
-    /* Save the entire context. */
-    SAVE_FPU SP
-    STP     X0, X1, [SP, #-0x10]!
-    STP     X2, X3, [SP, #-0x10]!
-    STP     X4, X5, [SP, #-0x10]!
-    STP     X6, X7, [SP, #-0x10]!
-    STP     X8, X9, [SP, #-0x10]!
-    STP     X10, X11, [SP, #-0x10]!
-    STP     X12, X13, [SP, #-0x10]!
-    STP     X14, X15, [SP, #-0x10]!
-    STP     X16, X17, [SP, #-0x10]!
-    STP     X18, X19, [SP, #-0x10]!
-    STP     X20, X21, [SP, #-0x10]!
-    STP     X22, X23, [SP, #-0x10]!
-    STP     X24, X25, [SP, #-0x10]!
-    STP     X26, X27, [SP, #-0x10]!
-    STP     X28, X29, [SP, #-0x10]!
-    MRS     X28, FPCR
-    MRS     X29, FPSR
-    STP     X28, X29, [SP, #-0x10]!
-    MRS     X29, SP_EL0
-    STP     X29, X30, [SP, #-0x10]!
-
-    MOV     X19, #((3 << 6) | 0x4 | 0x1)  /* el1h, disable interrupt */
-    MOV     X18, X30
-
-    STP     X18, X19, [SP, #-0x10]!
-.endm
-
 .macro RESTORE_CONTEXT
     /* Set the SP to point to the stack of the task being restored. */
     MOV     SP, X0
 
     LDP     X2, X3, [SP], #0x10  /* SPSR and ELR. */
-
-    TST     X3, #0x1f
     MSR     SPSR_EL1, X3
     MSR     ELR_EL1, X2
 
+    LDP     X0, X1, [SP], #0x10  /* origin_x0 and reserved */
+
     LDP     X29, X30, [SP], #0x10
     MSR     SP_EL0, X29
-    LDP     X28, X29, [SP], #0x10
-    MSR     FPCR, X28
-    MSR     FPSR, X29
     LDP     X28, X29, [SP], #0x10
     LDP     X26, X27, [SP], #0x10
     LDP     X24, X25, [SP], #0x10
@@ -132,7 +59,6 @@
     LDP     X4, X5, [SP], #0x10
     LDP     X2, X3, [SP], #0x10
     LDP     X0, X1, [SP], #0x10
-    RESTORE_FPU SP
 
     ERET
 .endm
@@ -173,37 +99,21 @@ b bad_mode
 .align 11
 .global vectors
 vectors:
-	/* Current EL with SP0
-	   当前系统运行在EL1时使用EL0的栈指针SP
-	   这是一种异常错误的类型
-	 */
 	vtentry el1_sync_invalid
 	vtentry el1_irq_invalid
 	vtentry el1_fiq_invalid
 	vtentry el1_error_invalid
 
-	/* Current EL with SPx
-	   当前系统运行在EL1时使用EL1的栈指针SP
-	   这说明系统在内核态发生了异常
-
-	   Note: 我们暂时只实现IRQ中断
-	 */
 	vtentry el1_sync
 	vtentry el1_irq
 	vtentry el1_fiq_invalid
 	vtentry el1_error_invalid
 
-	/* Lower EL using AArch64
-	   在用户态的aarch64的程序发生了异常
-	 */
 	vtentry el0_sync
 	vtentry el0_irq
 	vtentry el0_fiq_invalid
 	vtentry el0_error_invalid
 
-	/* Lower EL using AArch32
-	   在用户态的aarch32的程序发生了异常
-	 */
 	vtentry el0_sync_invalid
 	vtentry el0_irq_invalid
 	vtentry el0_fiq_invalid
@@ -227,23 +137,6 @@ el0_error_invalid:
 	inv_entry BAD_ERROR
 
 .align 3
-.globl arch_context_switch_with_next
-arch_context_switch_with_next:
-    LDR X0, [X0]
-    MOV SP, X0
-    B arch_context_switch_exit
-
-.align 3
-.globl arch_context_switch_with_prev_next
-arch_context_switch_with_prev_next:
-    SAVE_CONTEXT_FROM_EL1
-    MOV    X2, SP
-    STR    X2, [X0]
-    LDR    X0, [X1]
-    MOV    SP, X0
-    B arch_context_switch_exit
-
-.align 3
 .global arch_context_switch_exit
 arch_context_switch_exit:
     MOV X0, SP
@@ -259,19 +152,15 @@ el0_irq:
 .align 3
 el1_sync:
 	SAVE_CONTEXT
-	MOV X19, SP
 	MOV X0, SP
 	BL trap_dispatch
-	MOV SP, X19
 	B arch_context_switch_exit
 
 .align 3
 el0_sync:
 	SAVE_CONTEXT
-	MOV X19, SP
 	MOV X0, SP
     BL trap_dispatch
-    MOV SP, X19
 	B arch_context_switch_exit
 
 .align 3
@@ -282,12 +171,10 @@ el1_irq:
 
 .global setup_vectors
 setup_vectors:
-    /* setup vectors */
     ldr x0, =vectors
 	msr vbar_el1, x0
 	isb
 
-    /* Set CPACR_EL1 (Architecture Feature Access Control Register) to avoid trap from SIMD or float point instruction */
     mov x0, #0x00300000         /* Don't trap any SIMD/FP instructions in both EL0 and EL1 */
     msr cpacr_el1, x0
 

@@ -56,8 +56,8 @@ void aarch64_do_syscall(struct pt_regs *frame) {
     }
 
     if ((idx != SYS_BRK) && (idx != SYS_MMAP) && (idx != SYS_MREMAP) &&
-        (idx != SYS_SHMAT) && (idx != SYS_FCNTL) && (int)frame->x0 < 0 &&
-        ((frame->x0 & 0x8000000000000000) == 0))
+        (idx != SYS_SHMAT) && (idx != SYS_FCNTL) && (idx != SYS_RT_SIGRETURN) &&
+        (int)frame->x0 < 0 && ((frame->x0 & 0x8000000000000000) == 0))
         frame->x0 |= 0xffffffff00000000;
     else if ((int64_t)frame->x0 < 0 && ((frame->x0 & 0xffffffff) == 0))
         frame->x0 = 0;

@@ -2,6 +2,7 @@
 
 #define ARCH_MAX_IRQ_NUM 1020
 
+#include "arch/aarch64/cpu_local.h"
 #include "arch/aarch64/drivers/chars/keyboard.h"
 #include "arch/aarch64/drivers/chars/mouse.h"
 #include "arch/aarch64/drivers/chars/serial.h"

@@ -10,6 +10,8 @@ extern void gic_init();
 void arch_early_init() {
     setup_vectors();
     init_serial();
+    aarch64_cpu_local_init(get_cpuid_by_mpidr(current_mpidr()),
+                           current_mpidr());
     smp_init();
 }
 

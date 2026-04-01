@@ -74,7 +74,7 @@ void write_serial(char a) {
         pl011_write(&uart0, (const uint8_t *)&a, 1);
 }
 
-void serial_printk(char *buf, int len) {
+void serial_printk(const char *buf, int len) {
     for (int i = 0; i < len; i++) {
         if (buf[i] == '\n')
             write_serial('\r');

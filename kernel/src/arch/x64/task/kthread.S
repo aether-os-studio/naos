@@ -1,3 +1,5 @@
+.section .text
+
 .global kernel_thread_func
 kernel_thread_func:
     popq %r15

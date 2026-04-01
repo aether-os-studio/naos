@@ -7,8 +7,8 @@ struct pt_regs {
     uint64_t cpsr;
     uint64_t sp_el0;
     uint64_t x30;
-    uint64_t fpcr;
-    uint64_t fpsr;
+    uint64_t origin_x0;
+    uint64_t reserved;
     uint64_t x28;
     uint64_t x29;
     uint64_t x26;
@@ -39,6 +39,7 @@ struct pt_regs {
     uint64_t x3;
     uint64_t x0;
     uint64_t x1;
-
-    uint64_t fpu[32];
 } __attribute__((packed));
+
+_Static_assert(sizeof(struct pt_regs) == 0x120,
+               "aarch64 pt_regs must stay 16-byte aligned");

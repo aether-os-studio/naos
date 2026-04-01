@@ -98,9 +98,7 @@ void traceback(struct pt_regs *regs) {
 
     printk("======== Kernel traceback end =======\n");
 
-    pc = regs->pc;
-
-    if (pc >= get_physical_memory_offset())
+    if (regs->pc >= get_physical_memory_offset())
         return;
 
     printk("======== User traceback =======\n");
@@ -161,6 +159,10 @@ void traceback(struct pt_regs *regs) {
 }
 
 void show_frame(struct pt_regs *regs) {
+    if (current_task)
+        printk("current_task->name = %s, current_task->pid = %d\n",
+               current_task->name, current_task->pid);
+
     traceback(regs);
 
     printk("Exception:\r\n");
@@ -474,6 +476,7 @@ void handle_exception(struct pt_regs *frame) {
                 return;
             }
 
+            printk("fault_addr = %p\n", fault_addr);
             show_frame(frame);
             task_exit(SIGSEGV + 128);
         } else if (result == PF_RES_NOMEM) {
@@ -481,6 +484,7 @@ void handle_exception(struct pt_regs *frame) {
             task_exit(SIGKILL + 128);
         } else {
             printk("Unknown page fault result\r\n");
+            printk("fault_addr = %p\n", fault_addr);
             show_frame(frame);
             task_exit(SIGKILL + 128);
         }
@@ -513,8 +517,4 @@ void bad_mode(struct pt_regs *frame, int reason, unsigned int esr) {
     }
 }
 
-void trap_dispatch(struct pt_regs *frame) {
-    arch_disable_interrupt();
-
-    handle_exception(frame);
-}
+void trap_dispatch(struct pt_regs *frame) { handle_exception(frame); }

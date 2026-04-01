@@ -23,8 +23,6 @@ void kmain(void) {
 
     boot_init();
 
-    arch_set_current(NULL);
-
     frame_init();
 
     page_table_init();
