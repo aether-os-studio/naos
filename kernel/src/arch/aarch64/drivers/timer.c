@@ -1,4 +1,5 @@
 #include <arch/aarch64/drivers/timer.h>
+#include <arch/aarch64/drivers/gic.h>
 #include <acpi/uacpi/acpi.h>
 #include <acpi/uacpi/tables.h>
 #include <boot/boot.h>
@@ -150,12 +151,6 @@ static uint64_t timer_get_freq_from_dtb(void *fdt, int node_offset) {
     return 0;
 }
 
-static inline bool timer_running_in_el1(void) {
-    uint64_t current_el = 0;
-    asm volatile("mrs %0, CurrentEL" : "=r"(current_el));
-    return ((current_el >> 2) & 0x3) == 1;
-}
-
 /**
  * 从 DTB 初始化 timer
  */
@@ -201,16 +196,7 @@ static int timer_init_from_dtb(void) {
 
     uint32_t irq_num, irq_flags;
 
-    if (timer_running_in_el1() &&
-        timer_get_irq_from_dtb(fdt, timer_node, 2, &irq_num, &irq_flags) == 0) {
-        global_timer.active_type = TIMER_TYPE_VIRTUAL;
-        global_timer.ops = &timer_ops_virtual;
-        global_timer.irq_num = irq_num;
-        global_timer.irq_flags = irq_flags;
-        printk("Timer: Using virtual timer (PPI %d, IRQ %d)\n", irq_num - 16,
-               irq_num);
-    } else if (timer_get_irq_from_dtb(fdt, timer_node, 1, &irq_num,
-                                      &irq_flags) == 0) {
+    if (timer_get_irq_from_dtb(fdt, timer_node, 1, &irq_num, &irq_flags) == 0) {
         global_timer.active_type = TIMER_TYPE_PHYSICAL_NONSECURE;
         global_timer.ops = &timer_ops_physical;
         global_timer.irq_num = irq_num;
@@ -262,16 +248,7 @@ static bool timer_is_available(uint32_t gsiv) { return gsiv != 0; }
  * 从 ACPI GTDT 选择最佳 timer
  */
 static void timer_select_best_acpi(struct acpi_gtdt *gtdt) {
-    if (timer_running_in_el1() && timer_is_available(gtdt->el1_virtual_gsiv)) {
-        global_timer.active_type = TIMER_TYPE_VIRTUAL;
-        global_timer.ops = &timer_ops_virtual;
-        global_timer.irq_num = gtdt->el1_virtual_gsiv;
-        global_timer.irq_flags = gtdt->el1_virtual_flags;
-        global_timer.always_on =
-            gtdt->el1_virtual_flags & ACPI_GTDT_ALWAYS_ON_CAPABLE;
-        printk("Timer: Using ACPI virtual timer (GSIV %d)\n",
-               gtdt->el1_virtual_gsiv);
-    } else if (timer_is_available(gtdt->el1_non_secure_gsiv)) {
+    if (timer_is_available(gtdt->el1_non_secure_gsiv)) {
         global_timer.active_type = TIMER_TYPE_PHYSICAL_NONSECURE;
         global_timer.ops = &timer_ops_physical;
         global_timer.irq_num = gtdt->el1_non_secure_gsiv;
@@ -325,8 +302,6 @@ int timer_init(void) {
     int ret;
     bool from_acpi = false;
     bool from_dtb = false;
-
-    printk("Timer: CurrentEL = EL%u\n", timer_running_in_el1() ? 1 : 2);
 
     /* 尝试从 ACPI 初始化 */
     ret = timer_init_from_acpi();
@@ -397,6 +372,7 @@ void timer_init_percpu() {
     if (!global_timer.initialized || !global_timer.ops)
         return;
 
+    gic_configure_irq(global_timer.irq_num, global_timer.irq_flags);
     gic_enable_irq(global_timer.irq_num);
 
     timer_set_next_tick_ns(1000000000ULL / SCHED_HZ);

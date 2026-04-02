@@ -2,6 +2,7 @@
 #include <init/abis.h>
 #include <init/callbacks.h>
 #include <libs/string_builder.h>
+#include <mm/mm.h>
 #include <task/sched.h>
 #include <task/task_syscall.h>
 
@@ -118,6 +119,37 @@ static int zero_task_user_memory(task_t *task, uint64_t uaddr, size_t size) {
         size_t in_page = va - page_va;
         size_t chunk = MIN(remain, PAGE_SIZE - in_page);
         memset((void *)(phys_to_virt(pa) + in_page), 0, chunk);
+
+        va += chunk;
+        remain -= chunk;
+    }
+
+    return 0;
+}
+
+static int sync_task_user_instruction_memory(task_t *task, uint64_t uaddr,
+                                             size_t size) {
+    if (!task || !task->arch_context || !task->mm)
+        return -EFAULT;
+    if (size == 0)
+        return 0;
+    if (check_user_overflow(uaddr, size))
+        return -EFAULT;
+
+    uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
+    uint64_t va = uaddr;
+    size_t remain = size;
+
+    while (remain > 0) {
+        uint64_t page_va = PADDING_DOWN(va, PAGE_SIZE);
+        uint64_t page_pa = translate_address(pgdir, page_va);
+        if (!page_pa)
+            return -EFAULT;
+
+        size_t in_page = va - page_va;
+        size_t chunk = MIN(remain, PAGE_SIZE - in_page);
+        sync_instruction_memory_range((void *)(phys_to_virt(page_pa) + in_page),
+                                      chunk);
 
         va += chunk;
         remain -= chunk;
@@ -251,6 +283,16 @@ static int map_task_elf_segment(task_t *task, vfs_node_t *node,
     if (mem_map_size > file_map_size) {
         ret = zero_task_user_memory(task, aligned_addr + file_map_size,
                                     mem_map_size - file_map_size);
+        if (ret != 0) {
+            unmap_page_range(
+                (uint64_t *)phys_to_virt(task->mm->page_table_addr),
+                aligned_addr, alloc_size);
+            return ret;
+        }
+    }
+
+    if (phdr->p_flags & PF_X) {
+        ret = sync_task_user_instruction_memory(task, aligned_addr, alloc_size);
         if (ret != 0) {
             unmap_page_range(
                 (uint64_t *)phys_to_virt(task->mm->page_table_addr),

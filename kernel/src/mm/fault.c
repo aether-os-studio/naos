@@ -1,4 +1,5 @@
 #include <mm/fault.h>
+#include <mm/mm.h>
 #include <mm/page.h>
 #include <mm/shm.h>
 #include <fs/vfs/vfs.h>
@@ -183,6 +184,11 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
         if (ret == 0)
             break;
         loaded += (size_t)ret;
+    }
+
+    if (snapshot->vm_flags & VMA_EXEC) {
+        sync_instruction_memory_range((void *)phys_to_virt(page_paddr),
+                                      PAGE_SIZE);
     }
 
     vma_manager_t *mgr = &task->mm->task_vma_mgr;

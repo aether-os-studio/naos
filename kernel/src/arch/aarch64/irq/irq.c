@@ -37,7 +37,7 @@ void irq_init() {
         printk("timer init failure!!!\n");
     }
     irq_regist_irq(global_timer.irq_num, timer_handler, 0, NULL,
-                   &gic_controller, "GENERIC TIMER", 0);
+                   &gic_controller, "GENERIC TIMER", global_timer.irq_flags);
     timer_init_percpu();
     printk("timer initialized with irq %d\n", global_timer.irq_num);
 }

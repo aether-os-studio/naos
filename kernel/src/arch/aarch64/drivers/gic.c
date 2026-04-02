@@ -26,6 +26,13 @@ static uint32_t gic_v2_active_iar[MAX_CPU_NUM];
 #define ICC_SRE_SRE (1UL << 0)
 #define ICC_SRE_DFB (1UL << 1)
 #define ICC_SRE_DIB (1UL << 2)
+#define GIC_IRQ_FLAG_MODE_EDGE (1U << 0)
+
+/*
+ * 在 Non-secure 视图下访问 GICv2 的 GICD/GICC_CTLR 时，bit0 表示 Group1
+ * 使能；Group0 只能由 Secure world 管理。
+ */
+#define GICV2_NS_CTLR_ENABLE_GRP1 0x1U
 
 static inline void gic_cpu_relax(void) { asm volatile("yield" : : : "memory"); }
 
@@ -53,6 +60,23 @@ static inline uint8_t gic_mpidr_aff2(uint64_t mpidr) {
 
 static inline uint8_t gic_mpidr_aff3(uint64_t mpidr) {
     return (mpidr >> 32) & 0xFF;
+}
+
+static void gic_configure_icfgr(uint64_t base, uint32_t icfgr_base,
+                                uint32_t irq, bool edge_triggered) {
+    uint32_t reg = irq / 16;
+    uint32_t bit = ((irq % 16) * 2) + 1;
+    volatile uint32_t *icfgr =
+        (volatile uint32_t *)(base + icfgr_base + reg * sizeof(uint32_t));
+    uint32_t value = *icfgr;
+
+    value &= ~(1U << bit);
+    if (edge_triggered) {
+        value |= (1U << bit);
+    }
+
+    *icfgr = value;
+    dsb(sy);
 }
 
 static uint64_t gicr_v3_cpu_base(void) {
@@ -447,9 +471,10 @@ static void gicd_v2_init(void) {
     if (max_irq > 1020)
         max_irq = 1020;
 
-    // 配置所有中断为Group0
+    // 在 EL1 Non-secure 中运行时，所有可见中断都必须属于 Group1
     for (int i = 0; i < (max_irq / 32); i++) {
-        *(volatile uint32_t *)(gicd_base_virt + GICD_IGROUPR + i * 4) = 0x0;
+        *(volatile uint32_t *)(gicd_base_virt + GICD_IGROUPR + i * 4) =
+            0xFFFFFFFF;
     }
 
     // 配置所有中断优先级
@@ -476,8 +501,9 @@ static void gicd_v2_init(void) {
             0xFFFFFFFF;
     }
 
-    // 启用Group0
-    *(volatile uint32_t *)(gicd_base_virt + GICD_CTLR) = GICD_CTLR_EN_GRP0;
+    // Non-secure 视图下 bit0 为 EnableGrp1
+    *(volatile uint32_t *)(gicd_base_virt + GICD_CTLR) =
+        GICV2_NS_CTLR_ENABLE_GRP1;
     dsb(sy);
 }
 
@@ -487,6 +513,9 @@ static void gicc_v2_init(void) {
 
     // 清除PPI的pending状态
     *(volatile uint32_t *)(gicd_base_virt + GICD_ICPENDR) = 0xFFFFFFFF;
+
+    // PPI 默认使用电平触发，architected timer 依赖这个行为
+    *(volatile uint32_t *)(gicd_base_virt + GICD_ICFGR + 4) = 0;
 
     // 设置优先级掩码
     *(volatile uint32_t *)(gicc_base_virt + GICC_PMR) = 0xF0;
@@ -500,8 +529,9 @@ static void gicc_v2_init(void) {
         *(volatile uint32_t *)(gicc_base_virt + GICC_EOIR) = iar;
     }
 
-    // 启用Group0
-    *(volatile uint32_t *)(gicc_base_virt + GICC_CTLR) = 0x1;
+    // Non-secure 视图下 bit0 为 EnableGrp1
+    *(volatile uint32_t *)(gicc_base_virt + GICC_CTLR) =
+        GICV2_NS_CTLR_ENABLE_GRP1;
     dsb(sy);
 
     uint32_t local_target =
@@ -758,6 +788,31 @@ static void gic_v3_send_ipi(uint32_t cpu_id, uint64_t irq_num) {
     isb();
 }
 
+void gic_configure_irq(uint32_t irq, uint32_t flags) {
+    bool edge_triggered = (flags & GIC_IRQ_FLAG_MODE_EDGE) != 0;
+
+    // SGI 固定为边沿触发，不需要软件配置。
+    if (irq < PPI_INTR_BASE) {
+        return;
+    }
+
+    if (gic_version == GIC_VERSION_V2) {
+        gic_configure_icfgr(gicd_base_virt, GICD_ICFGR, irq, edge_triggered);
+        return;
+    }
+
+    if (irq < SPI_INTR_BASE) {
+        uint64_t gicr_addr = gicr_v3_cpu_base();
+        if (!gicr_addr) {
+            return;
+        }
+
+        gic_configure_icfgr(gicr_addr, GICR_ICFGR0, irq, edge_triggered);
+    } else {
+        gic_configure_icfgr(gicd_base_virt, GICD_ICFGR, irq, edge_triggered);
+    }
+}
+
 static void gic_send_ipi(uint32_t cpu_id, uint64_t irq_num) {
     if (gic_version == GIC_VERSION_V2) {
         gic_v2_send_ipi(cpu_id, irq_num);
@@ -883,9 +938,16 @@ int64_t gic_ack(uint64_t irq) {
     return 0;
 }
 
+int64_t gic_install(uint64_t irq, uint64_t arg, uint64_t flags) {
+    (void)arg;
+    gic_configure_irq((uint32_t)irq, (uint32_t)flags);
+    return 0;
+}
+
 irq_controller_t gic_controller = {
     .unmask = gic_unmask,
     .mask = gic_mask,
+    .install = gic_install,
     .ack = gic_ack,
 };
 

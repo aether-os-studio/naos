@@ -90,6 +90,7 @@ void free_frames_bytes(void *ptr, uint64_t bytes);
 extern void dcache_clean_range(void *addr, size_t size);
 extern void dcache_invalidate_range(void *addr, size_t size);
 extern void dcache_flush_range(void *addr, size_t size);
+extern void sync_instruction_memory_range(void *addr, size_t size);
 
 extern void memory_barrier(void);
 

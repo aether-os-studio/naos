@@ -91,6 +91,7 @@ void gic_ipi_init(void);
 void gic_init_percpu(void);
 void gic_enable_irq(uint32_t irq);
 void gic_disable_irq(uint32_t irq);
+void gic_configure_irq(uint32_t irq, uint32_t flags);
 void gic_send_eoi(uint32_t irq);
 uint64_t gic_get_current_irq(void);
 

@@ -32,6 +32,7 @@ static inline void arch_wait_for_interrupt() { asm volatile("hlt"); }
 void dcache_clean_range(void *addr, size_t size);
 void dcache_invalidate_range(void *addr, size_t size);
 void dcache_flush_range(void *addr, size_t size);
+void sync_instruction_memory_range(void *addr, size_t size);
 
 void memory_barrier(void);
 

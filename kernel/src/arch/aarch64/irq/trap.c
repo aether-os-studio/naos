@@ -216,6 +216,10 @@ void show_frame(struct pt_regs *regs) {
         printk("current_task->name = %s, current_task->pid = %d\n",
                current_task->name, current_task->pid);
 
+    if (!check_unmapped(regs->pc, sizeof(uint32_t))) {
+        printk("instruction: %#010x\n", *(uint32_t *)regs->pc);
+    }
+
     traceback(regs);
 
     printk("Exception:\r\n");
