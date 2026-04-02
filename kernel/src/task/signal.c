@@ -37,7 +37,11 @@ typedef struct signal_kernel_sigaction {
 #define SIGNAL_X64_UC_SIGCONTEXT_SS 0x2
 #define SIGNAL_X64_UC_STRICT_RESTORE_SS 0x4
 #define SIGNAL_X64_TRAPNO_PAGE_FAULT 14
+#define SIGNAL_X64_RT_SIGRETURN_TRAMPOLINE_SIZE 9U
+#endif
 
+#if defined(__aarch64__)
+#define SIGNAL_AARCH64_RT_SIGRETURN_TRAMPOLINE_SIZE 8U
 #endif
 
 signal_internal_t signal_internal_decisions[MAXSIG] = {0};
@@ -344,6 +348,34 @@ static inline bool signal_arch_user_context(struct pt_regs *regs) {
 #endif
 }
 
+#if defined(__x86_64__)
+static const uint8_t signal_x64_rt_sigreturn_trampoline
+    [SIGNAL_X64_RT_SIGRETURN_TRAMPOLINE_SIZE] = {
+        0xB8, SYS_RT_SIGRETURN, 0x00, 0x00, 0x00, 0x0F, 0x05, 0x0F, 0x0B,
+};
+#endif
+
+#if defined(__aarch64__)
+static const uint8_t signal_aarch64_rt_sigreturn_trampoline
+    [SIGNAL_AARCH64_RT_SIGRETURN_TRAMPOLINE_SIZE] = {
+        0x68, 0x11, 0x80, 0xD2, // mov x8, #139
+        0x01, 0x00, 0x00, 0xD4, // svc 0
+};
+#endif
+
+static bool signal_copy_trampoline_to_user(uint64_t user_addr, const void *code,
+                                           size_t code_size) {
+    if (!user_addr || !code || code_size == 0)
+        return false;
+
+    if (copy_to_user((void *)user_addr, code, code_size))
+        return false;
+
+    sync_instruction_memory_range(code, code_size);
+
+    return true;
+}
+
 static inline void signal_set_default(int sig, signal_internal_t action) {
     if (signal_sig_in_range(sig)) {
         signal_internal_decisions[sig] = action;
@@ -465,6 +497,8 @@ typedef struct signal_x64_frame_layout {
     uint64_t siginfo_addr;
     uint64_t fpstate_addr;
     uint64_t fpstate_bytes;
+    uint64_t trampoline_addr;
+    uint64_t trampoline_bytes;
 } signal_x64_frame_layout_t;
 
 static inline uint64_t signal_x64_align_up(uint64_t value, uint64_t align) {
@@ -491,6 +525,7 @@ static uint64_t signal_x64_user_fpstate_bytes(void) {
 
 static void signal_x64_build_frame_layout(uint64_t user_rsp,
                                           uint64_t fpstate_bytes,
+                                          uint64_t trampoline_bytes,
                                           signal_x64_frame_layout_t *layout) {
     if (!layout)
         return;
@@ -498,8 +533,8 @@ static void signal_x64_build_frame_layout(uint64_t user_rsp,
     memset(layout, 0, sizeof(*layout));
 
     uint64_t redzone_top = user_rsp - 128;
-    uint64_t fixed_bytes =
-        sizeof(void *) + sizeof(ucontext_t) + sizeof(siginfo_t);
+    uint64_t fixed_bytes = sizeof(void *) + sizeof(ucontext_t) +
+                           sizeof(siginfo_t) + trampoline_bytes;
     uint64_t reserve = fixed_bytes + (X64_FPU_FRAME_ALIGN - 1) + fpstate_bytes;
 
     if (redzone_top <= reserve)
@@ -517,6 +552,8 @@ static void signal_x64_build_frame_layout(uint64_t user_rsp,
     layout->fpstate_addr = signal_x64_align_up(
         layout->siginfo_addr + sizeof(siginfo_t), X64_FPU_FRAME_ALIGN);
     layout->fpstate_bytes = fpstate_bytes;
+    layout->trampoline_addr = layout->fpstate_addr + fpstate_bytes;
+    layout->trampoline_bytes = trampoline_bytes;
 }
 
 static bool signal_x64_copy_fpstate_to_user(task_t *task,
@@ -656,10 +693,6 @@ static bool signal_x64_setup_frame(task_t *task, struct pt_regs *regs, int sig,
                                    const sigaction_t *action,
                                    const siginfo_t *info,
                                    sigset_t restore_mask) {
-    if (!(action->sa_flags & SA_RESTORER) || !action->sa_restorer) {
-        return false;
-    }
-
     struct pt_regs saved = *regs;
     signal_x64_prepare_syscall_result(&saved, action);
 
@@ -668,8 +701,16 @@ static bool signal_x64_setup_frame(task_t *task, struct pt_regs *regs, int sig,
                                saved.rsp);
 
     uint64_t fpstate_bytes = signal_x64_user_fpstate_bytes();
+    const uint8_t *trampoline_code = NULL;
+    uint64_t trampoline_bytes = 0;
+    if (!(action->sa_flags & SA_RESTORER) || !action->sa_restorer) {
+        trampoline_code = signal_x64_rt_sigreturn_trampoline;
+        trampoline_bytes = sizeof(signal_x64_rt_sigreturn_trampoline);
+    }
+
     signal_x64_frame_layout_t layout;
-    signal_x64_build_frame_layout(saved.rsp, fpstate_bytes, &layout);
+    signal_x64_build_frame_layout(saved.rsp, fpstate_bytes, trampoline_bytes,
+                                  &layout);
     bool use_altstack =
         (action->sa_flags & SA_ONSTACK) &&
         signal_altstack_config_enabled(&task->signal->altstack) &&
@@ -677,7 +718,8 @@ static bool signal_x64_setup_frame(task_t *task, struct pt_regs *regs, int sig,
     if (use_altstack) {
         uint64_t alt_top = signal_stack_base(&task->signal->altstack) +
                            task->signal->altstack.ss_size;
-        signal_x64_build_frame_layout(alt_top, fpstate_bytes, &layout);
+        signal_x64_build_frame_layout(alt_top, fpstate_bytes, trampoline_bytes,
+                                      &layout);
         if (task->signal->altstack.ss_flags & SS_AUTODISARM)
             signal_altstack_disable(&task->signal->altstack);
     }
@@ -700,12 +742,17 @@ static bool signal_x64_setup_frame(task_t *task, struct pt_regs *regs, int sig,
     frame_ucontext.uc_mcontext.fpregs = (fpu_context_t *)layout.fpstate_addr;
 
     void *frame_restorer = (void *)action->sa_restorer;
+    if (trampoline_code)
+        frame_restorer = (void *)layout.trampoline_addr;
     if (!signal_x64_copy_fpstate_to_user(task, layout.fpstate_addr,
                                          layout.fpstate_bytes)) {
         return false;
     }
 
-    if (copy_to_user((void *)siginfo_addr, info, sizeof(*info)) ||
+    if ((trampoline_code && !signal_copy_trampoline_to_user(
+                                layout.trampoline_addr, trampoline_code,
+                                layout.trampoline_bytes)) ||
+        copy_to_user((void *)siginfo_addr, info, sizeof(*info)) ||
         copy_to_user((void *)ucontext_addr, &frame_ucontext,
                      sizeof(frame_ucontext)) ||
         copy_to_user((void *)layout.frame_rsp, &frame_restorer,
@@ -889,10 +936,25 @@ signal_aarch64_prepare_syscall_result(struct pt_regs *saved,
     }
 
     if (want_restart) {
-        saved->x0 = saved->origin_x0;
-        if (saved->pc >= SIGNAL_AARCH64_SYSCALL_INS_LEN)
-            saved->pc -= SIGNAL_AARCH64_SYSCALL_INS_LEN;
-        return;
+        uint64_t nr = saved->x8;
+
+        switch (nr) {
+        case SYS_NANOSLEEP:
+        case SYS_CLOCK_NANOSLEEP:
+        case SYS_RT_SIGSUSPEND:
+        case SYS_RT_SIGTIMEDWAIT:
+        case SYS_PSELECT6:
+        case SYS_PPOLL:
+        case SYS_EPOLL_PWAIT:
+        case SYS_EPOLL_PWAIT2:
+            force_eintr = true;
+            break;
+        default:
+            saved->x0 = saved->origin_x0;
+            if (saved->pc >= SIGNAL_AARCH64_SYSCALL_INS_LEN)
+                saved->pc -= SIGNAL_AARCH64_SYSCALL_INS_LEN;
+            return;
+        }
     }
 
     if (force_eintr)
@@ -1001,9 +1063,6 @@ static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
                                        int sig, const sigaction_t *action,
                                        const siginfo_t *info,
                                        sigset_t restore_mask) {
-    if (!(action->sa_flags & SA_RESTORER) || !action->sa_restorer)
-        return false;
-
     struct pt_regs saved = *regs;
     signal_aarch64_prepare_syscall_result(&saved, action);
 
@@ -1012,6 +1071,12 @@ static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
                                saved.sp_el0);
 
     uint64_t stack_top = saved.sp_el0;
+    const uint8_t *trampoline_code = NULL;
+    uint64_t trampoline_bytes = 0;
+    if (!(action->sa_flags & SA_RESTORER) || !action->sa_restorer) {
+        trampoline_code = signal_aarch64_rt_sigreturn_trampoline;
+        trampoline_bytes = sizeof(signal_aarch64_rt_sigreturn_trampoline);
+    }
     bool use_altstack =
         (action->sa_flags & SA_ONSTACK) &&
         signal_altstack_config_enabled(&task->signal->altstack) &&
@@ -1023,9 +1088,19 @@ static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
             signal_altstack_disable(&task->signal->altstack);
     }
 
-    if (stack_top <=
-        sizeof(signal_aarch64_frame_t) + sizeof(signal_aarch64_frame_record_t))
+    if (stack_top <= sizeof(signal_aarch64_frame_t) +
+                         sizeof(signal_aarch64_frame_record_t) +
+                         trampoline_bytes)
         return false;
+
+    uint64_t trampoline_addr = 0;
+    if (trampoline_bytes != 0) {
+        trampoline_addr = signal_aarch64_align_down(
+            stack_top - trampoline_bytes, sizeof(uint32_t));
+        if (!trampoline_addr)
+            return false;
+        stack_top = trampoline_addr;
+    }
 
     uint64_t frame_record_addr = signal_aarch64_align_down(
         stack_top - sizeof(signal_aarch64_frame_record_t), 16);
@@ -1050,7 +1125,10 @@ static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
         .lr = saved.x30,
     };
 
-    if (copy_to_user((void *)frame_addr, &frame, sizeof(frame)) ||
+    if ((trampoline_code &&
+         !signal_copy_trampoline_to_user(trampoline_addr, trampoline_code,
+                                         trampoline_bytes)) ||
+        copy_to_user((void *)frame_addr, &frame, sizeof(frame)) ||
         copy_to_user((void *)frame_record_addr, &frame_record,
                      sizeof(frame_record))) {
         return false;
@@ -1066,8 +1144,9 @@ static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
         regs->x2 = frame_addr + offsetof(signal_aarch64_frame_t, ucontext);
     }
     regs->x29 = frame_record_addr;
-    regs->x30 = (uint64_t)action->sa_restorer;
-    regs->cpsr = saved.cpsr;
+    regs->x30 =
+        trampoline_code ? trampoline_addr : (uint64_t)action->sa_restorer;
+    regs->cpsr = 0x80000300;
 
     return true;
 }
@@ -1229,8 +1308,8 @@ uint64_t sys_sigaction(int sig, const void *action, void *oldaction,
 #if defined(__x86_64__) || defined(__aarch64__)
         if (new_action.sa_handler != SIG_DFL &&
             new_action.sa_handler != SIG_IGN &&
-            ((new_action.sa_flags & SA_RESTORER) == 0 ||
-             new_action.sa_restorer == NULL)) {
+            (new_action.sa_flags & SA_RESTORER) != 0 &&
+            new_action.sa_restorer == NULL) {
             return (uint64_t)-EINVAL;
         }
 #endif

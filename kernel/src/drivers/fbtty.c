@@ -26,6 +26,11 @@ size_t terminal_read(tty_t *device, char *buf, size_t count) {
     while (read < count) {
         arch_enable_interrupt();
 
+        if (task_signal_has_deliverable(current_task)) {
+            arch_disable_interrupt();
+            return read ? read : (size_t)-EINTR;
+        }
+
         char c;
         bool got = false;
 

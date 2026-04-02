@@ -517,6 +517,8 @@ int vfs_poll_wait_sleep(vfs_node_t *node, vfs_poll_wait_t *wait,
     }
 
     while (true) {
+        if (task_signal_has_deliverable(wait->task))
+            return -EINTR;
         if ((wait->revents & want))
             return EOK;
         int polled = vfs_poll(node, want);

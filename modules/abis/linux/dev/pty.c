@@ -13,7 +13,7 @@ int pts_fsid = 0;
 
 extern vfs_node_t *devtmpfs_root;
 
-size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit);
+ssize_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit);
 extern void send_process_group_signal(int pgid, int sig);
 
 static inline void pty_notify_node(vfs_node_t *node, uint32_t events) {
@@ -313,13 +313,13 @@ bool ptmx_close(vfs_node_t *node) {
     return true;
 }
 
-size_t ptmx_data_avail(pty_pair_t *pair) { return pair->ptrMaster; }
+static size_t ptmx_data_avail(pty_pair_t *pair) { return pair->ptrMaster; }
 
-size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
+ssize_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     void *file = fd->node->handle;
     pty_pair_t *pair = file;
     if (!pair)
-        return (size_t)-EINVAL;
+        return -EINVAL;
 
     while (true) {
         mutex_lock(&pair->lock);
@@ -353,11 +353,11 @@ size_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     }
 }
 
-size_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
+ssize_t ptmx_write(fd_t *fd, const void *addr, size_t offset, size_t limit) {
     void *file = fd->node->handle;
     pty_pair_t *pair = file;
     if (!pair)
-        return (size_t)-EINVAL;
+        return -EINVAL;
 
     while (true) {
         mutex_lock(&pair->lock);
@@ -734,7 +734,7 @@ bool pts_close(vfs_node_t *node) {
     return true;
 }
 
-size_t pts_data_avali(pty_pair_t *pair) {
+static size_t pts_data_avali(pty_pair_t *pair) {
     bool canonical = pair->term.c_lflag & ICANON;
     if (!canonical)
         return pair->ptrSlave; // flush whatever we can
@@ -751,11 +751,11 @@ size_t pts_data_avali(pty_pair_t *pair) {
     return 0; // nothing found
 }
 
-size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit) {
+ssize_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit) {
     void *file = fd->node->handle;
     pty_pair_t *pair = file;
     if (!pair)
-        return (size_t)-EINVAL;
+        return -EINVAL;
 
     while (true) {
         mutex_lock(&pair->lock);
@@ -790,10 +790,10 @@ size_t pts_read(fd_t *fd, uint8_t *out, size_t offset, size_t limit) {
     }
 }
 
-size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
+ssize_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
     pty_pair_t *pair = fd->node->handle;
     if (!pair)
-        return (size_t)-EINVAL;
+        return -EINVAL;
 
     while (true) {
         mutex_lock(&pair->lock);
@@ -849,27 +849,27 @@ size_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
     }
 }
 
-size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit) {
-    int ret = 0;
+ssize_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit) {
+    ssize_t ret = 0;
     pty_pair_t *pair = fd->node->handle;
     if (!pair)
-        return (size_t)-EINVAL;
+        return -EINVAL;
     size_t chunks = limit / PTY_BUFF_SIZE;
     size_t remainder = limit % PTY_BUFF_SIZE;
     if (chunks)
         for (size_t i = 0; i < chunks; i++) {
-            int cycle = 0;
+            size_t cycle = 0;
             while (cycle < PTY_BUFF_SIZE) {
-                size_t r = pts_write_inner(fd, in + i * PTY_BUFF_SIZE + cycle,
-                                           PTY_BUFF_SIZE - cycle);
-                if ((ssize_t)r < 0)
+                ssize_t r = pts_write_inner(fd, in + i * PTY_BUFF_SIZE + cycle,
+                                            PTY_BUFF_SIZE - cycle);
+                if (r < 0)
                     return r;
                 if (r == 0) {
                     if (fd_get_flags(fd) & O_NONBLOCK)
-                        return ret ? ret : (size_t)-EWOULDBLOCK;
+                        return ret ? ret : -EWOULDBLOCK;
                     int reason = pty_wait_node(fd->node, EPOLLOUT, "pts_write");
                     if (reason != EOK)
-                        return ret ? ret : (size_t)-EINTR;
+                        return ret ? ret : -EINTR;
                     continue;
                 }
                 cycle += r;
@@ -881,16 +881,16 @@ size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit) {
     if (remainder) {
         size_t cycle = 0;
         while (cycle < remainder) {
-            size_t r = pts_write_inner(fd, in + chunks * PTY_BUFF_SIZE + cycle,
-                                       remainder - cycle);
-            if ((ssize_t)r < 0)
+            ssize_t r = pts_write_inner(fd, in + chunks * PTY_BUFF_SIZE + cycle,
+                                        remainder - cycle);
+            if (r < 0)
                 return r;
             if (r == 0) {
                 if (fd_get_flags(fd) & O_NONBLOCK)
-                    return ret ? ret : (size_t)-EWOULDBLOCK;
+                    return ret ? ret : -EWOULDBLOCK;
                 int reason = pty_wait_node(fd->node, EPOLLOUT, "pts_write");
                 if (reason != EOK)
-                    return ret ? ret : (size_t)-EINTR;
+                    return ret ? ret : -EINTR;
                 continue;
             }
             cycle += r;
@@ -901,11 +901,11 @@ size_t pts_write(fd_t *fd, uint8_t *in, size_t offset, size_t limit) {
     return ret;
 }
 
-size_t pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
+int pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
     if (!pair)
-        return (size_t)-EINVAL;
+        return -EINVAL;
 
-    size_t ret = -ENOTTY;
+    int ret = -ENOTTY;
     uint32_t notify_master = 0;
     uint32_t notify_slave = 0;
 

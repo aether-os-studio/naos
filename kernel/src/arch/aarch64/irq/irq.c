@@ -20,13 +20,8 @@ void arch_disable_interrupt() {
 }
 
 bool arch_interrupt_enabled() {
-
     long daif;
-    asm volatile("mrs %0, daif\n\t"
-                 "msr daifset, #2\n\t"
-                 : "=r"(daif)
-                 :
-                 : "memory");
+    asm volatile("mrs %0, daif\n\t" : "=r"(daif) : : "memory");
     return (daif & (1 << 1));
 }
 

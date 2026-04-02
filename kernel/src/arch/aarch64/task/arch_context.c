@@ -101,13 +101,13 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
         context->ctx->pc = entry;
         context->ctx->sp_el0 = stack;
         context->ctx->x0 = initial_arg;
-        spsr = 0x800003c0;
+        spsr = 0x80000300;
     } else {
         context->pc = (uint64_t)kernel_thread_func;
         context->sp = (uint64_t)context->ctx;
         context->ctx->x19 = entry;
         context->ctx->x20 = initial_arg;
-        spsr = 0x800003c5;
+        spsr = 0x80000305;
     }
 
     context->ctx->cpsr = spsr;
@@ -188,7 +188,7 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
     context->sp = (uint64_t)context->ctx;
     context->ctx->pc = entry;
     context->ctx->sp_el0 = stack;
-    context->ctx->cpsr = 0x800003c0;
+    context->ctx->cpsr = 0x80000300;
     aarch64_fpu_state_init(context->fpu_ctx);
 }
 
