@@ -543,6 +543,10 @@ size_t netlink_getsockopt(uint64_t fd, int level, int optname, void *optval,
             break;
         case SO_PASSCRED:
             break;
+        case SO_RCVBUF:
+            break;
+        case SO_SNDBUF:
+            break;
         default:
             return -ENOPROTOOPT;
         }
@@ -595,6 +599,10 @@ size_t netlink_setsockopt(uint64_t fd, int level, int optname,
         case SO_REUSEADDR:
             break;
         case SO_PASSCRED:
+            break;
+        case SO_RCVBUF:
+            break;
+        case SO_SNDBUF:
             break;
         default:
             return -ENOPROTOOPT;

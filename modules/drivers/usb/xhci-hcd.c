@@ -1178,43 +1178,45 @@ static int xhci_start_controller(usb_xhci_t *xhci) {
     xhci->running = true;
     xhci->event_task = NULL;
     xhci->enabled_intrs = 1;
-#if defined(__x86_64__)
-    xhci->irq_enabled = true;
-    for (int i = 0; i < MIN(cpu_count, xhci->max_intrs); i++) {
-        struct msi_desc_t desc;
-        desc.irq_num = irq_allocate_irqnum();
-        desc.processor = cpuid_to_lapicid[i];
-        desc.pci_dev = xhci->pci_dev;
-        desc.assert = false;
-        desc.edge_trigger = false;
-        desc.msi_index = i;
-        desc.pci.msi_attribute.can_mask = false;
-        desc.pci.msi_attribute.is_64 = true;
-        desc.pci.msi_attribute.is_msix = true;
-        if (pci_enable_msi(&desc)) {
-            if (i == 0) {
-                printk("XHCI use polling mode\n");
-                xhci->event_task =
-                    task_create("xhci_event", xhci_event_thread, (uint64_t)xhci,
-                                KTHREAD_PRIORITY);
+    // #if defined(__x86_64__)
+    //     xhci->irq_enabled = true;
+    //     for (int i = 0; i < MIN(cpu_count, xhci->max_intrs); i++) {
+    //         struct msi_desc_t desc;
+    //         desc.irq_num = irq_allocate_irqnum();
+    //         desc.processor = cpuid_to_lapicid[i];
+    //         desc.pci_dev = xhci->pci_dev;
+    //         desc.assert = false;
+    //         desc.edge_trigger = false;
+    //         desc.msi_index = i;
+    //         desc.pci.msi_attribute.can_mask = false;
+    //         desc.pci.msi_attribute.is_64 = true;
+    //         desc.pci.msi_attribute.is_msix = true;
+    //         if (pci_enable_msi(&desc)) {
+    //             if (i == 0) {
+    //                 printk("XHCI use polling mode\n");
+    //                 xhci->event_task =
+    //                     task_create("xhci_event", xhci_event_thread,
+    //                     (uint64_t)xhci,
+    //                                 KTHREAD_PRIORITY);
 
-                xhci->irq_enabled = false;
-            }
-            break;
-        } else {
-            if (i != 0)
-                xhci->enabled_intrs++;
-            irq_regist_irq(desc.irq_num, xhci_irq_handler, 0, &xhci->evt[i],
-                           &apic_controller, "xhci_irq_handler",
-                           IRQ_FLAGS_MSIX);
-        }
-    }
-    writel(&xhci->op->usbsts, XHCI_STS_EINT);
-#else
+    //                 xhci->irq_enabled = false;
+    //             }
+    //             break;
+    //         } else {
+    //             if (i != 0)
+    //                 xhci->enabled_intrs++;
+    //             irq_regist_irq(desc.irq_num, xhci_irq_handler, 0,
+    //             &xhci->evt[i],
+    //                            &apic_controller, "xhci_irq_handler",
+    //                            IRQ_FLAGS_MSIX);
+    //         }
+    //     }
+    //     writel(&xhci->op->usbsts, XHCI_STS_EINT);
+    // #else
     xhci->irq_enabled = false;
     xhci->event_task = task_create("xhci_event", xhci_event_thread,
                                    (uint64_t)xhci, KTHREAD_PRIORITY);
-#endif
+    // #endif
     xhci_program_interrupters(xhci);
 
     if (xhci_setup_scratchpad(xhci) != 0)
