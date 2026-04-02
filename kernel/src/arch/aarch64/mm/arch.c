@@ -56,6 +56,7 @@ uint64_t get_arch_page_table_flags(uint64_t flags) {
 #define tlbi(va) asm volatile("tlbi vale1is, %0" : : "r"((va)) : "memory")
 
 void arch_flush_tlb(uint64_t vaddr) {
+    dsb(ishst);
     tlbi(vaddr >> 12); // 无效化单个VA的TLB条目
     dsb(ish);          // 等待TLB操作完成
     isb();             // 流水线同步

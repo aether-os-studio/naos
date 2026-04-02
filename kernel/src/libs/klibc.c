@@ -10,13 +10,23 @@ void spin_init(spinlock_t *lock) { memset(lock, 0, sizeof(spinlock_t)); }
 
 void raw_spin_lock(spinlock_t *sl) {
     while (__sync_lock_test_and_set(&sl->lock, 1)) {
+#if defined(__aarch64__)
+        asm volatile("wfe");
+#else
         arch_pause();
+#endif
     }
 
     __sync_synchronize();
 }
 
-void raw_spin_unlock(spinlock_t *sl) { __sync_lock_release(&sl->lock); }
+void raw_spin_unlock(spinlock_t *sl) {
+    __sync_lock_release(&sl->lock);
+
+#if defined(__aarch64__)
+    asm volatile("sev");
+#endif
+}
 
 void spin_lock(spinlock_t *sl) {
     bool irq_state = arch_interrupt_enabled();

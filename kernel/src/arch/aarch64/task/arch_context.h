@@ -24,7 +24,6 @@ typedef struct arch_context {
     uint64_t sp;
     uint64_t tpidr_el0;
     struct fpu_context *fpu_ctx;
-    bool usermode;
 } arch_context_t;
 
 typedef struct fpu_context {

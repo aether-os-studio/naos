@@ -31,9 +31,6 @@ void irq_init() {
     if (timer_init()) {
         printk("timer init failure!!!\n");
     }
-    irq_regist_irq(global_timer.irq_num, timer_handler, 0, NULL,
-                   &gic_controller, "GENERIC TIMER", global_timer.irq_flags);
-    timer_init_percpu();
     printk("timer initialized with irq %d\n", global_timer.irq_num);
 }
 
@@ -46,8 +43,4 @@ void aarch64_do_irq(struct pt_regs *regs) {
         return;
 
     do_irq(regs, irq);
-}
-
-void timer_handler(uint64_t irq_num, void *parameter, struct pt_regs *regs) {
-    timer_set_next_tick_ns(1000000000ULL / SCHED_HZ);
 }

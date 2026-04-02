@@ -74,6 +74,7 @@ extern gic_version_t gic_version;
 #define GICC_EOIR 0x010
 #define GICC_RPR 0x014
 #define GICC_HPPIR 0x018
+#define GICC_APR 0x0D0
 #define GICC_DIR 0x1000
 
 /* 中断类型 */

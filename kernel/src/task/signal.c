@@ -363,6 +363,32 @@ static const uint8_t signal_aarch64_rt_sigreturn_trampoline
 };
 #endif
 
+static bool signal_sync_user_instruction_memory(uint64_t user_addr,
+                                                size_t code_size) {
+    if (!user_addr || code_size == 0)
+        return false;
+    if (check_user_overflow(user_addr, code_size))
+        return false;
+
+    uint64_t *pgdir = get_current_page_dir(true);
+    uint64_t uaddr = user_addr;
+    size_t remain = code_size;
+
+    while (remain > 0) {
+        uint64_t pa = user_translate_or_fault(pgdir, uaddr, false);
+        if (!pa)
+            return false;
+
+        size_t chunk = MIN(remain, PAGE_SIZE - (uaddr & (PAGE_SIZE - 1)));
+        sync_instruction_memory_range(user_virt_from_paddr(pa), chunk);
+
+        uaddr += chunk;
+        remain -= chunk;
+    }
+
+    return true;
+}
+
 static bool signal_copy_trampoline_to_user(uint64_t user_addr, const void *code,
                                            size_t code_size) {
     if (!user_addr || !code || code_size == 0)
@@ -371,9 +397,7 @@ static bool signal_copy_trampoline_to_user(uint64_t user_addr, const void *code,
     if (copy_to_user((void *)user_addr, code, code_size))
         return false;
 
-    sync_instruction_memory_range(code, code_size);
-
-    return true;
+    return signal_sync_user_instruction_memory(user_addr, code_size);
 }
 
 static inline void signal_set_default(int sig, signal_internal_t action) {

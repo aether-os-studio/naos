@@ -111,15 +111,12 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     }
 
     context->ctx->cpsr = spsr;
-
-    context->usermode = user_mode;
 }
 
 extern void ret_from_fork();
 
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
                        uint64_t clone_flags) {
-    dst->usermode = src->usermode;
     if (!src->tpidr_el0)
         src->tpidr_el0 = aarch64_read_tpidr_el0();
     dst->tpidr_el0 = src->tpidr_el0;
@@ -183,7 +180,6 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
     context->ctx = (struct pt_regs *)current_task->kernel_stack - 1;
     context->tpidr_el0 = 0;
     memset(context->ctx, 0, sizeof(struct pt_regs));
-    context->usermode = true;
     context->pc = (uint64_t)arch_context_switch_exit;
     context->sp = (uint64_t)context->ctx;
     context->ctx->pc = entry;

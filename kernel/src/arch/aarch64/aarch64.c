@@ -1,5 +1,4 @@
 #include <arch/arch.h>
-#include <irq/irq_manager.h>
 #include <boot/boot.h>
 #include <drivers/fdt/fdt.h>
 #include <mod/dlinker.h>
@@ -30,6 +29,8 @@ void arch_init() {
     irq_init();
 
     cpu_init();
+
+    timer_init_percpu();
 }
 
 void arch_init_after_thread() { pci_brcmstb_init(); }

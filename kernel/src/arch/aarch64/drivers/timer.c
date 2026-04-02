@@ -5,6 +5,7 @@
 #include <boot/boot.h>
 #include <drivers/kernel_logger.h>
 #include <drivers/fdt/fdt.h>
+#include <irq/irq_manager.h>
 
 struct global_timer_state global_timer = {0};
 
@@ -298,6 +299,10 @@ static int timer_init_from_acpi(void) {
     return 0;
 }
 
+void timer_handler(uint64_t irq_num, void *parameter, struct pt_regs *regs) {
+    timer_set_next_tick_ns(1000000000ULL / SCHED_HZ);
+}
+
 int timer_init(void) {
     int ret;
     bool from_acpi = false;
@@ -360,6 +365,9 @@ int timer_init(void) {
     printk("  Always-on: %s\n", global_timer.always_on ? "yes" : "no");
     printk("  Source: %s\n",
            from_acpi ? "ACPI" : (from_dtb ? "DTB" : "Hardcoded"));
+
+    irq_regist_irq(global_timer.irq_num, timer_handler, 0, NULL,
+                   &gic_controller, "GENERIC TIMER", global_timer.irq_flags);
 
     global_timer.initialized = 1;
 

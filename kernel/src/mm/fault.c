@@ -75,6 +75,20 @@ static bool fault_vma_can_resolve_cow(const fault_vma_snapshot_t *snapshot) {
            !(snapshot->vm_flags & (VMA_SHARED | VMA_SHM | VMA_DEVICE));
 }
 
+static void
+fault_sync_page_before_user_map(const fault_vma_snapshot_t *snapshot,
+                                uint64_t paddr) {
+    if (!snapshot || !paddr)
+        return;
+
+    void *page = (void *)phys_to_virt(paddr);
+
+    dcache_flush_range(page, PAGE_SIZE);
+
+    if (snapshot->vm_flags & VMA_EXEC)
+        sync_instruction_memory_range(page, PAGE_SIZE);
+}
+
 static uint64_t vm_flags_to_pt_flags(uint64_t vm_flags) {
     uint64_t pt_flags = PT_FLAG_U;
     if (vm_flags & VMA_READ)
@@ -186,10 +200,7 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
         loaded += (size_t)ret;
     }
 
-    if (snapshot->vm_flags & VMA_EXEC) {
-        sync_instruction_memory_range((void *)phys_to_virt(page_paddr),
-                                      PAGE_SIZE);
-    }
+    fault_sync_page_before_user_map(snapshot, page_paddr);
 
     vma_manager_t *mgr = &task->mm->task_vma_mgr;
     spin_lock(&mgr->lock);
@@ -298,6 +309,7 @@ map_cow_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
     }
     memcpy((void *)phys_to_virt(new_paddr),
            (const void *)phys_to_virt(old_paddr), PAGE_SIZE);
+    fault_sync_page_before_user_map(snapshot, new_paddr);
 
     uint64_t flags = ARCH_READ_PTE_FLAG(current_entry);
 #if defined(__aarch64__)

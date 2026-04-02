@@ -28,12 +28,6 @@ static uint32_t gic_v2_active_iar[MAX_CPU_NUM];
 #define ICC_SRE_DIB (1UL << 2)
 #define GIC_IRQ_FLAG_MODE_EDGE (1U << 0)
 
-/*
- * 在 Non-secure 视图下访问 GICv2 的 GICD/GICC_CTLR 时，bit0 表示 Group1
- * 使能；Group0 只能由 Secure world 管理。
- */
-#define GICV2_NS_CTLR_ENABLE_GRP1 0x1U
-
 static inline void gic_cpu_relax(void) { asm volatile("yield" : : : "memory"); }
 
 static inline void gicd_wait_for_rwp(void) {
@@ -198,14 +192,14 @@ static void gic_parse_acpi(void) {
         gicd_base_virt = (uint64_t)phys_to_virt(gicd_base_address);
         map_page_range(get_current_page_dir(false), gicd_base_virt,
                        gicd_base_address, 0x10000,
-                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
     }
 
     if (gic_version == GIC_VERSION_V2 && gicc_base_address) {
         gicc_base_virt = (uint64_t)phys_to_virt(gicc_base_address);
         map_page_range(get_current_page_dir(false), gicc_base_virt,
                        gicc_base_address, 0x2000,
-                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
     }
 
     if (gic_version >= GIC_VERSION_V3 && gicr_base_address) {
@@ -213,7 +207,7 @@ static void gic_parse_acpi(void) {
         gicr_region_size = GICR_STRIDE * cpu_count;
         map_page_range(get_current_page_dir(false), gicr_base_virt,
                        gicr_base_address, gicr_region_size,
-                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+                       PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
     }
 }
 
@@ -438,14 +432,14 @@ static void gic_parse_dtb() {
             gicd_base_virt = (uint64_t)phys_to_virt(gicd_base_address);
             map_page_range(get_current_page_dir(false), gicd_base_virt,
                            gicd_base_address, gicd_base_size,
-                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
         }
 
         if (gic_version == GIC_VERSION_V2 && gicc_base_address) {
             gicc_base_virt = (uint64_t)phys_to_virt(gicc_base_address);
             map_page_range(get_current_page_dir(false), gicc_base_virt,
                            gicc_base_address, gicc_base_size,
-                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
         }
 
         if (gic_version >= GIC_VERSION_V3 && gicr_base_address) {
@@ -453,7 +447,7 @@ static void gic_parse_dtb() {
             gicr_region_size = gicr_base_size;
             map_page_range(get_current_page_dir(false), gicr_base_virt,
                            gicr_base_address, gicr_region_size,
-                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_UNCACHEABLE);
+                           PT_FLAG_R | PT_FLAG_W | PT_FLAG_DEVICE);
         }
     }
 }
@@ -471,10 +465,9 @@ static void gicd_v2_init(void) {
     if (max_irq > 1020)
         max_irq = 1020;
 
-    // 在 EL1 Non-secure 中运行时，所有可见中断都必须属于 Group1
+    // 配置所有中断为Group0（与GICC_CTLR一致）
     for (int i = 0; i < (max_irq / 32); i++) {
-        *(volatile uint32_t *)(gicd_base_virt + GICD_IGROUPR + i * 4) =
-            0xFFFFFFFF;
+        *(volatile uint32_t *)(gicd_base_virt + GICD_IGROUPR + i * 4) = 0x0;
     }
 
     // 配置所有中断优先级
@@ -501,9 +494,8 @@ static void gicd_v2_init(void) {
             0xFFFFFFFF;
     }
 
-    // Non-secure 视图下 bit0 为 EnableGrp1
-    *(volatile uint32_t *)(gicd_base_virt + GICD_CTLR) =
-        GICV2_NS_CTLR_ENABLE_GRP1;
+    // 启用Group0
+    *(volatile uint32_t *)(gicd_base_virt + GICD_CTLR) = GICD_CTLR_EN_GRP0;
     dsb(sy);
 }
 
@@ -513,9 +505,6 @@ static void gicc_v2_init(void) {
 
     // 清除PPI的pending状态
     *(volatile uint32_t *)(gicd_base_virt + GICD_ICPENDR) = 0xFFFFFFFF;
-
-    // PPI 默认使用电平触发，architected timer 依赖这个行为
-    *(volatile uint32_t *)(gicd_base_virt + GICD_ICFGR + 4) = 0;
 
     // 设置优先级掩码
     *(volatile uint32_t *)(gicc_base_virt + GICC_PMR) = 0xF0;
@@ -530,8 +519,7 @@ static void gicc_v2_init(void) {
     }
 
     // Non-secure 视图下 bit0 为 EnableGrp1
-    *(volatile uint32_t *)(gicc_base_virt + GICC_CTLR) =
-        GICV2_NS_CTLR_ENABLE_GRP1;
+    *(volatile uint32_t *)(gicc_base_virt + GICC_CTLR) = 0x1;
     dsb(sy);
 
     uint32_t local_target =

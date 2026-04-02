@@ -62,10 +62,6 @@ void ap_kmain(struct limine_mp_info *cpu) {
     aarch64_cpu_local_init(get_cpuid_by_mpidr(current_mpidr()),
                            current_mpidr());
 
-    while (!task_initialized) {
-        asm volatile("nop");
-    }
-
     while (!global_timer.initialized) {
         asm volatile("nop");
     }
@@ -75,9 +71,9 @@ void ap_kmain(struct limine_mp_info *cpu) {
 
     gic_init_percpu();
 
-    timer_init_percpu();
-
     cpu_init();
+
+    timer_init_percpu();
 
     while (1) {
         arch_enable_interrupt();

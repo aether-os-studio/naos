@@ -575,7 +575,7 @@ pci_device_op_t pcie_brcmstb_device_op = {
 };
 
 static int pcie_brcmstb_probe(fdt_device_t *dev, const char *compatible) {
-    void *fdt = (void *)boot_get_dtb();
+    void *fdt = dev->fdt;
     int node = dev->node;
 
     printk("PCIe BRCMSTB: Probing controller\n");
