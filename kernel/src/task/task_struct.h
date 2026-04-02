@@ -78,8 +78,13 @@ typedef struct sigaltstack {
 #define SS_DISABLE 2
 #define SS_AUTODISARM (1U << 31)
 
+#if defined(__aarch64__)
+#define MINSIGSTKSZ 5120
+#define SIGSTKSZ 16384
+#else
 #define MINSIGSTKSZ 2048
 #define SIGSTKSZ 8192
+#endif
 
 #define SIGEV_SIGNAL 0    /* notify via signal */
 #define SIGEV_NONE 1      /* other notification: meaningless */

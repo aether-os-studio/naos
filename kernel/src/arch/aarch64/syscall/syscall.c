@@ -67,7 +67,5 @@ done:
         serial_fprintk("syscall %d not implemented\n", idx);
     }
 
-    frame->origin_x0 = frame->x0;
-
     task_signal(frame);
 }

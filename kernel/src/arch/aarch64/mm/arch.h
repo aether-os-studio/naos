@@ -16,7 +16,7 @@
 #define ARCH_PT_FLAG_INNER_SH ((uint64_t)3 << 8)
 #define ARCH_PT_FLAG_ACCESS ((uint64_t)1 << 10)
 #define ARCH_PT_FLAG_XN ((uint64_t)1 << 54)
-#define ARCH_PT_FLAG_COW ARCH_PT_FLAG_READONLY
+#define ARCH_PT_FLAG_COW ((uint64_t)1 << 55)
 #define ARCH_PT_SOFT_FLAGS ARCH_PT_FLAG_COW
 #define ARCH_PT_FLAG_WB ((uint64_t)0 << 2)
 #define ARCH_PT_FLAG_FB ((uint64_t)1 << 2)

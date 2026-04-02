@@ -41,6 +41,55 @@ static uint64_t aarch64_fault_flags(uint32_t ec, uint32_t iss) {
     return flags;
 }
 
+static bool aarch64_fault_access_allowed_now(task_t *task, uint64_t vaddr,
+                                             uint64_t fault_flags) {
+    if (!task || !task->mm)
+        return false;
+
+    spin_lock(&task->mm->lock);
+    uint64_t *table = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
+    uint64_t entry = 0;
+
+    for (uint64_t level = 0; level < ARCH_MAX_PT_LEVEL; level++) {
+        uint64_t index = PAGE_CALC_PAGE_TABLE_INDEX(vaddr, level + 1);
+        entry = table[index];
+
+        if (!(entry & ARCH_PT_FLAG_VALID)) {
+            spin_unlock(&task->mm->lock);
+            return false;
+        }
+
+        if (level == ARCH_MAX_PT_LEVEL - 1 || ARCH_PT_IS_LARGE(entry))
+            break;
+
+        if (!ARCH_PT_IS_TABLE(entry)) {
+            spin_unlock(&task->mm->lock);
+            return false;
+        }
+
+        table = (uint64_t *)phys_to_virt(ARCH_READ_PTE(entry));
+    }
+
+    uint64_t flags = ARCH_READ_PTE_FLAG(entry);
+
+    if ((fault_flags & PF_ACCESS_USER) && !(flags & ARCH_PT_FLAG_USER)) {
+        spin_unlock(&task->mm->lock);
+        return false;
+    }
+    if ((fault_flags & PF_ACCESS_WRITE) && (flags & ARCH_PT_FLAG_READONLY)) {
+        spin_unlock(&task->mm->lock);
+        return false;
+    }
+    if ((fault_flags & PF_ACCESS_EXEC) && (flags & ARCH_PT_FLAG_XN)) {
+        spin_unlock(&task->mm->lock);
+        return false;
+    }
+
+    spin_unlock(&task->mm->lock);
+
+    return true;
+}
+
 static int aarch64_fault_si_code(uint32_t iss) {
     switch (iss & 0x3F) {
     case 0b000100:
@@ -98,6 +147,8 @@ void traceback(struct pt_regs *regs) {
 
     printk("======== Kernel traceback end =======\n");
 
+    pc = regs->pc; // Program Counter
+
     if (regs->pc >= get_physical_memory_offset())
         return;
 
@@ -113,11 +164,13 @@ void traceback(struct pt_regs *regs) {
             if (vma->vm_name) {
                 if (pc >= vma->vm_start && pc <= vma->vm_end) {
                     printk("Fault in this vma: %s, vma->vm_start = %#018lx, "
-                           "offset_in_vma = %#018lx\n",
-                           vma->vm_name, vma->vm_start, pc - vma->vm_start);
+                           "offset_in_vma = %#018lx, vma->flags = %#010x\n",
+                           vma->vm_name, vma->vm_start, pc - vma->vm_start,
+                           vma->vm_flags);
                 } else {
-                    printk("Faulting task vma: %s, vma->vm_start = %#018lx\n",
-                           vma->vm_name, vma->vm_start);
+                    printk("Faulting task vma: %s, vma->vm_start = %#018lx, "
+                           "vma->flags = %#010x\n",
+                           vma->vm_name, vma->vm_start, vma->vm_flags);
                 }
             }
 
@@ -464,19 +517,24 @@ void handle_exception(struct pt_regs *frame) {
             handle_page_fault_flags(current_task, fault_addr, fault_flags);
         if (result == PF_RES_OK) {
             return;
+        } else if (aarch64_fault_access_allowed_now(current_task, fault_addr,
+                                                    fault_flags)) {
+            arch_flush_tlb(fault_addr);
+            return;
         } else if (result == PF_RES_SEGF) {
-            if (aarch64_user_mode_frame(frame) && current_task) {
-                siginfo_t info;
-                memset(&info, 0, sizeof(info));
-                info.si_signo = SIGSEGV;
-                info.si_code = aarch64_fault_si_code((uint32_t)esr);
-                info._sifields._sigfault._addr = (void *)fault_addr;
-                task_commit_signal(current_task, SIGSEGV, &info);
-                task_signal(frame);
-                return;
-            }
+            // if (aarch64_user_mode_frame(frame) && current_task) {
+            //     siginfo_t info;
+            //     memset(&info, 0, sizeof(info));
+            //     info.si_signo = SIGSEGV;
+            //     info.si_code = aarch64_fault_si_code((uint32_t)esr);
+            //     info._sifields._sigfault._addr = (void *)fault_addr;
+            //     task_commit_signal(current_task, SIGSEGV, &info);
+            //     task_signal(frame);
+            //     return;
+            // }
 
-            printk("fault_addr = %p\n", fault_addr);
+            printk("fault_addr = %p, fault_flags = %#018x\n", fault_addr,
+                   fault_flags);
             show_frame(frame);
             task_exit(SIGSEGV + 128);
         } else if (result == PF_RES_NOMEM) {

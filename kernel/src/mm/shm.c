@@ -377,7 +377,7 @@ static void *shmfs_map(fd_t *file, void *addr, size_t offset, size_t size,
         pt_flags |= PT_FLAG_R;
 
     uint64_t start = (uint64_t)addr;
-    uint64_t *pgdir = get_current_page_dir(true);
+    uint64_t *pgdir = get_current_page_dir(false);
     for (uint64_t ptr = start; ptr < start + size; ptr += PAGE_SIZE) {
         map_page_range_mm(current_task->mm, ptr,
                           translate_address(pgdir, (uint64_t)shm->addr +
@@ -554,7 +554,7 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
         flags |= PT_FLAG_X;
 
     uint64_t start = (uint64_t)addr;
-    uint64_t *pgdir = get_current_page_dir(true);
+    uint64_t *pgdir = get_current_page_dir(false);
     spin_lock(&current_task->mm->lock);
     for (uint64_t ptr = start; ptr < start + shm->size; ptr += PAGE_SIZE) {
         map_page_range_mm(

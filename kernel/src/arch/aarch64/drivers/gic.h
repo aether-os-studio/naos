@@ -80,12 +80,14 @@ extern gic_version_t gic_version;
 #define SGI_INTR_BASE 0
 #define PPI_INTR_BASE 16
 #define SPI_INTR_BASE 32
+#define GIC_RESCHED_SGI 1
 
 struct irq_controller;
 extern struct irq_controller gic_controller;
 
 /* 公共API */
 void gic_init(void);
+void gic_ipi_init(void);
 void gic_init_percpu(void);
 void gic_enable_irq(uint32_t irq);
 void gic_disable_irq(uint32_t irq);

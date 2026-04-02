@@ -15,12 +15,21 @@ void arch_early_init() {
     smp_init();
 }
 
-extern task_t *idle_tasks[MAX_CPU_NUM];
+void cpu_init() {
+    asm volatile("mrs x0, sctlr_el1\n\t"
+                 "orr x0, x0, #(1 << 15)\n\t"
+                 "orr x0, x0, #(1 << 26)\n\t"
+                 "msr sctlr_el1, x0\n\t" ::
+                     : "x0");
+}
 
 void arch_init() {
     gic_init();
+    gic_ipi_init();
 
     irq_init();
+
+    cpu_init();
 }
 
 void arch_init_after_thread() { pci_brcmstb_init(); }

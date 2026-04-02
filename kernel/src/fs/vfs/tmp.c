@@ -409,7 +409,7 @@ void *tmpfs_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
         pt_flags |= PT_FLAG_R;
 
     uint64_t start = (uint64_t)addr;
-    uint64_t *pgdir = get_current_page_dir(true);
+    uint64_t *pgdir = get_current_page_dir(false);
     for (uint64_t ptr = start; ptr < start + size; ptr += PAGE_SIZE) {
         map_page_range(pgdir, (uint64_t)ptr,
                        translate_address(pgdir, (uint64_t)handle->content +

@@ -45,6 +45,8 @@ extern bool task_initialized;
 
 extern struct global_timer_state global_timer;
 
+extern void cpu_init();
+
 void ap_kmain(struct limine_mp_info *cpu) {
     arch_disable_interrupt();
 
@@ -74,6 +76,8 @@ void ap_kmain(struct limine_mp_info *cpu) {
     gic_init_percpu();
 
     timer_init_percpu();
+
+    cpu_init();
 
     while (1) {
         arch_enable_interrupt();

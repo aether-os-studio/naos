@@ -14,6 +14,9 @@ uint64_t gicr_base_virt = 0;
 uint64_t gicr_base_address = 0;
 static uint64_t gicr_region_size = 0;
 gic_version_t gic_version = GIC_VERSION_UNKNOWN;
+static bool gic_ipi_initialized = false;
+static uint8_t gic_v2_cpu_sgi_target_mask[MAX_CPU_NUM];
+static uint32_t gic_v2_active_iar[MAX_CPU_NUM];
 
 // 内存屏障
 #define dsb(op) asm volatile("dsb " #op : : : "memory")
@@ -36,6 +39,20 @@ static inline uint32_t gic_mpidr_to_affinity(uint64_t mpidr) {
     return (uint32_t)((mpidr & 0xFF) | (((mpidr >> 8) & 0xFF) << 8) |
                       (((mpidr >> 16) & 0xFF) << 16) |
                       (((mpidr >> 32) & 0xFF) << 24));
+}
+
+static inline uint8_t gic_mpidr_aff0(uint64_t mpidr) { return mpidr & 0xFF; }
+
+static inline uint8_t gic_mpidr_aff1(uint64_t mpidr) {
+    return (mpidr >> 8) & 0xFF;
+}
+
+static inline uint8_t gic_mpidr_aff2(uint64_t mpidr) {
+    return (mpidr >> 16) & 0xFF;
+}
+
+static inline uint8_t gic_mpidr_aff3(uint64_t mpidr) {
+    return (mpidr >> 32) & 0xFF;
 }
 
 static uint64_t gicr_v3_cpu_base(void) {
@@ -486,6 +503,14 @@ static void gicc_v2_init(void) {
     // 启用Group0
     *(volatile uint32_t *)(gicc_base_virt + GICC_CTLR) = 0x1;
     dsb(sy);
+
+    uint32_t local_target =
+        *(volatile uint32_t *)(gicd_base_virt + GICD_ITARGETSR) & 0xFF;
+    if (!local_target) {
+        local_target = 1U << current_cpu_id;
+    }
+
+    gic_v2_cpu_sgi_target_mask[current_cpu_id] = (uint8_t)local_target;
 }
 
 static void gic_v2_enable_irq(uint32_t irq) {
@@ -513,7 +538,14 @@ static uint64_t gic_v2_get_irq(void) {
 
     uint32_t irq = iar & 0x3FF;
 
+    if (current_cpu_id < MAX_CPU_NUM) {
+        gic_v2_active_iar[current_cpu_id] = iar;
+    }
+
     if (irq >= 1020) {
+        if (current_cpu_id < MAX_CPU_NUM) {
+            gic_v2_active_iar[current_cpu_id] = 0xFFFFFFFF;
+        }
         return 1023; // 返回特殊值表示无效中断
     }
 
@@ -525,8 +557,39 @@ static void gic_v2_send_eoi(uint32_t irq) {
         return;
     }
 
-    *(volatile uint32_t *)(gicc_base_virt + GICC_EOIR) = irq;
+    uint32_t eoir = irq;
+    if (current_cpu_id < MAX_CPU_NUM) {
+        uint32_t iar = gic_v2_active_iar[current_cpu_id];
+        if (iar != 0xFFFFFFFF && (iar & 0x3FF) == irq) {
+            eoir = iar;
+        }
+        gic_v2_active_iar[current_cpu_id] = 0xFFFFFFFF;
+    }
+
+    *(volatile uint32_t *)(gicc_base_virt + GICC_EOIR) = eoir;
     dsb(sy);
+}
+
+static void gic_v2_send_ipi(uint32_t cpu_id, uint64_t irq_num) {
+    if (cpu_id >= cpu_count || cpu_id == current_cpu_id ||
+        irq_num >= PPI_INTR_BASE) {
+        return;
+    }
+
+    uint32_t target_mask = gic_v2_cpu_sgi_target_mask[cpu_id];
+    if (!target_mask) {
+        if (cpu_id >= 8) {
+            printk("GICv2: cannot send SGI %lu to cpu %u without target mask\n",
+                   irq_num, cpu_id);
+            return;
+        }
+        target_mask = 1U << cpu_id;
+    }
+
+    dsb(ishst);
+    *(volatile uint32_t *)(gicd_base_virt + GICD_SGIR) =
+        ((target_mask & 0xFF) << 16) | (uint32_t)(irq_num & 0xF);
+    dsb(ishst);
 }
 
 static void gicd_v3_init(void) {
@@ -670,6 +733,46 @@ static void gic_v3_send_eoi(uint32_t irq) {
     isb();
 }
 
+static void gic_v3_send_ipi(uint32_t cpu_id, uint64_t irq_num) {
+    if (cpu_id >= cpu_count || cpu_id == current_cpu_id ||
+        irq_num >= PPI_INTR_BASE) {
+        return;
+    }
+
+    uint64_t mpidr = cpuid_to_mpidr[cpu_id];
+    uint64_t aff0 = gic_mpidr_aff0(mpidr);
+
+    if (aff0 >= 16) {
+        printk("GICv3: cannot send SGI %lu to cpu %u with aff0=%lu\n", irq_num,
+               cpu_id, aff0);
+        return;
+    }
+
+    uint64_t sgi1r = ((uint64_t)gic_mpidr_aff3(mpidr) << 48) |
+                     ((uint64_t)gic_mpidr_aff2(mpidr) << 32) |
+                     ((uint64_t)(irq_num & 0xF) << 24) |
+                     ((uint64_t)gic_mpidr_aff1(mpidr) << 16) | (1ULL << aff0);
+
+    dsb(ishst);
+    asm volatile("msr ICC_SGI1R_EL1, %0" : : "r"(sgi1r) : "memory");
+    isb();
+}
+
+static void gic_send_ipi(uint32_t cpu_id, uint64_t irq_num) {
+    if (gic_version == GIC_VERSION_V2) {
+        gic_v2_send_ipi(cpu_id, irq_num);
+    } else {
+        gic_v3_send_ipi(cpu_id, irq_num);
+    }
+}
+
+static void gic_resched_ipi_handler(uint64_t irq_num, void *data,
+                                    struct pt_regs *regs) {
+    (void)irq_num;
+    (void)data;
+    (void)regs;
+}
+
 void gic_init(void) {
     gic_parse_dtb();
 
@@ -727,6 +830,10 @@ void gic_init_percpu(void) {
         gicr_v3_init();
         cpu_interface_v3_init();
     }
+
+    if (gic_ipi_initialized) {
+        gic_enable_irq(GIC_RESCHED_SGI);
+    }
 }
 
 void gic_enable_irq(uint32_t irq) {
@@ -781,3 +888,14 @@ irq_controller_t gic_controller = {
     .mask = gic_mask,
     .ack = gic_ack,
 };
+
+void gic_ipi_init(void) {
+    for (uint32_t cpu = 0; cpu < MAX_CPU_NUM; cpu++) {
+        gic_v2_active_iar[cpu] = 0xFFFFFFFF;
+    }
+
+    irq_regist_ipi(GIC_RESCHED_SGI, gic_resched_ipi_handler, 0, NULL,
+                   &gic_controller, "RESCHED_IPI", 0, gic_send_ipi);
+    irq_set_sched_ipi(GIC_RESCHED_SGI);
+    gic_ipi_initialized = true;
+}

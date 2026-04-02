@@ -9,6 +9,8 @@
 
 #if defined(__x86_64__)
 #include <arch/x64/syscall/nr.h>
+#elif defined(__aarch64__)
+#include <arch/aarch64/syscall/nr.h>
 #endif
 
 #define SIGNAL_MIN_SIGSET_SIZE sizeof(uint32_t)
@@ -24,17 +26,17 @@ typedef struct signal_kernel_sigaction {
 } signal_kernel_sigaction_t;
 #endif
 
+#define ERESTARTSYS 512
+#define ERESTARTNOINTR 513
+#define ERESTARTNOHAND 514
+#define ERESTART_RESTARTBLOCK 516
+
 #if defined(__x86_64__)
 #define SIGNAL_X64_SYSCALL_INS_LEN 2
 #define SIGNAL_X64_MAX_SYSCALL_NR 1024
 #define SIGNAL_X64_UC_SIGCONTEXT_SS 0x2
 #define SIGNAL_X64_UC_STRICT_RESTORE_SS 0x4
 #define SIGNAL_X64_TRAPNO_PAGE_FAULT 14
-
-#define ERESTARTSYS 512
-#define ERESTARTNOINTR 513
-#define ERESTARTNOHAND 514
-#define ERESTART_RESTARTBLOCK 516
 
 #endif
 
@@ -733,25 +735,38 @@ typedef struct signal_aarch64_user_sigset {
     uint64_t __bits[16];
 } signal_aarch64_user_sigset_t;
 
-typedef struct signal_aarch64_mcontext {
+#define SIGNAL_AARCH64_RESERVED_BYTES 4096U
+#define SIGNAL_AARCH64_FPSIMD_MAGIC 0x46508001U
+#define SIGNAL_AARCH64_SYSCALL_INS_LEN 4U
+
+typedef struct signal_aarch64_ctx_header {
+    uint32_t magic;
+    uint32_t size;
+} signal_aarch64_ctx_header_t;
+
+typedef struct signal_aarch64_fpsimd_context {
+    signal_aarch64_ctx_header_t head;
+    uint32_t fpsr;
+    uint32_t fpcr;
+    uint64_t vregs[32][2];
+} __attribute__((aligned(16))) signal_aarch64_fpsimd_context_t;
+
+typedef struct signal_aarch64_sigcontext {
+    uint64_t fault_address;
     uint64_t regs[31];
     uint64_t sp;
     uint64_t pc;
     uint64_t pstate;
-    uint64_t fault_address;
-    uint64_t origin_x0;
-    uint64_t fpcr;
-    uint64_t fpsr;
-    uint64_t reserved[4];
-    uint64_t fpu[32][2];
-} signal_aarch64_mcontext_t;
+    uint8_t __reserved[SIGNAL_AARCH64_RESERVED_BYTES]
+        __attribute__((aligned(16)));
+} signal_aarch64_sigcontext_t;
 
 typedef struct signal_aarch64_ucontext {
     uint64_t uc_flags;
     struct signal_aarch64_ucontext *uc_link;
     stack_t uc_stack;
     signal_aarch64_user_sigset_t uc_sigmask;
-    signal_aarch64_mcontext_t uc_mcontext;
+    signal_aarch64_sigcontext_t uc_mcontext;
 } signal_aarch64_ucontext_t;
 
 typedef struct signal_aarch64_frame {
@@ -759,9 +774,129 @@ typedef struct signal_aarch64_frame {
     signal_aarch64_ucontext_t ucontext;
 } signal_aarch64_frame_t;
 
+typedef struct signal_aarch64_frame_record {
+    uint64_t fp;
+    uint64_t lr;
+} signal_aarch64_frame_record_t;
+
+_Static_assert(sizeof(signal_aarch64_fpsimd_context_t) == 0x210,
+               "AArch64 fpsimd_context must match the Linux ABI");
+_Static_assert(offsetof(signal_aarch64_sigcontext_t, __reserved) == 0x120,
+               "AArch64 sigcontext.__reserved offset must match the Linux ABI");
+_Static_assert(sizeof(signal_aarch64_user_sigset_t) == 128,
+               "AArch64 user sigset in ucontext must be 1024 bits");
+
 static inline uint64_t signal_aarch64_align_down(uint64_t value,
                                                  uint64_t align) {
     return value & ~(align - 1);
+}
+
+static inline void
+signal_aarch64_save_fpsimd(signal_aarch64_sigcontext_t *sigcontext,
+                           const fpu_context_t *fpu_ctx) {
+    memset(sigcontext->__reserved, 0, sizeof(sigcontext->__reserved));
+    if (!fpu_ctx)
+        return;
+
+    signal_aarch64_fpsimd_context_t *fpsimd =
+        (signal_aarch64_fpsimd_context_t *)sigcontext->__reserved;
+    fpsimd->head.magic = SIGNAL_AARCH64_FPSIMD_MAGIC;
+    fpsimd->head.size = sizeof(*fpsimd);
+    fpsimd->fpsr = (uint32_t)fpu_ctx->fpsr;
+    fpsimd->fpcr = (uint32_t)fpu_ctx->fpcr;
+    memcpy(fpsimd->vregs, fpu_ctx->q, sizeof(fpsimd->vregs));
+}
+
+static bool
+signal_aarch64_restore_fpsimd(const signal_aarch64_sigcontext_t *sigcontext,
+                              fpu_context_t *fpu_ctx) {
+    if (!fpu_ctx)
+        return true;
+
+    aarch64_fpu_state_init(fpu_ctx);
+
+    const uint8_t *cursor = sigcontext->__reserved;
+    size_t remaining = sizeof(sigcontext->__reserved);
+    bool fpsimd_seen = false;
+
+    while (remaining >= sizeof(signal_aarch64_ctx_header_t)) {
+        const signal_aarch64_ctx_header_t *head =
+            (const signal_aarch64_ctx_header_t *)cursor;
+
+        if (head->magic == 0 && head->size == 0)
+            return true;
+
+        if ((head->size & 0xFUL) != 0 ||
+            head->size < sizeof(signal_aarch64_ctx_header_t) ||
+            head->size > remaining) {
+            return false;
+        }
+
+        if (head->magic == SIGNAL_AARCH64_FPSIMD_MAGIC) {
+            if (fpsimd_seen ||
+                head->size != sizeof(signal_aarch64_fpsimd_context_t)) {
+                return false;
+            }
+
+            const signal_aarch64_fpsimd_context_t *fpsimd =
+                (const signal_aarch64_fpsimd_context_t *)cursor;
+            fpu_ctx->fpsr = fpsimd->fpsr;
+            fpu_ctx->fpcr = fpsimd->fpcr;
+            memcpy(fpu_ctx->q, fpsimd->vregs, sizeof(fpsimd->vregs));
+            fpsimd_seen = true;
+        }
+
+        cursor += head->size;
+        remaining -= head->size;
+    }
+
+    return false;
+}
+
+static inline void
+signal_aarch64_prepare_syscall_result(struct pt_regs *saved,
+                                      const sigaction_t *action) {
+    if (!saved || !action || saved->x8 == SYS_RT_SIGRETURN)
+        return;
+
+    int64_t retval = (int64_t)saved->x0;
+    if (retval >= 0)
+        return;
+
+    int64_t err = -retval;
+    bool want_restart = false;
+    bool force_eintr = false;
+
+    switch (err) {
+    case ERESTARTNOINTR:
+        want_restart = true;
+        break;
+    case ERESTARTSYS:
+    case ERESTART:
+        want_restart = (action->sa_flags & SA_RESTART) != 0;
+        force_eintr = !want_restart;
+        break;
+    case ERESTARTNOHAND:
+    case ERESTART_RESTARTBLOCK:
+        force_eintr = true;
+        break;
+    case EINTR:
+        want_restart = (action->sa_flags & SA_RESTART) != 0;
+        force_eintr = !want_restart;
+        break;
+    default:
+        return;
+    }
+
+    if (want_restart) {
+        saved->x0 = saved->origin_x0;
+        if (saved->pc >= SIGNAL_AARCH64_SYSCALL_INS_LEN)
+            saved->pc -= SIGNAL_AARCH64_SYSCALL_INS_LEN;
+        return;
+    }
+
+    if (force_eintr)
+        saved->x0 = (uint64_t)-EINTR;
 }
 
 static inline void
@@ -774,6 +909,10 @@ signal_aarch64_fill_ucontext(signal_aarch64_ucontext_t *ucontext,
     if (altstack)
         ucontext->uc_stack = *altstack;
     ucontext->uc_sigmask.__bits[0] = sigset_kernel_to_user(blocked_mask);
+
+    if (info && info->si_signo == SIGSEGV)
+        ucontext->uc_mcontext.fault_address =
+            (uint64_t)info->_sifields._sigfault._addr;
 
     ucontext->uc_mcontext.regs[0] = regs->x0;
     ucontext->uc_mcontext.regs[1] = regs->x1;
@@ -809,20 +948,10 @@ signal_aarch64_fill_ucontext(signal_aarch64_ucontext_t *ucontext,
     ucontext->uc_mcontext.sp = regs->sp_el0;
     ucontext->uc_mcontext.pc = regs->pc;
     ucontext->uc_mcontext.pstate = regs->cpsr;
-    ucontext->uc_mcontext.origin_x0 = regs->origin_x0;
-    if (fpu_ctx) {
-        ucontext->uc_mcontext.fpcr = fpu_ctx->fpcr;
-        ucontext->uc_mcontext.fpsr = fpu_ctx->fpsr;
-        memcpy(ucontext->uc_mcontext.fpu, fpu_ctx->q,
-               sizeof(ucontext->uc_mcontext.fpu));
-    }
-
-    if (info && info->si_signo == SIGSEGV)
-        ucontext->uc_mcontext.fault_address =
-            (uint64_t)info->_sifields._sigfault._addr;
+    signal_aarch64_save_fpsimd(&ucontext->uc_mcontext, fpu_ctx);
 }
 
-static inline void
+static bool
 signal_aarch64_restore_ptregs(struct pt_regs *regs,
                               const signal_aarch64_ucontext_t *ucontext,
                               fpu_context_t *fpu_ctx) {
@@ -860,16 +989,12 @@ signal_aarch64_restore_ptregs(struct pt_regs *regs,
     regs->sp_el0 = ucontext->uc_mcontext.sp;
     regs->pc = ucontext->uc_mcontext.pc;
     regs->cpsr = ucontext->uc_mcontext.pstate;
-    regs->origin_x0 = ucontext->uc_mcontext.origin_x0;
-    if (fpu_ctx) {
-        fpu_ctx->fpcr = ucontext->uc_mcontext.fpcr;
-        fpu_ctx->fpsr = ucontext->uc_mcontext.fpsr;
-        memcpy(fpu_ctx->q, ucontext->uc_mcontext.fpu,
-               sizeof(ucontext->uc_mcontext.fpu));
-    }
+    regs->origin_x0 = regs->x0;
 
     if ((regs->cpsr & 0xF) != 0)
         regs->cpsr &= ~0xFULL;
+
+    return signal_aarch64_restore_fpsimd(&ucontext->uc_mcontext, fpu_ctx);
 }
 
 static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
@@ -880,6 +1005,7 @@ static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
         return false;
 
     struct pt_regs saved = *regs;
+    signal_aarch64_prepare_syscall_result(&saved, action);
 
     stack_t frame_altstack;
     signal_altstack_format_old(&frame_altstack, &task->signal->altstack,
@@ -897,12 +1023,18 @@ static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
             signal_altstack_disable(&task->signal->altstack);
     }
 
-    if (stack_top <= sizeof(signal_aarch64_frame_t))
+    if (stack_top <=
+        sizeof(signal_aarch64_frame_t) + sizeof(signal_aarch64_frame_record_t))
+        return false;
+
+    uint64_t frame_record_addr = signal_aarch64_align_down(
+        stack_top - sizeof(signal_aarch64_frame_record_t), 16);
+    if (!frame_record_addr)
         return false;
 
     uint64_t frame_addr = signal_aarch64_align_down(
-        stack_top - sizeof(signal_aarch64_frame_t), 16);
-    if (!frame_addr)
+        frame_record_addr - sizeof(signal_aarch64_frame_t), 16);
+    if (!frame_addr || frame_addr >= frame_record_addr)
         return false;
 
     signal_aarch64_frame_t frame;
@@ -913,8 +1045,16 @@ static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
                                  &frame_altstack, info,
                                  task->arch_context->fpu_ctx);
 
-    if (copy_to_user((void *)frame_addr, &frame, sizeof(frame)))
+    signal_aarch64_frame_record_t frame_record = {
+        .fp = saved.x29,
+        .lr = saved.x30,
+    };
+
+    if (copy_to_user((void *)frame_addr, &frame, sizeof(frame)) ||
+        copy_to_user((void *)frame_record_addr, &frame_record,
+                     sizeof(frame_record))) {
         return false;
+    }
 
     memset(regs, 0, sizeof(*regs));
     regs->pc = (uint64_t)action->sa_handler;
@@ -925,6 +1065,7 @@ static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
         regs->x1 = frame_addr + offsetof(signal_aarch64_frame_t, info);
         regs->x2 = frame_addr + offsetof(signal_aarch64_frame_t, ucontext);
     }
+    regs->x29 = frame_record_addr;
     regs->x30 = (uint64_t)action->sa_restorer;
     regs->cpsr = saved.cpsr;
 
@@ -1179,6 +1320,11 @@ uint64_t sys_sigreturn(struct pt_regs *regs) {
         return (uint64_t)-EFAULT;
     }
 
+    if ((regs->sp_el0 & 0xFUL) != 0) {
+        task_exit(128 + SIGSEGV);
+        return 0;
+    }
+
     signal_aarch64_frame_t frame;
     if (copy_from_user(&frame, (void *)regs->sp_el0, sizeof(frame))) {
         task_exit(128 + SIGSEGV);
@@ -1192,8 +1338,11 @@ uint64_t sys_sigreturn(struct pt_regs *regs) {
         return 0;
     }
 
-    signal_aarch64_restore_ptregs(regs, &frame.ucontext,
-                                  self->arch_context->fpu_ctx);
+    if (!signal_aarch64_restore_ptregs(regs, &frame.ucontext,
+                                       self->arch_context->fpu_ctx)) {
+        task_exit(128 + SIGSEGV);
+        return 0;
+    }
     aarch64_fpu_restore(self->arch_context->fpu_ctx);
 
     spin_lock(&self->signal->sighand->siglock);
@@ -1202,7 +1351,7 @@ uint64_t sys_sigreturn(struct pt_regs *regs) {
     signal_altstack_store(&self->signal->altstack, &restore_altstack);
     spin_unlock(&self->signal->sighand->siglock);
 
-    return regs->origin_x0;
+    return regs->x0;
 #else
     (void)regs;
     return (uint64_t)-ENOSYS;

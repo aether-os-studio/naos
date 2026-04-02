@@ -3,6 +3,7 @@
 #include <libs/klibc.h>
 
 extern uint64_t cpu_count;
+extern uint64_t cpuid_to_mpidr[MAX_CPU_NUM];
 
 void smp_init();
 uint64_t get_cpuid_by_mpidr(uint64_t mpidr);
