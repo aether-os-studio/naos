@@ -124,6 +124,5 @@ extern int lwip_socket_fsid;
 extern struct netif naos_lwip_netif;
 
 int lwip_module_init(void);
-void lwip_socket_fs_init(void);
 void real_socket_v4_init(void);
 void real_socket_v6_init(void);

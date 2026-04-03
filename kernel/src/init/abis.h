@@ -4,9 +4,6 @@
 #include <task/task_struct.h>
 #include <drivers/bus/bus.h>
 
-struct fd;
-typedef struct fd fd_t;
-
 typedef struct abi {
     void (*init)(void);
     void (*init_before_thread)(void);

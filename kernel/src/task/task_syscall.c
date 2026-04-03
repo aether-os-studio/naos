@@ -76,10 +76,17 @@ static int read_task_file_into_user_memory(task_t *task, vfs_node_t *node,
         size_t in_page = va - page_va;
         size_t chunk = MIN(remain, PAGE_SIZE - in_page);
         size_t loaded = 0;
+        fd_t fd = {
+            .f_op = node->i_fop,
+            .f_inode = node,
+            .node = node,
+            .f_flags = O_RDONLY,
+        };
         while (loaded < chunk) {
-            ssize_t ret =
-                vfs_read(node, (void *)(phys_to_virt(pa) + in_page + loaded),
-                         file_off + loaded, chunk - loaded);
+            loff_t pos = (loff_t)(file_off + loaded);
+            ssize_t ret = vfs_read_file(
+                &fd, (void *)(phys_to_virt(pa) + in_page + loaded),
+                chunk - loaded, &pos);
             if (ret < 0)
                 return ret;
             if (ret == 0)
@@ -444,10 +451,11 @@ static void task_fd_info_put(fd_info_t *fd_info, task_t *task) {
             if (!fd_info->fds[i])
                 continue;
 
-            fd_t *entry = fd_info->fds[i];
+            struct vfs_file *entry = fd_info->fds[i];
             fd_info->fds[i] = NULL;
+            fd_info->fd_flags[i] = 0;
             on_close_file_call(task, i, entry);
-            fd_release(entry);
+            vfs_close_file(entry);
         }
     });
 
@@ -472,9 +480,9 @@ void task_cleanup_partial(task_t *task, bool kernel_mm) {
         task->fd_info = NULL;
     }
 
-    if (task->exec_node) {
-        vfs_close(task->exec_node);
-        task->exec_node = NULL;
+    if (task->exec_file) {
+        vfs_close_file(task->exec_file);
+        task->exec_file = NULL;
     }
 
     if (task->fs) {
@@ -835,7 +843,7 @@ static int register_elf_load_vma(task_t *task, vfs_node_t *node,
     vma->vm_file_flags = 0;
     vma->node = node;
     if (node)
-        vfs_node_ref_get(node);
+        vfs_igrab(node);
     if (name)
         vma->vm_name = strdup(name);
 
@@ -905,10 +913,12 @@ uint64_t task_execve(const char *path_user, const char **argv,
     char path[128];
     strncpy(path, path_user, sizeof(path));
 
-    vfs_node_t *node = vfs_open(path, 0);
-    if (!node) {
+    struct vfs_file *exec_file = NULL;
+    struct vfs_open_how exec_how = {.flags = O_RDONLY};
+    if (vfs_openat(AT_FDCWD, path, &exec_how, &exec_file) < 0 || !exec_file) {
         return (uint64_t)-ENOENT;
     }
+    vfs_node_t *node = exec_file->f_inode;
 
     int argv_count = 0;
     int envp_count = 0;
@@ -978,7 +988,9 @@ uint64_t task_execve(const char *path_user, const char **argv,
     int shebang_depth = 0;
 
     while (true) {
-        header_read = vfs_read(node, header_buf, 0, sizeof(header_buf));
+        loff_t header_pos = 0;
+        header_read = vfs_read_file(exec_file, header_buf, sizeof(header_buf),
+                                    &header_pos);
 
         if (header_read < 2 || header_buf[0] != '#' || header_buf[1] != '!') {
             break;
@@ -987,7 +999,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
         if (++shebang_depth > 4) {
             task_execve_free_string_array(new_argv, argv_count);
             task_execve_free_string_array(new_envp, envp_count);
-            vfs_close(node);
+            vfs_close_file(exec_file);
             return (uint64_t)-ELOOP;
         }
 
@@ -1030,7 +1042,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
         if (line_start == line_end) {
             task_execve_free_string_array(new_argv, argv_count);
             task_execve_free_string_array(new_envp, envp_count);
-            vfs_close(node);
+            vfs_close_file(exec_file);
             return (uint64_t)-ENOEXEC;
         }
 
@@ -1045,14 +1057,14 @@ uint64_t task_execve(const char *path_user, const char **argv,
             interpreter_end == line_end) {
             task_execve_free_string_array(new_argv, argv_count);
             task_execve_free_string_array(new_envp, envp_count);
-            vfs_close(node);
+            vfs_close_file(exec_file);
             return (uint64_t)-ENOEXEC;
         }
 
         if (interpreter_end == interpreter_name) {
             task_execve_free_string_array(new_argv, argv_count);
             task_execve_free_string_array(new_envp, envp_count);
-            vfs_close(node);
+            vfs_close_file(exec_file);
             return (uint64_t)-ENOEXEC;
         }
 
@@ -1076,7 +1088,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
         if (!replaced_argv) {
             task_execve_free_string_array(new_argv, argv_count);
             task_execve_free_string_array(new_envp, envp_count);
-            vfs_close(node);
+            vfs_close_file(exec_file);
             return (uint64_t)-ENOMEM;
         }
 
@@ -1088,7 +1100,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
             task_execve_free_string_array(replaced_argv, replaced_index);
             task_execve_free_string_array(new_argv, argv_count);
             task_execve_free_string_array(new_envp, envp_count);
-            vfs_close(node);
+            vfs_close_file(exec_file);
             return (uint64_t)-ENOMEM;
         }
 
@@ -1098,7 +1110,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 task_execve_free_string_array(replaced_argv, replaced_index);
                 task_execve_free_string_array(new_argv, argv_count);
                 task_execve_free_string_array(new_envp, envp_count);
-                vfs_close(node);
+                vfs_close_file(exec_file);
                 return (uint64_t)-ENOMEM;
             }
         }
@@ -1108,7 +1120,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
             task_execve_free_string_array(replaced_argv, replaced_index);
             task_execve_free_string_array(new_argv, argv_count);
             task_execve_free_string_array(new_envp, envp_count);
-            vfs_close(node);
+            vfs_close_file(exec_file);
             return (uint64_t)-ENOMEM;
         }
 
@@ -1118,17 +1130,19 @@ uint64_t task_execve(const char *path_user, const char **argv,
                 task_execve_free_string_array(replaced_argv, replaced_index);
                 task_execve_free_string_array(new_argv, argv_count);
                 task_execve_free_string_array(new_envp, envp_count);
-                vfs_close(node);
+                vfs_close_file(exec_file);
                 return (uint64_t)-ENOMEM;
             }
         }
 
-        vfs_node_t *interpreter_node = vfs_open(interpreter_name, 0);
-        if (!interpreter_node) {
+        struct vfs_file *interpreter_file = NULL;
+        if (vfs_openat(AT_FDCWD, interpreter_name, &exec_how,
+                       &interpreter_file) < 0 ||
+            !interpreter_file) {
             task_execve_free_string_array(replaced_argv, replaced_index);
             task_execve_free_string_array(new_argv, argv_count);
             task_execve_free_string_array(new_envp, envp_count);
-            vfs_close(node);
+            vfs_close_file(exec_file);
             return (uint64_t)-ENOENT;
         }
 
@@ -1138,14 +1152,15 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
         strncpy(path, interpreter_name, sizeof(path));
         path[sizeof(path) - 1] = '\0';
-        vfs_close(node);
-        node = interpreter_node;
+        vfs_close_file(exec_file);
+        exec_file = interpreter_file;
+        node = interpreter_file->f_inode;
     }
 
     if (header_read < sizeof(Elf64_Ehdr)) {
         task_execve_free_string_array(new_argv, argv_count);
         task_execve_free_string_array(new_envp, envp_count);
-        vfs_close(node);
+        vfs_close_file(exec_file);
         return (uint64_t)-ENOEXEC;
     }
 
@@ -1155,7 +1170,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     if (dethread_ret < 0) {
         task_execve_free_string_array(new_argv, argv_count);
         task_execve_free_string_array(new_envp, envp_count);
-        vfs_close(node);
+        vfs_close_file(exec_file);
         return (uint64_t)dethread_ret;
     }
 
@@ -1168,14 +1183,14 @@ uint64_t task_execve(const char *path_user, const char **argv,
     if (e_entry == 0) {
         task_execve_free_string_array(new_argv, argv_count);
         task_execve_free_string_array(new_envp, envp_count);
-        vfs_close(node);
+        vfs_close_file(exec_file);
         return (uint64_t)-EINVAL;
     }
 
     if (!arch_check_elf(ehdr)) {
         task_execve_free_string_array(new_argv, argv_count);
         task_execve_free_string_array(new_envp, envp_count);
-        vfs_close(node);
+        vfs_close_file(exec_file);
         return (uint64_t)-ENOEXEC;
     }
 
@@ -1188,7 +1203,8 @@ uint64_t task_execve(const char *path_user, const char **argv,
     } else {
         phdr = (Elf64_Phdr *)malloc(phdr_size);
         phdr_allocated = true;
-        vfs_read(node, phdr, ehdr->e_phoff, phdr_size);
+        loff_t phdr_pos = (loff_t)ehdr->e_phoff;
+        vfs_read_file(exec_file, phdr, phdr_size, &phdr_pos);
     }
 
     shm_exec(self);
@@ -1231,32 +1247,39 @@ uint64_t task_execve(const char *path_user, const char **argv,
     for (int i = 0; i < ehdr->e_phnum; ++i) {
         if (phdr[i].p_type == PT_INTERP) {
             char interp_name[128];
-            vfs_read(node, interp_name, phdr[i].p_offset,
-                     phdr[i].p_filesz < 256 ? phdr[i].p_filesz : 255);
+            loff_t interp_pos = (loff_t)phdr[i].p_offset;
+            vfs_read_file(exec_file, interp_name,
+                          phdr[i].p_filesz < 256 ? phdr[i].p_filesz : 255,
+                          &interp_pos);
             interp_name[phdr[i].p_filesz < 256 ? phdr[i].p_filesz : 255] = '\0';
 
             interpreter_path = strdup(interp_name);
 
-            vfs_node_t *interpreter_node = vfs_open(interp_name, 0);
-            if (!interpreter_node) {
+            struct vfs_file *interpreter_file = NULL;
+            if (vfs_openat(AT_FDCWD, interp_name, &exec_how,
+                           &interpreter_file) < 0 ||
+                !interpreter_file) {
                 exec_fail_ret = (uint64_t)-ENOENT;
                 goto exec_fail_restore_mm;
             }
 
             Elf64_Ehdr interp_ehdr;
-            vfs_read(interpreter_node, &interp_ehdr, 0, sizeof(Elf64_Ehdr));
+            loff_t interp_hdr_pos = 0;
+            vfs_read_file(interpreter_file, &interp_ehdr, sizeof(Elf64_Ehdr),
+                          &interp_hdr_pos);
 
             size_t interp_phdr_size = interp_ehdr.e_phnum * sizeof(Elf64_Phdr);
             Elf64_Phdr *interp_phdr = (Elf64_Phdr *)malloc(interp_phdr_size);
-            vfs_read(interpreter_node, interp_phdr, interp_ehdr.e_phoff,
-                     interp_phdr_size);
+            loff_t interp_phdr_pos = (loff_t)interp_ehdr.e_phoff;
+            vfs_read_file(interpreter_file, interp_phdr, interp_phdr_size,
+                          &interp_phdr_pos);
 
             for (int j = 0; j < interp_ehdr.e_phnum; j++) {
                 if (interp_phdr[j].p_type != PT_LOAD)
                     continue;
 
                 if (register_elf_load_vma(
-                        self, interpreter_node, interpreter_path,
+                        self, interpreter_file->f_inode, interpreter_path,
                         INTERPRETER_BASE_ADDR, &interp_phdr[j]) != 0) {
                     printk("Failed to register interpreter PT_LOAD VMA\n");
                 }
@@ -1264,7 +1287,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
 
             interpreter_entry = INTERPRETER_BASE_ADDR + interp_ehdr.e_entry;
             free(interp_phdr);
-            vfs_close(interpreter_node);
+            vfs_close_file(interpreter_file);
 
         } else if (phdr[i].p_type == PT_LOAD) {
             uint64_t seg_addr = real_load_start + phdr[i].p_vaddr;
@@ -1345,12 +1368,14 @@ uint64_t task_execve(const char *path_user, const char **argv,
         mutex_init(&new->fdt_lock);
         with_fd_info_lock(old, {
             for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-                fd_t *fd = old->fds[i];
+                struct vfs_file *fd = old->fds[i];
 
                 if (fd) {
-                    new->fds[i] = vfs_dup(fd);
+                    new->fds[i] = vfs_file_get(fd);
+                    new->fd_flags[i] = old->fd_flags[i];
                 } else {
                     new->fds[i] = NULL;
+                    new->fd_flags[i] = 0;
                 }
             }
         });
@@ -1388,11 +1413,12 @@ uint64_t task_execve(const char *path_user, const char **argv,
             if (!self->fd_info->fds[i])
                 continue;
 
-            if (self->fd_info->fds[i]->close_on_exec) {
-                fd_t *entry = self->fd_info->fds[i];
+            if (self->fd_info->fd_flags[i] & FD_CLOEXEC) {
+                struct vfs_file *entry = self->fd_info->fds[i];
                 self->fd_info->fds[i] = NULL;
+                self->fd_info->fd_flags[i] = 0;
                 on_close_file_call(self, i, entry);
-                fd_release(entry);
+                vfs_close_file(entry);
             }
         }
     });
@@ -1403,12 +1429,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
         goto exec_fail_restore_mm;
     }
 
-    vfs_node_t *old_exec_node = self->exec_node;
-    vfs_node_ref_get(node);
-    self->exec_node = node;
-    vfs_close(node);
-    if (old_exec_node)
-        vfs_close(old_exec_node);
+    self->exec_file = NULL;
 
     if (!self->is_kernel)
         free_page_table(old_mm);
@@ -1460,7 +1481,7 @@ exec_fail_restore_mm:
         free(phdr);
     task_execve_free_string_array(new_argv, argv_count);
     task_execve_free_string_array(new_envp, envp_count);
-    vfs_close(node);
+    vfs_close_file(exec_file);
 
     return exec_fail_ret;
 }
@@ -1901,10 +1922,13 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     }
 
     if ((flags & CLONE_NEWNS) && child->nsproxy->mnt_ns &&
-        child->fs->root != child->nsproxy->mnt_ns->root) {
-        vfs_node_ref_get(child->nsproxy->mnt_ns->root);
-        vfs_close(child->fs->root);
-        child->fs->root = child->nsproxy->mnt_ns->root;
+        child->fs->vfs.root.mnt != child->nsproxy->mnt_ns->root) {
+        vfs_path_put(&child->fs->vfs.root);
+        child->fs->vfs.root.mnt = vfs_mntget(child->nsproxy->mnt_ns->root);
+        child->fs->vfs.root.dentry =
+            child->nsproxy->mnt_ns->root
+                ? vfs_dget(child->nsproxy->mnt_ns->root->mnt_root)
+                : NULL;
     }
 
     child->cpu_id = (flags & CLONE_VM) ? self->cpu_id : alloc_cpu_id();
@@ -1979,9 +2003,7 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     child->env_start = self->env_start;
     child->env_end = self->env_end;
 
-    child->exec_node = self->exec_node;
-    if (child->exec_node)
-        vfs_node_ref_get(child->exec_node);
+    child->exec_file = self->exec_file ? vfs_file_get(self->exec_file) : NULL;
 
     child->load_start = self->load_start;
     child->load_end = self->load_end;
@@ -1994,12 +2016,14 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     if (!(flags & CLONE_FILES)) {
         mutex_init(&child->fd_info->fdt_lock);
         for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-            fd_t *fd = self->fd_info->fds[i];
+            struct vfs_file *fd = self->fd_info->fds[i];
 
             if (fd) {
-                child->fd_info->fds[i] = vfs_dup(fd);
+                child->fd_info->fds[i] = vfs_file_get(fd);
+                child->fd_info->fd_flags[i] = self->fd_info->fd_flags[i];
             } else {
                 child->fd_info->fds[i] = NULL;
+                child->fd_info->fd_flags[i] = 0;
             }
         }
     }

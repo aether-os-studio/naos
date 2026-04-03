@@ -1,7 +1,7 @@
 #include <libs/klibc.h>
 #include <fs/fs_syscall.h>
 #include <fs/dev.h>
-#include <fs/termios.h>
+#include <libs/termios.h>
 
 #define PTY_MAX 1024
 #define PTY_BUFF_SIZE (256 * 1024)
@@ -45,3 +45,4 @@ typedef struct pty_pair {
 void pty_init();
 void ptmx_init();
 void pts_init();
+void pts_repopulate_nodes();

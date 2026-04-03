@@ -31,4 +31,8 @@ dbus-uuidgen --ensure
 
 udevd &
 
+while [ ! -e "/run/udev/control" ]; do
+    sleep 0.1
+done
+
 exec dbus-run-session -- seatd-launch -- weston --xwayland

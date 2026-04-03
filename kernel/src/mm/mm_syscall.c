@@ -37,6 +37,8 @@ static uint64_t msync_writeback_file_range(vfs_node_t *node, uint64_t vm_start,
                                            int64_t vm_offset,
                                            uint64_t sync_start,
                                            uint64_t sync_end);
+void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
+                  uint64_t flags, uint64_t offset);
 
 static inline uint64_t *mm_pgdir(task_mm_info_t *mm) {
     return mm ? (uint64_t *)phys_to_virt(mm->page_table_addr) : NULL;
@@ -45,8 +47,7 @@ static inline uint64_t *mm_pgdir(task_mm_info_t *mm) {
 static void mmap_put_fd_ref(fd_t *fd_ref) {
     if (!fd_ref)
         return;
-
-    fd_release(fd_ref);
+    vfs_file_put(fd_ref);
 }
 
 static bool rlimit_is_infinite(size_t value) { return value == (size_t)-1; }
@@ -501,25 +502,20 @@ static vma_t *alloc_mapping_vma(uint64_t start, uint64_t len, uint64_t prot,
     vma->vm_file_len = len;
     vma->vm_file_flags = file_flags;
     if (node)
-        vfs_node_ref_get(node);
+        vfs_igrab(node);
 
     if (node && ((node->type & file_stream) || (node->type & file_block)))
         vma->vm_flags |= VMA_DEVICE;
-
-    if (node) {
-        char *fullpath = vfs_get_fullpath_at(node, task_fs_root(current_task));
-        if (fullpath) {
-            vma->vm_name = strdup(fullpath);
-            free(fullpath);
-        }
-    }
 
     return vma;
 }
 
 static uint64_t map_file_vma(fd_t *file, uint64_t offset, uint64_t addr,
                              uint64_t len, uint64_t prot, uint64_t flags) {
-    uint64_t ret = (uint64_t)vfs_map(file, addr, len, prot, flags, offset);
+    if (!file || !file->f_op || !file->f_op->mmap)
+        return (uint64_t)-ENOSYS;
+    uint64_t ret = (uint64_t)file->f_op->mmap(file, (void *)addr, offset, len,
+                                              prot, flags);
     if ((int64_t)ret < 0)
         return ret;
     return addr;
@@ -682,7 +678,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
                 break;
             }
 
-            map_fd_ref = vfs_dup(entry);
+            map_fd_ref = vfs_file_get(entry);
             if (!map_fd_ref) {
                 map_fd_err = -ENOMEM;
                 break;
@@ -1130,7 +1126,7 @@ static vma_t *duplicate_vma(vma_t *src, uint64_t start, uint64_t size) {
     }
 
     if (dst->node)
-        vfs_node_ref_get(dst->node);
+        vfs_igrab(dst->node);
     if (src->vm_name)
         dst->vm_name = strdup(src->vm_name);
 
@@ -1145,15 +1141,11 @@ static uint64_t mremap_map_new_region(vma_t *new_vma, uint64_t addr,
     if (new_vma->vm_type != VMA_TYPE_FILE)
         return (uint64_t)-EINVAL;
 
-    fd_shared_t shared = {
-        .flags = new_vma->vm_file_flags,
-        .offset = (uint64_t)new_vma->vm_offset,
-    };
-
     fd_t fd = {
+        .f_op = new_vma->node ? new_vma->node->i_fop : NULL,
+        .f_inode = new_vma->node,
         .node = new_vma->node,
-        .shared = &shared,
-        .close_on_exec = false,
+        .f_flags = (unsigned int)new_vma->vm_file_flags,
     };
 
     uint64_t map_flags =
@@ -1304,20 +1296,20 @@ static uint64_t mremap_expand_inplace_locked(vma_manager_t *mgr, vma_t *vma,
 
     if (vma->vm_type == VMA_TYPE_FILE &&
         ((vma->vm_flags & VMA_SHARED) || (vma->vm_flags & VMA_DEVICE))) {
-        fd_shared_t shared = {
-            .flags = vma->vm_file_flags,
-            .offset = (uint64_t)vma->vm_offset + old_size,
-        };
         fd_t fd = {
+            .f_op = vma->node ? vma->node->i_fop : NULL,
+            .f_inode = vma->node,
             .node = vma->node,
-            .shared = &shared,
-            .close_on_exec = false,
+            .f_flags = (unsigned int)vma->vm_file_flags,
         };
         uint64_t map_flags =
             (vma->vm_flags & VMA_SHARED) ? MAP_SHARED : MAP_PRIVATE;
-        uint64_t ret = (uint64_t)vfs_map(
-            &fd, old_end, grow, vm_flags_to_prot(vma->vm_flags), map_flags,
-            (uint64_t)vma->vm_offset + old_size);
+
+        if (!fd.f_op || !fd.f_op->mmap)
+            return (uint64_t)-ENOSYS;
+        uint64_t ret = (uint64_t)fd.f_op->mmap(
+            &fd, (void *)old_end, grow, vm_flags_to_prot(vma->vm_flags),
+            map_flags, (uint64_t)vma->vm_offset + old_size);
         if ((int64_t)ret < 0)
             return ret;
     }
@@ -1538,16 +1530,15 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
     uint64_t file_off = offset;
 
     while (remaining > 0) {
-        ssize_t ret = vfs_read_fd(file, (void *)(addr + (len - remaining)),
-                                  file_off, remaining);
+        loff_t pos = (loff_t)file_off;
+        ssize_t ret = vfs_read_file(file, (void *)(addr + (len - remaining)),
+                                    remaining, &pos);
         if (ret < 0) {
             spin_lock(&mm->lock);
             unmap_page_range_mm(mm, map_addr, map_len);
             spin_unlock(&mm->lock);
-            printk("Failed read file for mmap: node=%s file_off=%lu req=%lu "
-                   "ret=%ld\n",
-                   file->node->name ? file->node->name : "<anon>", file_off,
-                   remaining, ret);
+            printk("Failed read file for mmap: file_off=%lu req=%lu ret=%ld\n",
+                   file_off, remaining, ret);
             return (void *)ret;
         }
         if (ret == 0)
@@ -1573,15 +1564,13 @@ static uint64_t msync_writeback_file_range(vfs_node_t *node, uint64_t vm_start,
     if (!node || sync_start >= sync_end || vm_offset < 0)
         return 0;
 
-    fs_t *fs = all_fs[node->fsid];
-    const vfs_operations_t *ops = fs ? fs->ops : NULL;
-    if (!ops || !ops->write)
+    if (!node || !node->i_fop || !node->i_fop->write)
         return 0;
 
     task_mm_info_t *mm = current_task->mm;
     uint64_t *pgdir = mm_pgdir(mm);
     uint64_t cursor = sync_start;
-    uint64_t file_size = node->size;
+    uint64_t file_size = node->i_size;
     uint8_t *bounce = alloc_frames_bytes(PAGE_SIZE);
     if (!bounce)
         return (uint64_t)-ENOMEM;
@@ -1618,23 +1607,18 @@ static uint64_t msync_writeback_file_range(vfs_node_t *node, uint64_t vm_start,
         }
 
         uint64_t written = 0;
-        fd_shared_t shared = {
-            .offset = file_off,
-            .flags = O_WRONLY,
-            .ref_count = 1,
-        };
         fd_t fd = {
+            .f_op = node->i_fop,
+            .f_inode = node,
             .node = node,
-            .shared = &shared,
-            .close_on_exec = false,
+            .f_flags = O_WRONLY,
         };
+        loff_t pos = (loff_t)file_off;
         while (written < io_chunk) {
-            ssize_t ret = ops->write(&fd, bounce + written, file_off + written,
-                                     io_chunk - written);
+            ssize_t ret =
+                vfs_write_file(&fd, bounce + written, io_chunk - written, &pos);
             if (ret < 0) {
                 free_frames_bytes(bounce, PAGE_SIZE);
-                if (ret == -ENOSYS)
-                    ret = 0;
                 return (uint64_t)ret;
             }
             if (ret == 0) {
@@ -1651,7 +1635,11 @@ static uint64_t msync_writeback_file_range(vfs_node_t *node, uint64_t vm_start,
 
     free_frames_bytes(bounce, PAGE_SIZE);
 
-    int sync_ret = vfs_fsync(node);
+    int sync_ret = vfs_fsync_file(&(fd_t){
+        .f_op = node->i_fop,
+        .f_inode = node,
+        .node = node,
+    });
     return sync_ret < 0 ? (sync_ret == -ENOSYS ? 0 : (uint64_t)sync_ret) : 0;
 }
 
@@ -1699,18 +1687,18 @@ uint64_t sys_msync(uint64_t addr, uint64_t size, uint64_t flags) {
         vm_offset = vma->vm_offset;
         node = vma->node;
         if (node)
-            vfs_node_ref_get(node);
+            vfs_igrab(node);
         spin_unlock(&mgr->lock);
 
         if (vm_type == VMA_TYPE_FILE && (vm_flags & VMA_SHARED) &&
             !(vm_flags & VMA_DEVICE) && node) {
             uint64_t ret = msync_writeback_file_range(node, vm_start, vm_offset,
                                                       cursor, vm_end);
-            vfs_node_ref_put(node, NULL);
+            vfs_iput(node);
             if ((int64_t)ret < 0)
                 return ret;
         } else if (node) {
-            vfs_node_ref_put(node, NULL);
+            vfs_iput(node);
         }
 
         cursor = vm_end;

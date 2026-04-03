@@ -4,6 +4,9 @@
 
 #define MAX_PID_NAME_LEN 8
 
+struct task;
+typedef struct task task_t;
+
 typedef struct proc_handle proc_handle_t;
 
 typedef size_t (*stat_entry_t)(proc_handle_t *handle);

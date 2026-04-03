@@ -293,8 +293,6 @@ int lwip_module_init() {
         return 0;
     }
 
-    lwip_socket_fs_init();
-
     netdev = get_default_netdev();
     if (!netdev) {
         printk("netserver: no netdev registered, lwIP stack stays offline\n");

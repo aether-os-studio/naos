@@ -16,8 +16,6 @@
 #include <task/task.h>
 #include <init/callbacks.h>
 
-extern int eventfdfs_id;
-
 static ssize_t drm_copy_to_user_ptr(uint64_t user_ptr, const void *src,
                                     size_t size) {
     if (!user_ptr || size == 0) {
@@ -113,6 +111,25 @@ typedef struct drm_prime_export_entry {
 static drm_prime_export_entry_t drm_prime_exports[DRM_MAX_PRIME_EXPORTS];
 static spinlock_t drm_prime_exports_lock = SPIN_INIT;
 
+typedef struct drmfdfs_info {
+    spinlock_t lock;
+    ino64_t next_ino;
+} drmfdfs_info_t;
+
+typedef struct drmfdfs_inode_info {
+    struct vfs_inode vfs_inode;
+} drmfdfs_inode_info_t;
+
+static struct vfs_file_system_type drmfdfs_fs_type;
+static const struct vfs_super_operations drmfdfs_super_ops;
+static const struct vfs_file_operations drmfdfs_dir_file_ops;
+static const struct vfs_file_operations drmfdfs_prime_file_ops;
+static const struct vfs_file_operations drmfdfs_sync_file_ops;
+static mutex_t drmfdfs_mount_lock;
+static struct vfs_mount *drmfdfs_internal_mnt;
+static spinlock_t drmfdfs_register_lock = SPIN_INIT;
+static bool drmfdfs_registered = false;
+
 typedef struct drm_syncfd_ctx drm_syncfd_ctx_t;
 static drm_syncfd_ctx_t *drm_syncfd_create_immediate_ctx(const char *name,
                                                          bool signaled);
@@ -135,69 +152,313 @@ typedef struct drm_prime_fd_ctx {
     char name[DMA_BUF_NAME_LEN];
 } drm_prime_fd_ctx_t;
 
-static int drm_prime_fsid = 0;
-static spinlock_t drm_prime_fsid_lock = SPIN_INIT;
+static inline drmfdfs_info_t *drmfdfs_sb_info(struct vfs_super_block *sb) {
+    return sb ? (drmfdfs_info_t *)sb->s_fs_info : NULL;
+}
 
-static ssize_t drm_primefd_read(fd_t *fd, void *buf, uint64_t offset,
-                                uint64_t len) {
-    drm_prime_fd_ctx_t *ctx = fd->node->handle;
+static struct vfs_inode *drmfdfs_alloc_inode(struct vfs_super_block *sb) {
+    drmfdfs_inode_info_t *info = calloc(1, sizeof(*info));
+
+    (void)sb;
+    return info ? &info->vfs_inode : NULL;
+}
+
+static void drmfdfs_destroy_inode(struct vfs_inode *inode) {
+    if (!inode)
+        return;
+    free(container_of(inode, drmfdfs_inode_info_t, vfs_inode));
+}
+
+static void drmfdfs_put_super(struct vfs_super_block *sb) {
+    if (sb && sb->s_fs_info)
+        free(sb->s_fs_info);
+}
+
+static int drmfdfs_statfs(struct vfs_path *path, void *buf) {
+    struct statfs *st = (struct statfs *)buf;
+    struct vfs_super_block *sb;
+
+    if (!path || !path->dentry || !path->dentry->d_inode || !st)
+        return -EINVAL;
+
+    memset(st, 0, sizeof(*st));
+    sb = path->dentry->d_inode->i_sb;
+    if (!sb)
+        return 0;
+    st->f_type = sb->s_magic;
+    st->f_bsize = PAGE_SIZE;
+    st->f_frsize = PAGE_SIZE;
+    st->f_namelen = 255;
+    st->f_flags = sb->s_flags;
+    return 0;
+}
+
+static int drmfdfs_init_fs_context(struct vfs_fs_context *fc) {
+    (void)fc;
+    return 0;
+}
+
+static int drmfdfs_get_tree(struct vfs_fs_context *fc) {
+    struct vfs_super_block *sb;
+    drmfdfs_info_t *fsi;
+    struct vfs_inode *inode;
+    struct vfs_dentry *root;
+
+    if (!fc)
+        return -EINVAL;
+
+    sb = vfs_alloc_super(fc->fs_type, fc->sb_flags);
+    if (!sb)
+        return -ENOMEM;
+
+    fsi = calloc(1, sizeof(*fsi));
+    if (!fsi) {
+        vfs_put_super(sb);
+        return -ENOMEM;
+    }
+
+    spin_init(&fsi->lock);
+    fsi->next_ino = 1;
+    sb->s_magic = 0x64726d66ULL;
+    sb->s_fs_info = fsi;
+    sb->s_op = &drmfdfs_super_ops;
+    sb->s_type = &drmfdfs_fs_type;
+
+    inode = vfs_alloc_inode(sb);
+    if (!inode) {
+        free(fsi);
+        vfs_put_super(sb);
+        return -ENOMEM;
+    }
+
+    inode->i_ino = 1;
+    inode->inode = 1;
+    inode->i_mode = S_IFDIR | 0700;
+    inode->type = file_dir;
+    inode->i_nlink = 2;
+    inode->i_fop = &drmfdfs_dir_file_ops;
+
+    root = vfs_d_alloc(sb, NULL, NULL);
+    if (!root) {
+        vfs_iput(inode);
+        free(fsi);
+        vfs_put_super(sb);
+        return -ENOMEM;
+    }
+
+    vfs_d_instantiate(root, inode);
+    sb->s_root = root;
+    fc->sb = sb;
+    return 0;
+}
+
+static const struct vfs_super_operations drmfdfs_super_ops = {
+    .alloc_inode = drmfdfs_alloc_inode,
+    .destroy_inode = drmfdfs_destroy_inode,
+    .put_super = drmfdfs_put_super,
+    .statfs = drmfdfs_statfs,
+};
+
+static struct vfs_file_system_type drmfdfs_fs_type = {
+    .name = "drmfdfs",
+    .fs_flags = VFS_FS_VIRTUAL,
+    .init_fs_context = drmfdfs_init_fs_context,
+    .get_tree = drmfdfs_get_tree,
+};
+
+static struct vfs_mount *drmfdfs_get_internal_mount(void) {
+    int ret;
+
+    spin_lock(&drmfdfs_register_lock);
+    if (!drmfdfs_registered) {
+        mutex_init(&drmfdfs_mount_lock);
+        vfs_register_filesystem(&drmfdfs_fs_type);
+        drmfdfs_registered = true;
+    }
+    spin_unlock(&drmfdfs_register_lock);
+
+    mutex_lock(&drmfdfs_mount_lock);
+    if (!drmfdfs_internal_mnt) {
+        ret = vfs_kern_mount("drmfdfs", 0, NULL, NULL, &drmfdfs_internal_mnt);
+        if (ret < 0)
+            drmfdfs_internal_mnt = NULL;
+    }
+    if (drmfdfs_internal_mnt)
+        vfs_mntget(drmfdfs_internal_mnt);
+    mutex_unlock(&drmfdfs_mount_lock);
+    return drmfdfs_internal_mnt;
+}
+
+static ino64_t drmfdfs_next_ino(struct vfs_super_block *sb) {
+    drmfdfs_info_t *fsi = drmfdfs_sb_info(sb);
+    ino64_t ino;
+
+    spin_lock(&fsi->lock);
+    ino = ++fsi->next_ino;
+    spin_unlock(&fsi->lock);
+    return ino;
+}
+
+static loff_t drmfdfs_llseek(struct vfs_file *file, loff_t offset, int whence) {
+    (void)file;
+    (void)offset;
+    (void)whence;
+    return -ESPIPE;
+}
+
+static int drmfdfs_open(struct vfs_inode *inode, struct vfs_file *file) {
+    if (!file)
+        return -EINVAL;
+    file->private_data = inode ? inode->i_private : NULL;
+    return 0;
+}
+
+static int drmfdfs_release(struct vfs_inode *inode, struct vfs_file *file) {
+    (void)inode;
+    if (!file)
+        return 0;
+    file->private_data = NULL;
+    return 0;
+}
+
+static int
+drmfdfs_create_file(const char *prefix, const struct vfs_file_operations *ops,
+                    void *private_data, umode_t mode, unsigned int open_flags,
+                    struct vfs_file **out_file, struct vfs_inode **out_inode) {
+    struct vfs_mount *mnt;
+    struct vfs_super_block *sb;
+    struct vfs_inode *inode;
+    struct vfs_dentry *dentry;
+    struct vfs_qstr name = {0};
+    struct vfs_file *file;
+    char label[64];
+
+    if (!prefix || !ops || !private_data || !out_file)
+        return -EINVAL;
+
+    mnt = drmfdfs_get_internal_mount();
+    if (!mnt)
+        return -ENODEV;
+    sb = mnt->mnt_sb;
+
+    inode = vfs_alloc_inode(sb);
+    if (!inode) {
+        vfs_mntput(mnt);
+        return -ENOMEM;
+    }
+
+    inode->i_ino = drmfdfs_next_ino(sb);
+    inode->inode = inode->i_ino;
+    inode->i_mode = mode;
+    inode->type = S_ISSOCK(mode) ? file_socket : file_stream;
+    if (S_ISREG(mode))
+        inode->type = file_none;
+    inode->i_nlink = 1;
+    inode->i_fop = ops;
+    inode->i_private = private_data;
+
+    snprintf(label, sizeof(label), "%s-%llu", prefix,
+             (unsigned long long)inode->i_ino);
+    vfs_qstr_make(&name, label);
+    dentry = vfs_d_alloc(sb, sb->s_root, &name);
+    if (!dentry) {
+        inode->i_private = NULL;
+        vfs_iput(inode);
+        vfs_mntput(mnt);
+        return -ENOMEM;
+    }
+
+    vfs_d_instantiate(dentry, inode);
+    file = vfs_alloc_file(&(struct vfs_path){.mnt = mnt, .dentry = dentry},
+                          open_flags);
+    if (!file) {
+        vfs_dput(dentry);
+        inode->i_private = NULL;
+        vfs_iput(inode);
+        vfs_mntput(mnt);
+        return -ENOMEM;
+    }
+
+    file->private_data = private_data;
+    *out_file = file;
+    if (out_inode)
+        *out_inode = inode;
+
+    vfs_dput(dentry);
+    vfs_iput(inode);
+    vfs_mntput(mnt);
+    return 0;
+}
+
+static drm_prime_fd_ctx_t *drm_primefd_file_ctx(struct vfs_file *file) {
+    if (!file)
+        return NULL;
+    if (file->private_data)
+        return (drm_prime_fd_ctx_t *)file->private_data;
+    if (!file->f_inode || !file->f_inode->i_sb ||
+        file->f_inode->i_sb->s_type != &drmfdfs_fs_type) {
+        return NULL;
+    }
+    return (drm_prime_fd_ctx_t *)file->f_inode->i_private;
+}
+
+static ssize_t drm_primefd_read(struct vfs_file *fd, void *buf, size_t len,
+                                loff_t *ppos) {
+    uint64_t offset = ppos ? (uint64_t)*ppos : fd_get_offset(fd);
+    drm_prime_fd_ctx_t *ctx = drm_primefd_file_ctx(fd);
     if (!ctx || !buf || ctx->phys == 0 || offset >= ctx->size) {
         return 0;
     }
 
     uint64_t copy_len = MIN(len, ctx->size - offset);
     memcpy(buf, (void *)(uintptr_t)phys_to_virt(ctx->phys + offset), copy_len);
+    if (ppos)
+        *ppos += (loff_t)copy_len;
     return (ssize_t)copy_len;
 }
 
-static ssize_t drm_primefd_write(fd_t *fd, const void *buf, uint64_t offset,
-                                 uint64_t len) {
-    drm_prime_fd_ctx_t *ctx = fd->node->handle;
+static ssize_t drm_primefd_write(struct vfs_file *fd, const void *buf,
+                                 size_t len, loff_t *ppos) {
+    uint64_t offset = ppos ? (uint64_t)*ppos : fd_get_offset(fd);
+    drm_prime_fd_ctx_t *ctx = drm_primefd_file_ctx(fd);
     if (!ctx || !buf || ctx->phys == 0 || offset >= ctx->size) {
         return 0;
     }
 
     uint64_t copy_len = MIN(len, ctx->size - offset);
     memcpy((void *)(uintptr_t)phys_to_virt(ctx->phys + offset), buf, copy_len);
+    if (ppos)
+        *ppos += (loff_t)copy_len;
     return (ssize_t)copy_len;
 }
 
-static bool drm_primefd_close(vfs_node_t *node) {
-    drm_prime_fd_ctx_t *ctx = node ? node->handle : NULL;
-    if (!ctx) {
-        return true;
-    }
-
+static int drm_primefd_release(struct vfs_inode *inode, struct vfs_file *file) {
+    drm_prime_fd_ctx_t *ctx = drm_primefd_file_ctx(file);
+    (void)inode;
+    if (!ctx)
+        return 0;
     free(ctx);
-    return true;
-}
-
-static int drm_primefd_stat(vfs_node_t *node) {
-    drm_prime_fd_ctx_t *ctx = node ? node->handle : NULL;
-    if (!ctx) {
-        return -EINVAL;
-    }
-    node->size = ctx->size;
     return 0;
 }
 
-static int drm_primefd_resize(vfs_node_t *node, uint64_t size) {
-    drm_prime_fd_ctx_t *ctx = node ? node->handle : NULL;
+static int drm_primefd_resize(struct vfs_inode *node, uint64_t size) {
+    drm_prime_fd_ctx_t *ctx =
+        node ? (drm_prime_fd_ctx_t *)node->i_private : NULL;
     if (!ctx) {
         return -EINVAL;
     }
 
     ctx->size = MIN(size, ctx->size);
     if (ctx->node) {
-        ctx->node->size = ctx->size;
+        ctx->node->i_size = ctx->size;
     }
 
     return 0;
 }
 
-static int drm_primefs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
-    vfs_node_t *node = fd->node;
-    drm_prime_fd_ctx_t *ctx = node ? node->handle : NULL;
+static long drm_primefs_ioctl(struct vfs_file *fd, unsigned long cmd,
+                              unsigned long arg) {
+    drm_prime_fd_ctx_t *ctx = drm_primefd_file_ctx(fd);
     if (!ctx) {
         return -EBADF;
     }
@@ -290,59 +551,32 @@ static int drm_primefs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
     }
 }
 
-static void *drm_primefd_map(fd_t *file, void *addr, size_t offset, size_t size,
-                             size_t prot, size_t flags) {
+static void *drm_primefd_mmap(struct vfs_file *file, void *addr, size_t offset,
+                              size_t size, size_t prot, uint64_t flags) {
+    (void)file;
+    (void)addr;
+    (void)offset;
+    (void)size;
     (void)prot;
     (void)flags;
-
-    drm_prime_fd_ctx_t *ctx = file->node->handle;
-    if (!ctx || ctx->phys == 0 || offset >= ctx->size || size == 0) {
-        return (void *)-EINVAL;
-    }
-
-    size_t map_size = MIN(size, (size_t)(ctx->size - offset));
-    if (map_size == 0) {
-        return (void *)-EINVAL;
-    }
-
-    map_page_range((uint64_t *)phys_to_virt(current_task->mm->page_table_addr),
-                   (uint64_t)addr, ctx->phys + offset, map_size,
-                   PT_FLAG_R | PT_FLAG_W | PT_FLAG_U);
-
-    return addr;
+    return NULL;
 }
 
-static vfs_operations_t drm_primefs_callbacks = {
-    .close = drm_primefd_close,
+static const struct vfs_file_operations drmfdfs_dir_file_ops = {
+    .llseek = drmfdfs_llseek,
+    .open = drmfdfs_open,
+    .release = drmfdfs_release,
+};
+
+static const struct vfs_file_operations drmfdfs_prime_file_ops = {
+    .llseek = drmfdfs_llseek,
     .read = drm_primefd_read,
     .write = drm_primefd_write,
-    .map = drm_primefd_map,
-    .stat = drm_primefd_stat,
-    .resize = drm_primefd_resize,
-    .ioctl = drm_primefs_ioctl,
-    .free_handle = vfs_generic_free_handle,
+    .mmap = drm_primefd_mmap,
+    .unlocked_ioctl = drm_primefs_ioctl,
+    .open = drmfdfs_open,
+    .release = drm_primefd_release,
 };
-
-static fs_t drm_primefs = {
-    .name = "drmprimefs",
-    .magic = 0,
-    .ops = &drm_primefs_callbacks,
-    .flags = FS_FLAGS_HIDDEN | FS_FLAGS_VIRTUAL,
-};
-
-static int drm_primefd_ensure_registered(void) {
-    if (drm_prime_fsid > 0) {
-        return 0;
-    }
-
-    spin_lock(&drm_prime_fsid_lock);
-    if (drm_prime_fsid == 0) {
-        drm_prime_fsid = vfs_regist(&drm_primefs);
-    }
-    spin_unlock(&drm_prime_fsid_lock);
-
-    return drm_prime_fsid > 0 ? 0 : -ENOMEM;
-}
 
 typedef enum drm_syncfd_kind {
     DRM_SYNCFD_KIND_IMMEDIATE = 0,
@@ -375,11 +609,21 @@ struct drm_syncfd_ctx {
     } u;
 };
 
-static int drm_syncfdfs_id = 0;
-static spinlock_t drm_syncfdfs_id_lock = SPIN_INIT;
 static struct llist_header drm_syncfd_contexts;
 static spinlock_t drm_syncfd_contexts_lock = SPIN_INIT;
 static bool drm_syncfd_contexts_initialized = false;
+
+static drm_syncfd_ctx_t *drm_syncfd_file_ctx(struct vfs_file *file) {
+    if (!file)
+        return NULL;
+    if (file->private_data)
+        return (drm_syncfd_ctx_t *)file->private_data;
+    if (!file->f_inode || !file->f_inode->i_sb ||
+        file->f_inode->i_sb->s_type != &drmfdfs_fs_type) {
+        return NULL;
+    }
+    return (drm_syncfd_ctx_t *)file->f_inode->i_private;
+}
 
 static void drm_syncfd_ctx_get(drm_syncfd_ctx_t *ctx) {
     if (!ctx) {
@@ -476,9 +720,9 @@ static bool drm_syncfd_update_state(drm_syncfd_ctx_t *ctx) {
     return true;
 }
 
-static int drm_syncfdfs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
-    vfs_node_t *node = fd->node;
-    drm_syncfd_ctx_t *ctx = node ? node->handle : NULL;
+static long drm_syncfdfs_ioctl(struct vfs_file *fd, unsigned long cmd,
+                               unsigned long arg) {
+    drm_syncfd_ctx_t *ctx = drm_syncfd_file_ctx(fd);
     if (!ctx) {
         return -EBADF;
     }
@@ -550,9 +794,9 @@ static int drm_syncfdfs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
         drm_syncfd_ctx_t *other = NULL;
         with_fd_info_lock(current_task->fd_info, {
             fd_t *fd_obj = current_task->fd_info->fds[merge.fd2];
-            if (fd_obj && fd_obj->node &&
-                fd_obj->node->fsid == drm_syncfdfs_id) {
-                other = fd_obj->node->handle;
+            drm_syncfd_ctx_t *ctx2 = drm_syncfd_file_ctx(fd_obj);
+            if (ctx2) {
+                other = ctx2;
                 if (other) {
                     drm_syncfd_ctx_get(other);
                 }
@@ -600,8 +844,11 @@ static int drm_syncfdfs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
     }
 }
 
-static int drm_syncfdfs_poll(vfs_node_t *node, size_t events) {
-    drm_syncfd_ctx_t *ctx = node ? node->handle : NULL;
+static __poll_t drm_syncfdfs_poll(struct vfs_file *file,
+                                  struct vfs_poll_table *pt) {
+    drm_syncfd_ctx_t *ctx = drm_syncfd_file_ctx(file);
+    size_t events = EPOLLIN | EPOLLOUT | EPOLLPRI | EPOLLRDHUP;
+    (void)pt;
     if (!ctx) {
         return EPOLLNVAL;
     }
@@ -616,15 +863,12 @@ static int drm_syncfdfs_poll(vfs_node_t *node, size_t events) {
     return revents;
 }
 
-static bool drm_syncfdfs_close(vfs_node_t *node) {
-    (void)node;
-    return true;
-}
-
-static void drm_syncfdfs_free_handle(vfs_node_t *node) {
-    drm_syncfd_ctx_t *ctx = node ? node->handle : NULL;
+static int drm_syncfdfs_release(struct vfs_inode *inode,
+                                struct vfs_file *file) {
+    drm_syncfd_ctx_t *ctx = drm_syncfd_file_ctx(file);
+    (void)inode;
     if (!ctx) {
-        return;
+        return 0;
     }
 
     spin_lock(&drm_syncfd_contexts_lock);
@@ -634,103 +878,55 @@ static void drm_syncfdfs_free_handle(vfs_node_t *node) {
     spin_unlock(&drm_syncfd_contexts_lock);
 
     drm_syncfd_ctx_put(ctx);
-    node->handle = NULL;
-}
-
-static vfs_operations_t drm_syncfdfs_callbacks = {
-    .close = drm_syncfdfs_close,
-    .ioctl = drm_syncfdfs_ioctl,
-    .poll = drm_syncfdfs_poll,
-    .free_handle = drm_syncfdfs_free_handle,
-};
-
-static fs_t drm_syncfdfs = {
-    .name = "drmsyncfs",
-    .magic = 0,
-    .ops = &drm_syncfdfs_callbacks,
-    .flags = FS_FLAGS_HIDDEN | FS_FLAGS_VIRTUAL,
-};
-
-static int drm_syncfd_ensure_registered(void) {
-    if (drm_syncfdfs_id > 0) {
-        return 0;
-    }
-
-    spin_lock(&drm_syncfdfs_id_lock);
     if (!drm_syncfd_contexts_initialized) {
         llist_init_head(&drm_syncfd_contexts);
         drm_syncfd_contexts_initialized = true;
     }
-    if (drm_syncfdfs_id == 0) {
-        drm_syncfdfs_id = vfs_regist(&drm_syncfdfs);
-    }
-    spin_unlock(&drm_syncfdfs_id_lock);
-
-    return drm_syncfdfs_id > 0 ? 0 : -ENOMEM;
+    return 0;
 }
 
+static const struct vfs_file_operations drmfdfs_sync_file_ops = {
+    .llseek = drmfdfs_llseek,
+    .unlocked_ioctl = drm_syncfdfs_ioctl,
+    .poll = drm_syncfdfs_poll,
+    .open = drmfdfs_open,
+    .release = drm_syncfdfs_release,
+};
+
 static ssize_t drm_syncfd_create_fd(drm_syncfd_ctx_t *ctx, uint32_t flags) {
-    int ret = drm_syncfd_ensure_registered();
-    if (ret) {
-        return ret;
-    }
     if (!ctx) {
         return -EINVAL;
     }
 
-    int fd = -1;
-    with_fd_info_lock(current_task->fd_info, {
-        for (int i = 0; i < MAX_FD_NUM; i++) {
-            if (!current_task->fd_info->fds[i]) {
-                fd = i;
-                break;
-            }
-        }
-    });
-    if (fd < 0) {
-        return -EMFILE;
-    }
-
-    vfs_node_t *node = vfs_node_alloc(NULL, NULL);
-    if (!node) {
-        return -ENOMEM;
-    }
-
-    node->type = file_stream;
-    node->fsid = drm_syncfdfs_id;
-    node->handle = ctx;
-    node->refcount++;
-    ctx->node = node;
-    drm_syncfd_ctx_get(ctx);
-
     spin_lock(&drm_syncfd_contexts_lock);
+    if (!drm_syncfd_contexts_initialized) {
+        llist_init_head(&drm_syncfd_contexts);
+        drm_syncfd_contexts_initialized = true;
+    }
     if (llist_empty(&ctx->link)) {
         llist_append(&drm_syncfd_contexts, &ctx->link);
     }
     spin_unlock(&drm_syncfd_contexts_lock);
 
-    fd_t *fd_obj = fd_create(node, O_RDWR, !!(flags & DRM_CLOEXEC));
-    if (!fd_obj) {
-        return -ENOMEM;
+    drm_syncfd_ctx_get(ctx);
+    struct vfs_file *file = NULL;
+    struct vfs_inode *inode = NULL;
+    int ret = drmfdfs_create_file("drmsync", &drmfdfs_sync_file_ops, ctx,
+                                  S_IFCHR | 0600, O_RDWR, &file, &inode);
+    if (ret < 0) {
+        drm_syncfd_ctx_put(ctx);
+        return ret;
     }
+    ctx->node = inode;
 
-    bool installed = false;
-    with_fd_info_lock(current_task->fd_info, {
-        if (!current_task->fd_info->fds[fd]) {
-            current_task->fd_info->fds[fd] = fd_obj;
-            on_open_file_call(current_task, fd);
-            installed = true;
-        }
-    });
-
-    if (!installed) {
-        fd_destroy(fd_obj);
-        vfs_close(node);
-        return -EMFILE;
-    }
+    ret = task_install_file(current_task, file,
+                            (flags & DRM_CLOEXEC) ? FD_CLOEXEC : 0, 0);
+    vfs_file_put(file);
+    if (ret < 0)
+        return ret;
 
     drm_syncfd_update_state(ctx);
-    return fd;
+    return ret;
 }
 
 static drm_syncfd_ctx_t *drm_syncfd_create_immediate_ctx(const char *name,
@@ -787,8 +983,9 @@ static drm_syncfd_ctx_t *drm_syncfd_ctx_from_fd(int fd) {
     }
     with_fd_info_lock(current_task->fd_info, {
         fd_t *fd_obj = current_task->fd_info->fds[fd];
-        if (fd_obj && fd_obj->node && fd_obj->node->fsid == drm_syncfdfs_id) {
-            ctx = fd_obj->node->handle;
+        drm_syncfd_ctx_t *sync_ctx = drm_syncfd_file_ctx(fd_obj);
+        if (sync_ctx) {
+            ctx = sync_ctx;
             if (ctx) {
                 drm_syncfd_ctx_get(ctx);
             }
@@ -808,25 +1005,6 @@ static void drm_syncfd_notify_all(void) {
 
 ssize_t drm_primefd_create(drm_device_t *dev, uint32_t handle, uint64_t phys,
                            uint64_t size, uint32_t flags) {
-    int ret = drm_primefd_ensure_registered();
-    if (ret) {
-        return ret;
-    }
-
-    int fd = -1;
-    with_fd_info_lock(current_task->fd_info, {
-        for (int i = 0; i < MAX_FD_NUM; i++) {
-            if (!current_task->fd_info->fds[i]) {
-                fd = i;
-                break;
-            }
-        }
-    });
-
-    if (fd < 0) {
-        return -EMFILE;
-    }
-
     drm_prime_fd_ctx_t *ctx = malloc(sizeof(*ctx));
     if (!ctx) {
         return -ENOMEM;
@@ -837,40 +1015,22 @@ ssize_t drm_primefd_create(drm_device_t *dev, uint32_t handle, uint64_t phys,
     ctx->phys = phys;
     ctx->size = size;
 
-    vfs_node_t *node = vfs_node_alloc(NULL, NULL);
-    if (!node) {
+    struct vfs_file *file = NULL;
+    struct vfs_inode *inode = NULL;
+    int ret = drmfdfs_create_file("drmprime", &drmfdfs_prime_file_ops, ctx,
+                                  S_IFREG | 0600, O_RDWR, &file, &inode);
+    if (ret < 0) {
         free(ctx);
-        return -ENOMEM;
+        return ret;
     }
 
-    node->type = file_none;
-    node->fsid = drm_prime_fsid;
-    node->handle = ctx;
-    node->refcount++;
-    node->size = size;
-    ctx->node = node;
+    inode->i_size = size;
+    ctx->node = inode;
 
-    fd_t *fd_obj = fd_create(node, O_RDWR, !!(flags & DRM_CLOEXEC));
-    if (!fd_obj) {
-        return -ENOMEM;
-    }
-
-    with_fd_info_lock(current_task->fd_info, {
-        if (!current_task->fd_info->fds[fd]) {
-            current_task->fd_info->fds[fd] = fd_obj;
-            on_open_file_call(current_task, fd);
-        } else {
-            fd_release(fd_obj);
-            fd_obj = NULL;
-        }
-    });
-
-    if (!fd_obj) {
-        vfs_close(node);
-        return -EMFILE;
-    }
-
-    return fd;
+    ret = task_install_file(current_task, file,
+                            (flags & DRM_CLOEXEC) ? FD_CLOEXEC : 0, 0);
+    vfs_file_put(file);
+    return ret;
 }
 
 static ssize_t drm_prime_get_handle_phys(drm_device_t *dev, uint32_t handle,
@@ -921,7 +1081,7 @@ typedef struct drm_syncobj_entry {
     uint64_t owner_pid;
     uint32_t handle;
     uint64_t point; // 0 = unsignaled, >0 = signaled/timeline point
-    vfs_node_t *eventfd_node;
+    struct vfs_file *eventfd_file;
 } drm_syncobj_entry_t;
 
 static drm_syncobj_entry_t drm_syncobjs[DRM_MAX_SYNCOBJS];
@@ -948,9 +1108,8 @@ static void drm_syncobj_prune_locked(void) {
             continue;
         }
 
-        if (drm_syncobjs[i].eventfd_node) {
-            vfs_close(drm_syncobjs[i].eventfd_node);
-        }
+        if (drm_syncobjs[i].eventfd_file)
+            vfs_file_put(drm_syncobjs[i].eventfd_file);
         memset(&drm_syncobjs[i], 0, sizeof(drm_syncobjs[i]));
     }
 }
@@ -1067,7 +1226,7 @@ static ssize_t drm_syncobj_create(drm_device_t *dev,
         .owner_pid = owner_pid,
         .handle = handle,
         .point = (create->flags & DRM_SYNCOBJ_CREATE_SIGNALED) ? 1 : 0,
-        .eventfd_node = NULL,
+        .eventfd_file = NULL,
     };
 
     create->handle = handle;
@@ -1090,9 +1249,8 @@ static ssize_t drm_syncobj_destroy(drm_device_t *dev,
         return -ENOENT;
     }
 
-    if (entry->eventfd_node) {
-        vfs_close(entry->eventfd_node);
-    }
+    if (entry->eventfd_file)
+        vfs_file_put(entry->eventfd_file);
     memset(entry, 0, sizeof(*entry));
     spin_unlock(&drm_syncobjs_lock);
     return 0;
@@ -1162,15 +1320,14 @@ static ssize_t drm_syncobj_fd_to_handle(drm_device_t *dev,
     uint64_t imported_point = 1;
     with_fd_info_lock(current_task->fd_info, {
         fd_t *fd_obj = current_task->fd_info->fds[h->fd];
-        if (fd_obj && fd_obj->node && fd_obj->node->fsid == eventfdfs_id) {
-            eventfd_t *efd = (eventfd_t *)fd_obj->node->handle;
+        if (eventfd_is_file(fd_obj)) {
+            eventfd_t *efd = eventfd_file_handle(fd_obj);
             if (efd) {
                 imported_point =
                     __atomic_load_n(&efd->count, __ATOMIC_ACQUIRE) ? 1 : 0;
             }
-        } else if (fd_obj && fd_obj->node &&
-                   fd_obj->node->fsid == drm_syncfdfs_id) {
-            drm_syncfd_ctx_t *ctx = fd_obj->node->handle;
+        } else {
+            drm_syncfd_ctx_t *ctx = drm_syncfd_file_ctx(fd_obj);
             if (ctx) {
                 imported_point = drm_syncfd_is_signaled(ctx) ? 1 : 0;
             }
@@ -1381,9 +1538,9 @@ static ssize_t drm_syncobj_reset_or_signal(drm_device_t *dev,
         uint64_t old_point = entry->point;
         entry->point = signal ? (old_point ? old_point : 1) : 0;
 
-        if (signal && entry->eventfd_node && entry->point != old_point) {
+        if (signal && entry->eventfd_file && entry->point != old_point) {
             uint64_t one = 1;
-            vfs_write(entry->eventfd_node, &one, 0, sizeof(one));
+            vfs_write_file(entry->eventfd_file, &one, sizeof(one), NULL);
         }
     }
     spin_unlock(&drm_syncobjs_lock);
@@ -1445,9 +1602,9 @@ drm_syncobj_timeline_signal(drm_device_t *dev,
             entry->point = points[i];
         }
 
-        if (entry->eventfd_node && entry->point != old_point) {
+        if (entry->eventfd_file && entry->point != old_point) {
             uint64_t one = 1;
-            vfs_write(entry->eventfd_node, &one, 0, sizeof(one));
+            vfs_write_file(entry->eventfd_file, &one, sizeof(one), NULL);
         }
     }
     spin_unlock(&drm_syncobjs_lock);
@@ -1545,9 +1702,9 @@ static ssize_t drm_syncobj_transfer(drm_device_t *dev,
             dst->point = dst_point;
         }
 
-        if (dst->eventfd_node && dst->point != old_point) {
+        if (dst->eventfd_file && dst->point != old_point) {
             uint64_t one = 1;
-            vfs_write(dst->eventfd_node, &one, 0, sizeof(one));
+            vfs_write_file(dst->eventfd_file, &one, sizeof(one), NULL);
         }
     }
 
@@ -1566,7 +1723,7 @@ static ssize_t drm_syncobj_eventfd_ioctl(drm_device_t *dev,
     }
 
     uint64_t owner_pid = drm_syncobj_owner_pid();
-    vfs_node_t *new_node = NULL;
+    struct vfs_file *new_node = NULL;
 
     if (e->fd >= 0) {
         if (e->fd >= MAX_FD_NUM) {
@@ -1575,10 +1732,8 @@ static ssize_t drm_syncobj_eventfd_ioctl(drm_device_t *dev,
 
         with_fd_info_lock(current_task->fd_info, {
             fd_t *fd_obj = current_task->fd_info->fds[e->fd];
-            if (fd_obj && fd_obj->node && fd_obj->node->fsid == eventfdfs_id) {
-                new_node = fd_obj->node;
-                new_node->refcount++;
-            }
+            if (eventfd_is_file(fd_obj))
+                new_node = vfs_file_get(fd_obj);
         });
 
         if (!new_node) {
@@ -1592,19 +1747,18 @@ static ssize_t drm_syncobj_eventfd_ioctl(drm_device_t *dev,
     if (!entry) {
         spin_unlock(&drm_syncobjs_lock);
         if (new_node) {
-            vfs_close(new_node);
+            vfs_file_put(new_node);
         }
         return -ENOENT;
     }
 
-    if (entry->eventfd_node) {
-        vfs_close(entry->eventfd_node);
-    }
-    entry->eventfd_node = new_node;
+    if (entry->eventfd_file)
+        vfs_file_put(entry->eventfd_file);
+    entry->eventfd_file = new_node;
 
-    if (entry->eventfd_node && entry->point > 0) {
+    if (entry->eventfd_file && entry->point > 0) {
         uint64_t one = 1;
-        vfs_write(entry->eventfd_node, &one, 0, sizeof(one));
+        vfs_write_file(entry->eventfd_file, &one, sizeof(one), NULL);
     }
 
     spin_unlock(&drm_syncobjs_lock);
@@ -1635,14 +1789,6 @@ static ssize_t drm_prime_store_export(drm_device_t *dev, uint64_t inode,
     spin_lock(&drm_prime_exports_lock);
     for (int i = 0; i < DRM_MAX_PRIME_EXPORTS; i++) {
         if (drm_prime_exports[i].used) {
-            if (!vfs_find_node_by_inode(drm_prime_exports[i].inode)) {
-                memset(&drm_prime_exports[i], 0, sizeof(drm_prime_exports[i]));
-                if (free_slot < 0) {
-                    free_slot = i;
-                }
-                continue;
-            }
-
             if (drm_prime_exports[i].dev == dev &&
                 drm_prime_exports[i].inode == inode) {
                 drm_prime_exports[i].handle = handle;
@@ -2218,11 +2364,10 @@ ssize_t drm_ioctl_prime_fd_to_handle(drm_device_t *dev, void *arg, fd_t *fd) {
     int direct_ret = -EBADF;
     with_fd_info_lock(current_task->fd_info, {
         fd_t *fd_obj = current_task->fd_info->fds[prime->fd];
-        if (!fd_obj || !fd_obj->node || fd_obj->node->fsid != drm_prime_fsid ||
-            !fd_obj->node->handle) {
+        drm_prime_fd_ctx_t *ctx = drm_primefd_file_ctx(fd_obj);
+        if (!ctx) {
             direct_ret = -EBADF;
         } else {
-            drm_prime_fd_ctx_t *ctx = fd_obj->node->handle;
             if (ctx->dev != dev || ctx->handle == 0) {
                 direct_ret = -EBADF;
             } else {

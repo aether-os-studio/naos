@@ -102,7 +102,7 @@ void on_open_file_call(task_t *task, int fd) {
         ptr = ptr->next;
     }
 }
-void on_close_file_call(task_t *task, int fd, fd_t *file) {
+void on_close_file_call(task_t *task, int fd, struct vfs_file *file) {
     callback_t *ptr = callbacks_on_close_file_head;
     while (ptr) {
         on_close_file_t fn = ptr->fn;

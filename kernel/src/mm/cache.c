@@ -194,22 +194,12 @@ static void cache_invalidate_exact(cache_kind_t kind, uint64_t key0,
         cache_entry_destroy(to_free);
 }
 
-static const vfs_operations_t *cache_vfs_ops_of(vfs_node_t *node) {
-    if (!node)
-        return NULL;
-    fs_t *fs = all_fs[node->fsid];
-    if (!fs)
-        return NULL;
-    return fs->ops;
-}
-
 static int cache_writeback_entry(cache_entry_t *entry) {
     if (!entry || entry->kind != CACHE_KIND_PAGE)
         return -EINVAL;
 
     vfs_node_t *node = (vfs_node_t *)(uintptr_t)entry->key0;
-    const vfs_operations_t *ops = cache_vfs_ops_of(node);
-    if (!node || !ops || !ops->write)
+    if (!node || !node->i_fop || !node->i_fop->write)
         return -EINVAL;
 
     uint64_t page_base = entry->key1 * PAGE_SIZE;
@@ -236,20 +226,17 @@ static int cache_writeback_entry(cache_entry_t *entry) {
 
     if (write_len != 0) {
         size_t written = 0;
-        fd_shared_t shared = {
-            .offset = page_base,
-            .flags = O_WRONLY,
-            .ref_count = 1,
-        };
         fd_t fd = {
+            .f_op = node->i_fop,
+            .f_inode = node,
             .node = node,
-            .shared = &shared,
-            .close_on_exec = false,
+            .f_flags = O_WRONLY,
         };
+        loff_t pos = (loff_t)page_base;
 
         while (written < write_len) {
-            ssize_t ret = ops->write(&fd, (uint8_t *)bounce + written,
-                                     page_base + written, write_len - written);
+            ssize_t ret = vfs_write_file(&fd, (uint8_t *)bounce + written,
+                                         write_len - written, &pos);
             if (ret <= 0) {
                 spin_lock(&cache_lock);
                 entry->writeback = false;
@@ -261,7 +248,11 @@ static int cache_writeback_entry(cache_entry_t *entry) {
         }
     }
 
-    int sync_ret = vfs_fsync(node);
+    int sync_ret = vfs_fsync_file(&(fd_t){
+        .f_op = node->i_fop,
+        .f_inode = node,
+        .node = node,
+    });
 
     spin_lock(&cache_lock);
     if (sync_ret < 0) {
@@ -304,14 +295,6 @@ cache_entry_t *cache_block_try_get(uint64_t drive, uint64_t page_index) {
 cache_entry_t *cache_block_get_or_create(uint64_t drive, uint64_t page_index,
                                          bool *created) {
     return cache_get_common(CACHE_KIND_BLOCK, drive, page_index, true, created);
-}
-
-cache_entry_t *cache_page_get_or_create(vfs_node_t *node, uint64_t page_index,
-                                        bool *created) {
-    if (!node)
-        return NULL;
-    return cache_get_common(CACHE_KIND_PAGE, (uint64_t)(uintptr_t)node,
-                            page_index, true, created);
 }
 
 void *cache_entry_data(cache_entry_t *entry) {
@@ -402,46 +385,6 @@ void cache_block_drop_drive(uint64_t drive) {
     }
 }
 
-void cache_page_invalidate_range(vfs_node_t *node, uint64_t start_offset,
-                                 uint64_t len) {
-    if (!node)
-        return;
-    cache_invalidate_range(CACHE_KIND_PAGE, (uint64_t)(uintptr_t)node,
-                           start_offset, len);
-}
-
-void cache_page_drop_node(vfs_node_t *node) {
-    if (!node)
-        return;
-
-    while (true) {
-        cache_entry_t *target = NULL;
-        bool found = false;
-
-        spin_lock(&cache_lock);
-
-        struct llist_header *pos;
-        for (pos = cache_lru.next; pos != &cache_lru; pos = pos->next) {
-            cache_entry_t *entry = container_of(pos, cache_entry_t, lru_node);
-            if (!entry->detached && entry->kind == CACHE_KIND_PAGE &&
-                entry->key0 == (uint64_t)(uintptr_t)node) {
-                cache_detach_locked(entry);
-                if (entry->refs == 0 && !entry->loading)
-                    target = entry;
-                found = true;
-                break;
-            }
-        }
-
-        spin_unlock(&cache_lock);
-
-        if (target)
-            cache_entry_destroy(target);
-        if (!found)
-            break;
-    }
-}
-
 static bool cache_buffer_is_userspace(const void *buf, size_t len) {
     return buf && !check_user_overflow((uint64_t)buf, len);
 }
@@ -468,192 +411,6 @@ static bool cache_copy_from_source(void *dst, const void *src, size_t len,
 
     memcpy(dst, src, len);
     return true;
-}
-
-ssize_t cache_page_read(vfs_node_t *node, fd_t *fd, const vfs_operations_t *ops,
-                        void *addr, size_t offset, size_t size) {
-    if (!node || !fd || !ops || !ops->read)
-        return -EINVAL;
-    if (size == 0)
-        return 0;
-    if (offset >= node->size)
-        return 0;
-
-    size_t total = MIN(size, (size_t)(node->size - offset));
-    size_t done = 0;
-    bool dst_is_userspace = cache_buffer_is_userspace(addr, total);
-
-    while (done < total) {
-        uint64_t pos = offset + done;
-        uint64_t page_index = pos / PAGE_SIZE;
-        size_t page_off = (size_t)(pos % PAGE_SIZE);
-        size_t chunk = MIN((size_t)PAGE_SIZE - page_off, total - done);
-        bool created = false;
-        cache_entry_t *entry =
-            cache_page_get_or_create(node, page_index, &created);
-        if (!entry)
-            return done ? (ssize_t)done : -ENOMEM;
-
-        if (created) {
-            uint64_t page_base = page_index * PAGE_SIZE;
-            size_t want = 0;
-            size_t loaded = 0;
-            ssize_t ret = 0;
-
-            memset(cache_entry_data(entry), 0, PAGE_SIZE);
-            if (page_base < node->size)
-                want = MIN((size_t)PAGE_SIZE, (size_t)(node->size - page_base));
-
-            while (loaded < want) {
-                ret = ops->read(fd, (uint8_t *)cache_entry_data(entry) + loaded,
-                                page_base + loaded, want - loaded);
-                if (ret < 0) {
-                    cache_entry_abort_fill(entry);
-                    cache_entry_put(entry);
-                    return done ? (ssize_t)done : ret;
-                }
-                if (ret == 0)
-                    break;
-                loaded += (size_t)ret;
-            }
-
-            cache_entry_mark_ready(entry, loaded);
-        }
-
-        if (!cache_copy_to_target((uint8_t *)addr + done,
-                                  (uint8_t *)cache_entry_data(entry) + page_off,
-                                  chunk, dst_is_userspace)) {
-            cache_entry_put(entry);
-            return done ? (ssize_t)done : -EFAULT;
-        }
-
-        done += chunk;
-        cache_entry_put(entry);
-    }
-
-    return (ssize_t)done;
-}
-
-ssize_t cache_page_write(vfs_node_t *node, fd_t *fd,
-                         const vfs_operations_t *ops, const void *addr,
-                         size_t offset, size_t size) {
-    if (!node || !fd || !ops || !ops->write || !ops->read)
-        return -EINVAL;
-    if (size == 0)
-        return 0;
-
-    size_t done = 0;
-    bool src_is_userspace = cache_buffer_is_userspace(addr, size);
-    uint8_t *bounce = malloc(PAGE_SIZE);
-    if (!bounce)
-        return -ENOMEM;
-
-    while (done < size) {
-        uint64_t pos = offset + done;
-        uint64_t page_index = pos / PAGE_SIZE;
-        uint64_t page_base = page_index * PAGE_SIZE;
-        size_t page_off = (size_t)(pos % PAGE_SIZE);
-        size_t chunk = MIN((size_t)PAGE_SIZE - page_off, size - done);
-        bool created = false;
-        cache_entry_t *entry =
-            cache_page_get_or_create(node, page_index, &created);
-        if (!entry) {
-            free(bounce);
-            return done ? (ssize_t)done : -ENOMEM;
-        }
-
-        if (created) {
-            size_t want = 0;
-            size_t loaded = 0;
-            ssize_t ret = 0;
-            bool need_read = !(page_off == 0 && chunk == PAGE_SIZE);
-
-            memset(cache_entry_data(entry), 0, PAGE_SIZE);
-            if (page_base < node->size)
-                want = MIN((size_t)PAGE_SIZE, (size_t)(node->size - page_base));
-
-            if (need_read && want > 0) {
-                while (loaded < want) {
-                    ret = ops->read(fd,
-                                    (uint8_t *)cache_entry_data(entry) + loaded,
-                                    page_base + loaded, want - loaded);
-                    if (ret < 0) {
-                        cache_entry_abort_fill(entry);
-                        cache_entry_put(entry);
-                        free(bounce);
-                        return done ? (ssize_t)done : ret;
-                    }
-                    if (ret == 0)
-                        break;
-                    loaded += (size_t)ret;
-                }
-            } else {
-                loaded = want;
-            }
-
-            cache_entry_mark_ready(entry, loaded);
-        }
-
-        if (!cache_copy_from_source(bounce, (const uint8_t *)addr + done, chunk,
-                                    src_is_userspace)) {
-            cache_entry_put(entry);
-            free(bounce);
-            return done ? (ssize_t)done : -EFAULT;
-        }
-
-        spin_lock(&cache_lock);
-        memcpy((uint8_t *)cache_entry_data(entry) + page_off, bounce, chunk);
-        entry->valid_bytes = MAX(entry->valid_bytes, page_off + chunk);
-        entry->dirty = true;
-        entry->dirty_seq++;
-        if (!entry->detached)
-            cache_touch_locked(entry);
-        spin_unlock(&cache_lock);
-
-        node->size = MAX(node->size, pos + chunk);
-        done += chunk;
-        cache_entry_put(entry);
-    }
-
-    free(bounce);
-    return (ssize_t)done;
-}
-
-int cache_page_writeback_node(vfs_node_t *node) {
-    if (!node)
-        return -EINVAL;
-
-    while (true) {
-        cache_entry_t *target = NULL;
-
-        spin_lock(&cache_lock);
-
-        struct llist_header *pos;
-        for (pos = cache_lru.next; pos != &cache_lru; pos = pos->next) {
-            cache_entry_t *entry = container_of(pos, cache_entry_t, lru_node);
-            if (entry->detached || entry->kind != CACHE_KIND_PAGE ||
-                entry->key0 != (uint64_t)(uintptr_t)node || !entry->dirty ||
-                entry->writeback) {
-                continue;
-            }
-
-            entry->refs++;
-            target = entry;
-            break;
-        }
-
-        spin_unlock(&cache_lock);
-
-        if (!target)
-            break;
-
-        int ret = cache_writeback_entry(target);
-        cache_entry_put(target);
-        if (ret < 0)
-            return ret;
-    }
-
-    return 0;
 }
 
 void cache_get_stats(cache_stats_t *stats) {

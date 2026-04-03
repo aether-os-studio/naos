@@ -38,6 +38,92 @@ struct llist_header worker_tick_queues[MAX_WORKER_NUM];
 spinlock_t worker_tick_locks[MAX_WORKER_NUM];
 uint32_t worker_slot_by_cpu[MAX_CPU_NUM];
 
+struct vfs_process_fs *task_current_vfs_fs(void) {
+    return current_task ? task_vfs_fs(current_task) : NULL;
+}
+
+struct vfs_file *task_get_file(task_t *task, int fd) {
+    struct vfs_file *file = NULL;
+
+    if (!task || !task->fd_info || fd < 0 || fd >= MAX_FD_NUM)
+        return NULL;
+
+    with_fd_info_lock(task->fd_info, {
+        if (task->fd_info->fds[fd]) {
+            file = vfs_file_get(task->fd_info->fds[fd]);
+        }
+    });
+
+    return file;
+}
+
+int task_install_file(task_t *task, struct vfs_file *file,
+                      unsigned int fd_flags, int min_fd) {
+    int newfd = -EMFILE;
+
+    if (!task || !task->fd_info || !file)
+        return -EINVAL;
+    if (min_fd < 0)
+        min_fd = 0;
+
+    with_fd_info_lock(task->fd_info, {
+        for (int i = min_fd; i < MAX_FD_NUM; ++i) {
+            if (task->fd_info->fds[i])
+                continue;
+            task->fd_info->fds[i] = vfs_file_get(file);
+            task->fd_info->fd_flags[i] = fd_flags;
+            newfd = i;
+            break;
+        }
+    });
+
+    if (newfd >= 0)
+        on_open_file_call(task, newfd);
+    return newfd;
+}
+
+int task_replace_file(task_t *task, int fd, struct vfs_file *file,
+                      unsigned int fd_flags) {
+    struct vfs_file *old = NULL;
+
+    if (!task || !task->fd_info || !file || fd < 0 || fd >= MAX_FD_NUM)
+        return -EINVAL;
+
+    with_fd_info_lock(task->fd_info, {
+        old = task->fd_info->fds[fd];
+        task->fd_info->fds[fd] = vfs_file_get(file);
+        task->fd_info->fd_flags[fd] = fd_flags;
+    });
+
+    if (old) {
+        on_close_file_call(task, fd, old);
+        vfs_close_file(old);
+    } else {
+        on_open_file_call(task, fd);
+    }
+
+    return fd;
+}
+
+int task_close_file_descriptor(task_t *task, int fd) {
+    struct vfs_file *file = NULL;
+
+    if (!task || !task->fd_info || fd < 0 || fd >= MAX_FD_NUM)
+        return -EBADF;
+
+    with_fd_info_lock(task->fd_info, {
+        file = task->fd_info->fds[fd];
+        task->fd_info->fds[fd] = NULL;
+        task->fd_info->fd_flags[fd] = 0;
+    });
+
+    if (!file)
+        return -EBADF;
+
+    on_close_file_call(task, fd, file);
+    return vfs_close_file(file);
+}
+
 static void sched_update_itimer_task(task_t *task, uint64_t now_ms);
 static void task_reap_softirq(void);
 
@@ -834,7 +920,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
 
     task->signal->signal = 0;
     task->status = 0;
-    task->fs = task_fs_create(rootdir, rootdir);
+    task->fs = task_fs_create(&vfs_root_path, &vfs_root_path);
     if (!task->fs) {
         goto fail;
     }
@@ -846,18 +932,26 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     if (!task->fd_info)
         goto fail;
     mutex_init(&task->fd_info->fdt_lock);
-    vfs_node_t *stdin_node = vfs_open("/dev/console", 0);
-    vfs_node_t *stdout_node = vfs_open("/dev/console", 0);
-    vfs_node_t *stderr_node = vfs_open("/dev/console", 0);
-    task->fd_info->fds[0] = fd_create(stdin_node, O_RDONLY, false);
-    task->fd_info->fds[1] = fd_create(stdout_node, O_WRONLY, false);
-    task->fd_info->fds[2] = fd_create(stderr_node, O_WRONLY, false);
-    if (stdin_node)
-        vfs_node_ref_get(stdin_node);
-    if (stdout_node)
-        vfs_node_ref_get(stdout_node);
-    if (stderr_node)
-        vfs_node_ref_get(stderr_node);
+    {
+        struct vfs_open_how in_how = {.flags = O_RDONLY};
+        struct vfs_open_how out_how = {.flags = O_WRONLY};
+        struct vfs_file *stdin_file = NULL;
+        struct vfs_file *stdout_file = NULL;
+        struct vfs_file *stderr_file = NULL;
+
+        if (vfs_openat(AT_FDCWD, "/dev/console", &in_how, &stdin_file) == 0)
+            task_replace_file(task, 0, stdin_file, 0);
+        if (vfs_openat(AT_FDCWD, "/dev/console", &out_how, &stdout_file) == 0)
+            task_replace_file(task, 1, stdout_file, 0);
+        if (vfs_openat(AT_FDCWD, "/dev/console", &out_how, &stderr_file) == 0)
+            task_replace_file(task, 2, stderr_file, 0);
+        if (stdin_file)
+            vfs_file_put(stdin_file);
+        if (stdout_file)
+            vfs_file_put(stdout_file);
+        if (stderr_file)
+            vfs_file_put(stderr_file);
+    }
     task->fd_info->ref_count++;
     strncpy(task->name, name, TASK_NAME_MAX);
     task->shm_ids = NULL;
@@ -1126,10 +1220,11 @@ void task_cleanup_fd_info(task_t *task) {
             with_fd_info_lock(task->fd_info, {
                 for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
                     if (task->fd_info->fds[i]) {
-                        fd_t *entry = task->fd_info->fds[i];
+                        struct vfs_file *entry = task->fd_info->fds[i];
                         task->fd_info->fds[i] = NULL;
+                        task->fd_info->fd_flags[i] = 0;
                         on_close_file_call(task, i, entry);
-                        fd_release(entry);
+                        vfs_close_file(entry);
                     }
                 }
             });
@@ -1159,7 +1254,8 @@ void task_exit_inner(task_t *task, int64_t code) {
     task_timeout_cancel(task);
     task_tick_work_cancel(task);
 
-    vfs_close(task->exec_node);
+    if (task->exec_file)
+        vfs_close_file(task->exec_file);
 
     task_cleanup_fd_info(task);
     task_fs_put(task->fs);
@@ -1275,7 +1371,7 @@ uint64_t task_exit(int64_t code) {
                 continue;
             }
 
-            task->procfs_thread_node = NULL;
+            task->procfs_thread_path = NULL;
             task_send_signal(task, SIGKILL, SI_USER);
         }
     }

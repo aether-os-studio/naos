@@ -1,5 +1,39 @@
 #include <fs/initramfs.h>
 #include <boot/boot.h>
+#include <drivers/kernel_logger.h>
+#include <mm/mm.h>
+
+static char *initramfs_make_abspath(const char *name) {
+    size_t len;
+    char *path;
+
+    if (!name)
+        return NULL;
+    if (name[0] == '/')
+        return strdup(name);
+
+    len = strlen(name);
+    path = malloc(len + 2);
+    if (!path)
+        return NULL;
+    path[0] = '/';
+    memcpy(path + 1, name, len + 1);
+    return path;
+}
+
+static int initramfs_set_mode(const char *path, uint32_t mode) {
+    struct vfs_path lookup = {0};
+    int ret = vfs_filename_lookup(AT_FDCWD, path, LOOKUP_FOLLOW, &lookup);
+    if (ret < 0)
+        return ret;
+
+    if (lookup.dentry && lookup.dentry->d_inode) {
+        umode_t type = lookup.dentry->d_inode->i_mode & S_IFMT;
+        lookup.dentry->d_inode->i_mode = type | (mode & 0777);
+    }
+    vfs_path_put(&lookup);
+    return 0;
+}
 
 uint32_t parse_hex(const char *c, int n) {
     uint32_t v = 0;
@@ -20,6 +54,7 @@ uint32_t parse_hex(const char *c, int n) {
 }
 
 void initramfs_init() {
+    struct vfs_mount *root_mnt = NULL;
     boot_module_t *boot_modules[MAX_MODULES_NUM];
     size_t modules_count = 0;
     boot_get_modules(boot_modules, &modules_count);
@@ -36,10 +71,15 @@ void initramfs_init() {
     if (!initramfs_module)
         return;
 
-    int ret = vfs_mount((TMPFS_DEV_MAJOR << 8) | 0, rootdir, "tmpfs");
+    int ret = vfs_kern_mount("tmpfs", 0, NULL, NULL, &root_mnt);
     if (ret < 0) {
         printk("Failed mount tmpfs as init root\n");
         return;
+    }
+    if (!vfs_root_path.mnt) {
+        vfs_root_path.mnt = vfs_mntget(root_mnt);
+        vfs_root_path.dentry = vfs_dget(root_mnt->mnt_root);
+        vfs_init_mnt_ns.root = vfs_mntget(root_mnt);
     }
 
     struct header {
@@ -84,30 +124,48 @@ void initramfs_init() {
             break;
         if (!strcmp(name, "."))
             goto next;
-        vfs_node_t *existing = vfs_open(name, 0);
-        if (existing) {
-            vfs_close(existing);
+        char *path = initramfs_make_abspath(name);
+        if (!path)
+            goto next;
+
+        struct vfs_path existing = {0};
+        if (vfs_filename_lookup(AT_FDCWD, path, LOOKUP_FOLLOW, &existing) ==
+            0) {
+            vfs_path_put(&existing);
+            free(path);
             goto next;
         }
 
         if ((mode & type_mask) == directory_type) {
-            vfs_mkdir(name);
-            vfs_chmod(name, mode & 0777);
+            vfs_mkdirat(AT_FDCWD, path, mode & 0777);
+            initramfs_set_mode(path, mode);
         } else if ((mode & 0120000) == 0120000) {
             char target_name[file_size + 1];
             memcpy(target_name, data, file_size);
             target_name[file_size] = '\0';
-            vfs_symlink(name, target_name);
-            vfs_chmod(name, mode & 0777);
+            vfs_symlinkat(target_name, AT_FDCWD, path);
+            initramfs_set_mode(path, mode);
         } else {
-            vfs_mkfile(name);
-            vfs_chmod(name, mode & 0777);
-            vfs_node_t *node = vfs_open(name, 0);
-            vfs_write(node, data, 0, file_size);
-            vfs_close(node);
+            struct vfs_file *file = NULL;
+            struct vfs_open_how how = {
+                .flags = O_CREAT | O_WRONLY | O_TRUNC,
+                .mode = mode & 0777,
+            };
+
+            ret = vfs_openat(AT_FDCWD, path, &how, &file);
+            if (ret == 0 && file) {
+                loff_t pos = 0;
+                vfs_write_file(file, data, file_size, &pos);
+                vfs_close_file(file);
+            }
+            initramfs_set_mode(path, mode);
         }
+        free(path);
 
     next:
         p = data + ((file_size + 3) & ~3);
     }
+
+    if (root_mnt)
+        vfs_mntput(root_mnt);
 }

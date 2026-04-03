@@ -334,13 +334,10 @@ uint64_t sys_uname(uint64_t arg1) {
 uint64_t sys_eventfd(uint64_t arg1) { return sys_eventfd2(arg1, 0); }
 
 extern void sysfs_init();
-extern void sysfs_init_umount();
 extern void fsfdfs_init();
 extern void cgroupfs_init();
-extern void notifyfs_init();
 extern void socketfs_init();
 extern void pipefs_init();
-extern void ramfs_init();
 extern void configfs_init();
 
 void linuxabi_init() {
@@ -374,13 +371,11 @@ void linuxabi_init_after_thread() {
     rtnl_init();
 
     fs_syscall_init();
-    ramfs_init();
     configfs_init();
     socketfs_init();
     pipefs_init();
     fsfdfs_init();
     cgroupfs_init();
-    notifyfs_init();
 }
 
 void linuxabi_init_before_user() {
@@ -397,8 +392,6 @@ int linuxabi_on_sched_update(void) {
     timerfd_check_wakeup();
     return 0;
 }
-
-extern int signalfdfs_id;
 
 static void signal_fill_signalfd_siginfo(struct signalfd_siginfo *sinfo,
                                          int sig, const siginfo_t *info) {
@@ -454,11 +447,11 @@ void signal_notify_signalfd(task_t *task, int sig, const siginfo_t *info) {
 
     for (int i = 0; i < MAX_FD_NUM; i++) {
         fd_t *fd = task->fd_info->fds[i];
-        if (!fd || !fd->node || fd->node->fsid != signalfdfs_id) {
+        if (!fd || !signalfd_is_file(fd)) {
             continue;
         }
 
-        struct signalfd_ctx *ctx = fd->node->handle;
+        struct signalfd_ctx *ctx = signalfd_file_handle(fd);
         if (!ctx || !ctx->queue || ctx->queue_size == 0) {
             continue;
         }

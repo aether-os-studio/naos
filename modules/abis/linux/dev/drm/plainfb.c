@@ -1283,10 +1283,6 @@ void drm_plainfb_init() {
         drm_regist_pci_dev(gpu_device, &plainfb_drm_device_op, fake_gpu_device);
     if (drm_dev) {
         const char *driver_name = "simpledrm";
-        if (fake_gpu_device->vendor_id == 0x1234 &&
-            fake_gpu_device->device_id == 0x1111) {
-            driver_name = "bochs-drm";
-        }
 
         drm_device_set_driver_info(drm_dev, driver_name, "20260310",
                                    "NaOS plain framebuffer DRM");
@@ -1312,14 +1308,16 @@ void drm_plainfb_init() {
 
         char pci_uevent_path[192];
         sprintf(pci_uevent_path, "%s/uevent", pci_device_path);
-        vfs_node_t *pci_uevent = vfs_open(pci_uevent_path, 0);
+        vfs_node_t *pci_uevent = sysfs_ensure_file(pci_uevent_path);
         if (pci_uevent) {
             char uevent_content[256];
             sprintf(uevent_content,
                     "DRIVER=%s\nPCI_SLOT_NAME=%04x:%02x:%02x.%01x\n",
                     driver_name, fake_gpu_device->segment, fake_gpu_device->bus,
                     fake_gpu_device->slot, fake_gpu_device->func);
-            vfs_write(pci_uevent, uevent_content, 0, strlen(uevent_content));
+            sysfs_write_node(pci_uevent, uevent_content, strlen(uevent_content),
+                             0);
+            vfs_iput(pci_uevent);
         }
     }
 }

@@ -2,46 +2,38 @@
 #include <task/task.h>
 #include <libs/string_builder.h>
 
-extern int procfs_mount_point_count;
-
-char *proc_gen_mountinfo_file(task_t *task, size_t *context_len) {
-    string_builder_t *builder = create_string_builder(1024);
+static char *proc_gen_mountinfo_file(task_t *task, size_t *content_len) {
+    string_builder_t *builder = create_string_builder(256);
     task_mount_namespace_t *mnt_ns =
         (task && task->nsproxy) ? task->nsproxy->mnt_ns : NULL;
-    if (!mnt_ns) {
-        char *data = builder->data;
-        *context_len = builder->size;
-        free(builder);
-        return data;
+    const char *fs_name = "unknown";
+    unsigned int mnt_id = 0;
+    dev64_t dev = 0;
+
+    if (!builder) {
+        *content_len = 0;
+        return NULL;
     }
-    struct mount_point *mnt, *tmp;
-    llist_for_each(mnt, tmp, &mnt_ns->mount_points, node) {
-        vfs_node_t *node = mnt->root_node ? mnt->root_node : mnt->dir;
-        if (!mnt->dir || !mnt->dir->name || !node || !mnt->fs ||
-            !mnt->devname || !mnt->fs->name) {
-            continue;
-        }
-        char *mount_path = vfs_get_fullpath_at(mnt->dir, task_fs_root(task));
-        string_builder_append(
-            builder, "%d %d %d:%d %s %s rw - %s %s rw\n", node->fsid,
-            mnt->dir->parent ? mnt->dir->parent->fsid : node->fsid,
-            (node->rdev >> 8) & 0xFF, node->rdev & 0xFF, "/", mount_path,
-            mnt->fs->name, mnt->devname);
-        free(mount_path);
+
+    if (mnt_ns && mnt_ns->root && mnt_ns->root->mnt_sb) {
+        if (mnt_ns->root->mnt_sb->s_type && mnt_ns->root->mnt_sb->s_type->name)
+            fs_name = mnt_ns->root->mnt_sb->s_type->name;
+        mnt_id = mnt_ns->root->mnt_id;
+        dev = mnt_ns->root->mnt_sb->s_dev;
     }
+
+    string_builder_append(builder, "%u %u %u:%u / / rw - %s none rw\n", mnt_id,
+                          mnt_id, (unsigned int)((dev >> 8) & 0xFF),
+                          (unsigned int)(dev & 0xFF), fs_name);
+
+    *content_len = builder->size;
     char *data = builder->data;
-    *context_len = builder->size;
     free(builder);
     return data;
 }
 
 size_t proc_pmountinfo_stat(proc_handle_t *handle) {
-    task_t *task;
-    if (handle->task == NULL) {
-        task = current_task;
-    } else {
-        task = handle->task;
-    }
+    task_t *task = handle && handle->task ? handle->task : current_task;
     size_t content_len = 0;
     char *content = proc_gen_mountinfo_file(task, &content_len);
     free(content);
@@ -49,30 +41,25 @@ size_t proc_pmountinfo_stat(proc_handle_t *handle) {
 }
 
 int proc_pmountinfo_poll(proc_handle_t *handle, int events) {
-    int revents = 0;
-    if (events & EPOLLIN)
-        revents |= EPOLLIN;
-    return revents;
+    (void)handle;
+    return (events & EPOLLIN) ? EPOLLIN : 0;
 }
 
 size_t proc_pmountinfo_read(proc_handle_t *handle, void *addr, size_t offset,
                             size_t size) {
-    task_t *task;
-    if (handle->task == NULL) {
-        task = current_task;
-    } else {
-        task = handle->task;
-    }
+    task_t *task = handle && handle->task ? handle->task : current_task;
     size_t content_len = 0;
     char *content = proc_gen_mountinfo_file(task, &content_len);
+
+    if (!content)
+        return 0;
     if (offset >= content_len) {
         free(content);
         return 0;
     }
-    content_len = MIN(content_len, offset + size);
-    size_t to_copy = MIN(content_len, size);
+
+    size_t to_copy = MIN(size, content_len - offset);
     memcpy(addr, content + offset, to_copy);
     free(content);
-    ((char *)addr)[to_copy] = '\0';
     return to_copy;
 }

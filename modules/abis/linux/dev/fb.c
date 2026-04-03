@@ -126,7 +126,7 @@ void fbdev_init() {
     device_install(DEV_CHAR, DEV_FB, framebuffer, name, 0, NULL, NULL, fb_ioctl,
                    NULL, fb_read, fb_write, fb_map);
 
-    vfs_node_t *graphics = vfs_open("/sys/class/graphics", 0);
+    vfs_node_t *graphics = sysfs_ensure_dir("/sys/class/graphics");
 
     sprintf(name, "fb%d", 0);
     vfs_node_t *node = sysfs_child_append(graphics, name, true);
@@ -134,7 +134,7 @@ void fbdev_init() {
     vfs_node_t *modes = sysfs_child_append(node, "modes", false);
     char content[64];
     sprintf(content, "U:%dx%d\n", framebuffer->width, framebuffer->height);
-    vfs_write(modes, content, 0, strlen(content));
+    sysfs_write_node(modes, content, strlen(content), 0);
 
     vfs_node_t *device = sysfs_child_append(node, "device", true);
     vfs_node_t *subsystem =
@@ -142,15 +142,26 @@ void fbdev_init() {
     vfs_node_t *uevent = sysfs_child_append(device, "uevent", false);
     sprintf(content, "MAJOR=%d\nMINOR=%d\nDEVNAME=fb%d\nSUBSYSTEM=graphics\n",
             29, 0, 0);
-    vfs_write(uevent, content, 0, strlen(content));
+    sysfs_write_node(uevent, content, strlen(content), 0);
 
-    char *subsystem_fullpath = vfs_get_fullpath(subsystem);
+    char *subsystem_fullpath = sysfs_node_path(subsystem);
     vfs_node_t *subsystem_link =
         sysfs_child_append_symlink(node, "subsystem", subsystem_fullpath);
     free(subsystem_fullpath);
 
-    char *uevent_fullpath = vfs_get_fullpath(uevent);
+    char *uevent_fullpath = sysfs_node_path(uevent);
     vfs_node_t *uevent_link =
         sysfs_child_append_symlink(node, "uevent", uevent_fullpath);
     free(uevent_fullpath);
+
+    vfs_iput(graphics);
+    vfs_iput(node);
+    vfs_iput(modes);
+    vfs_iput(device);
+    vfs_iput(subsystem);
+    vfs_iput(uevent);
+    if (subsystem_link)
+        vfs_iput(subsystem_link);
+    if (uevent_link)
+        vfs_iput(uevent_link);
 }

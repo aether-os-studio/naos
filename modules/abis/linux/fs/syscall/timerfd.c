@@ -1,5 +1,6 @@
 #include <fs/fs_syscall.h>
 #include <fs/proc.h>
+#include <fs/vfs/vfs.h>
 #include <arch/arch.h>
 #include <boot/boot.h>
 #include <irq/softirq.h>
@@ -9,6 +10,15 @@
 #include <task/task_syscall.h>
 #include <init/callbacks.h>
 
+#define TIMERFDFS_MAGIC 0x74666473ULL
+
+static struct vfs_file_system_type timerfdfs_fs_type;
+static const struct vfs_super_operations timerfdfs_super_ops;
+static const struct vfs_file_operations timerfdfs_dir_file_ops;
+static const struct vfs_file_operations timerfdfs_file_ops;
+static mutex_t timerfdfs_mount_lock;
+static struct vfs_mount *timerfdfs_internal_mnt;
+
 int timerfdfs_id = 0;
 static rb_root_t timerfd_mono_root = RB_ROOT_INIT;
 static rb_root_t timerfd_real_root = RB_ROOT_INIT;
@@ -17,7 +27,30 @@ static spinlock_t timerfd_real_lock = SPIN_INIT;
 static uint64_t timerfd_mono_next_ns = UINT64_MAX;
 static uint64_t timerfd_real_next_ns = UINT64_MAX;
 
+typedef struct timerfdfs_info {
+    spinlock_t lock;
+    ino64_t next_ino;
+} timerfdfs_info_t;
+
+typedef struct timerfdfs_inode_info {
+    struct vfs_inode vfs_inode;
+} timerfdfs_inode_info_t;
+
 static uint64_t get_current_time_ns(int clock_type);
+
+static inline timerfdfs_info_t *timerfdfs_sb_info(struct vfs_super_block *sb) {
+    return sb ? (timerfdfs_info_t *)sb->s_fs_info : NULL;
+}
+
+static inline timerfd_t *timerfd_file_handle(struct vfs_file *file) {
+    if (!file)
+        return NULL;
+    if (file->private_data)
+        return (timerfd_t *)file->private_data;
+    if (!file->f_inode)
+        return NULL;
+    return (timerfd_t *)file->f_inode->i_private;
+}
 
 static inline spinlock_t *timerfd_tree_lock_for_clock(int clock_type) {
     return clock_type == CLOCK_REALTIME ? &timerfd_real_lock
@@ -141,16 +174,6 @@ static inline void timerfd_snapshot_state(timerfd_t *tfd, int *clock_type,
     spin_unlock(&tfd->lock);
 }
 
-static inline void timerfd_lock_pair(timerfd_t *tfd) {
-    spin_lock(timerfd_tree_lock_for_clock(tfd->timer.clock_type));
-    spin_lock(&tfd->lock);
-}
-
-static inline void timerfd_unlock_pair(timerfd_t *tfd) {
-    spin_unlock(&tfd->lock);
-    spin_unlock(timerfd_tree_lock_for_clock(tfd->timer.clock_type));
-}
-
 static bool timerfd_refresh_due(timerfd_t *tfd, int clock_type, uint64_t now,
                                 uint64_t *count, uint64_t *expires) {
     if (!tfd)
@@ -186,7 +209,6 @@ void timerfd_check_wakeup(void) {
     if (!raise) {
         uint64_t real_next =
             __atomic_load_n(&timerfd_real_next_ns, __ATOMIC_ACQUIRE);
-
         if (real_next != UINT64_MAX &&
             real_next <= get_current_time_ns(CLOCK_REALTIME))
             raise = true;
@@ -223,7 +245,7 @@ void timerfd_softirq(void) {
                     if (timerfd_update_due_locked(tfd, now)) {
                         notify_node = tfd->node;
                         if (notify_node)
-                            vfs_node_ref_get(notify_node);
+                            vfs_igrab(notify_node);
                     }
                     timerfd_timeout_add_locked(tfd);
                     progressed = true;
@@ -235,7 +257,7 @@ void timerfd_softirq(void) {
                     continue;
 
                 vfs_poll_notify(notify_node, EPOLLIN);
-                vfs_node_ref_put(notify_node, NULL);
+                vfs_iput(notify_node);
             }
         }
 
@@ -244,76 +266,285 @@ void timerfd_softirq(void) {
     }
 }
 
-uint64_t sys_timerfd_create(int clockid, int flags) {
-    if (flags & ~(TFD_NONBLOCK | TFD_CLOEXEC))
-        return -EINVAL;
+static struct vfs_inode *timerfdfs_alloc_inode(struct vfs_super_block *sb) {
+    timerfdfs_inode_info_t *info = calloc(1, sizeof(*info));
+    (void)sb;
+    return info ? &info->vfs_inode : NULL;
+}
 
-    if (clockid != CLOCK_REALTIME && clockid != CLOCK_MONOTONIC)
-        return -EINVAL;
+static void timerfdfs_destroy_inode(struct vfs_inode *inode) {
+    timerfd_t *tfd;
 
-    timerfd_t *tfd = malloc(sizeof(timerfd_t));
-    if (!tfd)
+    if (!inode)
+        return;
+    tfd = (timerfd_t *)inode->i_private;
+    if (tfd) {
+        spin_lock(timerfd_tree_lock_for_clock(tfd->timer.clock_type));
+        spin_lock(&tfd->lock);
+        timerfd_timeout_remove_locked(tfd);
+        spin_unlock(&tfd->lock);
+        spin_unlock(timerfd_tree_lock_for_clock(tfd->timer.clock_type));
+        free(tfd);
+        inode->i_private = NULL;
+    }
+    free(container_of(inode, timerfdfs_inode_info_t, vfs_inode));
+}
+
+static int timerfdfs_init_fs_context(struct vfs_fs_context *fc) {
+    (void)fc;
+    return 0;
+}
+
+static int timerfdfs_get_tree(struct vfs_fs_context *fc) {
+    struct vfs_super_block *sb;
+    timerfdfs_info_t *fsi;
+    struct vfs_inode *inode;
+    struct vfs_dentry *root;
+
+    sb = vfs_alloc_super(fc->fs_type, fc->sb_flags);
+    if (!sb)
         return -ENOMEM;
-    memset(tfd, 0, sizeof(timerfd_t));
-    spin_init(&tfd->lock);
-    tfd->timer.clock_type = clockid;
 
-    vfs_node_t *node = vfs_node_alloc(NULL, NULL);
-    node->refcount++;
-    node->type = file_stream;
-    node->fsid = timerfdfs_id;
-    node->handle = tfd;
-    node->flags |= VFS_NODE_FLAGS_FREE_AFTER_USE;
-    tfd->node = node;
-
-    int fd = -1;
-    int ret = -EMFILE;
-    with_fd_info_lock(current_task->fd_info, {
-        for (int i = 0; i < MAX_FD_NUM; i++) {
-            if (!current_task->fd_info->fds[i]) {
-                fd = i;
-                break;
-            }
-        }
-
-        if (fd < 0)
-            break;
-
-        fd_t *new_fd = fd_create(node, O_RDONLY | (flags & TFD_NONBLOCK),
-                                 !!(flags & TFD_CLOEXEC));
-        if (!new_fd) {
-            ret = -ENOMEM;
-            fd = -1;
-            break;
-        }
-
-        current_task->fd_info->fds[fd] = new_fd;
-        on_open_file_call(current_task, fd);
-        ret = 0;
-    });
-
-    if (ret < 0) {
-        vfs_free(node);
-        return ret;
+    fsi = calloc(1, sizeof(*fsi));
+    if (!fsi) {
+        vfs_put_super(sb);
+        return -ENOMEM;
     }
 
-    return fd;
+    spin_init(&fsi->lock);
+    fsi->next_ino = 1;
+    sb->s_magic = TIMERFDFS_MAGIC;
+    sb->s_fs_info = fsi;
+    sb->s_op = &timerfdfs_super_ops;
+    sb->s_type = &timerfdfs_fs_type;
+
+    inode = vfs_alloc_inode(sb);
+    if (!inode) {
+        free(fsi);
+        vfs_put_super(sb);
+        return -ENOMEM;
+    }
+
+    inode->i_ino = 1;
+    inode->inode = 1;
+    inode->i_mode = S_IFDIR | 0700;
+    inode->type = file_dir;
+    inode->i_nlink = 2;
+    inode->i_fop = &timerfdfs_dir_file_ops;
+
+    root = vfs_d_alloc(sb, NULL, NULL);
+    if (!root) {
+        vfs_iput(inode);
+        free(fsi);
+        vfs_put_super(sb);
+        return -ENOMEM;
+    }
+
+    vfs_d_instantiate(root, inode);
+    sb->s_root = root;
+    fc->sb = sb;
+    return 0;
+}
+
+static void timerfdfs_put_super(struct vfs_super_block *sb) {
+    if (sb && sb->s_fs_info)
+        free(sb->s_fs_info);
+}
+
+static const struct vfs_super_operations timerfdfs_super_ops = {
+    .alloc_inode = timerfdfs_alloc_inode,
+    .destroy_inode = timerfdfs_destroy_inode,
+    .put_super = timerfdfs_put_super,
+};
+
+static struct vfs_file_system_type timerfdfs_fs_type = {
+    .name = "timefdfs",
+    .fs_flags = VFS_FS_VIRTUAL,
+    .init_fs_context = timerfdfs_init_fs_context,
+    .get_tree = timerfdfs_get_tree,
+};
+
+static struct vfs_mount *timerfdfs_get_internal_mount(void) {
+    int ret;
+
+    mutex_lock(&timerfdfs_mount_lock);
+    if (!timerfdfs_internal_mnt) {
+        ret =
+            vfs_kern_mount("timefdfs", 0, NULL, NULL, &timerfdfs_internal_mnt);
+        if (ret < 0)
+            timerfdfs_internal_mnt = NULL;
+    }
+    if (timerfdfs_internal_mnt)
+        vfs_mntget(timerfdfs_internal_mnt);
+    mutex_unlock(&timerfdfs_mount_lock);
+    return timerfdfs_internal_mnt;
+}
+
+static ino64_t timerfdfs_next_ino(struct vfs_super_block *sb) {
+    timerfdfs_info_t *fsi = timerfdfs_sb_info(sb);
+    ino64_t ino;
+
+    spin_lock(&fsi->lock);
+    ino = ++fsi->next_ino;
+    spin_unlock(&fsi->lock);
+    return ino;
+}
+
+static loff_t timerfdfs_llseek(struct vfs_file *file, loff_t offset,
+                               int whence) {
+    loff_t pos;
+
+    if (!file || !file->f_inode)
+        return -EBADF;
+    mutex_lock(&file->f_pos_lock);
+    switch (whence) {
+    case SEEK_SET:
+        pos = offset;
+        break;
+    case SEEK_CUR:
+        pos = file->f_pos + offset;
+        break;
+    case SEEK_END:
+        pos = (loff_t)file->f_inode->i_size + offset;
+        break;
+    default:
+        mutex_unlock(&file->f_pos_lock);
+        return -EINVAL;
+    }
+    if (pos < 0) {
+        mutex_unlock(&file->f_pos_lock);
+        return -EINVAL;
+    }
+    file->f_pos = pos;
+    mutex_unlock(&file->f_pos_lock);
+    return pos;
+}
+
+static int timerfdfs_open(struct vfs_inode *inode, struct vfs_file *file) {
+    if (!inode || !file)
+        return -EINVAL;
+    file->f_op = inode->i_fop;
+    file->private_data = inode->i_private;
+    return 0;
+}
+
+static int timerfdfs_release(struct vfs_inode *inode, struct vfs_file *file) {
+    (void)inode;
+    if (file)
+        file->private_data = NULL;
+    return 0;
 }
 
 // 统一的当前时间获取函数
 static uint64_t get_current_time_ns(int clock_type) {
-    if (clock_type == CLOCK_MONOTONIC) {
-        return nano_time(); // 单调时钟，直接返回纳秒
-    } else {                // CLOCK_REALTIME
-        return boot_get_boottime() * 1000000000ULL + nano_time();
+    if (clock_type == CLOCK_MONOTONIC)
+        return nano_time();
+    return boot_get_boottime() * 1000000000ULL + nano_time();
+}
+
+static int timerfdfs_create_file(struct vfs_file **out_file, int clockid,
+                                 unsigned int flags, timerfd_t **out_tfd) {
+    struct vfs_mount *mnt;
+    struct vfs_super_block *sb;
+    struct vfs_inode *inode;
+    struct vfs_dentry *dentry;
+    struct vfs_qstr name = {0};
+    struct vfs_file *file;
+    timerfd_t *tfd;
+    char label[32];
+
+    if (!out_file)
+        return -EINVAL;
+
+    mnt = timerfdfs_get_internal_mount();
+    if (!mnt)
+        return -ENODEV;
+    sb = mnt->mnt_sb;
+
+    tfd = calloc(1, sizeof(*tfd));
+    if (!tfd) {
+        vfs_mntput(mnt);
+        return -ENOMEM;
     }
+    spin_init(&tfd->lock);
+    tfd->timer.clock_type = clockid;
+
+    inode = vfs_alloc_inode(sb);
+    if (!inode) {
+        free(tfd);
+        vfs_mntput(mnt);
+        return -ENOMEM;
+    }
+
+    inode->i_ino = timerfdfs_next_ino(sb);
+    inode->inode = inode->i_ino;
+    inode->i_mode = S_IFCHR | 0600;
+    inode->type = file_stream;
+    inode->i_nlink = 1;
+    inode->i_fop = &timerfdfs_file_ops;
+    inode->i_private = tfd;
+    tfd->node = inode;
+
+    snprintf(label, sizeof(label), "timerfd-%llu",
+             (unsigned long long)inode->i_ino);
+    vfs_qstr_make(&name, label);
+    dentry = vfs_d_alloc(sb, sb->s_root, &name);
+    if (!dentry) {
+        inode->i_private = NULL;
+        vfs_iput(inode);
+        free(tfd);
+        vfs_mntput(mnt);
+        return -ENOMEM;
+    }
+
+    vfs_d_instantiate(dentry, inode);
+    file = vfs_alloc_file(&(struct vfs_path){.mnt = mnt, .dentry = dentry},
+                          O_RDONLY | (flags & TFD_NONBLOCK));
+    if (!file) {
+        vfs_dput(dentry);
+        inode->i_private = NULL;
+        vfs_iput(inode);
+        free(tfd);
+        vfs_mntput(mnt);
+        return -ENOMEM;
+    }
+
+    file->private_data = tfd;
+    *out_file = file;
+    if (out_tfd)
+        *out_tfd = tfd;
+
+    vfs_dput(dentry);
+    vfs_iput(inode);
+    vfs_mntput(mnt);
+    return 0;
+}
+
+uint64_t sys_timerfd_create(int clockid, int flags) {
+    struct vfs_file *file = NULL;
+    int ret;
+
+    if (flags & ~(TFD_NONBLOCK | TFD_CLOEXEC))
+        return -EINVAL;
+    if (clockid != CLOCK_REALTIME && clockid != CLOCK_MONOTONIC)
+        return -EINVAL;
+
+    ret = timerfdfs_create_file(&file, clockid, (unsigned int)flags, NULL);
+    if (ret < 0)
+        return ret;
+
+    ret = task_install_file(current_task, file,
+                            (flags & TFD_CLOEXEC) ? FD_CLOEXEC : 0, 0);
+    vfs_file_put(file);
+    return (uint64_t)ret;
 }
 
 uint64_t sys_timerfd_settime(int fd, int flags,
                              const struct itimerspec *new_value,
                              struct itimerspec *old_value) {
-    if (fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
-        return -EBADF;
+    struct vfs_file *file;
+    timerfd_t *tfd;
+
     if (!new_value)
         return -EINVAL;
     if (flags & ~(TFD_TIMER_ABSTIME | TFD_TIMER_CANCEL_ON_SET))
@@ -322,14 +553,17 @@ uint64_t sys_timerfd_settime(int fd, int flags,
         new_value->it_interval.tv_sec < 0 ||
         new_value->it_interval.tv_nsec < 0 ||
         new_value->it_value.tv_nsec >= 1000000000L ||
-        new_value->it_interval.tv_nsec >= 1000000000L) {
+        new_value->it_interval.tv_nsec >= 1000000000L)
         return -EINVAL;
-    }
 
-    vfs_node_t *node = current_task->fd_info->fds[fd]->node;
-    timerfd_t *tfd = node->handle;
-    if (!tfd)
+    file = task_get_file(current_task, fd);
+    if (!file)
         return -EBADF;
+    tfd = timerfd_file_handle(file);
+    if (!tfd) {
+        vfs_file_put(file);
+        return -EBADF;
+    }
 
     int clock_type = tfd->timer.clock_type;
     bool notify_readable = false;
@@ -360,19 +594,12 @@ uint64_t sys_timerfd_settime(int fd, int flags,
         old_value->it_value.tv_nsec = remaining % 1000000000ULL;
     }
 
-    uint64_t expires = 0;
-
-    if (flags & TFD_TIMER_ABSTIME) {
-        expires = value;
-    } else {
-        expires = value ? now + value : 0;
-    }
-
+    uint64_t expires =
+        (flags & TFD_TIMER_ABSTIME) ? value : (value ? now + value : 0);
     tfd->timer.expires = expires;
     tfd->timer.interval = interval;
-    if (value == 0) {
+    if (value == 0)
         tfd->count = 0;
-    }
     timerfd_timeout_add_locked(tfd);
     if (tfd->timer.expires && have_now && tfd->timer.expires <= now)
         raise_softirq = true;
@@ -381,36 +608,25 @@ uint64_t sys_timerfd_settime(int fd, int flags,
     spin_unlock(timerfd_tree_lock_for_clock(clock_type));
 
     if (notify_readable)
-        vfs_poll_notify(node, EPOLLIN);
-    vfs_poll_notify(node, EPOLLOUT);
+        vfs_poll_notify(tfd->node, EPOLLIN);
+    vfs_poll_notify(tfd->node, EPOLLOUT);
     if (raise_softirq && softirq_raise(SOFTIRQ_TIMERFD))
         sched_wake_worker(0);
 
+    vfs_file_put(file);
     return 0;
 }
 
-bool timerfd_close(vfs_node_t *node) {
-    timerfd_t *tfd = node ? node->handle : NULL;
-    if (!tfd)
-        return true;
-
-    timerfd_lock_pair(tfd);
-    timerfd_timeout_remove_locked(tfd);
-    timerfd_unlock_pair(tfd);
-
-    free(tfd);
-    return true;
-}
-
-int timerfd_poll(vfs_node_t *node, size_t events) {
-    timerfd_t *tfd = node ? node->handle : NULL;
-    if (!tfd)
-        return EPOLLNVAL;
-
-    int revents = 0;
+static __poll_t timerfdfs_poll(struct vfs_file *file,
+                               struct vfs_poll_table *pt) {
+    timerfd_t *tfd = timerfd_file_handle(file);
     int clock_type = CLOCK_MONOTONIC;
     uint64_t expires = 0;
     uint64_t count = 0;
+
+    (void)pt;
+    if (!tfd)
+        return EPOLLNVAL;
 
     timerfd_snapshot_state(tfd, &clock_type, &expires, &count);
     if (count == 0 && expires) {
@@ -419,15 +635,16 @@ int timerfd_poll(vfs_node_t *node, size_t events) {
             timerfd_refresh_due(tfd, clock_type, now, &count, &expires);
     }
 
-    if ((events & EPOLLIN) && count > 0)
-        revents |= EPOLLIN;
-
-    return revents;
+    return ((count > 0) ? EPOLLIN : 0);
 }
 
-ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
-    void *file = fd->node->handle;
-    timerfd_t *tfd = file;
+static ssize_t timerfdfs_read(struct vfs_file *file, void *addr, size_t size,
+                              loff_t *ppos) {
+    timerfd_t *tfd = timerfd_file_handle(file);
+
+    (void)ppos;
+    if (!tfd)
+        return -EBADF;
 
     for (;;) {
         uint64_t count = 0;
@@ -436,7 +653,6 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         uint64_t now = 0;
 
         timerfd_snapshot_state(tfd, &clock_type, &expires, &count);
-
         if (count == 0 && expires) {
             now = get_current_time_ns(clock_type);
             if (now >= expires)
@@ -447,15 +663,15 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             break;
 
         if (expires == 0) {
-            if (fd_get_flags(fd) & O_NONBLOCK) {
+            if (file->f_flags & O_NONBLOCK) {
                 return -EAGAIN;
             } else {
                 vfs_poll_wait_t wait;
                 vfs_poll_wait_init(&wait, current_task,
                                    EPOLLIN | EPOLLOUT | EPOLLERR | EPOLLHUP);
-                vfs_poll_wait_arm(fd->node, &wait);
-                int reason = vfs_poll_wait_sleep(fd->node, &wait, 10000000LL,
-                                                 "timerfd_read_unarmed");
+                vfs_poll_wait_arm(file->f_inode, &wait);
+                int reason = vfs_poll_wait_sleep(
+                    file->f_inode, &wait, 10000000LL, "timerfd_read_unarmed");
                 vfs_poll_wait_disarm(&wait);
                 if (reason != EOK && reason != ETIMEDOUT)
                     return -EINTR;
@@ -463,7 +679,7 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             }
         }
 
-        if (now < expires && !(fd_get_flags(fd) & O_NONBLOCK)) {
+        if (now < expires && !(file->f_flags & O_NONBLOCK)) {
             int64_t wait_ns = (int64_t)(expires - now);
             int reason = task_block(current_task, TASK_BLOCKING, wait_ns,
                                     "timerfd_read");
@@ -472,9 +688,8 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             continue;
         }
 
-        if (now < expires && (fd_get_flags(fd) & O_NONBLOCK)) {
+        if (now < expires && (file->f_flags & O_NONBLOCK))
             return -EAGAIN;
-        }
     }
 
     if (size < sizeof(uint64_t))
@@ -486,16 +701,16 @@ ssize_t timerfd_read(fd_t *fd, void *addr, size_t offset, size_t size) {
     spin_unlock(&tfd->lock);
 
     *(uint64_t *)addr = count;
-    vfs_poll_notify(fd->node, EPOLLOUT);
-
+    vfs_poll_notify(tfd->node, EPOLLOUT);
     return sizeof(uint64_t);
 }
 
 #define TFD_IOC_SET_TICKS _IOW('T', 0, uint64_t)
 
-int timerfd_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
-    vfs_node_t *node = fd->node;
-    timerfd_t *tfd = node ? node->handle : NULL;
+static long timerfdfs_ioctl(struct vfs_file *file, unsigned long cmd,
+                            unsigned long arg) {
+    timerfd_t *tfd = timerfd_file_handle(file);
+
     if (!tfd)
         return -EBADF;
     switch (cmd) {
@@ -506,30 +721,29 @@ int timerfd_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
         if (tfd->node)
             vfs_poll_notify(tfd->node, EPOLLIN);
         return 0;
-
     default:
         printk("timerfd_ioctl: Unsupported cmd %#018lx\n", cmd);
         return -ENOSYS;
     }
 }
 
-static vfs_operations_t timerfd_callbacks = {
-    .close = timerfd_close,
-    .read = timerfd_read,
-    .ioctl = timerfd_ioctl,
-    .poll = timerfd_poll,
-
-    .free_handle = vfs_generic_free_handle,
+static const struct vfs_file_operations timerfdfs_dir_file_ops = {
+    .llseek = timerfdfs_llseek,
+    .open = timerfdfs_open,
+    .release = timerfdfs_release,
 };
 
-fs_t timefdfs = {
-    .name = "timefdfs",
-    .magic = 0,
-    .ops = &timerfd_callbacks,
-    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN,
+static const struct vfs_file_operations timerfdfs_file_ops = {
+    .llseek = timerfdfs_llseek,
+    .read = timerfdfs_read,
+    .unlocked_ioctl = timerfdfs_ioctl,
+    .poll = timerfdfs_poll,
+    .open = timerfdfs_open,
+    .release = timerfdfs_release,
 };
 
 void timerfd_init() {
+    mutex_init(&timerfdfs_mount_lock);
     spin_init(&timerfd_mono_lock);
     spin_init(&timerfd_real_lock);
     timerfd_mono_root = RB_ROOT_INIT;
@@ -537,5 +751,6 @@ void timerfd_init() {
     __atomic_store_n(&timerfd_mono_next_ns, UINT64_MAX, __ATOMIC_RELEASE);
     __atomic_store_n(&timerfd_real_next_ns, UINT64_MAX, __ATOMIC_RELEASE);
     softirq_register(SOFTIRQ_TIMERFD, timerfd_softirq);
-    timerfdfs_id = vfs_regist(&timefdfs);
+    vfs_register_filesystem(&timerfdfs_fs_type);
+    timerfdfs_id = 1;
 }

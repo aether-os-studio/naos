@@ -96,7 +96,7 @@ void vma_free(vma_t *vma) {
         return;
 
     if (vma->node) {
-        vfs_close(vma->node);
+        vfs_iput(vma->node);
         shm_try_reap_by_vnode(vma->node);
     }
     if (vma->vm_name)
@@ -200,7 +200,7 @@ int vma_split(vma_manager_t *mgr, vma_t *vma, uint64_t addr) {
     new_vma->vm_type = vma->vm_type;
     new_vma->node = vma->node;
     if (new_vma->node)
-        vfs_node_ref_get(new_vma->node);
+        vfs_igrab(new_vma->node);
     new_vma->shm = vma->shm;
     new_vma->shm_id = vma->shm_id;
     new_vma->vm_offset = vma->vm_offset;
@@ -398,7 +398,7 @@ static vma_t *vma_copy(vma_t *src) {
     dst->vm_type = src->vm_type;
     dst->node = src->node;
     if (dst->node)
-        vfs_node_ref_get(dst->node);
+        vfs_igrab(dst->node);
     dst->shm = src->shm;
     dst->vm_offset = src->vm_offset;
     dst->vm_file_len = src->vm_file_len;

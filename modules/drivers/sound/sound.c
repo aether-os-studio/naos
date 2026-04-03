@@ -1371,8 +1371,10 @@ static sound_pcm_substream_t *sound_lookup_substream_by_path(const char *path) {
 }
 
 static void sound_register_node(const char *path) {
-    vfs_node_t *node = vfs_open(path, 0);
-    if (!node) {
+    struct vfs_file *file = NULL;
+    struct vfs_open_how how = {0};
+    int ret = vfs_openat(AT_FDCWD, path, &how, &file);
+    if (ret < 0 || !file || !file->f_inode) {
         return;
     }
 
@@ -1380,13 +1382,14 @@ static void sound_register_node(const char *path) {
         sound_pcm_substream_t *substream =
             sound_lookup_substream_by_path(path + strlen("/dev/"));
         if (substream) {
-            substream->node = node;
+            substream->node = vfs_igrab(file->f_inode);
             substream->node_registered = true;
+            vfs_file_put(file);
             return;
         }
     }
 
-    vfs_close(node);
+    vfs_file_put(file);
 }
 
 int sound_init(void) {
@@ -1394,7 +1397,7 @@ int sound_init(void) {
         return 0;
     }
 
-    vfs_mkdir("/dev/snd");
+    vfs_mkdirat(AT_FDCWD, "/dev/snd", 0600);
     sound_ready = true;
     return 0;
 }

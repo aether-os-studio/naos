@@ -1,9 +1,7 @@
-#include <task/ns.h>
-#include <task/task.h>
 #include <fs/vfs/vfs.h>
 #include <init/abis.h>
-
-extern struct llist_header mount_points;
+#include <task/ns.h>
+#include <task/task.h>
 
 static uint64_t next_namespace_inum = 1;
 
@@ -14,31 +12,47 @@ static uint64_t task_ns_alloc_inum(void) {
 static void task_ns_common_init(task_ns_common_t *common) {
     if (!common)
         return;
-
     common->ref_count = 1;
     common->inum = task_ns_alloc_inum();
 }
 
-task_fs_t *task_fs_create(vfs_node_t *root, vfs_node_t *cwd) {
-    if (!root)
-        return NULL;
-    if (!cwd)
-        cwd = root;
+static void task_ns_common_get(task_ns_common_t *common) {
+    if (!common)
+        return;
+    __atomic_add_fetch(&common->ref_count, 1, __ATOMIC_RELAXED);
+}
 
-    task_fs_t *fs = calloc(1, sizeof(task_fs_t));
+static bool task_ns_common_put(task_ns_common_t *common) {
+    if (!common)
+        return false;
+    return __atomic_sub_fetch(&common->ref_count, 1, __ATOMIC_ACQ_REL) == 0;
+}
+
+task_fs_t *task_fs_create(const struct vfs_path *root,
+                          const struct vfs_path *pwd) {
+    task_fs_t *fs;
+
+    if (!root || !root->mnt || !root->dentry)
+        return NULL;
+
+    fs = calloc(1, sizeof(*fs));
     if (!fs)
         return NULL;
 
     fs->ref_count = 1;
-    fs->root = root;
-    fs->cwd = cwd;
     fs->umask = 0022;
+    spin_init(&fs->vfs.lock);
+    fs->vfs.seq = 1;
 
-    vfs_node_ref_get(root);
-    if (cwd == root) {
-        vfs_node_ref_get(root);
+    fs->vfs.root = *root;
+    vfs_path_get(&fs->vfs.root);
+
+    if (pwd && pwd->mnt && pwd->dentry) {
+        fs->vfs.pwd = *pwd;
+        vfs_path_get(&fs->vfs.pwd);
     } else {
-        vfs_node_ref_get(cwd);
+        fs->vfs.pwd = fs->vfs.root;
+        vfs_path_get(&fs->vfs.pwd);
     }
 
     return fs;
@@ -53,57 +67,58 @@ void task_fs_get(task_fs_t *fs) {
 void task_fs_put(task_fs_t *fs) {
     if (!fs)
         return;
-
-    if (__atomic_sub_fetch(&fs->ref_count, 1, __ATOMIC_ACQ_REL) == 0) {
-        vfs_close(fs->cwd);
-        vfs_close(fs->root);
-        free(fs);
-    }
+    if (__atomic_sub_fetch(&fs->ref_count, 1, __ATOMIC_ACQ_REL) != 0)
+        return;
+    vfs_path_put(&fs->vfs.pwd);
+    vfs_path_put(&fs->vfs.root);
+    free(fs);
 }
 
 task_fs_t *task_fs_clone(task_t *task, uint64_t clone_flags) {
+    task_fs_t *parent_fs;
+
     if (!task || !task->fs)
         return NULL;
+    parent_fs = task->fs;
 
-    task_fs_t *parent_fs = task->fs;
     if (clone_flags & CLONE_FS) {
         task_fs_get(parent_fs);
         return parent_fs;
     }
 
-    task_fs_t *child_fs = task_fs_create(parent_fs->root, parent_fs->cwd);
-    if (!child_fs)
-        return NULL;
-
-    child_fs->umask = parent_fs->umask;
-    return child_fs;
+    return task_fs_create(&parent_fs->vfs.root, &parent_fs->vfs.pwd);
 }
 
-int task_fs_chdir(task_t *task, vfs_node_t *cwd) {
-    if (!task || !task->fs || !cwd)
+int task_fs_chdir(task_t *task, const struct vfs_path *pwd) {
+    if (!task || !task->fs || !pwd || !pwd->mnt || !pwd->dentry)
         return -EINVAL;
-    if (!vfs_is_ancestor(task->fs->root, cwd))
-        return -EPERM;
+    if (!pwd->dentry->d_inode || !S_ISDIR(pwd->dentry->d_inode->i_mode))
+        return -ENOTDIR;
 
-    vfs_node_ref_get(cwd);
-    vfs_close(task->fs->cwd);
-    task->fs->cwd = cwd;
+    spin_lock(&task->fs->vfs.lock);
+    vfs_path_put(&task->fs->vfs.pwd);
+    task->fs->vfs.pwd = *pwd;
+    vfs_path_get(&task->fs->vfs.pwd);
+    task->fs->vfs.seq++;
+    spin_unlock(&task->fs->vfs.lock);
     return 0;
 }
 
-int task_fs_chroot(task_t *task, vfs_node_t *root) {
-    if (!task || !task->fs || !root)
+int task_fs_chroot(task_t *task, const struct vfs_path *root) {
+    if (!task || !task->fs || !root || !root->mnt || !root->dentry)
         return -EINVAL;
+    if (!root->dentry->d_inode || !S_ISDIR(root->dentry->d_inode->i_mode))
+        return -ENOTDIR;
 
-    vfs_node_ref_get(root);
-    vfs_close(task->fs->root);
-    task->fs->root = root;
-
-    if (!task->fs->cwd) {
-        vfs_node_ref_get(root);
-        task->fs->cwd = root;
-    }
-
+    spin_lock(&task->fs->vfs.lock);
+    vfs_path_put(&task->fs->vfs.root);
+    task->fs->vfs.root = *root;
+    vfs_path_get(&task->fs->vfs.root);
+    vfs_path_put(&task->fs->vfs.pwd);
+    task->fs->vfs.pwd = task->fs->vfs.root;
+    vfs_path_get(&task->fs->vfs.pwd);
+    task->fs->vfs.seq++;
+    spin_unlock(&task->fs->vfs.lock);
     return 0;
 }
 
@@ -140,48 +155,20 @@ task_uts_namespace_create(const task_uts_namespace_t *parent) {
 }
 
 static task_mount_namespace_t *
-task_mount_namespace_create(vfs_node_t *root,
+task_mount_namespace_create(struct vfs_mount *root,
                             const task_mount_namespace_t *parent) {
+    task_mount_namespace_t *mnt_ns;
+
     if (!root)
         return NULL;
 
-    task_mount_namespace_t *mnt_ns = calloc(1, sizeof(*mnt_ns));
+    mnt_ns = calloc(1, sizeof(*mnt_ns));
     if (!mnt_ns)
         return NULL;
 
     task_ns_common_init(&mnt_ns->common);
-    if (parent) {
-        mnt_ns->common.inum = task_ns_alloc_inum();
-    }
-    mnt_ns->root = root;
-    llist_init_head(&mnt_ns->mount_points);
-    vfs_node_ref_get(root);
-
-    if (parent) {
-        size_t count = 0;
-        struct mount_point *mnt = NULL, *tmp = NULL;
-        llist_for_each(mnt, tmp, &parent->mount_points, node) { count++; }
-
-        struct mount_point **mounts = calloc(count, sizeof(*mounts));
-        if (!mounts) {
-            vfs_close(mnt_ns->root);
-            free(mnt_ns);
-            return NULL;
-        }
-
-        size_t idx = 0;
-        llist_for_each(mnt, tmp, &parent->mount_points, node) {
-            mounts[idx++] = mnt;
-        }
-
-        while (idx > 0) {
-            mnt = mounts[--idx];
-            task_mnt_namespace_add_mount(mnt_ns, mnt->fs, mnt->dir,
-                                         mnt->root_node, mnt->devname);
-        }
-
-        free(mounts);
-    }
+    mnt_ns->root = vfs_mntget(root);
+    mnt_ns->seq = parent ? parent->seq : 1;
     return mnt_ns;
 }
 
@@ -220,155 +207,39 @@ task_simple_namespace_create(const task_simple_namespace_t *parent) {
     return ns;
 }
 
-static void task_ns_common_get(task_ns_common_t *common) {
-    if (!common)
-        return;
-    __atomic_add_fetch(&common->ref_count, 1, __ATOMIC_RELAXED);
-}
-
-static bool task_ns_common_put(task_ns_common_t *common) {
-    if (!common)
-        return false;
-    return __atomic_sub_fetch(&common->ref_count, 1, __ATOMIC_ACQ_REL) == 0;
-}
-
 static void task_uts_namespace_put(task_uts_namespace_t *uts_ns) {
-    if (task_ns_common_put(&uts_ns->common))
+    if (uts_ns && task_ns_common_put(&uts_ns->common))
         free(uts_ns);
 }
 
 static void task_mount_namespace_put(task_mount_namespace_t *mnt_ns) {
     if (!mnt_ns)
         return;
-    if (task_ns_common_put(&mnt_ns->common)) {
-        struct mount_point *mnt = NULL, *tmp = NULL;
-        llist_for_each(mnt, tmp, &mnt_ns->mount_points, node) {
-            llist_delete(&mnt->node);
-            free(mnt->devname);
-            free(mnt);
-        }
-        vfs_close(mnt_ns->root);
-        free(mnt_ns);
-    }
-}
-
-struct mount_point *
-task_mnt_namespace_find_mount(task_mount_namespace_t *mnt_ns, vfs_node_t *dir) {
-    if (!mnt_ns || !dir)
-        return NULL;
-
-    struct mount_point *mnt = NULL, *tmp = NULL;
-    llist_for_each(mnt, tmp, &mnt_ns->mount_points, node) {
-        if (mnt->dir == dir)
-            return mnt;
-    }
-    return NULL;
-}
-
-struct mount_point *
-task_mnt_namespace_find_mount_by_root(task_mount_namespace_t *mnt_ns,
-                                      vfs_node_t *root_node) {
-    if (!mnt_ns || !root_node)
-        return NULL;
-
-    struct mount_point *mnt = NULL, *tmp = NULL;
-    llist_for_each(mnt, tmp, &mnt_ns->mount_points, node) {
-        if (mnt->root_node == root_node)
-            return mnt;
-    }
-    return NULL;
-}
-
-void task_mnt_namespace_add_mount(task_mount_namespace_t *mnt_ns, struct fs *fs,
-                                  vfs_node_t *dir, vfs_node_t *root_node,
-                                  const char *devname) {
-    if (!mnt_ns || !fs || !dir || !root_node || !devname)
+    if (!task_ns_common_put(&mnt_ns->common))
         return;
-
-    if (root_node != dir && vfs_bind_mount_root(root_node, dir) < 0)
-        return;
-
-    struct mount_point *mnt = calloc(1, sizeof(struct mount_point));
-    if (!mnt)
-        return;
-
-    mnt->fs = fs;
-    mnt->dir = dir;
-    mnt->root_node = root_node;
-    mnt->original_dir_root = dir->root;
-    vfs_node_ref_get(dir);
-    vfs_node_ref_get(root_node);
-    mnt->devname = strdup(devname);
-    llist_init_head(&mnt->node);
-    llist_prepend(&mnt_ns->mount_points, &mnt->node);
-}
-
-void task_mnt_namespace_remove_mount(task_mount_namespace_t *mnt_ns,
-                                     vfs_node_t *dir) {
-    struct mount_point *mnt =
-        task_mnt_namespace_find_mount_by_root(mnt_ns, dir);
-    if (!mnt)
-        mnt = task_mnt_namespace_find_mount(mnt_ns, dir);
-    if (!mnt)
-        return;
-
-    llist_delete(&mnt->node);
-    vfs_close(mnt->dir);
-    if (mnt->root_node != mnt->dir) {
-        vfs_free(mnt->root_node);
-    } else {
-        vfs_close(mnt->root_node);
-    }
-    free(mnt->devname);
-    free(mnt);
-}
-
-int task_mnt_namespace_move_mount(task_mount_namespace_t *mnt_ns,
-                                  vfs_node_t *old_dir, vfs_node_t *new_dir) {
-    struct mount_point *mnt =
-        task_mnt_namespace_find_mount_by_root(mnt_ns, old_dir);
-    if (!mnt)
-        mnt = task_mnt_namespace_find_mount(mnt_ns, old_dir);
-    if (!mnt)
-        return -ENOENT;
-
-    if (!(new_dir->type & file_dir))
-        return -ENOTDIR;
-
-    if (vfs_is_ancestor(mnt->root_node, new_dir))
-        return -EINVAL;
-
-    if (mnt->root_node != mnt->dir &&
-        vfs_bind_mount_root(mnt->root_node, new_dir) < 0) {
-        return -ENOMEM;
-    }
-
-    vfs_node_ref_get(new_dir);
-    vfs_close(mnt->dir);
-    mnt->dir = new_dir;
-    mnt->original_dir_root = new_dir->root;
-
-    return 0;
+    if (mnt_ns->root)
+        vfs_mntput(mnt_ns->root);
+    free(mnt_ns);
 }
 
 static void task_user_namespace_put(task_user_namespace_t *user_ns) {
-    if (task_ns_common_put(&user_ns->common))
+    if (user_ns && task_ns_common_put(&user_ns->common))
         free(user_ns);
 }
 
 static void task_simple_namespace_put(task_simple_namespace_t *ns) {
-    if (task_ns_common_put(&ns->common))
+    if (ns && task_ns_common_put(&ns->common))
         free(ns);
 }
 
 task_ns_proxy_t *task_ns_proxy_create_initial(void) {
-    task_ns_proxy_t *nsproxy = calloc(1, sizeof(task_ns_proxy_t));
+    task_ns_proxy_t *nsproxy = calloc(1, sizeof(*nsproxy));
     if (!nsproxy)
         return NULL;
 
     nsproxy->ref_count = 1;
     nsproxy->uts_ns = task_uts_namespace_create(NULL);
-    nsproxy->mnt_ns = task_mount_namespace_create(rootdir, NULL);
+    nsproxy->mnt_ns = task_mount_namespace_create(vfs_root_path.mnt, NULL);
     nsproxy->user_ns = task_user_namespace_create(NULL, NULL);
     nsproxy->pid_ns = task_simple_namespace_create(NULL);
     nsproxy->net_ns = task_simple_namespace_create(NULL);
@@ -382,26 +253,6 @@ task_ns_proxy_t *task_ns_proxy_create_initial(void) {
         return NULL;
     }
 
-    size_t count = 0;
-    struct mount_point *mnt = NULL, *tmp = NULL;
-    llist_for_each(mnt, tmp, &mount_points, node) { count++; }
-
-    struct mount_point **mounts = calloc(count, sizeof(*mounts));
-    if (!mounts)
-        return nsproxy;
-
-    size_t idx = 0;
-    llist_for_each(mnt, tmp, &mount_points, node) { mounts[idx++] = mnt; }
-
-    while (idx > 0) {
-        mnt = mounts[--idx];
-        task_mnt_namespace_add_mount(nsproxy->mnt_ns, mnt->fs, mnt->dir,
-                                     mnt->root_node ? mnt->root_node : mnt->dir,
-                                     mnt->devname);
-    }
-
-    free(mounts);
-
     return nsproxy;
 }
 
@@ -414,7 +265,6 @@ void task_ns_proxy_get(task_ns_proxy_t *nsproxy) {
 void task_ns_proxy_put(task_ns_proxy_t *nsproxy) {
     if (!nsproxy)
         return;
-
     if (__atomic_sub_fetch(&nsproxy->ref_count, 1, __ATOMIC_ACQ_REL) != 0)
         return;
 
@@ -428,15 +278,42 @@ void task_ns_proxy_put(task_ns_proxy_t *nsproxy) {
     free(nsproxy);
 }
 
+struct vfs_mount *task_mount_namespace_root(task_t *task) {
+    if (!task || !task->nsproxy || !task->nsproxy->mnt_ns)
+        return vfs_root_path.mnt;
+    if (task->nsproxy->mnt_ns->root)
+        return task->nsproxy->mnt_ns->root;
+    return vfs_root_path.mnt;
+}
+
+int task_mount_namespace_set_root(task_t *task, struct vfs_mount *root) {
+    task_mount_namespace_t *mnt_ns;
+
+    if (!task || !task->nsproxy || !task->nsproxy->mnt_ns || !root)
+        return -EINVAL;
+
+    mnt_ns = task->nsproxy->mnt_ns;
+    if (mnt_ns->root == root)
+        return 0;
+
+    if (mnt_ns->root)
+        vfs_mntput(mnt_ns->root);
+    mnt_ns->root = vfs_mntget(root);
+    mnt_ns->seq++;
+    return 0;
+}
+
 task_ns_proxy_t *task_ns_proxy_clone(task_t *task, uint64_t clone_flags) {
+    task_ns_proxy_t *parent;
+    task_ns_proxy_t *child;
+
     if (!task || !task->nsproxy)
         return NULL;
 
-    task_ns_proxy_t *parent = task->nsproxy;
-    task_ns_proxy_t *child = calloc(1, sizeof(task_ns_proxy_t));
+    parent = task->nsproxy;
+    child = calloc(1, sizeof(*child));
     if (!child)
         return NULL;
-
     child->ref_count = 1;
 
     if (clone_flags & CLONE_NEWUTS) {
@@ -447,7 +324,9 @@ task_ns_proxy_t *task_ns_proxy_clone(task_t *task, uint64_t clone_flags) {
     }
 
     if (clone_flags & CLONE_NEWNS) {
-        vfs_node_t *root = task->fs ? task->fs->root : rootdir;
+        struct vfs_mount *root = task && task->nsproxy && task->nsproxy->mnt_ns
+                                     ? task->nsproxy->mnt_ns->root
+                                     : vfs_root_path.mnt;
         child->mnt_ns = task_mount_namespace_create(root, parent->mnt_ns);
     } else {
         child->mnt_ns = parent->mnt_ns;

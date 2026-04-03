@@ -1,4 +1,5 @@
 #include <fs/vfs/vfs.h>
+#include <mm/mm.h>
 
 #define IS_SLASH(c) ((c) == '/')
 #define PATH_SEPARATOR '/'

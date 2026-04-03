@@ -22,8 +22,8 @@ char *proc_gen_maps_file(task_t *task, size_t *content_len) {
 
         string_builder_append(builder, "%012lx-%012lx %s %08lx %02x:%02x %lu",
                               vma->vm_start, vma->vm_end, perms, vma->vm_offset,
-                              vfs_node ? (vfs_node->rdev >> 8) & 0xFF : 0,
-                              vfs_node ? vfs_node->rdev & 0xFF : 0,
+                              vfs_node ? (vfs_node->i_rdev >> 8) & 0xFF : 0,
+                              vfs_node ? vfs_node->i_rdev & 0xFF : 0,
                               vfs_node ? vfs_node->inode : 0);
 
         const char *pathname = vma->vm_name;

@@ -1,7 +1,7 @@
 #include <block/block.h>
 #include <mm/mm.h>
 #include <mm/cache.h>
-#include <fs/partition.h>
+#include <block/partition.h>
 #include <dev/device.h>
 #include <arch/arch.h>
 #include <task/task.h>

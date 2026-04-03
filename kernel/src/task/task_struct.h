@@ -4,7 +4,7 @@
 #include <libs/mutex.h>
 #include <libs/llist.h>
 #include <libs/rbtree.h>
-#include <fs/termios.h>
+#include <libs/termios.h>
 #include <mm/shm.h>
 #include <task/ns.h>
 
@@ -20,9 +20,10 @@ typedef enum task_state {
 
 struct arch_context;
 typedef struct arch_context arch_context_t;
+typedef struct task_mm_info task_mm_info_t;
 
-struct vfs_node;
-typedef struct vfs_node vfs_node_t;
+struct vfs_file;
+struct vfs_path;
 
 struct rlimit {
     size_t rlim_cur;
@@ -102,14 +103,12 @@ typedef struct kernel_timer {
 
 #define MAX_TIMERS_NUM 8
 
-struct fd;
-typedef struct fd fd_t;
-
 #define MAX_FD_NUM 512
 #define MAX_SHM_NUM 32
 
 typedef struct fd_info {
-    fd_t *fds[MAX_FD_NUM];
+    struct vfs_file *fds[MAX_FD_NUM];
+    unsigned int fd_flags[MAX_FD_NUM];
     mutex_t fdt_lock;
     int ref_count;
 } fd_info_t;
@@ -314,7 +313,7 @@ typedef struct task {
     uint64_t preempt_count;
     uint32_t cpu_id;
     char name[TASK_NAME_MAX];
-    vfs_node_t *exec_node;
+    struct vfs_file *exec_file;
     int priority;
     void *sched_info;
     volatile task_state_t state;
@@ -329,8 +328,8 @@ typedef struct task {
     task_fs_t *fs;
     fd_info_t *fd_info;
     shm_mapping_t *shm_ids;
-    vfs_node_t *procfs_node;
-    vfs_node_t *procfs_thread_node;
+    struct vfs_path *procfs_path;
+    struct vfs_path *procfs_thread_path;
     uint64_t arg_start;
     uint64_t arg_end;
     uint64_t env_start;

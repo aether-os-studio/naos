@@ -88,7 +88,7 @@ static vfs_node_t *drm_event_node_get(drm_device_t *dev) {
         if (drm_event_node_bindings[i].dev == dev &&
             drm_event_node_bindings[i].node) {
             node = drm_event_node_bindings[i].node;
-            vfs_node_ref_get(node);
+            vfs_igrab(node);
             break;
         }
     }
@@ -101,8 +101,22 @@ static void drm_notify_event_node(drm_device_t *dev) {
     vfs_node_t *event_node = drm_event_node_get(dev);
     if (event_node) {
         vfs_poll_notify(event_node, EPOLLIN);
-        vfs_node_ref_put(event_node, NULL);
+        vfs_iput(event_node);
     }
+}
+
+static vfs_node_t *drm_lookup_inode(const char *path) {
+    struct vfs_path p = {0};
+    vfs_node_t *inode = NULL;
+
+    if (!path)
+        return NULL;
+    if (vfs_filename_lookup(AT_FDCWD, path, LOOKUP_FOLLOW, &p) < 0)
+        return NULL;
+    if (p.dentry && p.dentry->d_inode)
+        inode = vfs_igrab(p.dentry->d_inode);
+    vfs_path_put(&p);
+    return inode;
 }
 
 static void drm_event_node_register(drm_device_t *dev,
@@ -114,7 +128,7 @@ static void drm_event_node_register(drm_device_t *dev,
     char path[64];
     snprintf(path, sizeof(path), "/dev/%s", card_dev_name);
 
-    vfs_node_t *node = vfs_open(path, 0);
+    vfs_node_t *node = drm_lookup_inode(path);
     if (!node) {
         return;
     }
@@ -144,7 +158,7 @@ static void drm_event_node_register(drm_device_t *dev,
     spin_unlock(&drm_event_node_bindings_lock);
 
     if (old_node) {
-        vfs_close(old_node);
+        vfs_iput(old_node);
     }
 }
 
@@ -167,7 +181,7 @@ static void drm_event_node_unregister(drm_device_t *dev) {
     spin_unlock(&drm_event_node_bindings_lock);
 
     if (node) {
-        vfs_close(node);
+        vfs_iput(node);
     }
 }
 
@@ -226,7 +240,7 @@ ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
         vfs_poll_wait_init(&wait, current_task, want);
         int ret = vfs_poll_wait_arm(event_node, &wait);
         if (ret != 0) {
-            vfs_node_ref_put(event_node, NULL);
+            vfs_iput(event_node);
             return ret;
         }
 
@@ -234,7 +248,7 @@ ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
         if (!(events & want)) {
             int reason = vfs_poll_wait_sleep(event_node, &wait, -1, "drm_read");
             vfs_poll_wait_disarm(&wait);
-            vfs_node_ref_put(event_node, NULL);
+            vfs_iput(event_node);
             if (reason != EOK) {
                 return reason == EINTR ? -EINTR : -EIO;
             }
@@ -242,7 +256,7 @@ ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
         }
 
         vfs_poll_wait_disarm(&wait);
-        vfs_node_ref_put(event_node, NULL);
+        vfs_iput(event_node);
         if (events & (EPOLLERR | EPOLLHUP)) {
             return -EIO;
         }
@@ -408,7 +422,7 @@ static void drm_device_setup_sysfs(int major, int card_minor, int render_minor,
     char pci_device_path[128];
     sprintf(pci_device_path, "/sys/bus/pci/devices/%04x:%02x:%02x.%01x",
             pci_dev->segment, pci_dev->bus, pci_dev->slot, pci_dev->func);
-    vfs_node_t *pci_device_dir = vfs_open(pci_device_path, 0);
+    vfs_node_t *pci_device_dir = sysfs_ensure_dir(pci_device_path);
     if (!pci_device_dir) {
         printk("drm: Failed to open PCI sysfs node %s\n", pci_device_path);
         return;
@@ -421,11 +435,11 @@ static void drm_device_setup_sysfs(int major, int card_minor, int render_minor,
     vfs_node_t *card_root_dev = sysfs_child_append(card_root, "dev", false);
     char devnum_content[32];
     sprintf(devnum_content, "%d:%d\n", major, card_minor);
-    vfs_write(card_root_dev, devnum_content, 0, strlen(devnum_content));
+    sysfs_write_node(card_root_dev, devnum_content, strlen(devnum_content), 0);
 
     sysfs_child_append_symlink(card_root, "device", pci_device_path);
 
-    vfs_close(card_root);
+    vfs_iput(card_root);
 
     vfs_node_t *drm_dir = sysfs_child_append(pci_device_dir, "drm", true);
 
@@ -433,24 +447,24 @@ static void drm_device_setup_sysfs(int major, int card_minor, int render_minor,
 
     vfs_node_t *version = sysfs_child_append(drm_dir, "version", false);
     sprintf(content, "drm 1.1.0 20060810");
-    vfs_write(version, content, 0, strlen(content));
+    sysfs_write_node(version, content, strlen(content), 0);
 
     char card_node_name[16];
     sprintf(card_node_name, "card%d", card_minor);
     vfs_node_t *card_node = sysfs_child_append(drm_dir, card_node_name, true);
     vfs_node_t *card_node_dev = sysfs_child_append(card_node, "dev", false);
-    vfs_write(card_node_dev, devnum_content, 0, strlen(devnum_content));
+    sysfs_write_node(card_node_dev, devnum_content, strlen(devnum_content), 0);
 
     vfs_node_t *card_uevent = sysfs_child_append(card_node, "uevent", false);
     sprintf(content,
             "MAJOR=%d\nMINOR=%d\nDEVNAME=dri/%s\nSUBSYSTEM=drm\nDEVTYPE="
             "drm_minor\n",
             major, card_minor, card_node_name);
-    vfs_write(card_uevent, content, 0, strlen(content));
+    sysfs_write_node(card_uevent, content, strlen(content), 0);
     sysfs_child_append_symlink(card_node, "subsystem", "/sys/class/drm");
     sysfs_child_append_symlink(card_node, "device", pci_device_path);
 
-    vfs_node_t *class_drm = vfs_open("/sys/class/drm", 0);
+    vfs_node_t *class_drm = sysfs_ensure_dir("/sys/class/drm");
 
     char card_path[256];
     sprintf(card_path, "%s/drm/%s", pci_device_path, card_node_name);
@@ -464,11 +478,12 @@ static void drm_device_setup_sysfs(int major, int card_minor, int render_minor,
         vfs_node_t *render_root_dev =
             sysfs_child_append(render_root, "dev", false);
         sprintf(devnum_content, "%d:%d\n", major, render_minor);
-        vfs_write(render_root_dev, devnum_content, 0, strlen(devnum_content));
+        sysfs_write_node(render_root_dev, devnum_content,
+                         strlen(devnum_content), 0);
 
         sysfs_child_append_symlink(render_root, "device", pci_device_path);
 
-        vfs_close(render_root);
+        vfs_iput(render_root);
 
         char render_node_name[16];
         sprintf(render_node_name, "renderD%d", render_minor);
@@ -476,21 +491,36 @@ static void drm_device_setup_sysfs(int major, int card_minor, int render_minor,
             sysfs_child_append(drm_dir, render_node_name, true);
         vfs_node_t *render_node_dev =
             sysfs_child_append(render_node, "dev", false);
-        vfs_write(render_node_dev, devnum_content, 0, strlen(devnum_content));
+        sysfs_write_node(render_node_dev, devnum_content,
+                         strlen(devnum_content), 0);
         vfs_node_t *render_uevent =
             sysfs_child_append(render_node, "uevent", false);
         sprintf(content,
                 "MAJOR=%d\nMINOR=%d\nDEVNAME=dri/%s\nSUBSYSTEM=drm\nDEVTYPE="
                 "drm_minor\n",
                 major, render_minor, render_node_name);
-        vfs_write(render_uevent, content, 0, strlen(content));
+        sysfs_write_node(render_uevent, content, strlen(content), 0);
         sysfs_child_append_symlink(render_node, "subsystem", "/sys/class/drm");
         sysfs_child_append_symlink(render_node, "device", pci_device_path);
 
         char render_path[256];
         sprintf(render_path, "%s/drm/%s", pci_device_path, render_node_name);
         sysfs_child_append_symlink(class_drm, render_node_name, render_path);
+
+        vfs_iput(render_root_dev);
+        vfs_iput(render_node);
+        vfs_iput(render_node_dev);
+        vfs_iput(render_uevent);
     }
+
+    vfs_iput(pci_device_dir);
+    vfs_iput(card_root_dev);
+    vfs_iput(drm_dir);
+    vfs_iput(version);
+    vfs_iput(card_node);
+    vfs_iput(card_node_dev);
+    vfs_iput(card_uevent);
+    vfs_iput(class_drm);
 }
 
 static int drm_id = 0;
@@ -794,11 +824,16 @@ void drm_unregister_device(drm_device_t *dev) {
  * This provides basic display functionality even without hardware acceleration.
  */
 void drm_init_after_pci_sysfs() {
-    if (!vfs_open("/dev/dri/card0", 0)) {
+    struct vfs_path path = {0};
+
+    if (vfs_filename_lookup(AT_FDCWD, "/dev/dri/card0", LOOKUP_FOLLOW, &path) <
+        0) {
         printk("Cannot find GPU device, using framebuffer.\n");
         extern void drm_plainfb_init(void);
         drm_plainfb_init();
+        return;
     }
+    vfs_path_put(&path);
 }
 
 /**

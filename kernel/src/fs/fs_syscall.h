@@ -1,7 +1,7 @@
 #pragma once
 
 #include <libs/klibc.h>
-#include <fs/termios.h>
+#include <libs/termios.h>
 #include <fs/vfs/vfs.h>
 #include <fs/vfs/fcntl.h>
 #include <task/task.h>
@@ -219,7 +219,7 @@ __attribute__((__packed__))
 
 typedef struct epoll_watch {
     struct llist_header node;
-    vfs_node_t *file;
+    struct vfs_file *file;
     uint32_t events;
     uint64_t data;
     bool edge_trigger;
@@ -266,6 +266,12 @@ typedef struct eventfd {
     uint64_t count;
     int flags;
 } eventfd_t;
+
+struct vfs_file;
+eventfd_t *eventfd_file_handle(struct vfs_file *file);
+int eventfd_is_file(struct vfs_file *file);
+int eventfd_create_file(struct vfs_file **out_file, uint64_t initial_val,
+                        unsigned int flags, eventfd_t **out_efd);
 
 #define SIGNALFD_IOC_MASK 0x53010008
 
@@ -382,7 +388,7 @@ uint64_t sys_inotify_init();
 uint64_t sys_inotify_init1(uint64_t flags);
 uint64_t sys_inotify_add_watch(uint64_t notifyfd, const char *path,
                                uint64_t mask);
-uint64_t sys_inotify_rm_watch(uint64_t watchfd, uint64_t mask);
+uint64_t sys_inotify_rm_watch(uint64_t watchfd, uint64_t wd);
 
 uint64_t sys_fsync(uint64_t fd);
 uint64_t sys_close(uint64_t fd);

@@ -42,6 +42,11 @@ typedef struct socket_handle {
     fd_t *fd;
     void *sock;
     socket_op_t *op;
+    ssize_t (*read_op)(fd_t *fd, void *buf, size_t offset, size_t limit);
+    ssize_t (*write_op)(fd_t *fd, const void *buf, size_t offset, size_t limit);
+    int (*ioctl_op)(fd_t *fd, ssize_t cmd, ssize_t arg);
+    int (*poll_op)(vfs_node_t *node, size_t events);
+    void (*release)(struct socket_handle *handle);
 } socket_handle_t;
 
 typedef struct real_socket_socket {

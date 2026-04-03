@@ -8,7 +8,7 @@
 typedef int (*on_new_task_t)(task_t *task);
 typedef int (*on_exit_task_t)(task_t *task);
 typedef int (*on_open_file_t)(task_t *task, int fd);
-typedef int (*on_close_file_t)(task_t *task, int fd, fd_t *file);
+typedef int (*on_close_file_t)(task_t *task, int fd, struct vfs_file *file);
 typedef int (*on_new_device_t)(device_t *dev);
 typedef int (*on_remove_device_t)(device_t *dev);
 typedef int (*on_new_bus_device_t)(bus_device_t *dev);
@@ -35,7 +35,7 @@ void regist_on_send_signal_callback(on_send_signal_t fn);
 void on_new_task_call(task_t *task);
 void on_exit_task_call(task_t *task);
 void on_open_file_call(task_t *task, int fd);
-void on_close_file_call(task_t *task, int fd, fd_t *file);
+void on_close_file_call(task_t *task, int fd, struct vfs_file *file);
 void on_new_device_call(device_t *device);
 void on_remove_device_call(device_t *device);
 void on_new_bus_device_call(bus_device_t *device);

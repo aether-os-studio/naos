@@ -3,7 +3,6 @@
 
 proc_handle_node_t *dispatch_array[256];
 static size_t dp_index = 0;
-extern vfs_node_t *procfs_root;
 
 size_t procfs_node_read(size_t len, size_t offset, size_t size, char *addr,
                         char *contect) {
@@ -73,15 +72,6 @@ static void create_procfs_node(char *name, read_entry_t read_entry,
                                stat_entry_t stat_entry,
                                poll_entry_t poll_entry) {
     create_procfs_handle(name, read_entry, stat_entry, NULL, poll_entry);
-    vfs_node_t *node = vfs_node_alloc(procfs_root, name);
-    node->type = file_none;
-    node->mode = 0700;
-    proc_handle_t *handle0 = malloc(sizeof(proc_handle_t));
-    node->handle = handle0;
-    handle0->node = node;
-    handle0->task = NULL;
-    handle0->fd_num = -1;
-    sprintf(handle0->name, "%s", name);
 }
 
 void procfs_nodes_init() {
@@ -140,7 +130,7 @@ void procfs_stat_dispatch(proc_handle_t *handle, vfs_node_t *node) {
     for (size_t i = 0; i < dp_index; i++) {
         if (hash == dispatch_array[i]->hash) {
             if (dispatch_array[i]->stat_entry)
-                node->size = dispatch_array[i]->stat_entry(handle);
+                node->i_size = dispatch_array[i]->stat_entry(handle);
             return;
         }
     }

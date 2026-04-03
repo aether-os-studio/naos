@@ -1,4 +1,3 @@
-#include <fs/vfs/vfs.h>
 #include <mm/mm.h>
 #include <mm/mm_syscall.h>
 #include <mm/shm.h>
@@ -7,70 +6,12 @@
 static shm_t *shm_list = NULL;
 static int next_shmid = 1;
 static spinlock_t shm_op_lock = SPIN_INIT;
-static int shmfs_fsid = 0;
 
 static inline long shm_now_seconds(void) {
     return (long)(nano_time() / 1000000000ULL);
 }
 
 #define PAGE_ALIGN_UP(x) (((x) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1))
-
-static int shmfs_mount(uint64_t dev, vfs_node_t *node);
-static void shmfs_unmount(vfs_node_t *node);
-static void shmfs_open(vfs_node_t *parent, const char *name, vfs_node_t *node);
-static ssize_t shmfs_read(fd_t *fd, void *addr, size_t offset, size_t size);
-static ssize_t shmfs_write(fd_t *fd, const void *addr, size_t offset,
-                           size_t size);
-static bool shmfs_close(vfs_node_t *node);
-static ssize_t shmfs_readlink(vfs_node_t *node, void *addr, size_t offset,
-                              size_t size);
-static int shmfs_mk(vfs_node_t *parent, const char *name, vfs_node_t *node);
-static int shmfs_mknod(vfs_node_t *parent, const char *name, vfs_node_t *node,
-                       uint16_t mode, int dev);
-static int shmfs_chmod(vfs_node_t *node, uint16_t mode);
-static int shmfs_chown(vfs_node_t *node, uint64_t uid, uint64_t gid);
-static int shmfs_stat(vfs_node_t *node);
-static int shmfs_rename(vfs_node_t *node, const char *new);
-static void *shmfs_map(fd_t *file, void *addr, size_t offset, size_t size,
-                       size_t prot, size_t flags);
-static int shmfs_ioctl(fd_t *node, ssize_t cmd, ssize_t arg);
-static int shmfs_poll(vfs_node_t *node, size_t events);
-static int shmfs_resize(vfs_node_t *node, uint64_t size);
-static int shmfs_delete(vfs_node_t *parent, vfs_node_t *node);
-static void shmfs_free_handle(vfs_node_t *node);
-
-static vfs_operations_t shmfs_callbacks = {
-    .mount = shmfs_mount,
-    .unmount = shmfs_unmount,
-    .open = shmfs_open,
-    .close = shmfs_close,
-    .read = shmfs_read,
-    .write = shmfs_write,
-    .readlink = shmfs_readlink,
-    .mkdir = shmfs_mk,
-    .mkfile = shmfs_mk,
-    .link = shmfs_mk,
-    .symlink = shmfs_mk,
-    .mknod = shmfs_mknod,
-    .chmod = shmfs_chmod,
-    .chown = shmfs_chown,
-    .delete = shmfs_delete,
-    .rename = shmfs_rename,
-    .stat = shmfs_stat,
-    .map = shmfs_map,
-    .ioctl = shmfs_ioctl,
-    .poll = shmfs_poll,
-    .resize = shmfs_resize,
-
-    .free_handle = shmfs_free_handle,
-};
-
-static fs_t shmfs = {
-    .name = "shmfs",
-    .magic = 0,
-    .ops = &shmfs_callbacks,
-    .flags = FS_FLAGS_HIDDEN | FS_FLAGS_VIRTUAL,
-};
 
 static shm_t *shm_find_key_locked(int key) {
     for (shm_t *s = shm_list; s; s = s->next) {
@@ -105,62 +46,14 @@ static int shm_ensure_backing_locked(shm_t *shm) {
     if (!shm->addr)
         return -ENOMEM;
     memset(shm->addr, 0, shm->size);
-
-    return 0;
-}
-
-static int shm_register_fs_locked(void) {
-    if (shmfs_fsid > 0)
-        return 0;
-
-    shmfs_fsid = vfs_regist(&shmfs);
-    if (shmfs_fsid <= 0)
-        return -ENOSYS;
-
     return 0;
 }
 
 static int shm_create_dev_node_locked(shm_t *shm) {
-    int ret = shm_register_fs_locked();
-    if (ret < 0)
-        return ret;
-
-    vfs_node_t *shm_dir = vfs_open("/dev/shm", 0);
-    if (!shm_dir) {
-        vfs_mkdir("/dev/shm");
-        shm_dir = vfs_open("/dev/shm", 0);
-    }
-    if (!shm_dir || !(shm_dir->type & file_dir)) {
-        if (shm_dir)
-            vfs_close(shm_dir);
-        return -ENOENT;
-    }
-
-    sprintf(shm->node_name, "sysv_%d", shm->shmid);
-
-    if (vfs_child_find(shm_dir, shm->node_name)) {
-        vfs_close(shm_dir);
-        return -EEXIST;
-    }
-
-    vfs_node_t *node = vfs_node_alloc(shm_dir, shm->node_name);
-    if (!node) {
-        vfs_close(shm_dir);
-        return -ENOMEM;
-    }
-    node->handle = shm;
-
-    node->type = file_none;
-    node->fsid = shmfs_fsid;
-    node->mode = shm->mode;
-    node->owner = shm->uid;
-    node->group = shm->gid;
-    node->size = shm->size;
-    node->handle = shm;
-
-    shm->node = node;
-    vfs_close(shm_dir);
-
+    if (!shm)
+        return -EINVAL;
+    snprintf(shm->node_name, sizeof(shm->node_name), "sysv_%d", shm->shmid);
+    shm->node = NULL;
     return 0;
 }
 
@@ -169,16 +62,9 @@ static void shm_try_free_locked(shm_t *shm) {
         return;
     if (!shm->marked_destroy || shm->nattch > 0)
         return;
-    if (shm->node && vfs_node_refcount_read(shm->node) > 0)
-        return;
 
     shm_unlink_locked(shm);
-
-    if (shm->node) {
-        shm->node->handle = NULL;
-        vfs_delete(shm->node);
-        shm->node = NULL;
-    }
+    shm->node = NULL;
 
     if (shm->addr)
         free_frames_bytes(shm->addr, shm->size);
@@ -192,12 +78,11 @@ static void *find_free_region(vma_manager_t *mgr, size_t size) {
 
     if ((int64_t)addr < 0)
         return NULL;
-
     return (void *)addr;
 }
 
 static shm_mapping_t *mapping_add(task_t *task, shm_t *shm, uint64_t uaddr) {
-    shm_mapping_t *m = malloc(sizeof(shm_mapping_t));
+    shm_mapping_t *m = malloc(sizeof(*m));
     if (!m)
         return NULL;
 
@@ -217,8 +102,7 @@ static shm_mapping_t *mapping_find(task_t *task, uint64_t uaddr) {
 }
 
 static void mapping_remove(task_t *task, shm_mapping_t *target) {
-    for (shm_mapping_t **pp = (shm_mapping_t **)&task->shm_ids; *pp;
-         pp = &(*pp)->next) {
+    for (shm_mapping_t **pp = &task->shm_ids; *pp; pp = &(*pp)->next) {
         if (*pp == target) {
             *pp = target->next;
             free(target);
@@ -227,7 +111,6 @@ static void mapping_remove(task_t *task, shm_mapping_t *target) {
     }
 }
 
-/* 对单个进程执行一次 detach（解除映射 + 移除 VMA + 减引用） */
 static void do_shmdt_one(task_t *task, shm_mapping_t *m) {
     shm_t *shm = m->shm;
     vma_manager_t *mgr = &task->mm->task_vma_mgr;
@@ -251,204 +134,20 @@ static void do_shmdt_one(task_t *task, shm_mapping_t *m) {
     }
 }
 
-static int shmfs_mount(uint64_t dev, vfs_node_t *node) { return 0; }
-
-static void shmfs_unmount(vfs_node_t *node) {}
-
-static void shmfs_open(vfs_node_t *parent, const char *name, vfs_node_t *node) {
-}
-
-static ssize_t shmfs_readlink(vfs_node_t *node, void *addr, size_t offset,
-                              size_t size) {
-    return -EPERM;
-}
-
-static int shmfs_mk(vfs_node_t *parent, const char *name, vfs_node_t *node) {
-    return -EPERM;
-}
-
-static int shmfs_mknod(vfs_node_t *parent, const char *name, vfs_node_t *node,
-                       uint16_t mode, int dev) {
-    return -EPERM;
-}
-
-static int shmfs_chmod(vfs_node_t *node, uint16_t mode) { return -EPERM; }
-
-static int shmfs_chown(vfs_node_t *node, uint64_t uid, uint64_t gid) {
-    return -EPERM;
-}
-
-static ssize_t shmfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
-    shm_t *shm = (fd && fd->node) ? (shm_t *)fd->node->handle : NULL;
-    if (!shm)
-        return -EINVAL;
-
-    spin_lock(&shm_op_lock);
-
-    if (offset >= shm->size) {
-        spin_unlock(&shm_op_lock);
-        return 0;
-    }
-
-    size_t copy_size = MIN(size, shm->size - offset);
-    int ret = shm_ensure_backing_locked(shm);
-    if (ret < 0) {
-        spin_unlock(&shm_op_lock);
-        return ret;
-    }
-
-    memcpy(addr, (uint8_t *)shm->addr + offset, copy_size);
-    spin_unlock(&shm_op_lock);
-
-    return copy_size;
-}
-
-static ssize_t shmfs_write(fd_t *fd, const void *addr, size_t offset,
-                           size_t size) {
-    shm_t *shm = (fd && fd->node) ? (shm_t *)fd->node->handle : NULL;
-    if (!shm)
-        return -EINVAL;
-
-    spin_lock(&shm_op_lock);
-
-    if (offset >= shm->size) {
-        spin_unlock(&shm_op_lock);
-        return 0;
-    }
-
-    size_t copy_size = MIN(size, shm->size - offset);
-    int ret = shm_ensure_backing_locked(shm);
-    if (ret < 0) {
-        spin_unlock(&shm_op_lock);
-        return ret;
-    }
-
-    memcpy((uint8_t *)shm->addr + offset, addr, copy_size);
-    spin_unlock(&shm_op_lock);
-
-    return copy_size;
-}
-
-static int shmfs_stat(vfs_node_t *node) {
-    shm_t *shm = node ? node->handle : NULL;
-    if (!shm || !node)
-        return -EINVAL;
-
-    spin_lock(&shm_op_lock);
-    node->size = shm->size;
-    node->owner = shm->uid;
-    node->group = shm->gid;
-    spin_unlock(&shm_op_lock);
-
-    return 0;
-}
-
-static int shmfs_rename(vfs_node_t *node, const char *new) { return -EPERM; }
-
-static void *shmfs_map(fd_t *file, void *addr, size_t offset, size_t size,
-                       size_t prot, size_t flags) {
-    (void)flags;
-
-    shm_t *shm = (file && file->node) ? (shm_t *)file->node->handle : NULL;
-    if (!shm)
-        return (void *)(int64_t)-EINVAL;
-
-    spin_lock(&shm_op_lock);
-
-    if (offset >= shm->size || size > shm->size - offset) {
-        spin_unlock(&shm_op_lock);
-        return (void *)(int64_t)-EINVAL;
-    }
-
-    int ret = shm_ensure_backing_locked(shm);
-    if (ret < 0) {
-        spin_unlock(&shm_op_lock);
-        return (void *)(int64_t)ret;
-    }
-
-    uint64_t pt_flags = PT_FLAG_U;
-    if (prot & PROT_READ)
-        pt_flags |= PT_FLAG_R;
-    if (prot & PROT_WRITE)
-        pt_flags |= PT_FLAG_W;
-    if (prot & PROT_EXEC)
-        pt_flags |= PT_FLAG_X;
-    if (!(pt_flags & (PT_FLAG_R | PT_FLAG_W | PT_FLAG_X)))
-        pt_flags |= PT_FLAG_R;
-
-    uint64_t start = (uint64_t)addr;
-    uint64_t *pgdir = get_current_page_dir(false);
-    for (uint64_t ptr = start; ptr < start + size; ptr += PAGE_SIZE) {
-        map_page_range_mm(current_task->mm, ptr,
-                          translate_address(pgdir, (uint64_t)shm->addr +
-                                                       offset + ptr - start),
-                          PAGE_SIZE, pt_flags);
-    }
-
-    spin_unlock(&shm_op_lock);
-    return addr;
-}
-
-static int shmfs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
-    vfs_node_t *node = fd->node;
-    return -EPERM;
-}
-
-static int shmfs_poll(vfs_node_t *node, size_t events) { return 0; }
-
-static int shmfs_resize(vfs_node_t *node, uint64_t size) { return 0; }
-
-static int shmfs_delete(vfs_node_t *parent, vfs_node_t *node) {
-    if (!node)
-        return -EINVAL;
-    if (node->handle) {
-        shm_t *shm = (shm_t *)node->handle;
-        if (!shm->marked_destroy)
-            return -EPERM;
-    }
-    return 0;
-}
-
-static bool shmfs_close(vfs_node_t *node) {
-    shm_t *shm = node ? node->handle : NULL;
-    if (!shm)
-        return false;
-
-    spin_lock(&shm_op_lock);
-    shm_try_free_locked(shm);
-    spin_unlock(&shm_op_lock);
-
-    return false;
-}
-
-static void shmfs_free_handle(vfs_node_t *node) {}
-
-void shm_try_reap_by_vnode(struct vfs_node *node) {
-    if (!node)
-        return;
-
-    spin_lock(&shm_op_lock);
-
-    for (shm_t *s = shm_list; s; s = s->next) {
-        if (s->node == node) {
-            shm_try_free_locked(s);
-            break;
-        }
-    }
-
-    spin_unlock(&shm_op_lock);
-}
+void shm_try_reap_by_vnode(struct vfs_inode *node) { (void)node; }
 
 uint64_t sys_shmget(int key, int size, int shmflg) {
+    shm_t *shm;
+
     if (size <= 0)
         return -EINVAL;
 
     spin_lock(&shm_op_lock);
 
     if (key != IPC_PRIVATE) {
-        shm_t *s = shm_find_key_locked(key);
-        if (s) {
-            if ((size_t)PAGE_ALIGN_UP((size_t)size) > s->size) {
+        shm = shm_find_key_locked(key);
+        if (shm) {
+            if ((size_t)PAGE_ALIGN_UP((size_t)size) > shm->size) {
                 spin_unlock(&shm_op_lock);
                 return -EINVAL;
             }
@@ -457,7 +156,7 @@ uint64_t sys_shmget(int key, int size, int shmflg) {
                 return -EEXIST;
             }
             spin_unlock(&shm_op_lock);
-            return s->shmid;
+            return shm->shmid;
         }
     }
 
@@ -466,13 +165,12 @@ uint64_t sys_shmget(int key, int size, int shmflg) {
         return -ENOENT;
     }
 
-    shm_t *shm = malloc(sizeof(shm_t));
+    shm = calloc(1, sizeof(*shm));
     if (!shm) {
         spin_unlock(&shm_op_lock);
         return -ENOMEM;
     }
 
-    memset(shm, 0, sizeof(shm_t));
     shm->shmid = next_shmid++;
     shm->key = key;
     shm->size = PAGE_ALIGN_UP((size_t)size);
@@ -482,18 +180,12 @@ uint64_t sys_shmget(int key, int size, int shmflg) {
     shm->cuid = current_task->uid;
     shm->cgid = current_task->gid;
     shm->cpid = current_task->pid;
-    shm->lpid = 0;
-    shm->atime = 0;
-    shm->dtime = 0;
     shm->ctime = shm_now_seconds();
-    shm->nattch = 0;
-    shm->marked_destroy = false;
 
-    int ret = shm_create_dev_node_locked(shm);
-    if (ret < 0) {
+    if (shm_create_dev_node_locked(shm) < 0) {
         free(shm);
         spin_unlock(&shm_op_lock);
-        return ret;
+        return -ENOMEM;
     }
 
     shm->next = shm_list;
@@ -501,28 +193,31 @@ uint64_t sys_shmget(int key, int size, int shmflg) {
 
     uint64_t shmid = shm->shmid;
     spin_unlock(&shm_op_lock);
-
     return shmid;
 }
 
 void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
     vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
     int64_t err = 0;
+    shm_t *shm;
+    uint64_t addr;
+    uint64_t flags;
+    uint64_t start;
+    uint64_t *pgdir;
+    vma_t *vma;
 
     spin_lock(&mgr->lock);
     spin_lock(&shm_op_lock);
 
-    shm_t *shm = shm_find_id_locked(shmid);
+    shm = shm_find_id_locked(shmid);
     if (!shm) {
         err = -EINVAL;
         goto out_unlock;
     }
 
-    int ret = shm_ensure_backing_locked(shm);
-    if (ret < 0) {
-        err = ret;
+    err = shm_ensure_backing_locked(shm);
+    if (err < 0)
         goto out_unlock;
-    }
 
     if (!shmaddr) {
         shmaddr = find_free_region(mgr, shm->size);
@@ -532,7 +227,7 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
         }
     }
 
-    uint64_t addr = (uint64_t)shmaddr;
+    addr = (uint64_t)shmaddr;
     if (addr) {
         if (shmflg & SHM_RND) {
             addr = PADDING_DOWN(addr, PAGE_SIZE);
@@ -547,14 +242,14 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
         goto out_unlock;
     }
 
-    uint64_t flags = PT_FLAG_U | PT_FLAG_R;
+    flags = PT_FLAG_U | PT_FLAG_R;
     if (!(shmflg & SHM_RDONLY))
         flags |= PT_FLAG_W;
     if (shmflg & SHM_EXEC)
         flags |= PT_FLAG_X;
 
-    uint64_t start = (uint64_t)addr;
-    uint64_t *pgdir = get_current_page_dir(false);
+    start = addr;
+    pgdir = get_current_page_dir(false);
     spin_lock(&current_task->mm->lock);
     for (uint64_t ptr = start; ptr < start + shm->size; ptr += PAGE_SIZE) {
         map_page_range_mm(
@@ -564,7 +259,7 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
     }
     spin_unlock(&current_task->mm->lock);
 
-    vma_t *vma = vma_alloc();
+    vma = vma_alloc();
     if (!vma) {
         spin_lock(&current_task->mm->lock);
         unmap_page_range_mm(current_task->mm, addr, shm->size);
@@ -583,7 +278,6 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
         vma->vm_flags |= VMA_EXEC;
     vma->shm = shm;
     vma->shm_id = shm->shmid;
-    vma->node = NULL;
 
     if (vma_insert(mgr, vma) != 0) {
         vma_free(vma);
@@ -609,7 +303,6 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
     shm->lpid = current_task->pid;
     spin_unlock(&shm_op_lock);
     spin_unlock(&mgr->lock);
-
     return (void *)addr;
 
 out_unlock:
@@ -619,14 +312,16 @@ out_unlock:
 }
 
 uint64_t sys_shmdt(void *shmaddr) {
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+    shm_mapping_t *m;
+
     if (!shmaddr)
         return -EINVAL;
 
-    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
     spin_lock(&mgr->lock);
     spin_lock(&shm_op_lock);
 
-    shm_mapping_t *m = mapping_find(current_task, (uint64_t)shmaddr);
+    m = mapping_find(current_task, (uint64_t)shmaddr);
     if (!m) {
         spin_unlock(&shm_op_lock);
         spin_unlock(&mgr->lock);
@@ -642,9 +337,10 @@ uint64_t sys_shmdt(void *shmaddr) {
 }
 
 uint64_t sys_shmctl(int shmid, int cmd, struct shmid_ds *buf) {
-    spin_lock(&shm_op_lock);
+    shm_t *shm;
 
-    shm_t *shm = shm_find_id_locked(shmid);
+    spin_lock(&shm_op_lock);
+    shm = shm_find_id_locked(shmid);
     if (!shm) {
         spin_unlock(&shm_op_lock);
         return -EINVAL;
@@ -654,17 +350,14 @@ uint64_t sys_shmctl(int shmid, int cmd, struct shmid_ds *buf) {
     case IPC_RMID:
         shm->marked_destroy = true;
         shm->ctime = shm_now_seconds();
-        if (shm->node && vfs_node_refcount_read(shm->node) > 0)
-            vfs_delete(shm->node);
         shm_try_free_locked(shm);
         break;
-
-    case IPC_STAT:
+    case IPC_STAT: {
+        struct shmid_ds info = {0};
         if (!buf) {
             spin_unlock(&shm_op_lock);
             return -EINVAL;
         }
-        struct shmid_ds info = {0};
         info.shm_perm.__ipc_perm_key = shm->key;
         info.shm_perm.mode = shm->mode;
         info.shm_perm.uid = shm->uid;
@@ -682,8 +375,7 @@ uint64_t sys_shmctl(int shmid, int cmd, struct shmid_ds *buf) {
         if (copy_to_user(buf, &info, sizeof(info)))
             return -EFAULT;
         return 0;
-        break;
-
+    }
     default:
         spin_unlock(&shm_op_lock);
         return -ENOSYS;
@@ -697,17 +389,14 @@ void shm_fork(task_t *parent, task_t *child) {
     spin_lock(&shm_op_lock);
 
     child->shm_ids = NULL;
-
     for (shm_mapping_t *m = parent->shm_ids; m; m = m->next) {
-        shm_mapping_t *cm = malloc(sizeof(shm_mapping_t));
+        shm_mapping_t *cm = malloc(sizeof(*cm));
         if (!cm)
             continue;
-
         cm->shm = m->shm;
         cm->uaddr = m->uaddr;
         cm->next = child->shm_ids;
         child->shm_ids = cm;
-
         if (m->shm)
             m->shm->nattch++;
     }
@@ -716,41 +405,40 @@ void shm_fork(task_t *parent, task_t *child) {
 }
 
 void shm_exec(task_t *task) {
-    spin_lock(&shm_op_lock);
+    shm_mapping_t *m;
 
-    shm_mapping_t *m = task->shm_ids;
+    spin_lock(&shm_op_lock);
+    m = task->shm_ids;
     while (m) {
         shm_mapping_t *next = m->next;
-
         if (m->shm) {
             if (m->shm->nattch > 0)
                 m->shm->nattch--;
             shm_try_free_locked(m->shm);
         }
         free(m);
-
         m = next;
     }
     task->shm_ids = NULL;
-
     spin_unlock(&shm_op_lock);
 }
 
 void shm_exit(task_t *task) {
+    vma_manager_t *mgr;
+    shm_mapping_t *m;
+
     if (!task || !task->arch_context || !task->mm)
         return;
 
-    vma_manager_t *mgr = &task->mm->task_vma_mgr;
+    mgr = &task->mm->task_vma_mgr;
     spin_lock(&mgr->lock);
     spin_lock(&shm_op_lock);
 
-    shm_mapping_t *m = task->shm_ids;
+    m = task->shm_ids;
     while (m) {
         shm_mapping_t *next = m->next;
-
         do_shmdt_one(task, m);
         free(m);
-
         m = next;
     }
     task->shm_ids = NULL;

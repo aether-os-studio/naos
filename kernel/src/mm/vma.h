@@ -24,7 +24,7 @@ typedef enum {
     VMA_TYPE_SHM   // 共享内存
 } vma_type_t;
 
-struct vfs_node;
+struct vfs_inode;
 
 // VMA结构体
 typedef struct vma {
@@ -32,7 +32,7 @@ typedef struct vma {
     unsigned long vm_end;   // 结束地址
     unsigned long vm_flags; // 权限标志
     vma_type_t vm_type;     // VMA类型
-    struct vfs_node *node;  // 文件描述符
+    struct vfs_inode *node; // 文件描述符
     shm_t *shm;             // 共享内存指针
     int64_t vm_offset;      // 文件偏移量
     uint64_t vm_file_len;   // 从 vm_start 起实际由文件提供的字节数

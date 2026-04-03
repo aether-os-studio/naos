@@ -5,7 +5,7 @@
 #include <libs/keys.h>
 #include <libs/kbqueue.h>
 #include <task/task.h>
-#include <fs/termios.h>
+#include <libs/termios.h>
 #include <fs/vfs/fcntl.h>
 #define FLANTERM_IN_FLANTERM
 #include <libs/flanterm/flanterm_private.h>

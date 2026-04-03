@@ -7,7 +7,13 @@
 
 extern int err_to_errno(err_t err);
 
-int lwip_socket_fsid = 0;
+static int lwip_socket_poll(vfs_node_t *node, size_t events);
+static int lwip_socket_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg);
+static ssize_t lwip_socket_read(fd_t *fd, void *buf, size_t offset,
+                                size_t limit);
+static ssize_t lwip_socket_write(fd_t *fd, const void *buf, size_t offset,
+                                 size_t limit);
+static socket_op_t lwip_socket_ops;
 
 static int lwip_errno_from_err(err_t err) {
     if (err == ERR_OK) {
@@ -491,64 +497,62 @@ static lwip_socket_state_t *lwip_socket_alloc(struct netconn *conn, int domain,
     return sock;
 }
 
-static vfs_node_t *lwip_socket_create_node(lwip_socket_state_t *sock);
+static void lwip_socket_handle_release(socket_handle_t *handle);
+static lwip_socket_state_t *lwip_socket_state_from_node(vfs_node_t *node);
+static lwip_socket_state_t *lwip_socket_state_from_file(fd_t *file);
 
 static int lwip_socket_install_fd(lwip_socket_state_t *sock, int open_type,
                                   uint64_t accept_flags) {
-    int ret = -EMFILE;
-    uint64_t slot = 0;
-    vfs_node_t *node = NULL;
+    struct vfs_file *file = NULL;
     socket_handle_t *handle = NULL;
+    uint64_t file_flags = O_RDWR;
+    int ret = 0;
 
     if (!sock) {
         return -EINVAL;
     }
 
-    node = lwip_socket_create_node(sock);
-    if (!node) {
+    handle = calloc(1, sizeof(*handle));
+    if (!handle) {
+        lwip_socket_release_conn(sock);
+        free(sock);
         return -ENOMEM;
     }
 
-    with_fd_info_lock(current_task->fd_info, {
-        for (slot = 0; slot < MAX_FD_NUM; slot++) {
-            if (!current_task->fd_info->fds[slot]) {
-                break;
-            }
+    handle->op = &lwip_socket_ops;
+    handle->sock = sock;
+    handle->read_op = lwip_socket_read;
+    handle->write_op = lwip_socket_write;
+    handle->ioctl_op = lwip_socket_ioctl;
+    handle->poll_op = lwip_socket_poll;
+    handle->release = lwip_socket_handle_release;
+
+    if ((open_type & O_NONBLOCK) || (accept_flags & O_NONBLOCK)) {
+        file_flags |= O_NONBLOCK;
+        if (sock->conn) {
+            netconn_set_nonblocking(sock->conn, 1);
         }
+    }
 
-        if (slot == MAX_FD_NUM) {
-            break;
-        }
-
-        uint64_t flags = O_RDWR;
-        if ((open_type & O_NONBLOCK) || (accept_flags & O_NONBLOCK)) {
-            flags |= O_NONBLOCK;
-            if (sock->conn) {
-                netconn_set_nonblocking(sock->conn, 1);
-            }
-        }
-
-        fd_t *new_fd =
-            fd_create(node, flags, !!((open_type | accept_flags) & O_CLOEXEC));
-        if (!new_fd) {
-            ret = -ENOMEM;
-            break;
-        }
-
-        current_task->fd_info->fds[slot] = new_fd;
-        on_open_file_call(current_task, slot);
-        ret = (int)slot;
-    });
-
+    ret = sockfs_create_handle_file(handle, file_flags, &file);
     if (ret < 0) {
+        free(handle);
         lwip_socket_release_conn(sock);
         free(sock);
-        vfs_free(node);
         return ret;
     }
 
-    handle = node->handle;
-    handle->fd = current_task->fd_info->fds[slot];
+    sock->node = file->f_inode;
+    ret = task_install_file(current_task, file,
+                            ((open_type | accept_flags) & O_CLOEXEC)
+                                ? FD_CLOEXEC
+                                : 0,
+                            0);
+    vfs_file_put(file);
+    if (ret < 0) {
+        return ret;
+    }
+
     lwip_socket_notify_ready_state(sock);
     return ret;
 }
@@ -1415,12 +1419,21 @@ static ssize_t lwip_socket_sendmsg_common(lwip_socket_state_t *sock, fd_t *fd,
     }
 }
 
+static lwip_socket_state_t *lwip_socket_state_from_node(vfs_node_t *node) {
+    socket_handle_t *handle = sockfs_inode_socket_handle(node);
+    return handle ? (lwip_socket_state_t *)handle->sock : NULL;
+}
+
+static lwip_socket_state_t *lwip_socket_state_from_file(fd_t *file) {
+    socket_handle_t *handle = sockfs_file_handle(file);
+    return handle ? (lwip_socket_state_t *)handle->sock : NULL;
+}
+
 static lwip_socket_state_t *lwip_socket_from_fd(uint64_t fd) {
     if (fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd]) {
         return NULL;
     }
-    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
-    return handle ? (lwip_socket_state_t *)handle->sock : NULL;
+    return lwip_socket_state_from_file(current_task->fd_info->fds[fd]);
 }
 
 static int lwip_socket_socket(int domain, int type, int protocol) {
@@ -1744,8 +1757,7 @@ static size_t lwip_socket_getsockopt(uint64_t fd, int level, int optname,
 }
 
 static int lwip_socket_poll(vfs_node_t *node, size_t events) {
-    socket_handle_t *handle = node ? node->handle : NULL;
-    lwip_socket_state_t *sock = handle ? handle->sock : NULL;
+    lwip_socket_state_t *sock = lwip_socket_state_from_node(node);
     int revents = 0;
     s16_t rcvevent = 0;
     u16_t sendevent = 0;
@@ -1793,9 +1805,7 @@ static int lwip_socket_poll(vfs_node_t *node, size_t events) {
 }
 
 static int lwip_socket_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
-    vfs_node_t *node = fd->node;
-    socket_handle_t *handle = node ? node->handle : NULL;
-    lwip_socket_state_t *sock = handle ? handle->sock : NULL;
+    lwip_socket_state_t *sock = lwip_socket_state_from_file(fd);
 
     if (!sock) {
         return -EBADF;
@@ -1831,12 +1841,18 @@ static int lwip_socket_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
     return -ENOTTY;
 }
 
-static bool lwip_socket_close(vfs_node_t *node) {
-    socket_handle_t *handle = node ? node->handle : NULL;
-    lwip_socket_state_t *sock = handle ? handle->sock : NULL;
+static void lwip_socket_handle_release(socket_handle_t *handle) {
+    lwip_socket_state_t *sock = NULL;
+
+    if (!handle) {
+        return;
+    }
+
+    sock = (lwip_socket_state_t *)handle->sock;
 
     if (!sock) {
-        return true;
+        free(handle);
+        return;
     }
 
     sock->closed = true;
@@ -1846,15 +1862,13 @@ static bool lwip_socket_close(vfs_node_t *node) {
 
     free(sock);
     free(handle);
-    return true;
 }
 
 static ssize_t lwip_socket_read(fd_t *fd, void *buf, size_t offset,
                                 size_t limit) {
     struct iovec iov = {.iov_base = buf, .len = limit};
     struct msghdr msg = {.msg_iov = &iov, .msg_iovlen = 1};
-    socket_handle_t *handle = fd ? fd->node->handle : NULL;
-    lwip_socket_state_t *sock = handle ? handle->sock : NULL;
+    lwip_socket_state_t *sock = lwip_socket_state_from_file(fd);
     int flags = 0;
 
     LWIP_UNUSED_ARG(offset);
@@ -1874,8 +1888,7 @@ static ssize_t lwip_socket_write(fd_t *fd, const void *buf, size_t offset,
                                  size_t limit) {
     struct iovec iov = {.iov_base = (void *)buf, .len = limit};
     struct msghdr msg = {.msg_iov = &iov, .msg_iovlen = 1};
-    socket_handle_t *handle = fd ? fd->node->handle : NULL;
-    lwip_socket_state_t *sock = handle ? handle->sock : NULL;
+    lwip_socket_state_t *sock = lwip_socket_state_from_file(fd);
     int flags = 0;
 
     LWIP_UNUSED_ARG(offset);
@@ -1909,57 +1922,6 @@ static socket_op_t lwip_socket_ops = {
     .getsockopt = lwip_socket_getsockopt,
     .setsockopt = lwip_socket_setsockopt,
 };
-
-static vfs_operations_t lwip_socket_vfs_ops = {
-    .close = lwip_socket_close,
-    .read = lwip_socket_read,
-    .write = lwip_socket_write,
-    .ioctl = lwip_socket_ioctl,
-    .poll = lwip_socket_poll,
-    .free_handle = vfs_generic_free_handle,
-};
-
-static fs_t lwip_socket_fs = {
-    .name = "lwip_sockfs",
-    .magic = 0,
-    .ops = &lwip_socket_vfs_ops,
-    .flags = FS_FLAGS_HIDDEN | FS_FLAGS_VIRTUAL,
-};
-
-static vfs_node_t *lwip_socket_create_node(lwip_socket_state_t *sock) {
-    vfs_node_t *node = vfs_node_alloc(NULL, NULL);
-    socket_handle_t *handle = NULL;
-
-    if (!node) {
-        return NULL;
-    }
-
-    node->refcount++;
-    node->type = file_socket;
-    node->mode = 0700;
-    node->fsid = lwip_socket_fsid;
-
-    handle = calloc(1, sizeof(*handle));
-    if (!handle) {
-        vfs_free(node);
-        return NULL;
-    }
-
-    handle->op = &lwip_socket_ops;
-    handle->sock = sock;
-    node->handle = handle;
-    sock->node = node;
-    return node;
-}
-
-void lwip_socket_fs_init(void) {
-    static bool fs_ready = false;
-
-    if (!fs_ready) {
-        lwip_socket_fsid = vfs_regist(&lwip_socket_fs);
-        fs_ready = true;
-    }
-}
 
 extern int lwip_module_init();
 

@@ -20,7 +20,7 @@ typedef struct shm {
     long ctime;
     int nattch;
     bool marked_destroy;
-    struct vfs_node *node;
+    struct vfs_inode *node;
     char node_name[32];
 } shm_t;
 
@@ -81,9 +81,9 @@ uint64_t sys_shmdt(void *shmaddr);
 uint64_t sys_shmctl(int shmid, int cmd, struct shmid_ds *buf);
 
 struct task;
-struct vfs_node;
+struct vfs_inode;
 
 void shm_fork(struct task *parent, struct task *child);
 void shm_exec(struct task *task);
 void shm_exit(struct task *task);
-void shm_try_reap_by_vnode(struct vfs_node *node);
+void shm_try_reap_by_vnode(struct vfs_inode *node);

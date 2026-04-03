@@ -139,6 +139,10 @@ struct signalfd_ctx {
     vfs_node_t *node;
 };
 
+struct vfs_file;
+struct signalfd_ctx *signalfd_file_handle(struct vfs_file *file);
+int signalfd_is_file(struct vfs_file *file);
+
 void signal_init();
 
 void task_commit_signal(task_t *task, int sig, siginfo_t *info);

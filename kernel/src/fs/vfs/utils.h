@@ -1,7 +1,6 @@
 #pragma once
 
 #include <libs/klibc.h>
-#include <mm/mm.h>
 
 static inline char toupper(char ch) {
     if (ch >= 'a' && ch <= 'z')

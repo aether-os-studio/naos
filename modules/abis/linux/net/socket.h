@@ -121,6 +121,11 @@ typedef struct socket {
     size_t filter_len;
 } socket_t;
 
+int sockfs_create_handle_file(socket_handle_t *handle, unsigned int open_flags,
+                              struct vfs_file **out_file);
+socket_handle_t *sockfs_file_handle(fd_t *file);
+socket_handle_t *sockfs_inode_socket_handle(vfs_node_t *node);
+
 // 套接字层级
 #define SOL_SOCKET 1
 #define SOL_NETLINK 270

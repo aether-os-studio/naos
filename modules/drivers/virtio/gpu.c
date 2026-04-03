@@ -137,11 +137,10 @@ static uint32_t virtio_gpu_drm_to_virtio_format(uint32_t format) {
 }
 
 static uint64_t virtio_gpu_owner_file(fd_t *fd) {
-    if (!fd || !fd->shared) {
+    if (!fd) {
         return 0;
     }
-
-    return (uint64_t)(uintptr_t)fd->shared;
+    return (uint64_t)(uintptr_t)fd;
 }
 
 static bool virtio_gpu_owner_matches(uint64_t owner_file, fd_t *fd) {
@@ -333,7 +332,7 @@ static void virtio_gpu_cleanup_submit_slot_locked(
     }
 
     if (pending->signal_node) {
-        vfs_close((vfs_node_t *)pending->signal_node);
+        vfs_iput((vfs_node_t *)pending->signal_node);
         pending->signal_node = NULL;
     }
 
@@ -384,8 +383,13 @@ virtio_gpu_handle_pending_completion_locked(virtio_gpu_device_t *gpu_dev,
 
     if (pending->signal_node) {
         uint64_t one = 1;
-        vfs_write((vfs_node_t *)pending->signal_node, &one, 0, sizeof(one));
-        vfs_close((vfs_node_t *)pending->signal_node);
+        eventfd_t *efd =
+            (eventfd_t *)((vfs_node_t *)pending->signal_node)->i_private;
+        if (efd) {
+            __atomic_add_fetch(&efd->count, one, __ATOMIC_ACQ_REL);
+            vfs_poll_notify(efd->node, EPOLLIN | EPOLLOUT);
+        }
+        vfs_iput((vfs_node_t *)pending->signal_node);
         pending->signal_node = NULL;
     }
     pending->completed = true;
@@ -621,7 +625,7 @@ static int virtio_gpu_send_command_async_nodata(virtio_gpu_device_t *gpu_dev,
                                                 vfs_node_t *signal_node) {
     if (!gpu_dev || !cmd || cmd_size == 0) {
         if (signal_node) {
-            vfs_close(signal_node);
+            vfs_iput(signal_node);
         }
         return -EINVAL;
     }
@@ -706,7 +710,7 @@ static int virtio_gpu_send_command_async_nodata(virtio_gpu_device_t *gpu_dev,
 
     mutex_unlock(&gpu_dev->control_lock);
     if (signal_node) {
-        vfs_close(signal_node);
+        vfs_iput(signal_node);
     }
     return ret;
 }
@@ -1858,7 +1862,7 @@ static int virtio_gpu_submit_3d_async(virtio_gpu_device_t *gpu_dev,
                                       vfs_node_t *fence_signal_node) {
     if (!gpu_dev || !command || size == 0) {
         if (fence_signal_node) {
-            vfs_close(fence_signal_node);
+            vfs_iput(fence_signal_node);
         }
         return -EINVAL;
     }
@@ -1867,7 +1871,7 @@ static int virtio_gpu_submit_3d_async(virtio_gpu_device_t *gpu_dev,
     virtio_gpu_cmd_submit_t *cmd = malloc(submit_size);
     if (!cmd) {
         if (fence_signal_node) {
-            vfs_close(fence_signal_node);
+            vfs_iput(fence_signal_node);
         }
         return -ENOMEM;
     }
@@ -3347,7 +3351,7 @@ static int virtio_gpu_wait_fence_fd_in(int fence_fd) {
         fd_t *fd = current_task->fd_info->fds[fence_fd];
         if (fd && fd->node) {
             node = fd->node;
-            node->refcount++;
+            vfs_igrab(node);
         }
     });
 
@@ -3414,7 +3418,7 @@ static int virtio_gpu_wait_fence_fd_in(int fence_fd) {
     ret = -EAGAIN;
 
 out:
-    vfs_close(node);
+    vfs_iput(node);
     return ret;
 }
 
@@ -3434,7 +3438,7 @@ static int virtio_gpu_create_fence_fd_out(vfs_node_t **node_out) {
         fd_t *fd_obj = current_task->fd_info->fds[fence_fd];
         if (fd_obj && fd_obj->node) {
             *node_out = fd_obj->node;
-            vfs_node_ref_get(*node_out);
+            vfs_igrab(*node_out);
         }
     });
 
@@ -4128,7 +4132,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
         int ret = virtio_gpu_get_active_context(gpu_dev, &ctx_id, NULL, fd);
         if (ret != 0) {
             if (fence_signal_node) {
-                vfs_close(fence_signal_node);
+                vfs_iput(fence_signal_node);
                 fence_signal_node = NULL;
             }
             if (fence_fd_out >= 0) {
@@ -4142,7 +4146,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
                                               (void **)&command_data);
         if (ret != 0) {
             if (fence_signal_node) {
-                vfs_close(fence_signal_node);
+                vfs_iput(fence_signal_node);
                 fence_signal_node = NULL;
             }
             if (fence_fd_out >= 0) {
@@ -4159,7 +4163,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
             if (ret != 0) {
                 free(command_data);
                 if (fence_signal_node) {
-                    vfs_close(fence_signal_node);
+                    vfs_iput(fence_signal_node);
                     fence_signal_node = NULL;
                 }
                 if (fence_fd_out >= 0) {
@@ -4179,7 +4183,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
                     free(bo_handles);
                     free(command_data);
                     if (fence_signal_node) {
-                        vfs_close(fence_signal_node);
+                        vfs_iput(fence_signal_node);
                         fence_signal_node = NULL;
                     }
                     if (fence_fd_out >= 0) {
@@ -4192,7 +4196,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
                     free(bo_handles);
                     free(command_data);
                     if (fence_signal_node) {
-                        vfs_close(fence_signal_node);
+                        vfs_iput(fence_signal_node);
                         fence_signal_node = NULL;
                     }
                     if (fence_fd_out >= 0) {
@@ -4327,11 +4331,11 @@ drm_device_op_t virtio_gpu_drm_device_op = {
 };
 
 int virtio_gpu_on_close_file(task_t *task, int fd, fd_t *file) {
-    if (!file || !file->shared) {
+    if (!file) {
         return 0;
     }
 
-    if (__atomic_load_n(&file->shared->ref_count, __ATOMIC_ACQUIRE) != 1) {
+    if (vfs_ref_read(&file->f_ref) != 1) {
         return 0;
     }
 

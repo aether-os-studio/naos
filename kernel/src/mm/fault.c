@@ -33,7 +33,7 @@ static bool fault_vma_snapshot_capture(vma_t *vma,
     };
 
     if (pin_node && snapshot->node)
-        vfs_node_ref_get(snapshot->node);
+        vfs_igrab(snapshot->node);
 
     return true;
 }
@@ -129,7 +129,7 @@ static void fault_vma_snapshot_put(fault_vma_snapshot_t *snapshot) {
     if (!snapshot || !snapshot->node)
         return;
 
-    vfs_node_ref_put(snapshot->node, NULL);
+    vfs_iput(snapshot->node);
     shm_try_reap_by_vnode(snapshot->node);
     snapshot->node = NULL;
 }
@@ -178,19 +178,17 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
     memset((void *)phys_to_virt(page_paddr), 0, PAGE_SIZE);
 
     size_t loaded = 0;
-    fd_shared_t shared = {
-        .flags = snapshot->vm_file_flags,
-        .offset = file_off,
-    };
     fd_t fd = {
+        .f_op = snapshot->node->i_fop,
+        .f_inode = snapshot->node,
         .node = snapshot->node,
-        .shared = &shared,
-        .close_on_exec = false,
+        .f_flags = (unsigned int)snapshot->vm_file_flags,
     };
+    loff_t pos = (loff_t)file_off;
     while (loaded < read_size) {
         ssize_t ret =
-            vfs_read_fd(&fd, (void *)(phys_to_virt(page_paddr) + loaded),
-                        file_off + loaded, read_size - loaded);
+            vfs_read_file(&fd, (void *)(phys_to_virt(page_paddr) + loaded),
+                          read_size - loaded, &pos);
         if (ret < 0) {
             address_release(page_paddr);
             return PF_RES_SEGF;

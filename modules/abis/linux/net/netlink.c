@@ -10,8 +10,6 @@
 #include <bpf/socket_filter.h>
 #include <init/callbacks.h>
 
-static int netlink_socket_fsid = 0;
-
 // Global netlink socket tracking
 #define MAX_NETLINK_SOCKETS 256
 static struct netlink_sock *netlink_sockets[MAX_NETLINK_SOCKETS] = {0};
@@ -35,6 +33,14 @@ static struct netlink_msg_pool_entry
     netlink_msg_pool[MAX_NETLINK_MSG_POOL_SIZE];
 static uint32_t netlink_msg_pool_next = 0;
 static spinlock_t netlink_msg_pool_lock = SPIN_INIT;
+
+static void netlink_handle_release(socket_handle_t *handle);
+static ssize_t netlink_read_op(fd_t *fd, void *buf, size_t offset,
+                               size_t count);
+static ssize_t netlink_write_op(fd_t *fd, const void *buf, size_t offset,
+                                size_t count);
+int netlink_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg);
+int netlink_poll(vfs_node_t *node, size_t events);
 
 // Function to add message to persistent pool
 static void netlink_msg_pool_add(const char *message, size_t length,
@@ -486,7 +492,8 @@ int netlink_bind(uint64_t fd, const struct sockaddr_un *addr,
         return -EBADF;
     }
 
-    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    socket_handle_t *handle =
+        sockfs_file_handle(current_task->fd_info->fds[fd]);
     if (handle == NULL || handle->sock == NULL) {
         return -EBADF;
     }
@@ -526,7 +533,8 @@ size_t netlink_getsockopt(uint64_t fd, int level, int optname, void *optval,
         return -EBADF;
     }
 
-    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    socket_handle_t *handle =
+        sockfs_file_handle(current_task->fd_info->fds[fd]);
     struct netlink_sock *nl_sk = handle->sock;
 
     if (level == SOL_SOCKET) {
@@ -565,7 +573,8 @@ size_t netlink_setsockopt(uint64_t fd, int level, int optname,
         return -EBADF;
     }
 
-    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    socket_handle_t *handle =
+        sockfs_file_handle(current_task->fd_info->fds[fd]);
     struct netlink_sock *nl_sk = handle->sock;
 
     if (level == SOL_SOCKET) {
@@ -622,7 +631,8 @@ int netlink_getsockname(uint64_t fd, struct sockaddr_un *addr,
         return -EBADF;
     }
 
-    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    socket_handle_t *handle =
+        sockfs_file_handle(current_task->fd_info->fds[fd]);
     struct netlink_sock *nl_sk = handle->sock;
 
     spin_lock(&nl_sk->lock);
@@ -644,7 +654,8 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
         return -EBADF;
     }
 
-    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    socket_handle_t *handle =
+        sockfs_file_handle(current_task->fd_info->fds[fd]);
     struct netlink_sock *nl_sk = handle->sock;
 
     if (nl_sk->buffer == NULL) {
@@ -748,7 +759,8 @@ size_t netlink_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
         return -EBADF;
     }
 
-    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    socket_handle_t *handle =
+        sockfs_file_handle(current_task->fd_info->fds[fd]);
     struct netlink_sock *nl_sk = handle->sock;
 
     // Calculate total message length
@@ -826,7 +838,8 @@ size_t netlink_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
         return -EBADF;
     }
 
-    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    socket_handle_t *handle =
+        sockfs_file_handle(current_task->fd_info->fds[fd]);
     struct netlink_sock *nl_sk = handle->sock;
 
     if (limit == 0) {
@@ -889,7 +902,8 @@ size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
         return -EBADF;
     }
 
-    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    socket_handle_t *handle =
+        sockfs_file_handle(current_task->fd_info->fds[fd]);
     struct netlink_sock *nl_sk = handle->sock;
 
     if (nl_sk->buffer == NULL) {
@@ -1008,21 +1022,13 @@ int netlink_socket(int domain, int type, int protocol) {
     }
     memset(handle, 0, sizeof(socket_handle_t));
 
-    vfs_node_t *socknode = vfs_node_alloc(NULL, NULL);
-    if (socknode == NULL) {
-        free(handle);
-        free(nl_sk->buffer);
-        free(nl_sk);
-        return -ENOMEM;
-    }
-    socknode->type = file_socket;
-    socknode->fsid = netlink_socket_fsid;
-    socknode->refcount++;
-    socknode->handle = handle;
-    nl_sk->node = socknode;
-
     handle->op = &netlink_ops;
     handle->sock = nl_sk;
+    handle->read_op = netlink_read_op;
+    handle->write_op = netlink_write_op;
+    handle->ioctl_op = netlink_ioctl;
+    handle->poll_op = netlink_poll;
+    handle->release = netlink_handle_release;
 
     // Add to global socket array
     spin_lock(&netlink_sockets_lock);
@@ -1049,33 +1055,27 @@ int netlink_socket(int domain, int type, int protocol) {
         flags |= O_NONBLOCK;
     }
 
-    int ret = -EMFILE;
-    uint64_t i = 0;
-    with_fd_info_lock(current_task->fd_info, {
-        for (i = 0; i < MAX_FD_NUM; i++) {
-            if (current_task->fd_info->fds[i] == NULL) {
-                break;
-            }
-        }
+    struct vfs_file *file = NULL;
+    int ret = sockfs_create_handle_file(handle, flags, &file);
+    if (ret < 0) {
+        spin_lock(&netlink_sockets_lock);
+        netlink_sockets[slot] = NULL;
+        spin_unlock(&netlink_sockets_lock);
+        free(handle);
+        free(nl_sk->buffer);
+        free(nl_sk);
+        return ret;
+    }
 
-        if (i == MAX_FD_NUM)
-            break;
-
-        fd_t *new_fd = fd_create(socknode, flags, !!(type & O_CLOEXEC));
-        if (!new_fd) {
-            ret = -ENOMEM;
-            break;
-        }
-        current_task->fd_info->fds[i] = new_fd;
-        on_open_file_call(current_task, i);
-        ret = (int)i;
-    });
+    nl_sk->node = file->f_inode;
+    ret = task_install_file(current_task, file,
+                            (type & O_CLOEXEC) ? FD_CLOEXEC : 0, 0);
+    vfs_file_put(file);
 
     if (ret < 0) {
         spin_lock(&netlink_sockets_lock);
         netlink_sockets[slot] = NULL;
         spin_unlock(&netlink_sockets_lock);
-        vfs_free(socknode);
         return ret;
     }
 
@@ -1088,7 +1088,7 @@ int netlink_socket_pair(int type, int protocol, int *sv) {
 }
 
 int netlink_poll(vfs_node_t *node, size_t events) {
-    socket_handle_t *handle = node ? node->handle : NULL;
+    socket_handle_t *handle = sockfs_inode_socket_handle(node);
     if (handle == NULL || handle->sock == NULL) {
         return EPOLLERR;
     }
@@ -1120,7 +1120,8 @@ ssize_t netlink_write(uint64_t fd, const char *buf, size_t count) {
         return -EBADF;
     }
 
-    socket_handle_t *handle = current_task->fd_info->fds[fd]->node->handle;
+    socket_handle_t *handle =
+        sockfs_file_handle(current_task->fd_info->fds[fd]);
     struct netlink_sock *nl_sk = handle->sock;
 
     if (nl_sk->protocol == NETLINK_KOBJECT_UEVENT) {
@@ -1132,10 +1133,10 @@ ssize_t netlink_write(uint64_t fd, const char *buf, size_t count) {
 
 static ssize_t netlink_read_op(fd_t *fd, void *buf, size_t offset,
                                size_t count) {
-    if (!fd || !fd->node || !fd->node->handle)
+    if (!fd || !fd->node || !sockfs_file_handle(fd))
         return -EBADF;
 
-    socket_handle_t *handle = fd->node->handle;
+    socket_handle_t *handle = sockfs_file_handle(fd);
     struct netlink_sock *nl_sk = handle->sock;
     if (!nl_sk || !nl_sk->buffer)
         return -EINVAL;
@@ -1163,10 +1164,10 @@ static ssize_t netlink_read_op(fd_t *fd, void *buf, size_t offset,
 
 static ssize_t netlink_write_op(fd_t *fd, const void *buf, size_t offset,
                                 size_t count) {
-    if (!fd || !fd->node || !fd->node->handle)
+    if (!fd || !fd->node || !sockfs_file_handle(fd))
         return -EBADF;
 
-    socket_handle_t *handle = fd->node->handle;
+    socket_handle_t *handle = sockfs_file_handle(fd);
     struct netlink_sock *nl_sk = handle->sock;
     if (!nl_sk)
         return -EBADF;
@@ -1178,7 +1179,7 @@ static ssize_t netlink_write_op(fd_t *fd, const void *buf, size_t offset,
 }
 
 int netlink_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
-    socket_handle_t *handle = fd->node->handle;
+    socket_handle_t *handle = sockfs_file_handle(fd);
     struct netlink_sock *nl_sk = handle->sock;
 
     switch (cmd) {
@@ -1190,14 +1191,10 @@ int netlink_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
     }
 }
 
-void netlink_free_handle(vfs_node_t *node) {
-    if (node == NULL) {
+static void netlink_handle_release(socket_handle_t *handle) {
+    if (handle == NULL) {
         return;
     }
-
-    socket_handle_t *handle = node->handle;
-    if (handle == NULL)
-        return;
 
     struct netlink_sock *nl_sk = handle->sock;
     if (nl_sk != NULL) {
@@ -1222,33 +1219,9 @@ void netlink_free_handle(vfs_node_t *node) {
     }
 
     free(handle);
-    node->handle = NULL;
-}
-
-static bool netlink_close(vfs_node_t *node) {
-    netlink_free_handle(node);
-    return true;
-}
-
-static vfs_operations_t netlink_vfs_ops = {
-    .close = netlink_close,
-    .read = netlink_read_op,
-    .write = netlink_write_op,
-    .ioctl = netlink_ioctl,
-    .poll = netlink_poll,
-    .free_handle = netlink_free_handle,
-};
-
-fs_t netlinksockfs = {
-    .name = "netlinksockfs",
-    .magic = 0,
-    .ops = &netlink_vfs_ops,
-    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN,
 };
 
 void netlink_init() {
-    netlink_socket_fsid = vfs_regist(&netlinksockfs);
-
     // Initialize message pool
     spin_lock(&netlink_msg_pool_lock);
     for (int i = 0; i < MAX_NETLINK_MSG_POOL_SIZE; i++) {

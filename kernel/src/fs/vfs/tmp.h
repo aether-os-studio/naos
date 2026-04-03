@@ -2,20 +2,25 @@
 
 #include <fs/vfs/vfs.h>
 
-typedef struct tmpfs_node {
-    char *content;
-    uint64_t inode;
-    uint64_t dev;
-    uint64_t rdev;
-    uint64_t blksz;
-    uint32_t owner;
-    uint32_t group;
-    uint32_t type;
-    uint16_t mode;
-    uint32_t link_count;
-    uint32_t handle_refs;
-    size_t size;
-    size_t capability;
-} tmpfs_node_t;
+typedef struct tmpfs_fs_info {
+    uint64_t next_ino;
+    dev64_t dev;
+    spinlock_t lock;
+} tmpfs_fs_info_t;
 
-void tmpfs_init();
+typedef struct tmpfs_dirent {
+    struct llist_header node;
+    char *name;
+    struct vfs_inode *inode;
+} tmpfs_dirent_t;
+
+typedef struct tmpfs_inode_info {
+    struct vfs_inode vfs_inode;
+    spinlock_t lock;
+    char *data;
+    size_t size;
+    size_t capacity;
+    struct llist_header children;
+} tmpfs_inode_info_t;
+
+void tmpfs_init(void);

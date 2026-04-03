@@ -12,6 +12,7 @@
 #include <task/signal.h>
 #include <task/task.h>
 #include <fs/vfs/vfs.h>
+#include <fs/vfs/notify.h>
 #include <fs/vfs/tmp.h>
 #include <fs/initramfs.h>
 #include <init/abis.h>
@@ -40,6 +41,8 @@ void kmain(void) {
     device_init();
 
     vfs_init();
+
+    notifyfs_init();
 
     tmpfs_init();
 

@@ -1,20 +1,15 @@
 #pragma once
 
+#include <fs/vfs/vfs.h>
 #include <libs/klibc.h>
 #include <libs/llist.h>
 
 struct task;
 typedef struct task task_t;
 
-struct vfs_node;
-typedef struct vfs_node vfs_node_t;
-struct fs;
-struct mount_point;
-
 typedef struct task_fs {
     int ref_count;
-    vfs_node_t *root;
-    vfs_node_t *cwd;
+    struct vfs_process_fs vfs;
     uint16_t umask;
 } task_fs_t;
 
@@ -35,8 +30,8 @@ typedef struct task_uts_namespace {
 
 typedef struct task_mount_namespace {
     task_ns_common_t common;
-    vfs_node_t *root;
-    struct llist_header mount_points;
+    struct vfs_mount *root;
+    uint64_t seq;
 } task_mount_namespace_t;
 
 typedef struct task_user_namespace {
@@ -61,27 +56,18 @@ typedef struct task_ns_proxy {
     task_simple_namespace_t *cgroup_ns;
 } task_ns_proxy_t;
 
-task_fs_t *task_fs_create(vfs_node_t *root, vfs_node_t *cwd);
+task_fs_t *task_fs_create(const struct vfs_path *root,
+                          const struct vfs_path *pwd);
 task_fs_t *task_fs_clone(task_t *task, uint64_t clone_flags);
 void task_fs_get(task_fs_t *fs);
 void task_fs_put(task_fs_t *fs);
-int task_fs_chdir(task_t *task, vfs_node_t *cwd);
-int task_fs_chroot(task_t *task, vfs_node_t *root);
-
-void task_mnt_namespace_add_mount(task_mount_namespace_t *mnt_ns, struct fs *fs,
-                                  vfs_node_t *dir, vfs_node_t *root_node,
-                                  const char *devname);
-void task_mnt_namespace_remove_mount(task_mount_namespace_t *mnt_ns,
-                                     vfs_node_t *dir);
-int task_mnt_namespace_move_mount(task_mount_namespace_t *mnt_ns,
-                                  vfs_node_t *old_dir, vfs_node_t *new_dir);
-struct mount_point *
-task_mnt_namespace_find_mount(task_mount_namespace_t *mnt_ns, vfs_node_t *dir);
-struct mount_point *
-task_mnt_namespace_find_mount_by_root(task_mount_namespace_t *mnt_ns,
-                                      vfs_node_t *root_node);
+int task_fs_chdir(task_t *task, const struct vfs_path *pwd);
+int task_fs_chroot(task_t *task, const struct vfs_path *root);
 
 task_ns_proxy_t *task_ns_proxy_create_initial(void);
 task_ns_proxy_t *task_ns_proxy_clone(task_t *task, uint64_t clone_flags);
 void task_ns_proxy_get(task_ns_proxy_t *nsproxy);
 void task_ns_proxy_put(task_ns_proxy_t *nsproxy);
+
+struct vfs_mount *task_mount_namespace_root(task_t *task);
+int task_mount_namespace_set_root(task_t *task, struct vfs_mount *root);

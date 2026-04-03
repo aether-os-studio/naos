@@ -45,6 +45,70 @@ typedef struct {
     bool has_ambiguous_provider;
 } module_plan_t;
 
+typedef struct {
+    struct vfs_dir_context ctx;
+    module_t **mods;
+    size_t *count;
+    size_t *capacity;
+} module_collect_ctx_t;
+
+static int collect_module_actor(struct vfs_dir_context *ctx, const char *name,
+                                int namelen, loff_t pos, uint64_t ino,
+                                unsigned type) {
+    module_collect_ctx_t *collect = ctx ? ctx->private : NULL;
+    module_t *module;
+    struct vfs_file *file = NULL;
+    struct vfs_open_how how = {.flags = O_RDONLY};
+    char path[512];
+
+    (void)pos;
+    (void)ino;
+    if (!collect || !collect->mods || !collect->count || !collect->capacity)
+        return -EINVAL;
+    if (type == DT_DIR || namelen <= 0)
+        return 0;
+
+    if (*collect->count >= *collect->capacity) {
+        size_t new_capacity = *collect->capacity ? *collect->capacity * 2 : 16;
+        module_t *new_modules =
+            realloc(*collect->mods, new_capacity * sizeof(**collect->mods));
+        if (!new_modules)
+            return -ENOMEM;
+        *collect->mods = new_modules;
+        *collect->capacity = new_capacity;
+    }
+
+    module = &(*collect->mods)[*collect->count];
+    memset(module, 0, sizeof(*module));
+    snprintf(module->module_name, sizeof(module->module_name), "%.*s", namelen,
+             name);
+    snprintf(path, sizeof(path), "/lib/modules/%.*s", namelen, name);
+    module->path = strdup(path);
+    if (!module->path)
+        return -ENOMEM;
+
+    if (vfs_openat(AT_FDCWD, path, &how, &file) < 0 || !file) {
+        free(module->path);
+        module->path = NULL;
+        return 0;
+    }
+
+    module->size = file->f_inode ? file->f_inode->i_size : 0;
+    module->data = alloc_frames_bytes(module->size);
+    if (!module->data) {
+        vfs_close_file(file);
+        free(module->path);
+        module->path = NULL;
+        return -ENOMEM;
+    }
+
+    loff_t file_pos = 0;
+    vfs_read_file(file, module->data, module->size, &file_pos);
+    vfs_close_file(file);
+    (*collect->count)++;
+    return 0;
+}
+
 static void load_segment(Elf64_Phdr *phdr, void *elf, uint64_t offset) {
     size_t hi = PADDING_UP(phdr->p_vaddr + phdr->p_memsz, PAGE_SIZE) + offset;
     size_t lo = PADDING_DOWN(phdr->p_vaddr, PAGE_SIZE) + offset;
@@ -917,44 +981,25 @@ dlfunc_t *find_func(const char *name) {
 }
 
 void dlinker_init() {
-    vfs_node_t *modules_root = vfs_open("/lib/modules", 0);
-    if (!modules_root) {
+    struct vfs_file *modules_root = NULL;
+    struct vfs_open_how dir_how = {
+        .flags = O_RDONLY | O_DIRECTORY,
+    };
+    if (vfs_openat(AT_FDCWD, "/lib/modules", &dir_how, &modules_root) < 0 ||
+        !modules_root) {
         return;
     }
 
     module_t *modules = NULL;
     size_t module_count = 0;
     size_t module_capacity = 0;
-
-    vfs_node_t *node, *tmp;
-    llist_for_each(node, tmp, &modules_root->childs, node_for_childs) {
-        if (module_count >= module_capacity) {
-            size_t new_capacity = module_capacity ? module_capacity * 2 : 16;
-            module_t *new_modules =
-                realloc(modules, new_capacity * sizeof(*new_modules));
-            if (new_modules == NULL) {
-                serial_fprintk("Cannot grow module list\n");
-                break;
-            }
-            modules = new_modules;
-            module_capacity = new_capacity;
-        }
-
-        module_t *module = &modules[module_count];
-        memset(module, 0, sizeof(*module));
-        strncpy(module->module_name, node->name, sizeof(module->module_name));
-        module->path = node->name;
-        module->size = node->size;
-        module->data = alloc_frames_bytes(module->size);
-        if (module->data == NULL) {
-            serial_fprintk("Cannot allocate backing storage for module %s\n",
-                           module->module_name);
-            continue;
-        }
-
-        vfs_read(node, module->data, 0, module->size);
-        module_count++;
-    }
+    module_collect_ctx_t collect = {0};
+    collect.ctx.actor = collect_module_actor;
+    collect.ctx.private = &collect;
+    collect.mods = &modules;
+    collect.count = &module_count;
+    collect.capacity = &module_capacity;
+    vfs_iterate_dir(modules_root, &collect.ctx);
 
     module_plan_t *plans = calloc(module_count, sizeof(*plans));
     bool *loaded_flags = calloc(module_count, sizeof(*loaded_flags));
@@ -1045,5 +1090,5 @@ void dlinker_init() {
     free(plans);
     free(loaded_flags);
     free(modules);
-    vfs_close(modules_root);
+    vfs_close_file(modules_root);
 }

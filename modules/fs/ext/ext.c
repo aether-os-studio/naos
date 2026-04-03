@@ -9,9 +9,7 @@
 #include <mm/mm.h>
 #include <arch/arch.h>
 
-static int ext_fsid = 0;
 static spinlock_t rwlock = SPIN_INIT;
-DEFINE_LLIST(ext_mounts);
 
 #define EXT_MAP_CACHE_TARGET_BYTES (128u * 1024u)
 #define EXT_MAP_CACHE_MIN_ENTRIES 16u
@@ -24,8 +22,6 @@ typedef struct ext_map_cache_entry {
 } ext_map_cache_entry_t;
 
 typedef struct ext_mount_ctx {
-    struct llist_header node;
-    vfs_node_t *root;
     uint64_t dev;
     ext_super_block_t sb;
     ext_group_desc_t *groups;
@@ -40,6 +36,13 @@ typedef struct ext_mount_ctx {
     uint32_t map_cache_entry_count;
 } ext_mount_ctx_t;
 
+typedef struct ext_inode_info {
+    struct vfs_inode vfs_inode;
+    ext_inode_disk_t inode_cache;
+    bool inode_valid;
+    char *symlink;
+} ext_inode_info_t;
+
 typedef struct ext_dir_lookup {
     bool found;
     uint32_t inode;
@@ -52,13 +55,20 @@ typedef struct ext_dir_lookup {
     uint16_t prev_rec_len;
 } ext_dir_lookup_t;
 
-static void ext_hide_node(vfs_node_t *node);
 static int ext_dev_read(ext_mount_ctx_t *fs, uint64_t offset, void *buf,
                         size_t size);
 static int ext_dev_write(ext_mount_ctx_t *fs, uint64_t offset, const void *buf,
                          size_t size);
-static void ext_sync_node_from_inode(vfs_node_t *node, ext_mount_ctx_t *fs,
-                                     const ext_inode_disk_t *inode);
+static void ext_sync_vfs_inode(struct vfs_inode *inode, ext_mount_ctx_t *fs,
+                               const ext_inode_disk_t *disk_inode);
+static struct vfs_inode *ext_iget_locked(struct vfs_super_block *sb,
+                                         uint32_t ino);
+
+static struct vfs_file_system_type ext_fs_type;
+static const struct vfs_super_operations ext_super_ops;
+static const struct vfs_inode_operations ext_inode_ops;
+static const struct vfs_file_operations ext_dir_ops;
+static const struct vfs_file_operations ext_file_ops;
 
 static uint64_t ext_now(void) {
     return boot_get_boottime() + nano_time() / 1000000000;
@@ -202,6 +212,26 @@ static uint32_t ext_dir_file_type_to_vfs(uint8_t type) {
     case EXT2_FT_REG_FILE:
     default:
         return file_none;
+    }
+}
+
+static unsigned char ext_dir_file_type_to_dtype(uint8_t type) {
+    switch (type) {
+    case EXT2_FT_DIR:
+        return DT_DIR;
+    case EXT2_FT_SYMLINK:
+        return DT_LNK;
+    case EXT2_FT_CHRDEV:
+        return DT_CHR;
+    case EXT2_FT_BLKDEV:
+        return DT_BLK;
+    case EXT2_FT_FIFO:
+        return DT_FIFO;
+    case EXT2_FT_SOCK:
+        return DT_SOCK;
+    case EXT2_FT_REG_FILE:
+    default:
+        return DT_REG;
     }
 }
 
@@ -364,6 +394,14 @@ static void ext_map_cache_store_locked(ext_mount_ctx_t *fs, uint32_t block,
     entry->valid = true;
 }
 
+static inline ext_mount_ctx_t *ext_sb_info(struct vfs_super_block *sb) {
+    return sb ? (ext_mount_ctx_t *)sb->s_fs_info : NULL;
+}
+
+static inline ext_inode_info_t *ext_i(struct vfs_inode *inode) {
+    return inode ? container_of(inode, ext_inode_info_t, vfs_inode) : NULL;
+}
+
 static int ext_inode_offset(ext_mount_ctx_t *fs, uint32_t ino,
                             uint64_t *offset_out) {
     if (!fs || !offset_out || ino == 0 || ino > fs->inodes_count)
@@ -395,18 +433,6 @@ static int ext_dev_write(ext_mount_ctx_t *fs, uint64_t offset, const void *buf,
     return ext_dev_write_direct(fs, offset, buf, size);
 }
 
-static void ext_hide_node(vfs_node_t *node) {
-    if (!node)
-        return;
-
-    vfs_detach_child(node);
-    node->flags |= VFS_NODE_FLAGS_FREE_AFTER_USE;
-
-    if (node->refcount <= 0 && node->handle == NULL) {
-        vfs_free(node);
-    }
-}
-
 static int ext_read_block(ext_mount_ctx_t *fs, uint32_t block, void *buf) {
     return ext_dev_read(fs, (uint64_t)block * fs->block_size, buf,
                         fs->block_size);
@@ -425,28 +451,6 @@ static int ext_zero_block(ext_mount_ctx_t *fs, uint32_t block) {
     int ret = ext_write_block(fs, block, zero);
     free(zero);
     return ret;
-}
-
-static ext_mount_ctx_t *ext_find_mount(vfs_node_t *node) {
-    if (!node)
-        return NULL;
-
-    ext_mount_ctx_t *ctx, *tmp;
-    for (vfs_node_t *cur = node; cur; cur = cur->parent) {
-        llist_for_each(ctx, tmp, &ext_mounts, node) {
-            if (ctx->root == cur)
-                return ctx;
-        }
-    }
-
-    if (node->dev) {
-        llist_for_each(ctx, tmp, &ext_mounts, node) {
-            if (ctx->dev == node->dev)
-                return ctx;
-        }
-    }
-
-    return NULL;
 }
 
 static int ext_write_super(ext_mount_ctx_t *fs) {
@@ -522,57 +526,42 @@ static void ext_copy_runtime_inode_state(ext_inode_disk_t *dst,
     dst->i_ctime = src->i_ctime;
 }
 
-static int ext_flush_handle_inode_locked(ext_mount_ctx_t *fs, vfs_node_t *node,
-                                         ext_handle_t *handle,
-                                         ext_inode_disk_t *inode_out) {
-    if (!fs || !handle || !handle->inode_valid) {
-        if (inode_out)
-            memset(inode_out, 0, sizeof(*inode_out));
-        return 0;
+static uint32_t ext_block_bits(uint32_t block_size) {
+    uint32_t bits = 0;
+
+    while (block_size > 1) {
+        bits++;
+        block_size >>= 1;
     }
-
-    ext_inode_disk_t inode = handle->inode_cache;
-
-    if (handle->inode_dirty && (node->type & file_none)) {
-        ext_inode_disk_t disk_inode = {0};
-        int ret = ext_read_inode(fs, handle->ino, &disk_inode);
-        if (ret)
-            return ret;
-
-        ext_copy_runtime_inode_state(&disk_inode, &inode);
-        ret = ext_write_inode(fs, handle->ino, &disk_inode);
-        if (ret)
-            return ret;
-
-        inode = disk_inode;
-        handle->inode_cache = inode;
-        handle->inode_dirty = false;
-        ext_sync_node_from_inode(node, fs, &inode);
-    }
-
-    if (inode_out)
-        *inode_out = inode;
-    return 0;
+    return bits;
 }
 
-static void ext_sync_node_from_inode(vfs_node_t *node, ext_mount_ctx_t *fs,
-                                     const ext_inode_disk_t *inode) {
-    node->fsid = ext_fsid;
-    node->dev = fs->dev;
-    node->blksz = fs->block_size;
-    node->size = ext_inode_size_get(inode);
-    node->realsize = ext_inode_blocks_get(inode) * 512;
-    node->createtime = inode->i_crtime ? inode->i_crtime : inode->i_ctime;
-    node->readtime = inode->i_atime;
-    node->writetime = inode->i_mtime;
-    node->owner = ext_inode_uid_get(inode);
-    node->group = ext_inode_gid_get(inode);
-    node->mode = inode->i_mode & 07777;
-    node->type = ext_mode_to_vfs_type(inode->i_mode);
-    if ((node->type & file_block) || (node->type & file_stream))
-        node->rdev = ext_inode_rdev_get(inode);
+static void ext_sync_vfs_inode(struct vfs_inode *inode, ext_mount_ctx_t *fs,
+                               const ext_inode_disk_t *disk_inode) {
+    if (!inode || !fs || !disk_inode)
+        return;
+
+    inode->i_mode = disk_inode->i_mode;
+    inode->i_uid = ext_inode_uid_get(disk_inode);
+    inode->i_gid = ext_inode_gid_get(disk_inode);
+    inode->i_nlink = disk_inode->i_links_count;
+    inode->i_size = ext_inode_size_get(disk_inode);
+    inode->i_blocks = ext_inode_blocks_get(disk_inode);
+    inode->i_blkbits = ext_block_bits(fs->block_size);
+    inode->i_atime.sec = disk_inode->i_atime;
+    inode->i_btime.sec =
+        disk_inode->i_crtime ? disk_inode->i_crtime : disk_inode->i_ctime;
+    inode->i_ctime.sec = disk_inode->i_ctime;
+    inode->i_mtime.sec = disk_inode->i_mtime;
+    inode->inode = inode->i_ino;
+    inode->type = ext_mode_to_vfs_type(disk_inode->i_mode);
+    if ((inode->type & file_block) || (inode->type & file_stream))
+        inode->i_rdev = ext_inode_rdev_get(disk_inode);
     else
-        node->rdev = fs->dev;
+        inode->i_rdev = fs->dev;
+
+    inode->i_op = &ext_inode_ops;
+    inode->i_fop = S_ISDIR(inode->i_mode) ? &ext_dir_ops : &ext_file_ops;
 }
 
 static int ext_lookup_name_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
@@ -1648,7 +1637,7 @@ static int ext_dir_is_empty_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
 
 static int ext_drop_link_locked(ext_mount_ctx_t *fs, uint32_t ino,
                                 ext_inode_disk_t *inode,
-                                vfs_node_t *cached_node);
+                                struct vfs_inode *cached_inode);
 
 static int ext_delete_directory_contents_locked(ext_mount_ctx_t *fs,
                                                 uint32_t dir_ino,
@@ -1809,7 +1798,7 @@ static int ext_release_inode_locked(ext_mount_ctx_t *fs, uint32_t ino,
 
 static int ext_drop_link_locked(ext_mount_ctx_t *fs, uint32_t ino,
                                 ext_inode_disk_t *inode,
-                                vfs_node_t *cached_node) {
+                                struct vfs_inode *cached_inode) {
     if (!fs || !inode)
         return -EINVAL;
 
@@ -1818,7 +1807,7 @@ static int ext_drop_link_locked(ext_mount_ctx_t *fs, uint32_t ino,
     ext_inode_touch(inode, false, false, true);
 
     if (inode->i_links_count == 0) {
-        if (cached_node && cached_node->refcount > 0) {
+        if (cached_inode && vfs_ref_read(&cached_inode->i_ref) > 1) {
             inode->i_dtime = (uint32_t)ext_now();
             return ext_write_inode(fs, ino, inode);
         }
@@ -1827,247 +1816,129 @@ static int ext_drop_link_locked(ext_mount_ctx_t *fs, uint32_t ino,
 
     return ext_write_inode(fs, ino, inode);
 }
+static int ext_load_inode_locked(struct vfs_inode *inode,
+                                 ext_inode_disk_t *disk_inode) {
+    ext_inode_info_t *info;
+    ext_mount_ctx_t *fs;
+    int ret;
 
-static int ext_lookup_node_locked(vfs_node_t *parent, const char *name,
-                                  vfs_node_t *node) {
-    ext_mount_ctx_t *fs = ext_find_mount(parent ? parent : node);
-    if (!fs)
-        return -ENOENT;
-    if (!parent) {
-        node->inode = EXT_ROOT_INO;
-        ext_inode_disk_t inode = {0};
-        int ret = ext_read_inode(fs, node->inode, &inode);
+    if (!inode || !disk_inode)
+        return -EINVAL;
+
+    info = ext_i(inode);
+    fs = ext_sb_info(inode->i_sb);
+    if (!info || !fs)
+        return -EINVAL;
+
+    if (!info->inode_valid) {
+        ret = ext_read_inode(fs, (uint32_t)inode->i_ino, &info->inode_cache);
         if (ret)
             return ret;
-        ext_sync_node_from_inode(node, fs, &inode);
-        return 0;
+        info->inode_valid = true;
+        ext_sync_vfs_inode(inode, fs, &info->inode_cache);
     }
 
-    ext_dir_lookup_t lookup = {0};
-    int ret = ext_lookup_name_locked(fs, parent->inode, name, &lookup);
-    if (ret)
-        return ret;
-    if (!lookup.found)
-        return -ENOENT;
-
-    ext_inode_disk_t inode = {0};
-    ret = ext_read_inode(fs, lookup.inode, &inode);
-    if (ret)
-        return ret;
-
-    node->inode = lookup.inode;
-    ext_sync_node_from_inode(node, fs, &inode);
+    *disk_inode = info->inode_cache;
     return 0;
 }
 
-static void ext_prune_children(vfs_node_t *parent, const char *name) {
-    if (!parent || !name)
-        return;
+static int ext_store_inode_locked(struct vfs_inode *inode,
+                                  const ext_inode_disk_t *disk_inode,
+                                  bool write_back) {
+    ext_inode_info_t *info;
+    ext_mount_ctx_t *fs;
+    int ret = 0;
 
-    uint64_t nodes_count = 0;
-    vfs_node_t *child, *tmp;
-    llist_for_each(child, tmp, &parent->childs, node_for_childs) {
-        if (!child->name || strcmp(child->name, name))
-            continue;
-        if (child == child->root)
-            continue;
-        nodes_count++;
-    }
+    if (!inode || !disk_inode)
+        return -EINVAL;
 
-    if (!nodes_count)
-        return;
+    info = ext_i(inode);
+    fs = ext_sb_info(inode->i_sb);
+    if (!info || !fs)
+        return -EINVAL;
 
-    vfs_node_t **nodes = calloc(nodes_count, sizeof(vfs_node_t *));
-    if (!nodes)
-        return;
-
-    uint64_t idx = 0;
-    llist_for_each(child, tmp, &parent->childs, node_for_childs) {
-        if (!child->name || strcmp(child->name, name))
-            continue;
-        if (child == child->root)
-            continue;
-        nodes[idx++] = child;
-    }
-
-    for (uint64_t i = 0; i < idx; i++)
-        vfs_free(nodes[i]);
-
-    free(nodes);
-}
-
-static void ext_resolve_children_conflict(vfs_node_t *parent,
-                                          const char *name) {
-    if (!parent || !name)
-        return;
-
-    uint64_t nodes_count = 0;
-    vfs_node_t *child, *tmp;
-    llist_for_each(child, tmp, &parent->childs, node_for_childs) {
-        if (!child->name || strcmp(child->name, name))
-            continue;
-        nodes_count++;
-    }
-
-    if (nodes_count <= 1)
-        return;
-
-    vfs_node_t **nodes = calloc(nodes_count, sizeof(vfs_node_t *));
-    if (!nodes)
-        return;
-
-    uint64_t idx = 0;
-    llist_for_each(child, tmp, &parent->childs, node_for_childs) {
-        if (!child->name || strcmp(child->name, name))
-            continue;
-        nodes[idx++] = child;
-    }
-
-    vfs_node_t *keep = NULL;
-    for (uint64_t i = 0; i < idx; i++) {
-        if (nodes[i] == nodes[i]->root) {
-            keep = nodes[i];
-            break;
-        }
-    }
-    if (!keep) {
-        for (uint64_t i = 0; i < idx; i++) {
-            if (nodes[i] == nodes[i]->root) {
-                keep = nodes[i];
-                break;
-            }
-        }
-    }
-    if (!keep) {
-        for (uint64_t i = 0; i < idx; i++) {
-            if (nodes[i]->fsid == (uint32_t)ext_fsid) {
-                keep = nodes[i];
-                break;
-            }
-        }
-    }
-    if (!keep)
-        keep = nodes[0];
-
-    for (uint64_t i = 0; i < idx; i++) {
-        if (nodes[i] == keep)
-            continue;
-        ext_hide_node(nodes[i]);
-    }
-
-    free(nodes);
-}
-
-static int ext_populate_dir_with_fs_locked(ext_mount_ctx_t *fs,
-                                           vfs_node_t *node) {
-    if (!fs)
-        return -ENOENT;
-
-    ext_inode_disk_t dir_inode = {0};
-    int ret = ext_read_inode(fs, node->inode, &dir_inode);
-    if (ret)
-        return ret;
-    if ((dir_inode.i_mode & S_IFMT) != EXT2_S_IFDIR)
-        return -ENOTDIR;
-
-    uint64_t dir_size = ext_inode_size_get(&dir_inode);
-    uint32_t blocks =
-        (uint32_t)((dir_size + fs->block_size - 1) / fs->block_size);
-    uint8_t *buf = calloc(1, fs->block_size);
-    if (!buf)
-        return -ENOMEM;
-
-    for (uint32_t lblock = 0; lblock < blocks; lblock++) {
-        uint32_t pblock = 0;
-        ret = ext_inode_get_block_locked(fs, node->inode, &dir_inode, lblock,
-                                         false, &pblock);
-        if (ret) {
-            free(buf);
+    if (write_back) {
+        ret = ext_write_inode(fs, (uint32_t)inode->i_ino, disk_inode);
+        if (ret)
             return ret;
-        }
-        if (!pblock)
-            continue;
-        ret = ext_read_block(fs, pblock, buf);
-        if (ret) {
-            free(buf);
-            return ret;
-        }
-        for (uint32_t off = 0;
-             off + sizeof(ext_dir_entry_t) <= fs->block_size;) {
-            ext_dir_entry_t *entry = (ext_dir_entry_t *)(buf + off);
-            if (entry->rec_len < 8 || (entry->rec_len & 3) ||
-                off + entry->rec_len > fs->block_size) {
-                free(buf);
-                return -EIO;
-            }
-            if (entry->inode &&
-                !(entry->name_len == 1 && entry->name[0] == '.') &&
-                !(entry->name_len == 2 && entry->name[0] == '.' &&
-                  entry->name[1] == '.')) {
-                char name[256];
-                memset(name, 0, sizeof(name));
-                memcpy(name, entry->name, entry->name_len);
-
-                vfs_node_t *exist = vfs_child_find(node, name);
-                if (exist) {
-                    if (exist == exist->root) {
-                        goto next;
-                    }
-                    if (exist->fsid != (uint32_t)ext_fsid ||
-                        (exist->inode && exist->inode != entry->inode)) {
-                        ext_hide_node(exist);
-                        exist = NULL;
-                    }
-                }
-
-                vfs_node_t *child = exist;
-                if (!child) {
-                    child = vfs_node_alloc(node, name);
-                    if (!child) {
-                        free(buf);
-                        return -ENOMEM;
-                    }
-                }
-                child->inode = entry->inode;
-                child->fsid = ext_fsid;
-                child->dev = node->dev;
-                child->rdev = node->dev;
-                child->blksz = fs->block_size;
-                child->type = ext_dir_file_type_to_vfs(entry->file_type);
-            }
-        next:
-            off += entry->rec_len;
-        }
     }
 
-    free(buf);
-    node->flags |= VFS_NODE_FLAGS_CHILDREN_POPULATED;
-    node->flags &= ~VFS_NODE_FLAGS_DIRTY_CHILDREN;
+    info->inode_cache = *disk_inode;
+    info->inode_valid = true;
+    ext_sync_vfs_inode(inode, fs, disk_inode);
     return 0;
 }
 
-static int ext_populate_dir_locked(vfs_node_t *node) {
-    return ext_populate_dir_with_fs_locked(ext_find_mount(node), node);
+static struct vfs_inode *
+ext_find_cached_inode_locked(struct vfs_super_block *sb, uint32_t ino) {
+    struct vfs_inode *inode, *tmp;
+
+    if (!sb)
+        return NULL;
+
+    spin_lock(&sb->s_inode_lock);
+    llist_for_each(inode, tmp, &sb->s_inodes, i_sb_list) {
+        if (inode->i_ino == ino) {
+            vfs_igrab(inode);
+            spin_unlock(&sb->s_inode_lock);
+            return inode;
+        }
+    }
+    spin_unlock(&sb->s_inode_lock);
+    return NULL;
 }
 
-static int ext_create_inode_common_locked(ext_mount_ctx_t *fs,
-                                          vfs_node_t *parent, vfs_node_t *node,
-                                          uint16_t mode, uint32_t rdev,
-                                          const void *payload,
-                                          size_t payload_size) {
+static struct vfs_inode *ext_iget_locked(struct vfs_super_block *sb,
+                                         uint32_t ino) {
+    ext_mount_ctx_t *fs = ext_sb_info(sb);
+    ext_inode_info_t *info;
+    struct vfs_inode *inode;
+    ext_inode_disk_t disk_inode = {0};
+    int ret;
+
+    if (!sb || !fs || !ino)
+        return ERR_PTR(-EINVAL);
+
+    inode = ext_find_cached_inode_locked(sb, ino);
+    if (inode)
+        return inode;
+
+    inode = vfs_alloc_inode(sb);
+    if (!inode)
+        return ERR_PTR(-ENOMEM);
+
+    ret = ext_read_inode(fs, ino, &disk_inode);
+    if (ret) {
+        vfs_iput(inode);
+        return ERR_PTR(ret);
+    }
+
+    inode->i_ino = ino;
+    info = ext_i(inode);
+    info->inode_cache = disk_inode;
+    info->inode_valid = true;
+    ext_sync_vfs_inode(inode, fs, &disk_inode);
+    return inode;
+}
+
+static int ext_create_inode_common_locked(
+    ext_mount_ctx_t *fs, struct vfs_inode *parent, struct vfs_dentry *dentry,
+    uint16_t mode, uint32_t rdev, const void *payload, size_t payload_size) {
     uint32_t ino = 0;
+    struct vfs_inode *vinode = NULL;
+    ext_inode_info_t *info = NULL;
     int ret = ext_alloc_inode_locked(fs, mode, &ino);
     if (ret)
         return ret;
 
-    ext_inode_disk_t inode = {0};
-    inode.i_mode = mode;
-    inode.i_links_count = (mode & S_IFMT) == EXT2_S_IFDIR ? 2 : 1;
-    ext_inode_uid_set(&inode, node->owner);
-    ext_inode_gid_set(&inode, node->group);
-    ext_inode_touch(&inode, true, true, true);
+    ext_inode_disk_t disk_inode = {0};
+    disk_inode.i_mode = mode;
+    disk_inode.i_links_count = (mode & S_IFMT) == EXT2_S_IFDIR ? 2 : 1;
+    ext_inode_uid_set(&disk_inode, parent ? parent->i_uid : 0);
+    ext_inode_gid_set(&disk_inode, parent ? parent->i_gid : 0);
+    ext_inode_touch(&disk_inode, true, true, true);
     if ((mode & S_IFMT) == EXT2_S_IFCHR || (mode & S_IFMT) == EXT2_S_IFBLK)
-        ext_inode_rdev_set(&inode, rdev);
+        ext_inode_rdev_set(&disk_inode, rdev);
 
     if ((mode & S_IFMT) == EXT2_S_IFDIR) {
         uint32_t block = 0;
@@ -2075,9 +1946,9 @@ static int ext_create_inode_common_locked(ext_mount_ctx_t *fs,
         ret = ext_alloc_block_locked(fs, prefer_group, &block);
         if (ret)
             goto rollback_inode;
-        inode.i_block[0] = block;
-        ext_inode_add_fs_blocks(fs, &inode, 1);
-        ext_inode_size_set(&inode, fs->block_size);
+        disk_inode.i_block[0] = block;
+        ext_inode_add_fs_blocks(fs, &disk_inode, 1);
+        ext_inode_size_set(&disk_inode, fs->block_size);
 
         uint8_t *buf = calloc(1, fs->block_size);
         if (!buf) {
@@ -2092,7 +1963,7 @@ static int ext_create_inode_common_locked(ext_mount_ctx_t *fs,
         dot->name[0] = '.';
 
         ext_dir_entry_t *dotdot = (ext_dir_entry_t *)(buf + dot->rec_len);
-        dotdot->inode = parent ? parent->inode : ino;
+        dotdot->inode = parent ? (uint32_t)parent->i_ino : ino;
         dotdot->rec_len = fs->block_size - dot->rec_len;
         dotdot->name_len = 2;
         dotdot->file_type = EXT2_FT_DIR;
@@ -2104,75 +1975,130 @@ static int ext_create_inode_common_locked(ext_mount_ctx_t *fs,
         if (ret)
             goto rollback_inode_release;
     } else if ((mode & S_IFMT) == EXT2_S_IFLNK) {
-        if (payload_size <= sizeof(inode.i_block)) {
-            memcpy(inode.i_block, payload, payload_size);
-            ext_inode_size_set(&inode, payload_size);
+        if (payload_size <= sizeof(disk_inode.i_block)) {
+            memcpy(disk_inode.i_block, payload, payload_size);
+            ext_inode_size_set(&disk_inode, payload_size);
         } else {
-            ret = ext_write_inode_data_locked(fs, ino, &inode, payload, 0,
+            ret = ext_write_inode_data_locked(fs, ino, &disk_inode, payload, 0,
                                               payload_size);
             if (ret < 0)
                 goto rollback_inode_release;
         }
     }
 
-    ret = ext_write_inode(fs, ino, &inode);
+    ret = ext_write_inode(fs, ino, &disk_inode);
     if (ret)
         goto rollback_inode_release;
 
     ext_inode_disk_t parent_inode = {0};
-    ret = ext_read_inode(fs, parent->inode, &parent_inode);
+    ret = ext_read_inode(fs, (uint32_t)parent->i_ino, &parent_inode);
     if (ret)
         goto rollback_inode_release;
 
-    ret = ext_dir_add_entry_locked(fs, parent->inode, &parent_inode, ino,
-                                   node->name,
-                                   ext_mode_to_dir_file_type(inode.i_mode));
+    ret = ext_dir_add_entry_locked(
+        fs, (uint32_t)parent->i_ino, &parent_inode, ino, dentry->d_name.name,
+        ext_mode_to_dir_file_type(disk_inode.i_mode));
     if (ret)
         goto rollback_inode_release;
 
     if ((mode & S_IFMT) == EXT2_S_IFDIR) {
         parent_inode.i_links_count++;
         ext_inode_touch(&parent_inode, false, true, true);
-        ret = ext_write_inode(fs, parent->inode, &parent_inode);
+        ret = ext_write_inode(fs, (uint32_t)parent->i_ino, &parent_inode);
         if (ret)
             return ret;
     }
 
-    node->inode = ino;
-    ext_sync_node_from_inode(node, fs, &inode);
-    if ((mode & S_IFMT) == EXT2_S_IFCHR || (mode & S_IFMT) == EXT2_S_IFBLK)
-        node->rdev = rdev;
+    vinode = ext_iget_locked(parent->i_sb, ino);
+    if (IS_ERR(vinode))
+        return PTR_ERR(vinode);
+
+    info = ext_i(vinode);
+    if ((mode & S_IFMT) == EXT2_S_IFLNK &&
+        payload_size <= sizeof(disk_inode.i_block)) {
+        info->symlink = calloc(1, payload_size + 1);
+        if (info->symlink)
+            memcpy(info->symlink, payload, payload_size);
+    }
+
+    vfs_d_instantiate(dentry, vinode);
+    vfs_iput(vinode);
     return 0;
 
 rollback_inode_release:
-    ext_release_inode_locked(fs, ino, &inode);
+    ext_release_inode_locked(fs, ino, &disk_inode);
     return ret;
 rollback_inode:
     ext_free_inode_locked(fs, ino, (mode & S_IFMT) == EXT2_S_IFDIR);
     return ret;
 }
 
-int ext_mount(uint64_t dev, vfs_node_t *node) {
-    if (!dev || !node)
+static int ext_mount_prepare_locked(ext_mount_ctx_t *fs, uint64_t dev);
+static int ext_iterate_dir_locked(struct vfs_inode *dir,
+                                  struct vfs_dir_context *ctx);
+static struct vfs_dentry *ext_lookup(struct vfs_inode *dir,
+                                     struct vfs_dentry *dentry,
+                                     unsigned int flags);
+static int ext_create(struct vfs_inode *dir, struct vfs_dentry *dentry,
+                      umode_t mode, bool excl);
+static int ext_mkdir(struct vfs_inode *dir, struct vfs_dentry *dentry,
+                     umode_t mode);
+static int ext_mknod(struct vfs_inode *dir, struct vfs_dentry *dentry,
+                     umode_t mode, dev64_t dev);
+static int ext_symlink(struct vfs_inode *dir, struct vfs_dentry *dentry,
+                       const char *target);
+static int ext_link(struct vfs_dentry *old_dentry, struct vfs_inode *dir,
+                    struct vfs_dentry *new_dentry);
+static int ext_unlink(struct vfs_inode *dir, struct vfs_dentry *dentry);
+static int ext_rmdir(struct vfs_inode *dir, struct vfs_dentry *dentry);
+static int ext_rename(struct vfs_rename_ctx *ctx);
+static const char *ext_get_link(struct vfs_dentry *dentry,
+                                struct vfs_inode *inode,
+                                struct vfs_nameidata *nd);
+static int ext_permission(struct vfs_inode *inode, int mask);
+static int ext_getattr(const struct vfs_path *path, struct vfs_kstat *stat,
+                       uint32_t request_mask, unsigned int flags);
+static int ext_setattr(struct vfs_dentry *dentry, const struct vfs_kstat *stat);
+static loff_t ext_llseek(struct vfs_file *file, loff_t offset, int whence);
+static ssize_t ext_read(struct vfs_file *file, void *buf, size_t count,
+                        loff_t *ppos);
+static ssize_t ext_write(struct vfs_file *file, const void *buf, size_t count,
+                         loff_t *ppos);
+static int ext_iterate_shared(struct vfs_file *file,
+                              struct vfs_dir_context *ctx);
+static long ext_unlocked_ioctl(struct vfs_file *file, unsigned long cmd,
+                               unsigned long arg);
+static __poll_t ext_poll(struct vfs_file *file, struct vfs_poll_table *pt);
+static int ext_open(struct vfs_inode *inode, struct vfs_file *file);
+static int ext_release(struct vfs_inode *inode, struct vfs_file *file);
+static int ext_fsync(struct vfs_file *file, loff_t start, loff_t end,
+                     int datasync);
+static struct vfs_inode *ext_alloc_inode(struct vfs_super_block *sb);
+static void ext_destroy_inode(struct vfs_inode *inode);
+static void ext_put_super(struct vfs_super_block *sb);
+static int ext_statfs(struct vfs_path *path, void *buf);
+static int ext_resolve_mount_dev(struct vfs_fs_context *fc, uint64_t *dev_out);
+static int ext_init_fs_context(struct vfs_fs_context *fc);
+static int ext_get_tree(struct vfs_fs_context *fc);
+
+/* implementation continues below */
+
+static int ext_mount_prepare_locked(ext_mount_ctx_t *fs, uint64_t dev) {
+    int ret;
+    uint64_t gdt_block;
+    uint32_t compat_ok;
+    uint32_t ro_ok;
+    uint32_t incompat_ok;
+
+    if (!fs || !dev)
         return -EINVAL;
 
-    spin_lock(&rwlock);
-
-    bool linked = false;
-    ext_mount_ctx_t *fs = calloc(1, sizeof(*fs));
-    if (!fs) {
-        spin_unlock(&rwlock);
-        return -ENOMEM;
-    }
-
     fs->dev = dev;
-    int ret = ext_dev_read(fs, 1024, &fs->sb, sizeof(fs->sb));
+    ret = ext_dev_read(fs, 1024, &fs->sb, sizeof(fs->sb));
     if (ret)
-        goto fail;
-    if (fs->sb.s_magic != EXT_SUPER_MAGIC) {
-        ret = -EINVAL;
-        goto fail;
-    }
+        return ret;
+    if (fs->sb.s_magic != EXT_SUPER_MAGIC)
+        return -EINVAL;
 
     fs->block_size = 1024u << fs->sb.s_log_block_size;
     fs->inode_size =
@@ -2186,30 +2112,25 @@ int ext_mount(uint64_t dev, vfs_node_t *node) {
                                   fs->sb.s_blocks_per_group - 1) /
                                  fs->sb.s_blocks_per_group);
 
-    uint32_t compat_ok =
-        EXT2_FEATURE_COMPAT_EXT_ATTR | EXT2_FEATURE_COMPAT_RESIZE_INODE;
-    uint32_t ro_ok = EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER |
-                     EXT2_FEATURE_RO_COMPAT_LARGE_FILE |
-                     EXT4_FEATURE_RO_COMPAT_EXTRA_ISIZE;
-    uint32_t incompat_ok = EXT2_FEATURE_INCOMPAT_FILETYPE;
+    compat_ok = EXT2_FEATURE_COMPAT_EXT_ATTR | EXT2_FEATURE_COMPAT_RESIZE_INODE;
+    ro_ok = EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER |
+            EXT2_FEATURE_RO_COMPAT_LARGE_FILE |
+            EXT4_FEATURE_RO_COMPAT_EXTRA_ISIZE;
+    incompat_ok = EXT2_FEATURE_INCOMPAT_FILETYPE;
     if ((fs->sb.s_feature_compat & ~compat_ok) ||
         (fs->sb.s_feature_ro_compat & ~ro_ok) ||
-        (fs->sb.s_feature_incompat & ~incompat_ok)) {
-        ret = -ENOTSUP;
-        goto fail;
-    }
+        (fs->sb.s_feature_incompat & ~incompat_ok))
+        return -ENOTSUP;
 
     ret = ext_map_cache_init(fs);
     if (ret)
-        goto fail;
+        return ret;
 
     fs->groups = calloc(fs->group_count, sizeof(ext_group_desc_t));
-    if (!fs->groups) {
-        ret = -ENOMEM;
-        goto fail;
-    }
+    if (!fs->groups)
+        return -ENOMEM;
 
-    uint64_t gdt_block = fs->block_size == 1024 ? 2 : 1;
+    gdt_block = fs->block_size == 1024 ? 2 : 1;
     for (uint32_t i = 0; i < fs->group_count; i++) {
         uint64_t offset =
             gdt_block * fs->block_size + (uint64_t)i * fs->desc_size;
@@ -2217,647 +2138,331 @@ int ext_mount(uint64_t dev, vfs_node_t *node) {
             ext_dev_read(fs, offset, &fs->groups[i],
                          MIN((size_t)fs->desc_size, sizeof(ext_group_desc_t)));
         if (ret)
-            goto fail;
+            return ret;
     }
 
-    llist_init_head(&fs->node);
-    llist_prepend(&ext_mounts, &fs->node);
-    linked = true;
-    fs->root = node;
-
-    node->inode = EXT_ROOT_INO;
-    node->fsid = ext_fsid;
-    node->dev = dev;
-    node->rdev = dev;
-    node->blksz = fs->block_size;
-    node->type = file_dir;
-
-    ext_inode_disk_t root_inode = {0};
-    ret = ext_read_inode(fs, EXT_ROOT_INO, &root_inode);
-    if (ret) {
-        goto fail;
-    }
-    ext_sync_node_from_inode(node, fs, &root_inode);
-    ret = ext_populate_dir_with_fs_locked(fs, node);
-    if (ret) {
-        goto fail;
-    }
-
-    spin_unlock(&rwlock);
     return 0;
-
-fail:
-    if (linked)
-        llist_delete(&fs->node);
-    ext_map_cache_destroy(fs);
-    if (fs->groups)
-        free(fs->groups);
-    free(fs);
-    spin_unlock(&rwlock);
-    return ret;
 }
 
-void ext_unmount(vfs_node_t *node) {
-    if (!node)
-        return;
+static int ext_iterate_dir_locked(struct vfs_inode *dir,
+                                  struct vfs_dir_context *ctx) {
+    ext_mount_ctx_t *fs = ext_sb_info(dir->i_sb);
+    ext_inode_disk_t dir_inode = {0};
+    uint64_t dir_size;
+    uint32_t blocks;
+    uint8_t *buf;
+    loff_t index = 0;
+    int ret;
 
-    spin_lock(&rwlock);
-    ext_mount_ctx_t *ctx = ext_find_mount(node);
-    if (ctx) {
-        llist_delete(&ctx->node);
-        ext_map_cache_destroy(ctx);
-        free(ctx->groups);
-        free(ctx);
-    }
-
-    node->dev = node->parent ? node->parent->dev : 0;
-    node->rdev = node->parent ? node->parent->rdev : 0;
-
-    vfs_node_t *child, *tmp;
-    uint64_t nodes_count = 0;
-    llist_for_each(child, tmp, &node->childs, node_for_childs) {
-        nodes_count++;
-    }
-    vfs_node_t **nodes = calloc(nodes_count, sizeof(vfs_node_t *));
-    if (nodes) {
-        uint64_t idx = 0;
-        llist_for_each(child, tmp, &node->childs, node_for_childs) {
-            nodes[idx++] = child;
-        }
-        for (uint64_t i = 0; i < idx; i++)
-            vfs_free(nodes[i]);
-        free(nodes);
-    }
-    spin_unlock(&rwlock);
-}
-
-void ext_open(vfs_node_t *parent, const char *name, vfs_node_t *node) {
-    spin_lock(&rwlock);
-
-    ext_mount_ctx_t *fs = ext_find_mount(node ? node : parent);
-    if (!fs) {
-        spin_unlock(&rwlock);
-        return;
-    }
-
-    if (node->inode == 0) {
-        if (ext_lookup_node_locked(parent, name, node) != 0) {
-            spin_unlock(&rwlock);
-            return;
-        }
-    }
-
-    ext_inode_disk_t inode = {0};
-    if (ext_read_inode(fs, node->inode, &inode) != 0) {
-        spin_unlock(&rwlock);
-        return;
-    }
-    ext_sync_node_from_inode(node, fs, &inode);
-
-    ext_handle_t *handle = node->handle;
-    if (!handle) {
-        handle = calloc(1, sizeof(*handle));
-        if (!handle) {
-            spin_unlock(&rwlock);
-            return;
-        }
-        node->handle = handle;
-    }
-    handle->node = node;
-    handle->ino = node->inode;
-    handle->inode_cache = inode;
-    handle->inode_valid = true;
-    handle->inode_dirty = false;
-
-    if (((node->type & file_block) || (node->type & file_stream)) &&
-        !handle->device_opened) {
-        if (!device_open(node->rdev, NULL)) {
-            handle->device_opened = true;
-        }
-    }
-
-    if ((node->type & file_dir) &&
-        (!(node->flags & VFS_NODE_FLAGS_CHILDREN_POPULATED) ||
-         (node->flags & VFS_NODE_FLAGS_DIRTY_CHILDREN))) {
-        ext_populate_dir_with_fs_locked(fs, node);
-    }
-
-    spin_unlock(&rwlock);
-}
-
-bool ext_close(vfs_node_t *node) {
-    ext_handle_t *handle = node ? node->handle : NULL;
-    if (!handle)
-        return true;
-
-    spin_lock(&rwlock);
-
-    ext_mount_ctx_t *fs = ext_find_mount(node);
-    ext_inode_disk_t inode = {0};
-    int inode_ret = ext_flush_handle_inode_locked(fs, node, handle, &inode);
-
-    if (handle->device_opened)
-        device_close(node->rdev);
-
-    if ((node->flags & VFS_NODE_FLAGS_DELETED) && node->inode) {
-        if (fs && !inode_ret) {
-            if (!handle->inode_valid) {
-                inode_ret = ext_read_inode(fs, handle->ino, &inode);
-            }
-        }
-        if (fs && !inode_ret && inode.i_links_count == 0) {
-            ext_release_inode_locked(fs, handle->ino, &inode);
-        }
-    }
-
-    free(handle);
-    node->handle = NULL;
-
-    spin_unlock(&rwlock);
-    return true;
-}
-
-int ext_fsync(vfs_node_t *node) {
-    if (!node)
-        return -EINVAL;
-    if (!(node->type & file_none))
-        return 0;
-
-    spin_lock(&rwlock);
-
-    ext_mount_ctx_t *fs = ext_find_mount(node);
-    ext_handle_t *handle = node->handle;
-    ext_inode_disk_t inode = {0};
-    int ret = 0;
-
-    if (fs && handle)
-        ret = ext_flush_handle_inode_locked(fs, node, handle, &inode);
-
-    spin_unlock(&rwlock);
-    return ret;
-}
-
-ssize_t ext_write(fd_t *fd, const void *addr, size_t offset, size_t size) {
-    if (!fd || !fd->node)
-        return -EBADF;
-
-    if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
-        return device_write(fd->node->rdev, (void *)addr, offset, size, fd);
-    }
-    if (!(fd->node->type & file_none))
-        return -EINVAL;
-
-    spin_lock(&rwlock);
-    ext_handle_t *handle = fd->node->handle;
-    ext_mount_ctx_t *fs = ext_find_mount(fd->node);
-    if (!handle || !fs) {
-        spin_unlock(&rwlock);
-        return -ENOENT;
-    }
-
-    ext_inode_disk_t inode =
-        handle->inode_valid ? handle->inode_cache : (ext_inode_disk_t){0};
-    int ret = 0;
-    if (!handle->inode_valid) {
-        ret = ext_read_inode(fs, handle->ino, &inode);
-        if (ret) {
-            spin_unlock(&rwlock);
-            return ret;
-        }
-        handle->inode_cache = inode;
-        handle->inode_valid = true;
-    }
-
-    ret = ext_write_inode_data_locked(fs, handle->ino, &inode, addr, offset,
-                                      size);
-    if (ret >= 0) {
-        handle->inode_cache = inode;
-        ext_sync_node_from_inode(fd->node, fs, &inode);
-        handle->inode_dirty = true;
-    }
-    spin_unlock(&rwlock);
-    return ret;
-}
-
-ssize_t ext_read(fd_t *fd, void *addr, size_t offset, size_t size) {
-    if (!fd || !fd->node)
-        return -EBADF;
-
-    if ((fd->node->type & file_block) || (fd->node->type & file_stream)) {
-        return device_read(fd->node->rdev, addr, offset, size, fd);
-    }
-    if (!(fd->node->type & file_none))
-        return -EINVAL;
-
-    spin_lock(&rwlock);
-    ext_handle_t *handle = fd->node->handle;
-    ext_mount_ctx_t *fs = ext_find_mount(fd->node);
-    if (!handle || !fs) {
-        spin_unlock(&rwlock);
-        return -ENOENT;
-    }
-
-    ext_inode_disk_t inode =
-        handle->inode_valid ? handle->inode_cache : (ext_inode_disk_t){0};
-    int ret = 0;
-    if (!handle->inode_valid) {
-        ret = ext_read_inode(fs, handle->ino, &inode);
-        if (ret) {
-            spin_unlock(&rwlock);
-            return ret;
-        }
-        handle->inode_cache = inode;
-        handle->inode_valid = true;
-    }
-    ret =
-        ext_read_inode_data_locked(fs, handle->ino, &inode, addr, offset, size);
-    if (ret >= 0) {
-        handle->inode_cache = inode;
-        fd->node->size = ext_inode_size_get(&inode);
-        fd->node->realsize = ext_inode_blocks_get(&inode) * 512;
-        fd->node->readtime = (uint32_t)ext_now();
-    }
-    spin_unlock(&rwlock);
-    return ret;
-}
-
-ssize_t ext_readlink(vfs_node_t *node, void *addr, size_t offset, size_t size) {
-    if (!node || !(node->type & file_symlink))
-        return -EINVAL;
-
-    spin_lock(&rwlock);
-    ext_mount_ctx_t *fs = ext_find_mount(node);
-    if (!fs) {
-        spin_unlock(&rwlock);
-        return -ENOENT;
-    }
-
-    ext_inode_disk_t inode = {0};
-    int ret = ext_read_inode(fs, node->inode, &inode);
-    if (ret) {
-        spin_unlock(&rwlock);
+    ret = ext_load_inode_locked(dir, &dir_inode);
+    if (ret)
         return ret;
-    }
+    if (!S_ISDIR(dir_inode.i_mode))
+        return -ENOTDIR;
 
-    size_t link_size = (size_t)ext_inode_size_get(&inode);
-    if (offset >= link_size) {
-        spin_unlock(&rwlock);
-        return 0;
-    }
-
-    size_t to_copy = MIN(size, link_size - offset);
-    if (link_size <= sizeof(inode.i_block)) {
-        memcpy(addr, ((uint8_t *)inode.i_block) + offset, to_copy);
-        spin_unlock(&rwlock);
-        return to_copy;
-    }
-
-    char *tmp = calloc(1, link_size);
-    if (!tmp) {
-        spin_unlock(&rwlock);
+    dir_size = ext_inode_size_get(&dir_inode);
+    blocks = (uint32_t)((dir_size + fs->block_size - 1) / fs->block_size);
+    buf = calloc(1, fs->block_size);
+    if (!buf)
         return -ENOMEM;
+
+    for (uint32_t lblock = 0; lblock < blocks; lblock++) {
+        uint32_t pblock = 0;
+        ret = ext_inode_get_block_locked(fs, (uint32_t)dir->i_ino, &dir_inode,
+                                         lblock, false, &pblock);
+        if (ret) {
+            free(buf);
+            return ret;
+        }
+        if (!pblock)
+            continue;
+
+        ret = ext_read_block(fs, pblock, buf);
+        if (ret) {
+            free(buf);
+            return ret;
+        }
+
+        for (uint32_t off = 0;
+             off + sizeof(ext_dir_entry_t) <= fs->block_size;) {
+            ext_dir_entry_t *entry = (ext_dir_entry_t *)(buf + off);
+            if (entry->rec_len < 8 || (entry->rec_len & 3) ||
+                off + entry->rec_len > fs->block_size) {
+                free(buf);
+                return -EIO;
+            }
+            if (entry->inode &&
+                !(entry->name_len == 1 && entry->name[0] == '.') &&
+                !(entry->name_len == 2 && entry->name[0] == '.' &&
+                  entry->name[1] == '.')) {
+                if (index++ >= ctx->pos) {
+                    if (ctx->actor(
+                            ctx, entry->name, entry->name_len, index,
+                            entry->inode,
+                            ext_dir_file_type_to_dtype(entry->file_type))) {
+                        free(buf);
+                        ctx->pos = index;
+                        return 0;
+                    }
+                    ctx->pos = index;
+                }
+            }
+            off += entry->rec_len;
+        }
     }
-    ret =
-        ext_read_inode_data_locked(fs, node->inode, &inode, tmp, 0, link_size);
-    if (ret >= 0)
-        memcpy(addr, tmp + offset, to_copy);
-    free(tmp);
-    spin_unlock(&rwlock);
-    return ret < 0 ? ret : (ssize_t)to_copy;
+
+    free(buf);
+    return 0;
 }
 
-int ext_mkfile(vfs_node_t *parent, const char *name, vfs_node_t *node) {
-    (void)name;
-    if (!parent || !node)
-        return -EINVAL;
+static struct vfs_dentry *ext_lookup(struct vfs_inode *dir,
+                                     struct vfs_dentry *dentry,
+                                     unsigned int flags) {
+    ext_mount_ctx_t *fs = ext_sb_info(dir->i_sb);
+    ext_dir_lookup_t lookup = {0};
+    struct vfs_inode *inode = NULL;
+    int ret;
+
+    (void)flags;
+    if (!fs || !dir || !dentry)
+        return ERR_PTR(-EINVAL);
 
     spin_lock(&rwlock);
-    ext_mount_ctx_t *fs = ext_find_mount(parent);
-    int ret = fs ? ext_create_inode_common_locked(
-                       fs, parent, node, EXT2_S_IFREG | 0700, 0, NULL, 0)
-                 : -ENOENT;
+    ret = ext_lookup_name_locked(fs, (uint32_t)dir->i_ino, dentry->d_name.name,
+                                 &lookup);
+    if (!ret && lookup.found)
+        inode = ext_iget_locked(dir->i_sb, lookup.inode);
+    spin_unlock(&rwlock);
+
+    if (ret)
+        return ERR_PTR(ret);
+    if (inode && IS_ERR(inode))
+        return ERR_CAST(inode);
+
+    vfs_d_instantiate(dentry, inode);
+    if (inode)
+        vfs_iput(inode);
+    return dentry;
+}
+
+static int ext_create(struct vfs_inode *dir, struct vfs_dentry *dentry,
+                      umode_t mode, bool excl) {
+    int ret;
+    (void)excl;
+    spin_lock(&rwlock);
+    ret = ext_create_inode_common_locked(ext_sb_info(dir->i_sb), dir, dentry,
+                                         (mode & 07777) | S_IFREG, 0, NULL, 0);
     spin_unlock(&rwlock);
     return ret;
 }
 
-static int ext_link_node_locked(ext_mount_ctx_t *fs, vfs_node_t *parent,
-                                vfs_node_t *target, vfs_node_t *node) {
-    if (!fs || !parent || !target || !node)
-        return -EINVAL;
+static int ext_mkdir(struct vfs_inode *dir, struct vfs_dentry *dentry,
+                     umode_t mode) {
+    int ret;
+    spin_lock(&rwlock);
+    ret = ext_create_inode_common_locked(ext_sb_info(dir->i_sb), dir, dentry,
+                                         (mode & 07777) | S_IFDIR, 0, NULL, 0);
+    spin_unlock(&rwlock);
+    return ret;
+}
 
-    ext_mount_ctx_t *target_fs = ext_find_mount(target);
-    if (target_fs != fs) {
-        return -EXDEV;
-    }
+static int ext_mknod(struct vfs_inode *dir, struct vfs_dentry *dentry,
+                     umode_t mode, dev64_t dev) {
+    int ret;
+    spin_lock(&rwlock);
+    ret = ext_create_inode_common_locked(ext_sb_info(dir->i_sb), dir, dentry,
+                                         mode, (uint32_t)dev, NULL, 0);
+    spin_unlock(&rwlock);
+    return ret;
+}
 
-    if (!target->inode) {
-        int ret = ext_lookup_node_locked(target->parent, target->name, target);
-        if (ret)
-            return ret;
-    }
+static int ext_symlink(struct vfs_inode *dir, struct vfs_dentry *dentry,
+                       const char *target) {
+    int ret;
+    spin_lock(&rwlock);
+    ret = ext_create_inode_common_locked(ext_sb_info(dir->i_sb), dir, dentry,
+                                         S_IFLNK | 0777, 0, target,
+                                         target ? strlen(target) : 0);
+    spin_unlock(&rwlock);
+    return ret;
+}
 
+static int ext_link(struct vfs_dentry *old_dentry, struct vfs_inode *dir,
+                    struct vfs_dentry *new_dentry) {
+    ext_mount_ctx_t *fs = ext_sb_info(dir->i_sb);
     ext_inode_disk_t target_inode = {0};
-    int ret = ext_read_inode(fs, target->inode, &target_inode);
-    if (ret)
-        return ret;
-    if ((target_inode.i_mode & S_IFMT) == EXT2_S_IFDIR)
-        return -EPERM;
-
     ext_inode_disk_t parent_inode = {0};
-    ret = ext_read_inode(fs, parent->inode, &parent_inode);
+    int ret;
+
+    if (!old_dentry || !old_dentry->d_inode || !dir || !new_dentry)
+        return -EINVAL;
+    if (old_dentry->d_inode->i_sb != dir->i_sb)
+        return -EXDEV;
+
+    spin_lock(&rwlock);
+    ret = ext_load_inode_locked(old_dentry->d_inode, &target_inode);
     if (ret)
-        return ret;
+        goto out;
+    if (S_ISDIR(target_inode.i_mode)) {
+        ret = -EPERM;
+        goto out;
+    }
+
+    ret = ext_read_inode(fs, (uint32_t)dir->i_ino, &parent_inode);
+    if (ret)
+        goto out;
 
     ret = ext_dir_add_entry_locked(
-        fs, parent->inode, &parent_inode, target->inode, node->name,
+        fs, (uint32_t)dir->i_ino, &parent_inode,
+        (uint32_t)old_dentry->d_inode->i_ino, new_dentry->d_name.name,
         ext_mode_to_dir_file_type(target_inode.i_mode));
-    if (!ret) {
-        target_inode.i_links_count++;
-        target_inode.i_dtime = 0;
-        ext_inode_touch(&target_inode, false, false, true);
-        ret = ext_write_inode(fs, target->inode, &target_inode);
-        if (!ret) {
-            node->inode = target->inode;
-            ext_sync_node_from_inode(node, fs, &target_inode);
-        }
-    }
+    if (ret)
+        goto out;
 
-    return ret;
-}
+    target_inode.i_links_count++;
+    target_inode.i_dtime = 0;
+    ext_inode_touch(&target_inode, false, false, true);
+    ret = ext_store_inode_locked(old_dentry->d_inode, &target_inode, true);
+    if (!ret)
+        vfs_d_instantiate(new_dentry, old_dentry->d_inode);
 
-static int ext_link_existing(vfs_node_t *parent, vfs_node_t *target,
-                             vfs_node_t *node) {
-    if (!parent || !target || !node)
-        return -EINVAL;
-
-    spin_lock(&rwlock);
-    ext_mount_ctx_t *fs = ext_find_mount(parent);
-    int ret = fs ? ext_link_node_locked(fs, parent, target, node) : -ENOENT;
+out:
     spin_unlock(&rwlock);
     return ret;
 }
 
-int ext_link(vfs_node_t *parent, const char *name, vfs_node_t *node) {
-    if (!parent || !name || !node)
-        return -EINVAL;
-
-    ext_mount_ctx_t *fs = ext_find_mount(parent);
-    if (!fs) {
-        return -ENOENT;
-    }
-
-    vfs_node_t *target = vfs_open(name, O_NOFOLLOW);
-
-    spin_lock(&rwlock);
-    int ret = target ? ext_link_node_locked(fs, parent, target, node) : -ENOENT;
-    spin_unlock(&rwlock);
-
-    vfs_close(target);
-
-    return ret;
-}
-
-int ext_symlink(vfs_node_t *parent, const char *name, vfs_node_t *node) {
-    if (!parent || !name || !node)
-        return -EINVAL;
-
-    spin_lock(&rwlock);
-    ext_mount_ctx_t *fs = ext_find_mount(parent);
-    int ret = fs ? ext_create_inode_common_locked(fs, parent, node,
-                                                  EXT2_S_IFLNK | 0777, 0, name,
-                                                  strlen(name))
-                 : -ENOENT;
-    spin_unlock(&rwlock);
-    return ret;
-}
-
-int ext_mknod(vfs_node_t *parent, const char *name, vfs_node_t *node,
-              uint16_t mode, int dev) {
-    (void)name;
-    if (!parent || !node)
-        return -EINVAL;
-
-    spin_lock(&rwlock);
-    ext_mount_ctx_t *fs = ext_find_mount(parent);
-    int ret = fs ? ext_create_inode_common_locked(fs, parent, node, mode, dev,
-                                                  NULL, 0)
-                 : -ENOENT;
-    spin_unlock(&rwlock);
-    return ret;
-}
-
-int ext_mkdir(vfs_node_t *parent, const char *name, vfs_node_t *node) {
-    (void)name;
-    if (!parent || !node)
-        return -EINVAL;
-
-    spin_lock(&rwlock);
-    ext_mount_ctx_t *fs = ext_find_mount(parent);
-    int ret = fs ? ext_create_inode_common_locked(
-                       fs, parent, node, EXT2_S_IFDIR | 0700, 0, NULL, 0)
-                 : -ENOENT;
-    spin_unlock(&rwlock);
-    return ret;
-}
-
-int ext_chmod(vfs_node_t *node, uint16_t mode) {
-    if (!node)
-        return -EINVAL;
-
-    spin_lock(&rwlock);
-    ext_mount_ctx_t *fs = ext_find_mount(node);
-    if (!fs) {
-        spin_unlock(&rwlock);
-        return -ENOENT;
-    }
-
-    ext_inode_disk_t inode = {0};
-    int ret = ext_read_inode(fs, node->inode, &inode);
-    if (!ret) {
-        inode.i_mode = (inode.i_mode & S_IFMT) | (mode & 07777);
-        ext_inode_touch(&inode, false, false, true);
-        ret = ext_write_inode(fs, node->inode, &inode);
-        if (!ret)
-            ext_sync_node_from_inode(node, fs, &inode);
-    }
-    spin_unlock(&rwlock);
-    return ret;
-}
-
-int ext_chown(vfs_node_t *node, uint64_t uid, uint64_t gid) {
-    if (!node)
-        return -EINVAL;
-
-    spin_lock(&rwlock);
-    ext_mount_ctx_t *fs = ext_find_mount(node);
-    if (!fs) {
-        spin_unlock(&rwlock);
-        return -ENOENT;
-    }
-
-    ext_inode_disk_t inode = {0};
-    int ret = ext_read_inode(fs, node->inode, &inode);
-    if (!ret) {
-        ext_inode_uid_set(&inode, (uint32_t)uid);
-        ext_inode_gid_set(&inode, (uint32_t)gid);
-        ext_inode_touch(&inode, false, false, true);
-        ret = ext_write_inode(fs, node->inode, &inode);
-        if (!ret)
-            ext_sync_node_from_inode(node, fs, &inode);
-    }
-    spin_unlock(&rwlock);
-    return ret;
-}
-
-int ext_delete(vfs_node_t *parent, vfs_node_t *node) {
-    if (!parent || !node)
-        return -EINVAL;
-
-    spin_lock(&rwlock);
-    ext_mount_ctx_t *fs = ext_find_mount(parent);
-    if (!fs) {
-        spin_unlock(&rwlock);
-        return -ENOENT;
-    }
-
+static int ext_unlink(struct vfs_inode *dir, struct vfs_dentry *dentry) {
+    ext_mount_ctx_t *fs = ext_sb_info(dir->i_sb);
     ext_inode_disk_t parent_inode = {0};
-    ext_inode_disk_t inode = {0};
-    int ret = ext_read_inode(fs, parent->inode, &parent_inode);
-    if (ret) {
-        spin_unlock(&rwlock);
-        return ret;
-    }
-    ret = ext_read_inode(fs, node->inode, &inode);
-    if (ret) {
-        spin_unlock(&rwlock);
-        return ret;
-    }
+    ext_inode_disk_t disk_inode = {0};
+    int ret;
 
-    if ((inode.i_mode & S_IFMT) == EXT2_S_IFDIR) {
-        ret = ext_delete_directory_contents_locked(fs, node->inode, &inode);
-        if (ret) {
-            spin_unlock(&rwlock);
-            return ret;
-        }
+    if (!dentry || !dentry->d_inode)
+        return -ENOENT;
+
+    spin_lock(&rwlock);
+    ret = ext_read_inode(fs, (uint32_t)dir->i_ino, &parent_inode);
+    if (ret)
+        goto out;
+    ret = ext_load_inode_locked(dentry->d_inode, &disk_inode);
+    if (ret)
+        goto out;
+    if (S_ISDIR(disk_inode.i_mode)) {
+        ret = -EISDIR;
+        goto out;
     }
 
-    ret = ext_dir_remove_entry_locked(fs, parent->inode, &parent_inode,
-                                      node->name, NULL);
-    if (ret) {
-        spin_unlock(&rwlock);
-        return ret;
-    }
+    ret = ext_dir_remove_entry_locked(fs, (uint32_t)dir->i_ino, &parent_inode,
+                                      dentry->d_name.name, NULL);
+    if (ret)
+        goto out;
 
-    if ((inode.i_mode & S_IFMT) == EXT2_S_IFDIR && parent_inode.i_links_count) {
-        parent_inode.i_links_count--;
-        ext_inode_touch(&parent_inode, false, true, true);
-        ret = ext_write_inode(fs, parent->inode, &parent_inode);
-        if (ret) {
-            spin_unlock(&rwlock);
-            return ret;
-        }
-    }
+    ret = ext_drop_link_locked(fs, (uint32_t)dentry->d_inode->i_ino,
+                               &disk_inode, dentry->d_inode);
+    if (!ret && disk_inode.i_links_count)
+        ret = ext_store_inode_locked(dentry->d_inode, &disk_inode, false);
 
-    if (inode.i_links_count)
-        inode.i_links_count--;
-    ext_inode_touch(&inode, false, false, true);
-
-    if (inode.i_links_count == 0) {
-        if (node->refcount > 0) {
-            inode.i_dtime = (uint32_t)ext_now();
-            ret = ext_write_inode(fs, node->inode, &inode);
-        } else {
-            ret = ext_release_inode_locked(fs, node->inode, &inode);
-        }
-    } else {
-        ret = ext_write_inode(fs, node->inode, &inode);
-    }
-
+out:
     spin_unlock(&rwlock);
     return ret;
 }
 
-int ext_rename(vfs_node_t *node, const char *new) {
-    if (!node || !new)
-        return -EINVAL;
+static int ext_rmdir(struct vfs_inode *dir, struct vfs_dentry *dentry) {
+    ext_mount_ctx_t *fs = ext_sb_info(dir->i_sb);
+    ext_inode_disk_t parent_inode = {0};
+    ext_inode_disk_t disk_inode = {0};
+    int ret;
 
-    char *path = strdup(new);
-    if (!path)
-        return -ENOMEM;
-
-    size_t path_len = strlen(path);
-    while (path_len > 1 && path[path_len - 1] == '/') {
-        path[--path_len] = '\0';
-    }
-
-    char *slash = strrchr(path, '/');
-    char *new_name = slash ? slash + 1 : path;
-    if (!strlen(new_name)) {
-        free(path);
-        return -EINVAL;
-    }
-
-    char parent_path[512];
-    memset(parent_path, 0, sizeof(parent_path));
-    if (slash) {
-        size_t len = slash == path ? 1 : (size_t)(slash - path);
-        memcpy(parent_path, path, len);
-        if (len == 0)
-            strcpy(parent_path, "/");
-    } else {
-        strcpy(parent_path, ".");
-    }
-
-    vfs_node_t *new_parent = vfs_open(parent_path, 0);
-    if (!new_parent) {
-        free(path);
+    if (!dentry || !dentry->d_inode)
         return -ENOENT;
-    }
 
     spin_lock(&rwlock);
-    ext_mount_ctx_t *fs = ext_find_mount(node);
-    if (!fs) {
-        free(path);
-        spin_unlock(&rwlock);
-        vfs_close(new_parent);
-        return -ENOENT;
-    }
-    ext_mount_ctx_t *new_fs = ext_find_mount(new_parent);
-    if (new_fs != fs) {
-        free(path);
-        spin_unlock(&rwlock);
-        vfs_close(new_parent);
-        return -EXDEV;
+    ret = ext_read_inode(fs, (uint32_t)dir->i_ino, &parent_inode);
+    if (ret)
+        goto out;
+    ret = ext_load_inode_locked(dentry->d_inode, &disk_inode);
+    if (ret)
+        goto out;
+    if (!S_ISDIR(disk_inode.i_mode)) {
+        ret = -ENOTDIR;
+        goto out;
     }
 
-    ext_inode_disk_t inode = {0};
+    ret = ext_dir_is_empty_locked(fs, (uint32_t)dentry->d_inode->i_ino,
+                                  &disk_inode);
+    if (ret <= 0) {
+        ret = ret < 0 ? ret : -ENOTEMPTY;
+        goto out;
+    }
+
+    ret = ext_dir_remove_entry_locked(fs, (uint32_t)dir->i_ino, &parent_inode,
+                                      dentry->d_name.name, NULL);
+    if (ret)
+        goto out;
+
+    if (parent_inode.i_links_count)
+        parent_inode.i_links_count--;
+    ext_inode_touch(&parent_inode, false, true, true);
+    ret = ext_write_inode(fs, (uint32_t)dir->i_ino, &parent_inode);
+    if (ret)
+        goto out;
+
+    ret = ext_drop_link_locked(fs, (uint32_t)dentry->d_inode->i_ino,
+                               &disk_inode, dentry->d_inode);
+    if (!ret && disk_inode.i_links_count)
+        ret = ext_store_inode_locked(dentry->d_inode, &disk_inode, false);
+
+out:
+    spin_unlock(&rwlock);
+    return ret;
+}
+
+static int ext_rename(struct vfs_rename_ctx *ctx) {
+    ext_mount_ctx_t *fs;
+    ext_inode_disk_t src_inode = {0};
     ext_inode_disk_t old_parent_inode = {0};
     ext_inode_disk_t new_parent_inode = {0};
     ext_inode_disk_t target_inode = {0};
     ext_dir_lookup_t target_lookup = {0};
-    bool target_exists = false;
+    struct vfs_inode *cached_target = NULL;
+    bool target_exists;
+    bool source_is_dir;
     bool target_is_dir = false;
-    bool source_is_dir = false;
-    int ret = ext_read_inode(fs, node->inode, &inode);
+    int ret;
+
+    if (!ctx || !ctx->old_dir || !ctx->new_dir || !ctx->old_dentry ||
+        !ctx->old_dentry->d_inode || !ctx->new_dentry)
+        return -EINVAL;
+    if (ctx->flags & (VFS_RENAME_EXCHANGE | VFS_RENAME_WHITEOUT))
+        return -EOPNOTSUPP;
+    if (ctx->old_dir->i_sb != ctx->new_dir->i_sb)
+        return -EXDEV;
+
+    fs = ext_sb_info(ctx->old_dir->i_sb);
+    spin_lock(&rwlock);
+
+    ret = ext_load_inode_locked(ctx->old_dentry->d_inode, &src_inode);
     if (ret)
         goto out;
-    ret = ext_read_inode(fs, node->parent->inode, &old_parent_inode);
+    ret = ext_read_inode(fs, (uint32_t)ctx->old_dir->i_ino, &old_parent_inode);
     if (ret)
         goto out;
-    ret = ext_read_inode(fs, new_parent->inode, &new_parent_inode);
+    ret = ext_read_inode(fs, (uint32_t)ctx->new_dir->i_ino, &new_parent_inode);
     if (ret)
         goto out;
 
-    source_is_dir = (inode.i_mode & S_IFMT) == EXT2_S_IFDIR;
-
-    ret = ext_dir_find_locked(fs, new_parent->inode, &new_parent_inode,
-                              new_name, &target_lookup);
+    source_is_dir = S_ISDIR(src_inode.i_mode);
+    ret = ext_dir_find_locked(fs, (uint32_t)ctx->new_dir->i_ino,
+                              &new_parent_inode, ctx->new_dentry->d_name.name,
+                              &target_lookup);
     if (ret)
         goto out;
     target_exists = target_lookup.found;
 
-    if ((new_parent == node->parent && !strcmp(new_name, node->name)) ||
-        (target_exists && target_lookup.inode == node->inode)) {
+    if ((ctx->old_dir == ctx->new_dir &&
+         streq(ctx->old_dentry->d_name.name, ctx->new_dentry->d_name.name)) ||
+        (target_exists &&
+         target_lookup.inode == (uint32_t)ctx->old_dentry->d_inode->i_ino)) {
         ret = 0;
         goto out;
     }
@@ -2867,232 +2472,538 @@ int ext_rename(vfs_node_t *node, const char *new) {
         if (ret)
             goto out;
 
-        target_is_dir = (target_inode.i_mode & S_IFMT) == EXT2_S_IFDIR;
+        target_is_dir = S_ISDIR(target_inode.i_mode);
         if (source_is_dir != target_is_dir) {
             ret = source_is_dir ? -ENOTDIR : -EISDIR;
             goto out;
         }
-
         if (target_is_dir) {
             ret =
                 ext_dir_is_empty_locked(fs, target_lookup.inode, &target_inode);
-            if (ret < 0)
-                goto out;
-            if (!ret) {
-                ret = -ENOTEMPTY;
+            if (ret <= 0) {
+                ret = ret < 0 ? ret : -ENOTEMPTY;
                 goto out;
             }
         }
 
         ret = ext_dir_replace_entry_locked(
-            fs, new_parent->inode, &new_parent_inode, new_name, node->inode,
-            ext_mode_to_dir_file_type(inode.i_mode));
+            fs, (uint32_t)ctx->new_dir->i_ino, &new_parent_inode,
+            ctx->new_dentry->d_name.name,
+            (uint32_t)ctx->old_dentry->d_inode->i_ino,
+            ext_mode_to_dir_file_type(src_inode.i_mode));
         if (ret)
             goto out;
 
-        vfs_node_t *cached_target = vfs_find_node_by_inode(target_lookup.inode);
-        if (cached_target == node)
-            cached_target = NULL;
+        cached_target = ext_find_cached_inode_locked(ctx->new_dir->i_sb,
+                                                     target_lookup.inode);
         ret = ext_drop_link_locked(fs, target_lookup.inode, &target_inode,
                                    cached_target);
+        if (cached_target) {
+            if (!ret && target_inode.i_links_count)
+                (void)ext_store_inode_locked(cached_target, &target_inode,
+                                             false);
+            vfs_iput(cached_target);
+            cached_target = NULL;
+        }
         if (ret)
             goto out;
     } else {
-        ret = ext_dir_add_entry_locked(fs, new_parent->inode, &new_parent_inode,
-                                       node->inode, new_name,
-                                       ext_mode_to_dir_file_type(inode.i_mode));
+        ret = ext_dir_add_entry_locked(
+            fs, (uint32_t)ctx->new_dir->i_ino, &new_parent_inode,
+            (uint32_t)ctx->old_dentry->d_inode->i_ino,
+            ctx->new_dentry->d_name.name,
+            ext_mode_to_dir_file_type(src_inode.i_mode));
         if (ret)
             goto out;
     }
 
-    ret = ext_dir_remove_entry_locked(fs, node->parent->inode,
-                                      &old_parent_inode, node->name, NULL);
+    ret = ext_dir_remove_entry_locked(fs, (uint32_t)ctx->old_dir->i_ino,
+                                      &old_parent_inode,
+                                      ctx->old_dentry->d_name.name, NULL);
     if (ret)
         goto out;
 
-    if (source_is_dir && new_parent != node->parent) {
-        ret = ext_dir_set_dotdot_locked(fs, node->inode, &inode,
-                                        new_parent->inode);
+    if (source_is_dir && ctx->new_dir != ctx->old_dir) {
+        ret = ext_dir_set_dotdot_locked(
+            fs, (uint32_t)ctx->old_dentry->d_inode->i_ino, &src_inode,
+            (uint32_t)ctx->new_dir->i_ino);
+        if (ret)
+            goto out;
+
+        if (old_parent_inode.i_links_count)
+            old_parent_inode.i_links_count--;
+        new_parent_inode.i_links_count++;
+        ext_inode_touch(&old_parent_inode, false, true, true);
+        ext_inode_touch(&new_parent_inode, false, true, true);
+        ret = ext_write_inode(fs, (uint32_t)ctx->old_dir->i_ino,
+                              &old_parent_inode);
+        if (ret)
+            goto out;
+        ret = ext_write_inode(fs, (uint32_t)ctx->new_dir->i_ino,
+                              &new_parent_inode);
         if (ret)
             goto out;
     }
 
-    if (source_is_dir) {
-        bool write_old_parent = false;
-        bool write_new_parent = false;
-
-        if (new_parent != node->parent) {
-            if (old_parent_inode.i_links_count)
-                old_parent_inode.i_links_count--;
-            write_old_parent = true;
-
-            if (!target_exists) {
-                new_parent_inode.i_links_count++;
-                write_new_parent = true;
-            }
-        } else if (target_exists) {
-            if (old_parent_inode.i_links_count)
-                old_parent_inode.i_links_count--;
-            write_old_parent = true;
-        }
-
-        if (write_old_parent) {
-            ext_inode_touch(&old_parent_inode, false, true, true);
-            ret = ext_write_inode(fs, node->parent->inode, &old_parent_inode);
-            if (ret)
-                goto out;
-        }
-
-        if (write_new_parent) {
-            ext_inode_touch(&new_parent_inode, false, true, true);
-            ret = ext_write_inode(fs, new_parent->inode, &new_parent_inode);
-            if (ret)
-                goto out;
-        }
-    }
-
-    ext_inode_touch(&inode, false, false, true);
-    ret = ext_write_inode(fs, node->inode, &inode);
+    ext_inode_touch(&src_inode, false, false, true);
+    ret = ext_store_inode_locked(ctx->old_dentry->d_inode, &src_inode, true);
 
 out:
-    free(path);
+    if (cached_target)
+        vfs_iput(cached_target);
     spin_unlock(&rwlock);
-    vfs_close(new_parent);
     return ret;
 }
 
-int ext_stat(vfs_node_t *node) {
-    if (!node)
+static const char *ext_get_link(struct vfs_dentry *dentry,
+                                struct vfs_inode *inode,
+                                struct vfs_nameidata *nd) {
+    ext_inode_info_t *info;
+    ext_mount_ctx_t *fs;
+    ext_inode_disk_t disk_inode = {0};
+    size_t link_size;
+    int ret;
+
+    (void)dentry;
+    (void)nd;
+    if (!inode)
+        return ERR_PTR(-EINVAL);
+
+    spin_lock(&rwlock);
+    info = ext_i(inode);
+    fs = ext_sb_info(inode->i_sb);
+    ret = ext_load_inode_locked(inode, &disk_inode);
+    if (ret) {
+        spin_unlock(&rwlock);
+        return ERR_PTR(ret);
+    }
+
+    link_size = (size_t)ext_inode_size_get(&disk_inode);
+    free(info->symlink);
+    info->symlink = calloc(1, link_size + 1);
+    if (!info->symlink) {
+        spin_unlock(&rwlock);
+        return ERR_PTR(-ENOMEM);
+    }
+
+    if (link_size <= sizeof(disk_inode.i_block)) {
+        memcpy(info->symlink, disk_inode.i_block, link_size);
+        spin_unlock(&rwlock);
+        return info->symlink;
+    }
+
+    ret = ext_read_inode_data_locked(fs, (uint32_t)inode->i_ino, &disk_inode,
+                                     info->symlink, 0, link_size);
+    spin_unlock(&rwlock);
+    return ret < 0 ? ERR_PTR(ret) : info->symlink;
+}
+
+static int ext_permission(struct vfs_inode *inode, int mask) {
+    (void)inode;
+    (void)mask;
+    return 0;
+}
+
+static int ext_getattr(const struct vfs_path *path, struct vfs_kstat *stat,
+                       uint32_t request_mask, unsigned int flags) {
+    (void)request_mask;
+    (void)flags;
+    vfs_fill_generic_kstat(path, stat);
+    return 0;
+}
+
+static int ext_setattr(struct vfs_dentry *dentry,
+                       const struct vfs_kstat *stat) {
+    struct vfs_inode *inode = dentry ? dentry->d_inode : NULL;
+    ext_mount_ctx_t *fs;
+    ext_inode_disk_t disk_inode = {0};
+    int ret;
+
+    if (!inode || !stat)
+        return -EINVAL;
+
+    fs = ext_sb_info(inode->i_sb);
+    spin_lock(&rwlock);
+    ret = ext_load_inode_locked(inode, &disk_inode);
+    if (ret)
+        goto out;
+
+    if (stat->mode)
+        disk_inode.i_mode = (disk_inode.i_mode & S_IFMT) | (stat->mode & 07777);
+    ext_inode_uid_set(&disk_inode, stat->uid);
+    ext_inode_gid_set(&disk_inode, stat->gid);
+
+    if (!S_ISDIR(disk_inode.i_mode) &&
+        stat->size != ext_inode_size_get(&disk_inode)) {
+        ret = ext_inode_truncate_locked(fs, (uint32_t)inode->i_ino, &disk_inode,
+                                        stat->size);
+        if (ret)
+            goto out;
+    } else {
+        ext_inode_touch(&disk_inode, false, false, true);
+        ret = ext_write_inode(fs, (uint32_t)inode->i_ino, &disk_inode);
+        if (ret)
+            goto out;
+    }
+
+    ret = ext_store_inode_locked(inode, &disk_inode, false);
+out:
+    spin_unlock(&rwlock);
+    return ret;
+}
+
+static loff_t ext_llseek(struct vfs_file *file, loff_t offset, int whence) {
+    loff_t pos;
+
+    if (!file || !file->f_inode)
+        return -EBADF;
+
+    mutex_lock(&file->f_pos_lock);
+    switch (whence) {
+    case SEEK_SET:
+        pos = offset;
+        break;
+    case SEEK_CUR:
+        pos = file->f_pos + offset;
+        break;
+    case SEEK_END:
+        pos = (loff_t)file->f_inode->i_size + offset;
+        break;
+    default:
+        mutex_unlock(&file->f_pos_lock);
+        return -EINVAL;
+    }
+    if (pos < 0) {
+        mutex_unlock(&file->f_pos_lock);
+        return -EINVAL;
+    }
+    file->f_pos = pos;
+    mutex_unlock(&file->f_pos_lock);
+    return pos;
+}
+
+static ssize_t ext_read(struct vfs_file *file, void *buf, size_t count,
+                        loff_t *ppos) {
+    ext_mount_ctx_t *fs;
+    ext_inode_disk_t disk_inode = {0};
+    int ret;
+
+    if (!file || !file->f_inode || !buf || !ppos)
+        return -EINVAL;
+    if ((file->f_inode->type & file_block) ||
+        (file->f_inode->type & file_stream))
+        return device_read(file->f_inode->i_rdev, buf, (size_t)*ppos, count,
+                           file);
+    if (!S_ISREG(file->f_inode->i_mode))
+        return -EINVAL;
+
+    fs = ext_sb_info(file->f_inode->i_sb);
+    spin_lock(&rwlock);
+    ret = ext_load_inode_locked(file->f_inode, &disk_inode);
+    if (!ret)
+        ret =
+            ext_read_inode_data_locked(fs, (uint32_t)file->f_inode->i_ino,
+                                       &disk_inode, buf, (size_t)*ppos, count);
+    if (ret >= 0)
+        *ppos += ret;
+    spin_unlock(&rwlock);
+    return ret;
+}
+
+static ssize_t ext_write(struct vfs_file *file, const void *buf, size_t count,
+                         loff_t *ppos) {
+    ext_mount_ctx_t *fs;
+    ext_inode_disk_t disk_inode = {0};
+    int ret;
+
+    if (!file || !file->f_inode || !buf || !ppos)
+        return -EINVAL;
+    if ((file->f_inode->type & file_block) ||
+        (file->f_inode->type & file_stream))
+        return device_write(file->f_inode->i_rdev, (void *)buf, (size_t)*ppos,
+                            count, file);
+    if (!S_ISREG(file->f_inode->i_mode))
+        return -EINVAL;
+
+    fs = ext_sb_info(file->f_inode->i_sb);
+    spin_lock(&rwlock);
+    ret = ext_load_inode_locked(file->f_inode, &disk_inode);
+    if (!ret) {
+        ret =
+            ext_write_inode_data_locked(fs, (uint32_t)file->f_inode->i_ino,
+                                        &disk_inode, buf, (size_t)*ppos, count);
+        if (ret >= 0) {
+            int write_ret =
+                ext_store_inode_locked(file->f_inode, &disk_inode, true);
+            if (write_ret < 0)
+                ret = write_ret;
+            else
+                *ppos += ret;
+        }
+    }
+    spin_unlock(&rwlock);
+    return ret;
+}
+
+static int ext_iterate_shared(struct vfs_file *file,
+                              struct vfs_dir_context *ctx) {
+    int ret;
+
+    if (!file || !file->f_inode || !ctx)
         return -EINVAL;
 
     spin_lock(&rwlock);
-    ext_mount_ctx_t *fs = ext_find_mount(node);
-    if (!fs) {
-        spin_unlock(&rwlock);
-        return -ENOENT;
-    }
-
-    if (!node->inode) {
-        int ret = ext_lookup_node_locked(node->parent, node->name, node);
-        spin_unlock(&rwlock);
-        return ret;
-    }
-
-    ext_handle_t *handle = node->handle;
-    ext_inode_disk_t inode = (handle && handle->inode_valid)
-                                 ? handle->inode_cache
-                                 : (ext_inode_disk_t){0};
-    int ret = 0;
-    if (!handle || !handle->inode_valid) {
-        ret = ext_read_inode(fs, node->inode, &inode);
-        if (!ret && handle) {
-            handle->inode_cache = inode;
-            handle->inode_valid = true;
-        }
-    }
-    if (!ret)
-        ext_sync_node_from_inode(node, fs, &inode);
+    ret = ext_iterate_dir_locked(file->f_inode, ctx);
     spin_unlock(&rwlock);
+    if (!ret)
+        file->f_pos = ctx->pos;
     return ret;
 }
 
-int ext_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
-    if (!fd->node)
+static long ext_unlocked_ioctl(struct vfs_file *file, unsigned long cmd,
+                               unsigned long arg) {
+    if (!file || !file->f_inode)
         return -EBADF;
-    if ((fd->node->type & file_block) || (fd->node->type & file_stream))
-        return device_ioctl(fd->node->rdev, cmd, (void *)arg, fd);
+    if ((file->f_inode->type & file_block) ||
+        (file->f_inode->type & file_stream))
+        return device_ioctl(file->f_inode->i_rdev, (ssize_t)cmd, (void *)arg,
+                            file);
     return -ENOSYS;
 }
 
-int ext_poll(vfs_node_t *node, size_t events) {
-    if (!node)
+static __poll_t ext_poll(struct vfs_file *file, struct vfs_poll_table *pt) {
+    (void)pt;
+    if (!file || !file->f_inode)
         return EPOLLNVAL;
-    if ((node->type & file_block) || (node->type & file_stream))
-        return device_poll(node->rdev, events);
-    return 0;
+    if ((file->f_inode->type & file_block) ||
+        (file->f_inode->type & file_stream))
+        return device_poll(file->f_inode->i_rdev,
+                           EPOLLIN | EPOLLOUT | EPOLLRDNORM | EPOLLWRNORM);
+    return EPOLLIN | EPOLLOUT | EPOLLRDNORM | EPOLLWRNORM;
 }
 
-int ext_resize(vfs_node_t *node, uint64_t size) {
-    if (!node || !(node->type & file_none))
+static int ext_open(struct vfs_inode *inode, struct vfs_file *file) {
+    if (!inode || !file)
         return -EINVAL;
-
-    spin_lock(&rwlock);
-    ext_mount_ctx_t *fs = ext_find_mount(node);
-    if (!fs) {
-        spin_unlock(&rwlock);
-        return -ENOENT;
-    }
-
-    ext_inode_disk_t inode = {0};
-    if (!ext_read_inode(fs, node->inode, &inode) &&
-        !ext_inode_truncate_locked(fs, node->inode, &inode, size)) {
-        ext_handle_t *handle = node->handle;
-        if (handle && handle->ino == node->inode) {
-            handle->inode_cache = inode;
-            handle->inode_valid = true;
-            handle->inode_dirty = false;
-        }
-        ext_sync_node_from_inode(node, fs, &inode);
-    }
-    spin_unlock(&rwlock);
-
+    file->f_op = inode->i_fop;
+    if ((inode->type & file_block) || (inode->type & file_stream))
+        return device_open(inode->i_rdev, NULL);
     return 0;
 }
 
-void *ext_map(fd_t *file, void *addr, size_t offset, size_t size, size_t prot,
-              size_t flags) {
-    if ((file->node->type & file_block) || (file->node->type & file_stream))
-        return device_map(file->node->rdev, addr, offset, size, prot, file);
+static int ext_release(struct vfs_inode *inode, struct vfs_file *file) {
+    (void)file;
+    if (!inode)
+        return 0;
+    if ((inode->type & file_block) || (inode->type & file_stream))
+        device_close(inode->i_rdev);
+    return 0;
+}
+
+static void *ext_mmap(struct vfs_file *file, void *addr, size_t offset,
+                      size_t size, size_t prot, uint64_t flags) {
+    if (!file || !file->f_inode)
+        return (void *)(int64_t)-EINVAL;
     return general_map(file, (uint64_t)addr, size, prot, flags, offset);
 }
 
-void ext_free_handle(vfs_node_t *node) {
-    if (!node || !node->handle)
-        return;
-    spin_lock(&rwlock);
-    ext_handle_t *handle = node->handle;
-    if (handle->device_opened)
-        device_close(node->rdev);
-    free(handle);
-    node->handle = NULL;
-    spin_unlock(&rwlock);
+static int ext_fsync(struct vfs_file *file, loff_t start, loff_t end,
+                     int datasync) {
+    (void)file;
+    (void)start;
+    (void)end;
+    (void)datasync;
+    return 0;
 }
 
-static vfs_operations_t ext_vfs_ops = {
-    .mount = ext_mount,
-    .unmount = ext_unmount,
+static struct vfs_inode *ext_alloc_inode(struct vfs_super_block *sb) {
+    ext_inode_info_t *info = calloc(1, sizeof(*info));
+    if (!info)
+        return NULL;
+    return &info->vfs_inode;
+}
+
+static void ext_destroy_inode(struct vfs_inode *inode) {
+    ext_inode_info_t *info = ext_i(inode);
+    if (!info)
+        return;
+    free(info->symlink);
+    free(info);
+}
+
+static void ext_put_super(struct vfs_super_block *sb) {
+    ext_mount_ctx_t *fs = ext_sb_info(sb);
+    if (!fs)
+        return;
+    ext_map_cache_destroy(fs);
+    free(fs->groups);
+    free(fs);
+}
+
+static int ext_statfs(struct vfs_path *path, void *buf) {
+    (void)path;
+    (void)buf;
+    return 0;
+}
+
+static int ext_resolve_mount_dev(struct vfs_fs_context *fc, uint64_t *dev_out) {
+    struct vfs_path path = {0};
+    char *end = NULL;
+    uint64_t dev;
+    int ret;
+
+    if (!fc || !dev_out)
+        return -EINVAL;
+
+    dev = (uint64_t)(uintptr_t)fc->fs_private;
+    if (dev) {
+        *dev_out = dev;
+        return 0;
+    }
+
+    if (!fc->source || !fc->source[0])
+        return -EINVAL;
+
+    dev = strtoul(fc->source, &end, 0);
+    if (end && *end == '\0' && dev) {
+        *dev_out = dev;
+        return 0;
+    }
+
+    ret = vfs_filename_lookup(AT_FDCWD, fc->source, LOOKUP_FOLLOW, &path);
+    if (ret < 0)
+        return ret;
+
+    if (!path.dentry || !path.dentry->d_inode) {
+        vfs_path_put(&path);
+        return -ENOENT;
+    }
+
+    dev = path.dentry->d_inode->i_rdev ? path.dentry->d_inode->i_rdev
+                                       : path.dentry->d_inode->i_sb->s_dev;
+    vfs_path_put(&path);
+    if (!dev)
+        return -EINVAL;
+
+    *dev_out = dev;
+    return 0;
+}
+
+static int ext_init_fs_context(struct vfs_fs_context *fc) {
+    fc->sb = vfs_alloc_super(fc->fs_type, fc->sb_flags);
+    if (!fc->sb)
+        return -ENOMEM;
+    return 0;
+}
+
+static int ext_get_tree(struct vfs_fs_context *fc) {
+    struct vfs_super_block *sb = fc ? fc->sb : NULL;
+    ext_mount_ctx_t *fs = NULL;
+    struct vfs_inode *root_inode = NULL;
+    struct vfs_dentry *root_dentry = NULL;
+    struct vfs_qstr root_name = {.name = "", .len = 0, .hash = 0};
+    uint64_t dev = 0;
+    int ret;
+
+    if (!sb)
+        return -EINVAL;
+
+    ret = ext_resolve_mount_dev(fc, &dev);
+    if (ret)
+        return ret;
+
+    fs = calloc(1, sizeof(*fs));
+    if (!fs)
+        return -ENOMEM;
+
+    spin_lock(&rwlock);
+    ret = ext_mount_prepare_locked(fs, dev);
+    spin_unlock(&rwlock);
+    if (ret) {
+        ext_map_cache_destroy(fs);
+        free(fs->groups);
+        free(fs);
+        return ret;
+    }
+
+    sb->s_fs_info = fs;
+    sb->s_op = &ext_super_ops;
+    sb->s_type = &ext_fs_type;
+    sb->s_magic = EXT_SUPER_MAGIC;
+    sb->s_dev = dev;
+
+    spin_lock(&rwlock);
+    root_inode = ext_iget_locked(sb, EXT_ROOT_INO);
+    spin_unlock(&rwlock);
+    if (IS_ERR(root_inode))
+        return PTR_ERR(root_inode);
+
+    root_dentry = vfs_d_alloc(sb, NULL, &root_name);
+    if (!root_dentry) {
+        vfs_iput(root_inode);
+        return -ENOMEM;
+    }
+
+    vfs_d_instantiate(root_dentry, root_inode);
+    sb->s_root = root_dentry;
+    vfs_iput(root_inode);
+    return 0;
+}
+
+static const struct vfs_super_operations ext_super_ops = {
+    .alloc_inode = ext_alloc_inode,
+    .destroy_inode = ext_destroy_inode,
+    .put_super = ext_put_super,
+    .statfs = ext_statfs,
+};
+
+static const struct vfs_file_operations ext_dir_ops = {
+    .llseek = ext_llseek,
+    .iterate_shared = ext_iterate_shared,
     .open = ext_open,
-    .close = ext_close,
+    .release = ext_release,
     .fsync = ext_fsync,
+    .poll = ext_poll,
+};
+
+static const struct vfs_file_operations ext_file_ops = {
+    .llseek = ext_llseek,
     .read = ext_read,
     .write = ext_write,
-    .readlink = ext_readlink,
-    .mkdir = ext_mkdir,
-    .mkfile = ext_mkfile,
-    .link = ext_link,
-    .link_node = ext_link_existing,
-    .symlink = ext_symlink,
-    .mknod = ext_mknod,
-    .chmod = ext_chmod,
-    .chown = ext_chown,
-    .delete = ext_delete,
-    .rename = ext_rename,
-    .map = ext_map,
-    .stat = ext_stat,
-    .ioctl = ext_ioctl,
+    .unlocked_ioctl = ext_unlocked_ioctl,
+    .open = ext_open,
+    .release = ext_release,
+    .mmap = ext_mmap,
+    .fsync = ext_fsync,
     .poll = ext_poll,
-    .resize = ext_resize,
-    .free_handle = ext_free_handle,
 };
 
-fs_t extfs = {
-    .name = "ext",
-    .magic = EXT_SUPER_MAGIC,
-    .ops = &ext_vfs_ops,
-    .flags = 0,
+static const struct vfs_inode_operations ext_inode_ops = {
+    .lookup = ext_lookup,
+    .create = ext_create,
+    .link = ext_link,
+    .unlink = ext_unlink,
+    .symlink = ext_symlink,
+    .mkdir = ext_mkdir,
+    .rmdir = ext_rmdir,
+    .mknod = ext_mknod,
+    .rename = ext_rename,
+    .get_link = ext_get_link,
+    .permission = ext_permission,
+    .getattr = ext_getattr,
+    .setattr = ext_setattr,
 };
+
+static struct vfs_file_system_type ext_fs_type = {
+    .name = "ext",
+    .fs_flags = VFS_FS_REQUIRES_DEV,
+    .init_fs_context = ext_init_fs_context,
+    .get_tree = ext_get_tree,
+};
+
+void ext_init(void) { vfs_register_filesystem(&ext_fs_type); }
 
 int dlmain() {
-    ext_fsid = vfs_regist(&extfs);
+    ext_init();
     return 0;
 }

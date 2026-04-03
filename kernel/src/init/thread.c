@@ -3,12 +3,11 @@
 #include <init/abis.h>
 #include <drivers/bus/pci.h>
 #include <drivers/fdt/fdt.h>
-#include <fs/partition.h>
+#include <fs/vfs/notify.h>
+#include <block/partition.h>
 #include <net/real_socket.h>
 
 extern void acpi_init_after_pci();
-
-extern void notifyfs_init();
 
 bool system_initialized = false;
 
@@ -26,8 +25,6 @@ void init_thread(uint64_t arg) {
 #if !defined(__x86_64__)
     fdt_init();
 #endif
-
-    notifyfs_init();
 
     pidfd_init();
 

@@ -4,7 +4,7 @@
 #include <arch/arch.h>
 #include <task/task_struct.h>
 #include <task/signal.h>
-#include <fs/termios.h>
+#include <libs/termios.h>
 #include <mm/bitmap.h>
 
 typedef struct task_index_bucket {
@@ -97,7 +97,6 @@ typedef struct task_index_bucket {
 #define CLONE_IO 0x80000000        /* Clone io context */
 
 extern task_t *arch_get_current();
-extern vfs_node_t *rootdir;
 
 #define current_task arch_get_current()
 
@@ -218,13 +217,16 @@ static inline uint64_t task_parent_wait_key(task_t *task) {
     return task_effective_wait_parent_pid(task->parent);
 }
 
-static inline vfs_node_t *task_fs_root(task_t *task) {
-    return (task && task->fs && task->fs->root) ? task->fs->root : rootdir;
+static inline struct vfs_process_fs *task_vfs_fs(task_t *task) {
+    return (task && task->fs) ? &task->fs->vfs : NULL;
 }
 
-static inline vfs_node_t *task_fs_cwd(task_t *task) {
-    return (task && task->fs && task->fs->cwd) ? task->fs->cwd
-                                               : task_fs_root(task);
+static inline const struct vfs_path *task_fs_root_path(task_t *task) {
+    return (task && task->fs) ? &task->fs->vfs.root : &vfs_root_path;
+}
+
+static inline const struct vfs_path *task_fs_pwd_path(task_t *task) {
+    return (task && task->fs) ? &task->fs->vfs.pwd : task_fs_root_path(task);
 }
 
 static inline bool task_should_index_parent(task_t *task) {
@@ -234,6 +236,14 @@ static inline bool task_should_index_parent(task_t *task) {
 void sched_defer_tick(void);
 void sched_wake_worker(uint32_t cpu_id);
 void sched_check_wakeup();
+
+struct vfs_process_fs *task_current_vfs_fs(void);
+struct vfs_file *task_get_file(task_t *task, int fd);
+int task_install_file(task_t *task, struct vfs_file *file,
+                      unsigned int fd_flags, int min_fd);
+int task_replace_file(task_t *task, int fd, struct vfs_file *file,
+                      unsigned int fd_flags);
+int task_close_file_descriptor(task_t *task, int fd);
 void task_refresh_tick_work_state(task_t *task);
 void task_schedule_reap(void);
 

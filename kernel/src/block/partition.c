@@ -1,6 +1,6 @@
 #include "fs/vfs/vfs.h"
 #include "dev/device.h"
-#include "fs/partition.h"
+#include "block/partition.h"
 #include "block/block.h"
 #include "drivers/kernel_logger.h"
 #include "arch/arch.h"

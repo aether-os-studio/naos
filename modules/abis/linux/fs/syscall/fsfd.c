@@ -1,61 +1,402 @@
 #include <fs/vfs/vfs.h>
-#include <fs/proc.h>
 #include <fs/fs_syscall.h>
 #include <task/task.h>
 #include <init/callbacks.h>
 
-static int fsfd_id = 0;
-static int mntfd_id = 0;
+#define FSFDFS_MAGIC 0x66736664ULL
 
-/* FS context state */
-#define FC_STATE_INIT 0    /* Context created but not configured */
-#define FC_STATE_CONFIG 1  /* Being configured */
-#define FC_STATE_CREATED 2 /* Superblock created (FSCONFIG_CMD_CREATE done) */
-#define FC_STATE_MOUNTED 3 /* Already mounted via fsmount */
+enum fsfd_object_kind {
+    FSFD_OBJECT_CONTEXT = 1,
+    FSFD_OBJECT_MOUNT = 2,
+};
+
+enum {
+    FC_STATE_INIT = 0,
+    FC_STATE_CONFIG = 1,
+    FC_STATE_CREATED = 2,
+    FC_STATE_MOUNTED = 3,
+};
+
+typedef struct fsfd_object {
+    uint32_t kind;
+} fsfd_object_t;
 
 typedef struct fs_context {
-    fs_t *fs;                /* Filesystem type */
-    char *source;            /* Source device/path */
-    char *data;              /* Mount data/options string */
-    uint64_t mount_flags;    /* MS_* mount flags */
-    uint64_t attr_flags;     /* MOUNT_ATTR_* flags */
-    int state;               /* Current state of the context */
-    vfs_node_t *source_node; /* Resolved source node (if any) */
-    uint64_t source_dev;     /* Source device number */
+    fsfd_object_t object;
+    struct vfs_file_system_type *fs_type;
+    char *source;
+    char *data;
+    uint64_t mount_flags;
+    uint64_t attr_flags;
+    int state;
 } fs_context_t;
 
 typedef struct mount_handle {
-    fs_t *fs;              /* Filesystem type */
-    char *source;          /* Source device/path (copied) */
-    uint64_t mount_flags;  /* Mount flags */
-    uint64_t dev;          /* Device number */
-    vfs_node_t *root_node; /* Detached mount root */
-    bool attached;         /* Whether this mount has been attached */
+    fsfd_object_t object;
+    struct vfs_mount *mnt;
+    char *source;
+    uint64_t mount_flags;
+    bool attached;
 } mount_handle_t;
 
-static int mount_handle_create_root(mount_handle_t *mnt_handle) {
-    if (!mnt_handle || !mnt_handle->fs || !mnt_handle->fs->ops)
-        return -EINVAL;
-    if (mnt_handle->root_node)
-        return 0;
+typedef struct fsfdfs_info {
+    spinlock_t lock;
+    ino64_t next_ino;
+} fsfdfs_info_t;
 
-    vfs_node_t *root = vfs_create_detached_mount_root(NULL);
-    if (!root)
-        return -ENOMEM;
+typedef struct fsfdfs_inode_info {
+    struct vfs_inode vfs_inode;
+} fsfdfs_inode_info_t;
 
-    vfs_node_ref_get(root);
+static struct vfs_file_system_type fsfdfs_fs_type;
+static const struct vfs_super_operations fsfdfs_super_ops;
+static const struct vfs_file_operations fsfdfs_dir_file_ops;
+static const struct vfs_file_operations fsfdfs_ctx_file_ops;
+static const struct vfs_file_operations fsfdfs_mnt_file_ops;
+static mutex_t fsfdfs_mount_lock;
+static struct vfs_mount *fsfdfs_internal_mnt;
 
-    int ret = mnt_handle->fs->ops->mount(mnt_handle->dev, root);
-    if (ret < 0) {
-        vfs_free(root);
-        return ret;
+static inline fsfdfs_info_t *fsfdfs_sb_info(struct vfs_super_block *sb) {
+    return sb ? (fsfdfs_info_t *)sb->s_fs_info : NULL;
+}
+
+static inline fsfd_object_t *fsfd_file_object(struct vfs_file *file) {
+    if (!file)
+        return NULL;
+    if (file->private_data)
+        return (fsfd_object_t *)file->private_data;
+    if (!file->f_inode)
+        return NULL;
+    return (fsfd_object_t *)file->f_inode->i_private;
+}
+
+static inline fs_context_t *fsfd_file_context(struct vfs_file *file) {
+    fsfd_object_t *obj = fsfd_file_object(file);
+
+    if (!obj || obj->kind != FSFD_OBJECT_CONTEXT)
+        return NULL;
+    if (!file || !file->f_inode || !file->f_inode->i_sb ||
+        file->f_inode->i_sb->s_type != &fsfdfs_fs_type) {
+        return NULL;
+    }
+    return (fs_context_t *)obj;
+}
+
+static inline mount_handle_t *fsfd_file_mount(struct vfs_file *file) {
+    fsfd_object_t *obj = fsfd_file_object(file);
+
+    if (!obj || obj->kind != FSFD_OBJECT_MOUNT)
+        return NULL;
+    if (!file || !file->f_inode || !file->f_inode->i_sb ||
+        file->f_inode->i_sb->s_type != &fsfdfs_fs_type) {
+        return NULL;
+    }
+    return (mount_handle_t *)obj;
+}
+
+static struct vfs_inode *fsfdfs_alloc_inode(struct vfs_super_block *sb) {
+    fsfdfs_inode_info_t *info = calloc(1, sizeof(*info));
+
+    (void)sb;
+    return info ? &info->vfs_inode : NULL;
+}
+
+static void fsfd_destroy_object(void *ptr) {
+    fsfd_object_t *obj = (fsfd_object_t *)ptr;
+
+    if (!obj)
+        return;
+
+    if (obj->kind == FSFD_OBJECT_CONTEXT) {
+        fs_context_t *ctx = (fs_context_t *)obj;
+
+        free(ctx->source);
+        free(ctx->data);
+        free(ctx);
+        return;
     }
 
-    mnt_handle->root_node = root;
+    if (obj->kind == FSFD_OBJECT_MOUNT) {
+        mount_handle_t *mnt = (mount_handle_t *)obj;
+
+        free(mnt->source);
+        if (mnt->mnt)
+            vfs_mntput(mnt->mnt);
+        free(mnt);
+    }
+}
+
+static void fsfdfs_destroy_inode(struct vfs_inode *inode) {
+    if (!inode)
+        return;
+    if (inode->i_private) {
+        fsfd_destroy_object(inode->i_private);
+        inode->i_private = NULL;
+    }
+    free(container_of(inode, fsfdfs_inode_info_t, vfs_inode));
+}
+
+static void fsfdfs_put_super(struct vfs_super_block *sb) {
+    if (sb && sb->s_fs_info)
+        free(sb->s_fs_info);
+}
+
+static int fsfdfs_statfs(struct vfs_path *path, void *buf) {
+    struct statfs *st = (struct statfs *)buf;
+    struct vfs_super_block *sb;
+
+    if (!path || !path->dentry || !path->dentry->d_inode || !st)
+        return -EINVAL;
+
+    memset(st, 0, sizeof(*st));
+    sb = path->dentry->d_inode->i_sb;
+    if (!sb)
+        return 0;
+
+    st->f_type = sb->s_magic;
+    st->f_bsize = PAGE_SIZE;
+    st->f_frsize = PAGE_SIZE;
+    st->f_namelen = 255;
+    st->f_flags = sb->s_flags;
+    st->f_fsid.val[0] = (int)(sb->s_dev & 0xffffffffU);
+    st->f_fsid.val[1] = (int)((sb->s_dev >> 32) & 0xffffffffU);
     return 0;
 }
 
-/* Convert MOUNT_ATTR_* to MS_* flags */
+static int fsfdfs_init_fs_context(struct vfs_fs_context *fc) {
+    (void)fc;
+    return 0;
+}
+
+static int fsfdfs_get_tree(struct vfs_fs_context *fc) {
+    struct vfs_super_block *sb;
+    fsfdfs_info_t *fsi;
+    struct vfs_inode *inode;
+    struct vfs_dentry *root;
+
+    if (!fc)
+        return -EINVAL;
+
+    sb = vfs_alloc_super(fc->fs_type, fc->sb_flags);
+    if (!sb)
+        return -ENOMEM;
+
+    fsi = calloc(1, sizeof(*fsi));
+    if (!fsi) {
+        vfs_put_super(sb);
+        return -ENOMEM;
+    }
+
+    spin_init(&fsi->lock);
+    fsi->next_ino = 1;
+
+    sb->s_magic = FSFDFS_MAGIC;
+    sb->s_fs_info = fsi;
+    sb->s_op = &fsfdfs_super_ops;
+    sb->s_type = &fsfdfs_fs_type;
+
+    inode = vfs_alloc_inode(sb);
+    if (!inode) {
+        free(fsi);
+        vfs_put_super(sb);
+        return -ENOMEM;
+    }
+
+    inode->i_ino = 1;
+    inode->inode = 1;
+    inode->i_mode = S_IFDIR | 0700;
+    inode->type = file_dir;
+    inode->i_nlink = 2;
+    inode->i_fop = &fsfdfs_dir_file_ops;
+
+    root = vfs_d_alloc(sb, NULL, NULL);
+    if (!root) {
+        vfs_iput(inode);
+        free(fsi);
+        vfs_put_super(sb);
+        return -ENOMEM;
+    }
+
+    vfs_d_instantiate(root, inode);
+    sb->s_root = root;
+    fc->sb = sb;
+    return 0;
+}
+
+static const struct vfs_super_operations fsfdfs_super_ops = {
+    .alloc_inode = fsfdfs_alloc_inode,
+    .destroy_inode = fsfdfs_destroy_inode,
+    .put_super = fsfdfs_put_super,
+    .statfs = fsfdfs_statfs,
+};
+
+static struct vfs_file_system_type fsfdfs_fs_type = {
+    .name = "fsfdfs",
+    .fs_flags = VFS_FS_VIRTUAL,
+    .init_fs_context = fsfdfs_init_fs_context,
+    .get_tree = fsfdfs_get_tree,
+};
+
+static struct vfs_mount *fsfdfs_get_internal_mount(void) {
+    int ret;
+
+    mutex_lock(&fsfdfs_mount_lock);
+    if (!fsfdfs_internal_mnt) {
+        ret = vfs_kern_mount("fsfdfs", 0, NULL, NULL, &fsfdfs_internal_mnt);
+        if (ret < 0)
+            fsfdfs_internal_mnt = NULL;
+    }
+    if (fsfdfs_internal_mnt)
+        vfs_mntget(fsfdfs_internal_mnt);
+    mutex_unlock(&fsfdfs_mount_lock);
+    return fsfdfs_internal_mnt;
+}
+
+static ino64_t fsfdfs_next_ino(struct vfs_super_block *sb) {
+    fsfdfs_info_t *fsi = fsfdfs_sb_info(sb);
+    ino64_t ino;
+
+    spin_lock(&fsi->lock);
+    ino = ++fsi->next_ino;
+    spin_unlock(&fsi->lock);
+    return ino;
+}
+
+static loff_t fsfdfs_llseek(struct vfs_file *file, loff_t offset, int whence) {
+    (void)file;
+    (void)offset;
+    (void)whence;
+    return -ESPIPE;
+}
+
+static int fsfdfs_open(struct vfs_inode *inode, struct vfs_file *file) {
+    if (!file)
+        return -EINVAL;
+    file->private_data = inode ? inode->i_private : NULL;
+    return 0;
+}
+
+static int fsfdfs_release(struct vfs_inode *inode, struct vfs_file *file) {
+    (void)inode;
+    if (!file)
+        return 0;
+    file->private_data = NULL;
+    return 0;
+}
+
+static const struct vfs_file_operations fsfdfs_dir_file_ops = {
+    .llseek = fsfdfs_llseek,
+    .open = fsfdfs_open,
+    .release = fsfdfs_release,
+};
+
+static const struct vfs_file_operations fsfdfs_ctx_file_ops = {
+    .llseek = fsfdfs_llseek,
+    .open = fsfdfs_open,
+    .release = fsfdfs_release,
+};
+
+static const struct vfs_file_operations fsfdfs_mnt_file_ops = {
+    .llseek = fsfdfs_llseek,
+    .open = fsfdfs_open,
+    .release = fsfdfs_release,
+};
+
+static int fsfdfs_create_file(const char *prefix,
+                              const struct vfs_file_operations *ops,
+                              void *private_data, struct vfs_file **out_file) {
+    struct vfs_mount *mnt;
+    struct vfs_super_block *sb;
+    struct vfs_inode *inode;
+    struct vfs_dentry *dentry;
+    struct vfs_qstr name = {0};
+    struct vfs_file *file;
+    char label[64];
+
+    if (!prefix || !ops || !private_data || !out_file)
+        return -EINVAL;
+
+    mnt = fsfdfs_get_internal_mount();
+    if (!mnt)
+        return -ENODEV;
+    sb = mnt->mnt_sb;
+
+    inode = vfs_alloc_inode(sb);
+    if (!inode) {
+        vfs_mntput(mnt);
+        return -ENOMEM;
+    }
+
+    inode->i_ino = fsfdfs_next_ino(sb);
+    inode->inode = inode->i_ino;
+    inode->i_mode = S_IFREG | 0600;
+    inode->type = file_stream;
+    inode->i_nlink = 1;
+    inode->i_fop = ops;
+    inode->i_private = private_data;
+
+    snprintf(label, sizeof(label), "%s-%llu", prefix,
+             (unsigned long long)inode->i_ino);
+    vfs_qstr_make(&name, label);
+    dentry = vfs_d_alloc(sb, sb->s_root, &name);
+    if (!dentry) {
+        inode->i_private = NULL;
+        vfs_iput(inode);
+        vfs_mntput(mnt);
+        return -ENOMEM;
+    }
+
+    vfs_d_instantiate(dentry, inode);
+    file = vfs_alloc_file(&(struct vfs_path){.mnt = mnt, .dentry = dentry},
+                          O_RDWR);
+    if (!file) {
+        vfs_dput(dentry);
+        inode->i_private = NULL;
+        vfs_iput(inode);
+        vfs_mntput(mnt);
+        return -ENOMEM;
+    }
+
+    file->private_data = private_data;
+    *out_file = file;
+
+    vfs_dput(dentry);
+    vfs_iput(inode);
+    vfs_mntput(mnt);
+    return 0;
+}
+
+static int fsfd_fill_statfs(struct vfs_path *path, struct statfs *buf) {
+    struct vfs_super_block *sb;
+    int ret = 0;
+
+    if (!path || !path->dentry || !path->dentry->d_inode || !buf)
+        return -EINVAL;
+
+    memset(buf, 0, sizeof(*buf));
+    sb = path->dentry->d_inode->i_sb;
+    if (!sb)
+        return 0;
+
+    if (sb->s_op && sb->s_op->statfs) {
+        ret = sb->s_op->statfs(path, buf);
+        if (ret < 0)
+            return ret;
+    }
+
+    buf->f_type = sb->s_magic;
+    if (!buf->f_bsize)
+        buf->f_bsize = PAGE_SIZE;
+    if (!buf->f_frsize)
+        buf->f_frsize = buf->f_bsize;
+    if (!buf->f_namelen)
+        buf->f_namelen = 255;
+    buf->f_flags = sb->s_flags;
+    buf->f_fsid.val[0] = (int)(sb->s_dev & 0xffffffffU);
+    buf->f_fsid.val[1] = (int)((sb->s_dev >> 32) & 0xffffffffU);
+    return 0;
+}
+
 static uint64_t attr_flags_to_ms_flags(uint64_t attr_flags) {
     uint64_t ms_flags = 0;
 
@@ -79,119 +420,10 @@ static uint64_t attr_flags_to_ms_flags(uint64_t attr_flags) {
     return ms_flags;
 }
 
-uint64_t sys_fsopen(const char *fsname_user, unsigned int flags) {
-    char fsname[256];
-    if (copy_from_user_str(fsname, fsname_user, sizeof(fsname)))
-        return (uint64_t)-EFAULT;
-
-    fs_context_t *handle = NULL;
-
-    for (int fsid = 1; all_fs[fsid]; fsid++) {
-        fs_t *fs = all_fs[fsid];
-        if (!strcmp(fs->name, fsname)) {
-            handle = malloc(sizeof(fs_context_t));
-            if (!handle)
-                return (uint64_t)-ENOMEM;
-            memset(handle, 0, sizeof(fs_context_t));
-            handle->fs = all_fs[fsid];
-            handle->source = NULL;
-            handle->data = NULL;
-            handle->mount_flags = 0;
-            handle->attr_flags = 0;
-            handle->state = FC_STATE_INIT;
-            handle->source_node = NULL;
-            handle->source_dev = 0;
-            goto found;
-        }
-    }
-
-    return (uint64_t)-ENOENT;
-
-found:;
-    vfs_node_t *node = vfs_node_alloc(NULL, NULL);
-    if (!node) {
-        free(handle);
-        return (uint64_t)-ENOMEM;
-    }
-    node->refcount++;
-    node->mode = 0700;
-    node->type = file_stream;
-    node->fsid = fsfd_id;
-    node->handle = handle;
-
-    int fd = -1;
-    int ret = -EMFILE;
-    with_fd_info_lock(current_task->fd_info, {
-        for (int i = 0; i < MAX_FD_NUM; i++) {
-            if (!current_task->fd_info->fds[i]) {
-                fd = i;
-                break;
-            }
-        }
-
-        if (fd < 0)
-            break;
-
-        fd_t *new_fd = fd_create(node, 0, !!(flags & O_CLOEXEC));
-        if (!new_fd) {
-            ret = -ENOMEM;
-            fd = -1;
-            break;
-        }
-
-        current_task->fd_info->fds[fd] = new_fd;
-        on_open_file_call(current_task, fd);
-
-        ret = 0;
-    });
-
-    if (ret < 0) {
-        vfs_free(node);
-        return (uint64_t)ret;
-    }
-
-    return fd;
-}
-
-uint64_t sys_statfs(const char *path, struct statfs *buf) {
-    vfs_node_t *node = vfs_open(path, 0);
-    if (!node)
-        return -ENOENT;
-
-    if (node->fsid > (sizeof(all_fs) / sizeof(all_fs[0])))
+static int fsconfig_set_flag(fs_context_t *ctx, const char *key) {
+    if (!ctx || !key)
         return -EINVAL;
 
-    fs_t *fs = all_fs[node->fsid];
-    if (!fs)
-        return -ENOENT;
-
-    vfs_close(node);
-
-    buf->f_type = fs->magic;
-    buf->f_flags = 0;
-
-    return 0;
-}
-
-uint64_t sys_fstatfs(int fd, struct statfs *buf) {
-    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
-        return -EBADF;
-
-    fd_t *f = current_task->fd_info->fds[fd];
-
-    fs_t *fs = all_fs[f->node->fsid];
-    if (!fs)
-        return -ENOENT;
-
-    buf->f_type = fs->magic;
-    buf->f_flags = 0;
-
-    return 0;
-}
-
-/* Helper to set a boolean flag option */
-static int fsconfig_set_flag(fs_context_t *ctx, const char *key) {
-    /* Common mount flags */
     if (!strcmp(key, "ro") || !strcmp(key, "rdonly")) {
         ctx->mount_flags |= MS_RDONLY;
         return 0;
@@ -301,49 +533,43 @@ static int fsconfig_set_flag(fs_context_t *ctx, const char *key) {
         return 0;
     }
 
-    /* Unknown flag - may be filesystem specific, ignore for now */
     return 0;
 }
 
-/* Helper to set a string option */
 static int fsconfig_set_string(fs_context_t *ctx, const char *key,
                                const char *value) {
+    if (!ctx || !key)
+        return -EINVAL;
+
     if (!strcmp(key, "source")) {
-        if (ctx->source)
-            free(ctx->source);
-        ctx->source = strdup(value);
-        if (!ctx->source)
-            return -ENOMEM;
+        char *dup = strdup(value ? value : "");
 
-        /* Try to resolve the source to get device number */
-        vfs_node_t *source_node = vfs_open(value, 0);
-        if (source_node) {
-            ctx->source_node = source_node;
-            ctx->source_dev = source_node->rdev;
-        }
-        vfs_close(source_node);
+        if (!dup)
+            return -ENOMEM;
+        free(ctx->source);
+        ctx->source = dup;
         return 0;
     }
 
-    /* Handle mount options/data */
     if (!strcmp(key, "data") || !strcmp(key, "options")) {
-        if (ctx->data)
-            free(ctx->data);
-        ctx->data = strdup(value);
-        if (!ctx->data)
+        char *dup = strdup(value ? value : "");
+
+        if (!dup)
             return -ENOMEM;
+        free(ctx->data);
+        ctx->data = dup;
         return 0;
     }
 
-    /* For unknown string options, append to data */
-    if (value && strlen(value) > 0) {
+    if (value && value[0]) {
         char opt_buf[512];
-        snprintf(opt_buf, sizeof(opt_buf), "%s=%s", key, value);
 
+        snprintf(opt_buf, sizeof(opt_buf), "%s=%s", key, value);
         if (ctx->data) {
             size_t old_len = strlen(ctx->data);
             size_t opt_len = strlen(opt_buf);
             char *new_data = malloc(old_len + opt_len + 2);
+
             if (!new_data)
                 return -ENOMEM;
             strcpy(new_data, ctx->data);
@@ -361,69 +587,146 @@ static int fsconfig_set_string(fs_context_t *ctx, const char *key,
     return 0;
 }
 
-/* Helper to handle FSCONFIG_CMD_CREATE - validates and prepares for mount */
 static int fsconfig_cmd_create(fs_context_t *ctx) {
+    if (!ctx || !ctx->fs_type)
+        return -EINVAL;
     if (ctx->state == FC_STATE_CREATED)
         return -EBUSY;
-
-    /* Validate we have a filesystem */
-    if (!ctx->fs)
-        return -EINVAL;
-
-    /* Mark as created */
     ctx->state = FC_STATE_CREATED;
-
     return 0;
 }
 
-/* Helper to handle FSCONFIG_CMD_RECONFIGURE */
 static int fsconfig_cmd_reconfigure(fs_context_t *ctx) {
+    if (!ctx)
+        return -EINVAL;
     if (ctx->state != FC_STATE_CREATED && ctx->state != FC_STATE_MOUNTED)
         return -EINVAL;
-
-    /* Reconfiguration allowed - just return success */
     return 0;
+}
+
+static struct vfs_mount *fsfd_path_mount(const struct vfs_path *path) {
+    return vfs_path_mount(path);
+}
+
+uint64_t sys_fsopen(const char *fsname_user, unsigned int flags) {
+    struct vfs_file_system_type *fs_type;
+    struct vfs_file *file = NULL;
+    fs_context_t *ctx;
+    char fsname[256];
+    int ret;
+
+    if (flags & ~O_CLOEXEC)
+        return (uint64_t)-EINVAL;
+    if (copy_from_user_str(fsname, fsname_user, sizeof(fsname)))
+        return (uint64_t)-EFAULT;
+
+    fs_type = vfs_get_fs_type(fsname);
+    if (!fs_type)
+        return (uint64_t)-ENOENT;
+
+    ctx = calloc(1, sizeof(*ctx));
+    if (!ctx)
+        return (uint64_t)-ENOMEM;
+
+    ctx->object.kind = FSFD_OBJECT_CONTEXT;
+    ctx->fs_type = fs_type;
+    ctx->state = FC_STATE_INIT;
+
+    ret = fsfdfs_create_file("fsctx", &fsfdfs_ctx_file_ops, ctx, &file);
+    if (ret < 0) {
+        fsfd_destroy_object(ctx);
+        return (uint64_t)ret;
+    }
+
+    ret = task_install_file(current_task, file,
+                            (flags & O_CLOEXEC) ? FD_CLOEXEC : 0, 0);
+    vfs_file_put(file);
+    return (uint64_t)ret;
+}
+
+uint64_t sys_statfs(const char *path, struct statfs *buf) {
+    struct vfs_path vpath = {0};
+    int ret;
+
+    if (!path || !buf)
+        return -EINVAL;
+
+    ret = vfs_filename_lookup(AT_FDCWD, path, LOOKUP_FOLLOW, &vpath);
+    if (ret < 0)
+        return ret;
+
+    ret = fsfd_fill_statfs(&vpath, buf);
+    vfs_path_put(&vpath);
+    return ret;
+}
+
+uint64_t sys_fstatfs(int fd, struct statfs *buf) {
+    struct vfs_file *file;
+    struct vfs_path path = {0};
+    int ret;
+
+    if (!buf)
+        return -EINVAL;
+
+    file = task_get_file(current_task, fd);
+    if (!file)
+        return -EBADF;
+
+    path = file->f_path;
+    vfs_path_get(&path);
+    vfs_file_put(file);
+
+    ret = fsfd_fill_statfs(&path, buf);
+    vfs_path_put(&path);
+    return ret;
 }
 
 uint64_t sys_fsconfig(int fd, uint32_t cmd, const char *key_user,
                       const void *value_user, int aux) {
-    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
-        return -EBADF;
-
-    fd_t *file_descriptor = current_task->fd_info->fds[fd];
-
-    /* Check if this is an fs context fd */
-    if (file_descriptor->node->fsid != fsfd_id)
-        return -EINVAL;
-
-    fs_context_t *ctx = file_descriptor->node->handle;
-    if (!ctx || !ctx->fs)
-        return -ENOENT;
-
+    struct vfs_file *file;
+    fs_context_t *ctx;
     char key[256];
     char value[1024];
     int ret = 0;
 
+    file = task_get_file(current_task, fd);
+    if (!file)
+        return -EBADF;
+
+    ctx = fsfd_file_context(file);
+    if (!ctx) {
+        vfs_file_put(file);
+        return -EINVAL;
+    }
+
     switch (cmd) {
     case FSCONFIG_SET_FLAG:
-        /* Set a flag parameter (no value) */
-        if (!key_user)
-            return -EINVAL;
-        if (copy_from_user_str(key, key_user, sizeof(key)))
-            return -EFAULT;
+        if (!key_user) {
+            ret = -EINVAL;
+            break;
+        }
+        if (copy_from_user_str(key, key_user, sizeof(key))) {
+            ret = -EFAULT;
+            break;
+        }
         ctx->state = FC_STATE_CONFIG;
         ret = fsconfig_set_flag(ctx, key);
         break;
 
     case FSCONFIG_SET_STRING:
-        /* Set a string parameter */
-        if (!key_user)
-            return -EINVAL;
-        if (copy_from_user_str(key, key_user, sizeof(key)))
-            return -EFAULT;
+        if (!key_user) {
+            ret = -EINVAL;
+            break;
+        }
+        if (copy_from_user_str(key, key_user, sizeof(key))) {
+            ret = -EFAULT;
+            break;
+        }
         if (value_user) {
-            if (copy_from_user_str(value, value_user, sizeof(value)))
-                return -EFAULT;
+            if (copy_from_user_str(value, value_user, sizeof(value))) {
+                ret = -EFAULT;
+                break;
+            }
         } else {
             value[0] = '\0';
         }
@@ -432,17 +735,22 @@ uint64_t sys_fsconfig(int fd, uint32_t cmd, const char *key_user,
         break;
 
     case FSCONFIG_SET_BINARY:
-        /* Set a binary blob parameter - treat as string for now */
-        if (!key_user)
-            return -EINVAL;
-        if (copy_from_user_str(key, key_user, sizeof(key)))
-            return -EFAULT;
-        /* aux contains the length of the binary data */
+        if (!key_user) {
+            ret = -EINVAL;
+            break;
+        }
+        if (copy_from_user_str(key, key_user, sizeof(key))) {
+            ret = -EFAULT;
+            break;
+        }
         if (aux > 0 && value_user) {
             size_t copy_len =
-                aux < (int)sizeof(value) - 1 ? aux : sizeof(value) - 1;
-            if (copy_from_user(value, value_user, copy_len))
-                return -EFAULT;
+                aux < (int)sizeof(value) - 1 ? (size_t)aux : sizeof(value) - 1;
+
+            if (copy_from_user(value, value_user, copy_len)) {
+                ret = -EFAULT;
+                break;
+            }
             value[copy_len] = '\0';
         } else {
             value[0] = '\0';
@@ -453,86 +761,85 @@ uint64_t sys_fsconfig(int fd, uint32_t cmd, const char *key_user,
 
     case FSCONFIG_SET_PATH:
     case FSCONFIG_SET_PATH_EMPTY:
-        /* Set parameter by path - value is a path, aux is dirfd */
-        if (!key_user)
-            return -EINVAL;
-        if (copy_from_user_str(key, key_user, sizeof(key)))
-            return -EFAULT;
+        if (!key_user) {
+            ret = -EINVAL;
+            break;
+        }
+        if (copy_from_user_str(key, key_user, sizeof(key))) {
+            ret = -EFAULT;
+            break;
+        }
         if (value_user) {
-            if (copy_from_user_str(value, value_user, sizeof(value)))
-                return -EFAULT;
+            if (copy_from_user_str(value, value_user, sizeof(value))) {
+                ret = -EFAULT;
+                break;
+            }
         } else if (cmd == FSCONFIG_SET_PATH_EMPTY) {
-            /* Empty path with dirfd - resolve from dirfd */
-            if (aux < 0 || aux >= MAX_FD_NUM ||
-                !current_task->fd_info->fds[aux])
-                return -EBADF;
-            /* For now just use empty string */
             value[0] = '\0';
         } else {
-            return -EINVAL;
+            ret = -EINVAL;
+            break;
         }
         ctx->state = FC_STATE_CONFIG;
-
-        /* Handle path-based parameters */
         if (!strcmp(key, "source")) {
-            /* Resolve path relative to dirfd if needed */
             char *resolved = at_resolve_pathname(aux, value);
-            if (resolved) {
-                ret = fsconfig_set_string(ctx, key, resolved);
-            } else {
-                ret = fsconfig_set_string(ctx, key, value);
-            }
+
+            ret = fsconfig_set_string(ctx, key, resolved ? resolved : value);
+            free(resolved);
         } else {
             ret = fsconfig_set_string(ctx, key, value);
         }
         break;
 
     case FSCONFIG_SET_FD:
-        /* Set parameter by file descriptor */
-        if (!key_user)
-            return -EINVAL;
-        if (copy_from_user_str(key, key_user, sizeof(key)))
-            return -EFAULT;
-        /* aux contains the file descriptor */
-        if (aux < 0 || aux >= MAX_FD_NUM || !current_task->fd_info->fds[aux])
-            return -EBADF;
+        if (!key_user) {
+            ret = -EINVAL;
+            break;
+        }
+        if (copy_from_user_str(key, key_user, sizeof(key))) {
+            ret = -EFAULT;
+            break;
+        }
+        if (aux < 0) {
+            ret = -EBADF;
+            break;
+        }
         ctx->state = FC_STATE_CONFIG;
-
-        /* Handle fd-based source */
         if (!strcmp(key, "source")) {
-            fd_t *source_fd = current_task->fd_info->fds[aux];
-            ctx->source_node = source_fd->node;
-            ctx->source_dev = source_fd->node->rdev;
-            /* Generate a name for logging purposes */
-            if (ctx->source)
-                free(ctx->source);
-            if (source_fd->node->name) {
-                ctx->source = strdup(source_fd->node->name);
-            } else {
-                char buf[32];
-                snprintf(buf, sizeof(buf), "fd:%d", aux);
-                ctx->source = strdup(buf);
+            struct vfs_file *source_file = task_get_file(current_task, aux);
+            char *source_path;
+
+            if (!source_file) {
+                ret = -EBADF;
+                break;
             }
-            ret = 0;
+            source_path = vfs_path_to_string(&source_file->f_path,
+                                             task_fs_root_path(current_task));
+            vfs_file_put(source_file);
+            if (!source_path) {
+                ret = -ENOMEM;
+                break;
+            }
+            ret = fsconfig_set_string(ctx, key, source_path);
+            free(source_path);
         } else {
             ret = -EOPNOTSUPP;
         }
         break;
 
     case FSCONFIG_CMD_CREATE:
-        /* Create the superblock */
         ret = fsconfig_cmd_create(ctx);
         break;
 
     case FSCONFIG_CMD_CREATE_EXCL:
-        /* Create new superblock, fail if reusing */
-        if (ctx->state == FC_STATE_CREATED || ctx->state == FC_STATE_MOUNTED)
-            return -EBUSY;
+        if (ctx->state == FC_STATE_CREATED || ctx->state == FC_STATE_MOUNTED) {
+            ret = -EBUSY;
+            break;
+        }
         ret = fsconfig_cmd_create(ctx);
         break;
 
     case FSCONFIG_CMD_RECONFIGURE:
-        /* Reconfigure the superblock */
         ret = fsconfig_cmd_reconfigure(ctx);
         break;
 
@@ -541,328 +848,181 @@ uint64_t sys_fsconfig(int fd, uint32_t cmd, const char *key_user,
         break;
     }
 
+    vfs_file_put(file);
     return ret;
 }
 
-/*
- * sys_fsmount - Create a mount fd from an fs context
- *
- * This does NOT actually mount the filesystem. It creates a "detached mount"
- * represented by a file descriptor. The actual mounting happens when
- * move_mount() is called to attach this mount to a location in the filesystem.
- */
 uint64_t sys_fsmount(int fd, uint32_t flags, uint32_t attr_flags) {
-    if (fd < 0 || fd >= MAX_FD_NUM || !current_task->fd_info->fds[fd])
+    struct vfs_file *file;
+    fs_context_t *ctx;
+    mount_handle_t *handle;
+    struct vfs_file *mnt_file = NULL;
+    struct vfs_mount *mnt = NULL;
+    uint64_t combined_flags;
+    int ret;
+
+    file = task_get_file(current_task, fd);
+    if (!file)
         return -EBADF;
 
-    fd_t *file_descriptor = current_task->fd_info->fds[fd];
-
-    /* Check if this is an fs context fd */
-    if (file_descriptor->node->fsid != fsfd_id)
+    ctx = fsfd_file_context(file);
+    if (!ctx) {
+        vfs_file_put(file);
         return -EINVAL;
-
-    fs_context_t *ctx = file_descriptor->node->handle;
-    if (!ctx || !ctx->fs)
+    }
+    if (!ctx->fs_type) {
+        vfs_file_put(file);
         return -ENOENT;
-
-    /* Must have called FSCONFIG_CMD_CREATE first */
-    if (ctx->state != FC_STATE_CREATED)
+    }
+    if (ctx->state != FC_STATE_CREATED) {
+        vfs_file_put(file);
         return -EINVAL;
+    }
 
-    /* Combine mount flags from context with attr_flags */
-    uint64_t combined_flags =
-        ctx->mount_flags | attr_flags_to_ms_flags(attr_flags);
-
-    /* Create mount handle - stores info for later mounting */
-    mount_handle_t *mnt_handle = malloc(sizeof(mount_handle_t));
-    if (!mnt_handle)
-        return -ENOMEM;
-
-    mnt_handle->fs = ctx->fs;
-    mnt_handle->source = ctx->source ? strdup(ctx->source) : NULL;
-    mnt_handle->mount_flags = combined_flags;
-    mnt_handle->dev = ctx->source_dev;
-    mnt_handle->root_node = NULL;
-    mnt_handle->attached = false;
-
-    int ret = mount_handle_create_root(mnt_handle);
+    combined_flags = ctx->mount_flags | attr_flags_to_ms_flags(attr_flags);
+    ret = vfs_kern_mount(ctx->fs_type->name, combined_flags, ctx->source,
+                         ctx->data, &mnt);
     if (ret < 0) {
-        if (mnt_handle->source)
-            free(mnt_handle->source);
-        free(mnt_handle);
+        vfs_file_put(file);
         return ret;
     }
 
-    /* Create vfs node for mount fd */
-    vfs_node_t *mnt_node = vfs_node_alloc(NULL, NULL);
-    if (!mnt_node) {
-        if (mnt_handle->source)
-            free(mnt_handle->source);
-        free(mnt_handle);
+    handle = calloc(1, sizeof(*handle));
+    if (!handle) {
+        vfs_mntput(mnt);
+        vfs_file_put(file);
         return -ENOMEM;
     }
 
-    mnt_node->refcount++;
-    mnt_node->mode = 0700;
-    mnt_node->type = file_stream;
-    mnt_node->fsid = mntfd_id;
-    mnt_node->handle = mnt_handle;
+    handle->object.kind = FSFD_OBJECT_MOUNT;
+    handle->mnt = mnt;
+    handle->mount_flags = combined_flags;
+    handle->source = ctx->source ? strdup(ctx->source) : NULL;
+    if (ctx->source && !handle->source) {
+        fsfd_destroy_object(handle);
+        vfs_file_put(file);
+        return -ENOMEM;
+    }
 
-    int mnt_fd = -1;
-    ret = -EMFILE;
-    with_fd_info_lock(current_task->fd_info, {
-        for (int i = 0; i < MAX_FD_NUM; i++) {
-            if (!current_task->fd_info->fds[i]) {
-                mnt_fd = i;
-                break;
-            }
-        }
-
-        if (mnt_fd < 0)
-            break;
-
-        fd_t *new_fd = fd_create(mnt_node, 0, !!(flags & FSMOUNT_CLOEXEC));
-        if (!new_fd) {
-            ret = -ENOMEM;
-            mnt_fd = -1;
-            break;
-        }
-
-        current_task->fd_info->fds[mnt_fd] = new_fd;
-        on_open_file_call(current_task, mnt_fd);
-        ret = 0;
-    });
-
+    ret = fsfdfs_create_file("mnt", &fsfdfs_mnt_file_ops, handle, &mnt_file);
     if (ret < 0) {
-        vfs_free(mnt_node);
+        fsfd_destroy_object(handle);
+        vfs_file_put(file);
         return ret;
     }
 
-    /* Mark context as mounted */
-    ctx->state = FC_STATE_MOUNTED;
-
-    return mnt_fd;
+    ret = task_install_file(current_task, mnt_file,
+                            (flags & FSMOUNT_CLOEXEC) ? FD_CLOEXEC : 0, 0);
+    vfs_file_put(mnt_file);
+    if (ret >= 0)
+        ctx->state = FC_STATE_MOUNTED;
+    vfs_file_put(file);
+    return ret;
 }
 
-/*
- * sys_move_mount - Attach a detached mount to the filesystem tree
- *
- * When from_dfd is a mount fd (created by fsmount) with
- * MOVE_MOUNT_F_EMPTY_PATH, this actually performs the vfs_mount() to mount the
- * filesystem at the target.
- */
 uint64_t sys_move_mount(int from_dfd, const char *from_pathname_user,
                         int to_dfd, const char *to_pathname_user,
                         uint32_t flags) {
+    struct vfs_file *from_file = NULL;
+    struct vfs_file *to_file = NULL;
+    struct vfs_path from_path = {0};
+    struct vfs_path to_path = {0};
+    struct vfs_mount *source_mnt = NULL;
+    mount_handle_t *mnt_handle = NULL;
     char from_pathname[512];
     char to_pathname[512];
-
-    /* Handle empty path flags */
     bool from_empty = (flags & MOVE_MOUNT_F_EMPTY_PATH) != 0;
     bool to_empty = (flags & MOVE_MOUNT_T_EMPTY_PATH) != 0;
+    int ret = 0;
 
     if (!from_empty) {
         if (!from_pathname_user)
             return -EINVAL;
         if (copy_from_user_str(from_pathname, from_pathname_user,
-                               sizeof(from_pathname)))
+                               sizeof(from_pathname))) {
             return -EFAULT;
+        }
+        ret = vfs_filename_lookup(from_dfd, from_pathname, LOOKUP_FOLLOW,
+                                  &from_path);
+        if (ret < 0)
+            return ret;
     } else {
-        from_pathname[0] = '\0';
+        from_file = task_get_file(current_task, from_dfd);
+        if (!from_file)
+            return -EBADF;
+        mnt_handle = fsfd_file_mount(from_file);
+        if (mnt_handle) {
+            if (!mnt_handle->mnt || mnt_handle->attached) {
+                ret = -EINVAL;
+                goto out;
+            }
+        } else {
+            source_mnt = fsfd_path_mount(&from_file->f_path);
+            if (!source_mnt) {
+                ret = -EINVAL;
+                goto out;
+            }
+        }
     }
 
     if (!to_empty) {
-        if (!to_pathname_user)
-            return -EINVAL;
+        if (!to_pathname_user) {
+            ret = -EINVAL;
+            goto out;
+        }
         if (copy_from_user_str(to_pathname, to_pathname_user,
-                               sizeof(to_pathname)))
-            return -EFAULT;
-    } else {
-        to_pathname[0] = '\0';
-    }
-
-    mount_handle_t *mnt_handle = NULL;
-    vfs_node_t *source_mount = NULL;
-
-    /* Resolve the source */
-    if (from_empty && from_dfd >= 0 && from_dfd < MAX_FD_NUM &&
-        current_task->fd_info->fds[from_dfd]) {
-        fd_t *from_fd = current_task->fd_info->fds[from_dfd];
-
-        /* Check if from_dfd is a mount fd (created by fsmount) */
-        if (from_fd->node->fsid == mntfd_id) {
-            mnt_handle = from_fd->node->handle;
-            if (!mnt_handle || mnt_handle->attached)
-                return -EINVAL;
-        } else {
-            /* It's a regular fd pointing to a mount point */
-            source_mount = from_fd->node;
-            if (!source_mount->root || source_mount->root != source_mount)
-                return -EINVAL;
+                               sizeof(to_pathname))) {
+            ret = -EFAULT;
+            goto out;
         }
+        ret = vfs_filename_lookup(to_dfd, to_pathname, LOOKUP_FOLLOW, &to_path);
+        if (ret < 0)
+            goto out;
     } else {
-        /* Resolve path to get existing mount */
-        char *resolved = at_resolve_pathname(from_dfd, from_pathname);
-        source_mount = vfs_open(resolved ? resolved : from_pathname, 0);
-        if (!source_mount)
-            return -ENOENT;
-
-        /* Must be a mount root */
-        if (!source_mount->root || source_mount->root != source_mount) {
-            vfs_close(source_mount);
-            return -EINVAL;
+        to_file = task_get_file(current_task, to_dfd);
+        if (!to_file) {
+            ret = -EBADF;
+            goto out;
         }
-        vfs_close(source_mount);
+        to_path = to_file->f_path;
+        vfs_path_get(&to_path);
     }
 
-    /* Resolve the target directory */
-    vfs_node_t *target_dir = NULL;
-    if (to_empty && to_dfd >= 0 && to_dfd < MAX_FD_NUM &&
-        current_task->fd_info->fds[to_dfd]) {
-        target_dir = current_task->fd_info->fds[to_dfd]->node;
-    } else {
-        char *resolved = at_resolve_pathname(to_dfd, to_pathname);
-        target_dir = vfs_open(resolved ? resolved : to_pathname, 0);
+    if (!to_path.dentry || !to_path.dentry->d_inode ||
+        !(to_path.dentry->d_inode->type & file_dir)) {
+        ret = -ENOTDIR;
+        goto out;
     }
 
-    if (!target_dir)
-        return -ENOENT;
-
-    if (!(target_dir->type & file_dir))
-        return -ENOTDIR;
-
-    /*
-     * Case 1: Attaching a detached mount (from fsmount)
-     * This is where we actually call vfs_mount()
-     */
     if (mnt_handle) {
-        if (!current_task || !current_task->nsproxy ||
-            !current_task->nsproxy->mnt_ns)
-            return -EINVAL;
-        if (!mnt_handle->root_node)
-            return -EINVAL;
-        struct mount_point *target_mnt = task_mnt_namespace_find_mount_by_root(
-            current_task->nsproxy->mnt_ns, target_dir);
-        if (target_mnt) {
-            vfs_close(target_dir);
-            target_dir = target_mnt->dir;
-            vfs_node_ref_get(target_dir);
-        }
-        if (vfs_is_ancestor(mnt_handle->root_node, target_dir))
-            return -EINVAL;
-
-        task_mnt_namespace_add_mount(
-            current_task->nsproxy->mnt_ns, mnt_handle->fs, target_dir,
-            mnt_handle->root_node,
-            mnt_handle->source ? mnt_handle->source : "none");
-        vfs_close(target_dir);
-
-        mnt_handle->attached = true;
-
-        return 0;
+        ret = vfs_reconfigure_mount(mnt_handle->mnt, &to_path, true);
+        if (ret == 0)
+            mnt_handle->attached = true;
+        goto out;
     }
 
-    /*
-     * Case 2: Moving an existing mount to a new location
-     * Similar to MS_MOVE in sys_mount
-     */
-    if (source_mount) {
-        if (!current_task || !current_task->nsproxy ||
-            !current_task->nsproxy->mnt_ns)
-            return -EINVAL;
-
-        struct mount_point *target_mnt = task_mnt_namespace_find_mount_by_root(
-            current_task->nsproxy->mnt_ns, target_dir);
-        if (target_mnt)
-            target_dir = target_mnt->dir;
-
-        struct mount_point *mnt = task_mnt_namespace_find_mount_by_root(
-            current_task->nsproxy->mnt_ns, source_mount);
-        if (!mnt)
-            mnt = task_mnt_namespace_find_mount(current_task->nsproxy->mnt_ns,
-                                                source_mount);
-        if (!mnt)
-            return -EINVAL;
-        if (mnt->dir == target_dir)
-            return 0;
-        if (vfs_is_ancestor(mnt->root_node, target_dir))
-            return -EINVAL;
-
-        return task_mnt_namespace_move_mount(current_task->nsproxy->mnt_ns,
-                                             mnt->dir, target_dir);
+    if (!source_mnt)
+        source_mnt = fsfd_path_mount(&from_path);
+    if (!source_mnt) {
+        ret = -EINVAL;
+        goto out;
     }
 
-    return -EINVAL;
+    ret = vfs_reconfigure_mount(source_mnt, &to_path, false);
+
+out:
+    if (source_mnt)
+        vfs_mntput(source_mnt);
+    if (to_file)
+        vfs_file_put(to_file);
+    if (from_file)
+        vfs_file_put(from_file);
+    vfs_path_put(&to_path);
+    vfs_path_put(&from_path);
+    return ret;
 }
-
-ssize_t fsfdfs_read(fd_t *fd, void *addr, size_t offset, size_t size) {
-    return -ENOMSG;
-}
-
-bool fsfdfs_close(vfs_node_t *node) {
-    fs_context_t *ctx = node ? node->handle : NULL;
-    if (!ctx)
-        return true;
-
-    if (ctx->source)
-        free(ctx->source);
-    if (ctx->data)
-        free(ctx->data);
-    free(ctx);
-
-    return true;
-}
-
-bool mntfd_close(vfs_node_t *node) {
-    mount_handle_t *mnt = node ? node->handle : NULL;
-    if (!mnt)
-        return true;
-
-    /* Free source string if allocated */
-    if (mnt->source)
-        free(mnt->source);
-
-    if (mnt->root_node) {
-        if (!mnt->attached) {
-            if (mnt->fs && mnt->fs->ops && mnt->fs->ops->unmount)
-                mnt->fs->ops->unmount(mnt->root_node);
-        }
-        vfs_close(mnt->root_node);
-    }
-
-    free(mnt);
-    return true;
-}
-
-static vfs_operations_t fsfd_callbacks = {
-    .close = fsfdfs_close,
-    .read = fsfdfs_read,
-
-    .free_handle = vfs_generic_free_handle,
-};
-
-static vfs_operations_t mntfd_callbacks = {
-    .close = mntfd_close,
-    .read = fsfdfs_read,
-
-    .free_handle = vfs_generic_free_handle,
-};
-
-fs_t fsfd_fs = {
-    .name = "fsfd",
-    .magic = 0,
-    .ops = &fsfd_callbacks,
-    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN,
-};
-
-fs_t mntfd_fs = {
-    .name = "mntfd",
-    .magic = 0,
-    .ops = &mntfd_callbacks,
-    .flags = FS_FLAGS_VIRTUAL | FS_FLAGS_HIDDEN,
-};
 
 void fsfdfs_init() {
-    fsfd_id = vfs_regist(&fsfd_fs);
-    mntfd_id = vfs_regist(&mntfd_fs);
+    mutex_init(&fsfdfs_mount_lock);
+    vfs_register_filesystem(&fsfdfs_fs_type);
 }

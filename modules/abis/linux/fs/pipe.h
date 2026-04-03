@@ -13,8 +13,8 @@ typedef struct task task_t;
 struct spinlock;
 typedef struct spinlock spinlock_t;
 
-struct vfs_node;
-typedef struct vfs_node vfs_node_t;
+struct vfs_inode;
+typedef struct vfs_inode vfs_node_t;
 
 typedef struct pipe_info {
     uint32_t ptr;

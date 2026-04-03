@@ -1,6 +1,8 @@
 #include <dev/input.h>
 #include <fs/dev.h>
 #include <fs/sys.h>
+#include <drivers/kernel_logger.h>
+#include <mm/mm.h>
 
 static int eventn = 0;
 #define INPUT_EVENT_RING_SIZE (PAGE_SIZE * 32)
@@ -10,15 +12,17 @@ spinlock_t inputdev_regist_lock = SPIN_INIT;
 extern vfs_node_t *devtmpfs_root;
 
 static void input_sysfs_write_file(const char *path, const char *content) {
+    vfs_node_t *node;
+
     if (!path || !content)
         return;
 
-    vfs_mkfile(path);
-    vfs_node_t *node = vfs_open(path, 0);
+    node = sysfs_ensure_file(path);
     if (!node)
         return;
 
-    vfs_write(node, content, 0, strlen(content));
+    sysfs_write_node(node, content, strlen(content), 0);
+    vfs_iput(node);
 }
 
 static void input_bitmap_to_string(char *out, size_t out_size,
@@ -327,10 +331,7 @@ dev_input_event_t *regist_input_dev(const char *device_name,
         return NULL;
     }
     input_event->timesOpened = 0;
-    input_event->devnode = vfs_open_at(devtmpfs_root, dirpath, 0);
-    if (input_event->devnode) {
-        vfs_close(input_event->devnode);
-    }
+    input_event->devnode = NULL;
 
     char uevent[128];
     const char *extra_uevent =
@@ -373,7 +374,8 @@ dev_input_event_t *regist_input_dev(const char *device_name,
     vfs_node_t *node = sysfs_regist_dev(
         'c', (dev >> 8) & 0xFF, dev & 0xFF, sysfs_path, dirpath, uevent,
         "/sys/class/input", "/sys/class/input", dirname, parent_device_path);
-    vfs_close(node);
+    if (node)
+        vfs_iput(node);
     input_sysfs_publish_metadata(input_event, input_dir_path, input_dirname);
 
     eventn++;

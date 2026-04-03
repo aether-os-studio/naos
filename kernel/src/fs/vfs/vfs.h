@@ -1,12 +1,28 @@
 #pragma once
 
-#include <libs/klibc.h>
-#include <libs/llist.h>
-#include <libs/hashmap.h>
-#include <libs/rbtree.h>
 #include <fs/vfs/fcntl.h>
 #include <fs/vfs/utils.h>
+#include <libs/klibc.h>
+#include <libs/llist.h>
+#include <libs/mutex.h>
+#include <libs/rbtree.h>
 
+#ifndef AT_REMOVEDIR
+#define AT_REMOVEDIR 0x200
+#endif
+
+#ifndef F_RDLCK
+#define F_RDLCK 0
+#define F_WRLCK 1
+#define F_UNLCK 2
+#endif
+
+#define LOCK_SH 1
+#define LOCK_EX 2
+#define LOCK_NB 4
+#define LOCK_UN 8
+
+#ifndef CLOCK_REALTIME
 #define CLOCK_REALTIME 0
 #define CLOCK_MONOTONIC 1
 #define CLOCK_PROCESS_CPUTIME_ID 2
@@ -19,24 +35,14 @@
 #define CLOCK_BOOTTIME_ALARM 9
 #define CLOCK_SGI_CYCLE 10
 #define CLOCK_TAI 11
+#endif
 
-#define LOCK_SH 1
-#define LOCK_EX 2
-#define LOCK_NB 4
-#define LOCK_UN 8
-
-#define L_SET 0
-#define L_INCR 1
-#define L_XTND 2
-
-#define F_RDLCK 0
-#define F_WRLCK 1
-#define F_UNLCK 2
-
-// * 所有时间请使用 GMT 时间 *
-
-// 读写时请 padding 到 PAGE_SIZE 的整数倍
-#define FILE_BLKSIZE PAGE_SIZE
+#define VFS_PATH_MAX 4096
+#define VFS_NAME_MAX 255
+#define VFS_MAX_SYMLINKS 40
+#define VFS_DCACHE_HASH_BITS 10
+#define VFS_DCACHE_BUCKETS (1U << VFS_DCACHE_HASH_BITS)
+#define VFS_FILESYSTEM_MAX 128
 
 #define S_IFMT 00170000
 #define S_IFSOCK 0140000
@@ -50,271 +56,41 @@
 #define S_ISGID 0002000
 #define S_ISVTX 0001000
 
-typedef enum file_type {
-    file_none = 0x0001UL,    // 普通文件
-    file_dir = 0x0002UL,     // 文件夹
-    file_symlink = 0x0004UL, // 符号链接
-    file_block = 0x00008UL,  // 块设备，如硬盘
-    file_stream = 0x0010UL,  // 流式设备，如终端
-    file_socket = 0x0020UL,  // 套接字设备
-    file_epoll = 0x0040UL,   // epoll 设备
-    file_fifo = 0x0080UL,    // fifo 设备
-} file_type_t;
+#define S_ISREG(mode) (((mode) & S_IFMT) == S_IFREG)
+#define S_ISDIR(mode) (((mode) & S_IFMT) == S_IFDIR)
+#define S_ISLNK(mode) (((mode) & S_IFMT) == S_IFLNK)
+#define S_ISCHR(mode) (((mode) & S_IFMT) == S_IFCHR)
+#define S_ISBLK(mode) (((mode) & S_IFMT) == S_IFBLK)
+#define S_ISFIFO(mode) (((mode) & S_IFMT) == S_IFIFO)
+#define S_ISSOCK(mode) (((mode) & S_IFMT) == S_IFSOCK)
 
-typedef struct vfs_node vfs_node_t;
+#define ERR_PTR(err) ((void *)(intptr_t)(err))
+#define PTR_ERR(ptr) ((long)(intptr_t)(ptr))
+#define IS_ERR(ptr) ((uintptr_t)(void *)(ptr) >= (uintptr_t)-4095)
+#define IS_ERR_OR_NULL(ptr) (!(ptr) || IS_ERR(ptr))
+#define ERR_CAST(ptr) ((void *)(ptr))
+
+typedef uint16_t umode_t;
+typedef uint64_t ino64_t;
+typedef uint64_t dev64_t;
+typedef uint32_t uid32_t;
+typedef uint32_t gid32_t;
+typedef int64_t loff_t;
+typedef uint32_t __poll_t;
+
 struct task;
-typedef struct task task_t;
+struct task_mm_info;
 
-typedef struct fd_shared {
-    uint64_t offset;
-    uint64_t flags;
-    int ref_count;
-} fd_shared_t;
-
-typedef struct fd {
-    vfs_node_t *node;
-    fd_shared_t *shared;
-    bool close_on_exec;
-} fd_t;
-
-static inline uint64_t fd_get_offset(const fd_t *fd) {
-    if (!fd || !fd->shared)
-        return 0;
-    return __atomic_load_n(&fd->shared->offset, __ATOMIC_ACQUIRE);
-}
-
-static inline void fd_set_offset(fd_t *fd, uint64_t offset) {
-    if (!fd || !fd->shared)
-        return;
-    __atomic_store_n(&fd->shared->offset, offset, __ATOMIC_RELEASE);
-}
-
-static inline uint64_t fd_add_offset(fd_t *fd, int64_t delta) {
-    if (!fd || !fd->shared)
-        return 0;
-    return __atomic_add_fetch(&fd->shared->offset, delta, __ATOMIC_ACQ_REL);
-}
-
-static inline uint64_t fd_get_flags(const fd_t *fd) {
-    if (!fd || !fd->shared)
-        return 0;
-    return __atomic_load_n(&fd->shared->flags, __ATOMIC_ACQUIRE);
-}
-
-static inline void fd_set_flags(fd_t *fd, uint64_t flags) {
-    if (!fd || !fd->shared)
-        return;
-    __atomic_store_n(&fd->shared->flags, flags, __ATOMIC_RELEASE);
-}
-
-typedef struct vfs_poll_wait {
-    struct llist_header node;
-    task_t *task;
-    vfs_node_t *watch_node;
-    uint32_t events;
-    volatile uint32_t revents;
-    volatile bool armed;
-} vfs_poll_wait_t;
-
-typedef int (*vfs_mount_t)(uint64_t dev, vfs_node_t *node);
-typedef void (*vfs_unmount_t)(vfs_node_t *node);
-
-/**
- *\brief 打开一个文件
- *
- *\param parent   父目录句柄
- *\param name     文件名
- *\param node     文件节点
- */
-typedef void (*vfs_open_t)(vfs_node_t *parent, const char *name,
-                           vfs_node_t *node);
-
-/**
- *\brief 关闭一个文件
- *
- *\param current  当前文件句柄
- */
-typedef bool (*vfs_close_t)(vfs_node_t *node);
-typedef int (*vfs_fsync_t)(vfs_node_t *node);
-
-/**
- *\brief 重设文件大小
- *
- *\param current  当前文件句柄
- *\param size     新的大小
- */
-typedef int (*vfs_resize_t)(vfs_node_t *node, uint64_t size);
-
-/**
- *\brief 写入一个文件
- *
- *\param file     文件句柄
- *\param addr     写入的数据
- *\param offset   写入的偏移
- *\param size     写入的大小
- */
-typedef ssize_t (*vfs_write_t)(fd_t *fd, const void *addr, size_t offset,
-                               size_t size);
-
-/**
- *\brief 读取一个文件
- *
- *\param file     文件句柄
- *\param addr     读取的数据
- *\param offset   读取的偏移
- *\param size     读取的大小
- */
-typedef ssize_t (*vfs_read_t)(fd_t *fd, void *addr, size_t offset, size_t size);
-
-typedef ssize_t (*vfs_readlink_t)(vfs_node_t *node, void *addr, size_t offset,
-                                  size_t size);
-
-/**
- *\brief 获取文件信息
- *
- *\param file     文件句柄
- *\param node     文件节点
- */
-typedef int (*vfs_stat_t)(vfs_node_t *node);
-
-// 创建一个文件或文件夹
-typedef int (*vfs_mk_t)(vfs_node_t *parent, const char *name, vfs_node_t *node);
-typedef int (*vfs_link_node_t)(vfs_node_t *parent, vfs_node_t *source,
-                               vfs_node_t *node);
-
-typedef int (*vfs_mknod_t)(vfs_node_t *parent, const char *name,
-                           vfs_node_t *node, uint16_t mode, int dev);
-
-typedef int (*vfs_chmod_t)(vfs_node_t *node, uint16_t mode);
-typedef int (*vfs_chown_t)(vfs_node_t *node, uint64_t uid, uint64_t gid);
-
-typedef int (*vfs_del_t)(vfs_node_t *parent, vfs_node_t *node);
-
-typedef int (*vfs_rename_t)(vfs_node_t *node, const char *new);
-
-// 创建一个文件或文件夹
-typedef int (*vfs_ioctl_t)(fd_t *fd, ssize_t cmd, ssize_t arg);
-
-// 映射文件从 offset 开始的 size 大小
-typedef void *(*vfs_mapfile_t)(fd_t *fd, void *addr, size_t offset, size_t size,
-                               size_t prot, size_t flags);
-
-typedef int (*vfs_poll_t)(vfs_node_t *node, size_t events);
-
-typedef void (*vfs_free_handle_t)(vfs_node_t *node);
-typedef size_t (*procfs_fdinfo_render_t)(fd_t *fd, char *buf, size_t size);
-
-uint32_t poll_to_epoll_comp(uint32_t poll_events);
-uint32_t epoll_to_poll_comp(uint32_t epoll_events);
-
-void vfs_generic_free_handle(vfs_node_t *node);
-
-typedef struct vfs_super_operations {
-    vfs_mount_t mount;
-    vfs_unmount_t unmount;
-
-    int (*sync_fs)(vfs_node_t *root);
-    int (*freeze_fs)(vfs_node_t *root);
-    int (*thaw_fs)(vfs_node_t *root);
-} vfs_super_operations_t;
-
-typedef struct vfs_inode_operations {
-    vfs_open_t open;
-    vfs_readlink_t readlink;
-    vfs_mk_t mkdir;
-    vfs_mk_t mkfile;
-    vfs_mk_t link;
-    vfs_link_node_t link_node;
-    vfs_mk_t symlink;
-    vfs_mknod_t mknod;
-    vfs_chmod_t chmod;
-    vfs_chown_t chown;
-    vfs_del_t delete;
-    vfs_rename_t rename;
-    vfs_stat_t stat;
-    vfs_resize_t resize;
-} vfs_inode_operations_t;
-
-typedef struct vfs_file_operations {
-    vfs_close_t close;
-    vfs_fsync_t fsync;
-    vfs_read_t read;
-    vfs_write_t write;
-    vfs_mapfile_t map;
-    vfs_ioctl_t ioctl;
-    vfs_poll_t poll;
-    vfs_free_handle_t free_handle;
-} vfs_file_operations_t;
-
-typedef struct vfs_operations {
-    union {
-        vfs_super_operations_t super_ops;
-        struct {
-            vfs_mount_t mount;
-            vfs_unmount_t unmount;
-            int (*sync_fs)(vfs_node_t *root);
-            int (*freeze_fs)(vfs_node_t *root);
-            int (*thaw_fs)(vfs_node_t *root);
-        };
-    };
-
-    union {
-        vfs_inode_operations_t inode_ops;
-        struct {
-            vfs_open_t open;
-            vfs_readlink_t readlink;
-            vfs_mk_t mkdir;
-            vfs_mk_t mkfile;
-            vfs_mk_t link;
-            vfs_link_node_t link_node;
-            vfs_mk_t symlink;
-            vfs_mknod_t mknod;
-            vfs_chmod_t chmod;
-            vfs_chown_t chown;
-            vfs_del_t delete;
-            vfs_rename_t rename;
-            vfs_stat_t stat;
-            vfs_resize_t resize;
-        };
-    };
-
-    union {
-        vfs_file_operations_t file_ops;
-        struct {
-            vfs_close_t close;
-            vfs_fsync_t fsync;
-            vfs_read_t read;
-            vfs_write_t write;
-            vfs_mapfile_t map;
-            vfs_ioctl_t ioctl;
-            vfs_poll_t poll;
-            vfs_free_handle_t free_handle;
-        };
-    };
-} vfs_operations_t;
-
-enum {
-    TMPFS_DEV_MAJOR = 240,
-    RAMFS_DEV_MAJOR,
-    DEVFS_DEV_MAJOR,
-    PROCFS_DEV_MAJOR,
-    SYSFS_DEV_MAJOR,
-    CGROUPFS_DEV_MAJOR,
-};
-
-#define FS_FLAGS_HIDDEN (1UL << 0)
-#define FS_FLAGS_VIRTUAL (1UL << 1)
-#define FS_FLAGS_ALWAYS_OPEN (1UL << 2)
-
-typedef struct fs {
-    const char *name;
-    uint64_t magic;
-    const vfs_operations_t *ops;
-    uint64_t flags;
-    procfs_fdinfo_render_t procfs_fdinfo_render;
-} fs_t;
-
-extern fs_t *all_fs[256];
+typedef enum file_type {
+    file_none = 0x0001UL,
+    file_dir = 0x0002UL,
+    file_symlink = 0x0004UL,
+    file_block = 0x0008UL,
+    file_stream = 0x0010UL,
+    file_socket = 0x0020UL,
+    file_epoll = 0x0040UL,
+    file_fifo = 0x0080UL,
+} file_type_t;
 
 typedef struct flock {
     int16_t l_type;
@@ -339,362 +115,585 @@ typedef struct vfs_file_lock {
     int16_t type;
 } vfs_file_lock_t;
 
-#define VFS_NODE_FLAGS_OPENED (1UL << 0)
-#define VFS_NODE_FLAGS_DELETED (1UL << 1)
-#define VFS_NODE_FLAGS_FREE_AFTER_USE (1UL << 2)
-#define VFS_NODE_FLAGS_DIRTY_METADATA (1UL << 3)
-#define VFS_NODE_FLAGS_DIRTY_CHILDREN (1UL << 4)
-#define VFS_NODE_FLAGS_CHILDREN_POPULATED (1UL << 5)
-
-struct vfs_node {
-    vfs_node_t *parent;                  // 父目录
-    uint64_t flags;                      // 标志
-    uint64_t dev;                        // 设备号
-    uint64_t rdev;                       // 真实设备号
-    char *name;                          // 名称
-    uint64_t inode;                      // 节点号
-    uint64_t realsize;                   // 项目真实占用的空间 (可选)
-    uint64_t size;                       // 文件大小或若是文件夹则填0
-    uint64_t blksz;                      // 块大小
-    uint64_t createtime;                 // 创建时间
-    uint64_t readtime;                   // 最后读取时间
-    uint64_t writetime;                  // 最后写入时间
-    uint32_t owner;                      // 所有者
-    uint32_t group;                      // 所有组
-    uint32_t type;                       // 类型
-    uint32_t fsid;                       // 文件系统的 id
-    void *handle;                        // 操作文件的句柄
-    vfs_bsd_lock_t flock_lock;           // flock() 锁
-    spinlock_t file_locks_lock;          // POSIX 范围锁
-    struct llist_header file_locks;      // POSIX 范围锁链表
-    struct llist_header node;            // 所有vfs_node的链表
-    struct llist_header childs;          // 子目录和子文件
-    struct llist_header node_for_childs; // 为子目录和子文件添加的节点
-    vfs_node_t *root;                    // 根目录
-    int refcount;                        // 引用计数
-    uint16_t mode;                       // 模式
-    uint32_t rw_hint;                    // 读写提示
-    spinlock_t poll_waiters_lock;        // poll 等待队列锁
-    struct llist_header poll_waiters;    // poll 等待队列
-    uint64_t poll_seq_in;                // 可读相关事件变化序号
-    uint64_t poll_seq_out;               // 可写相关事件变化序号
-    uint64_t poll_seq_pri;               // 紧急数据事件变化序号
-    uint64_t i_version;                  // 数据变更版本
+struct vfs_qstr {
+    const char *name;
+    uint32_t len;
+    uint32_t hash;
 };
 
-static inline int vfs_node_refcount_read(vfs_node_t *node) {
-    if (!node)
-        return 0;
-    return __atomic_load_n(&node->refcount, __ATOMIC_ACQUIRE);
-}
+typedef struct vfs_ref {
+    volatile int refs;
+} vfs_ref_t;
 
-static inline void vfs_node_ref_get(vfs_node_t *node) {
-    if (!node)
+typedef struct vfs_lockref {
+    spinlock_t lock;
+    volatile int count;
+} vfs_lockref_t;
+
+struct vfs_timespec64 {
+    int64_t sec;
+    uint32_t nsec;
+    uint32_t pad;
+};
+
+struct vfs_kstat {
+    uint64_t mask;
+    uint64_t attributes;
+    uint64_t attributes_mask;
+    ino64_t ino;
+    dev64_t dev;
+    dev64_t rdev;
+    umode_t mode;
+    uid32_t uid;
+    gid32_t gid;
+    uint32_t nlink;
+    uint64_t size;
+    uint64_t blocks;
+    uint32_t blksize;
+    struct vfs_timespec64 atime;
+    struct vfs_timespec64 btime;
+    struct vfs_timespec64 ctime;
+    struct vfs_timespec64 mtime;
+    uint64_t mnt_id;
+};
+
+struct vfs_open_how {
+    uint64_t flags;
+    uint64_t mode;
+    uint64_t resolve;
+};
+
+struct vfs_address_space;
+struct vfs_dentry;
+struct vfs_file;
+struct vfs_fs_context;
+struct vfs_inode;
+struct vfs_mount;
+struct vfs_nameidata;
+struct vfs_path;
+struct vfs_poll_table;
+struct vfs_super_block;
+struct vfs_file_system_type;
+
+typedef struct vfs_poll_wait {
+    struct llist_header node;
+    struct task *task;
+    struct vfs_inode *watch_node;
+    uint32_t events;
+    volatile uint32_t revents;
+    volatile bool armed;
+} vfs_poll_wait_t;
+
+enum vfs_lookup_flags {
+    LOOKUP_FOLLOW = 1U << 0,
+    LOOKUP_DIRECTORY = 1U << 1,
+    LOOKUP_AUTOMOUNT = 1U << 2,
+    LOOKUP_PARENT = 1U << 3,
+    LOOKUP_CREATE = 1U << 4,
+    LOOKUP_EXCL = 1U << 5,
+    LOOKUP_RENAME_TARGET = 1U << 6,
+    LOOKUP_NOFOLLOW = 1U << 7,
+    LOOKUP_NO_SYMLINKS = 1U << 8,
+    LOOKUP_BENEATH = 1U << 9,
+    LOOKUP_IN_ROOT = 1U << 10,
+    LOOKUP_EMPTY = 1U << 11,
+    LOOKUP_RCU = 1U << 12,
+    LOOKUP_CACHED = 1U << 13,
+};
+
+enum vfs_resolve_flags {
+    RESOLVE_NO_XDEV = 0x01,
+    RESOLVE_NO_MAGICLINKS = 0x02,
+    RESOLVE_NO_SYMLINKS = 0x04,
+    RESOLVE_BENEATH = 0x08,
+    RESOLVE_IN_ROOT = 0x10,
+    RESOLVE_CACHED = 0x20,
+};
+
+enum vfs_dentry_flags {
+    VFS_DENTRY_ROOT = 1UL << 0,
+    VFS_DENTRY_HASHED = 1UL << 1,
+    VFS_DENTRY_MOUNTPOINT = 1UL << 2,
+    VFS_DENTRY_NEGATIVE = 1UL << 3,
+    VFS_DENTRY_OP_REVALIDATE = 1UL << 4,
+    VFS_DENTRY_DISCONNECTED = 1UL << 5,
+};
+
+enum vfs_inode_state {
+    VFS_I_NEW = 1UL << 0,
+    VFS_I_DIRTY_SYNC = 1UL << 1,
+    VFS_I_DIRTY_DATASYNC = 1UL << 2,
+    VFS_I_DIRTY_TIME = 1UL << 3,
+    VFS_I_FREEING = 1UL << 4,
+    VFS_I_WILL_FREE = 1UL << 5,
+    VFS_I_LINKABLE = 1UL << 6,
+};
+
+enum vfs_mount_flags {
+    VFS_MNT_READONLY = 1UL << 0,
+    VFS_MNT_NOSUID = 1UL << 1,
+    VFS_MNT_NODEV = 1UL << 2,
+    VFS_MNT_NOEXEC = 1UL << 3,
+    VFS_MNT_NOSYMFOLLOW = 1UL << 4,
+    VFS_MNT_LOCKED = 1UL << 5,
+};
+
+enum vfs_filesystem_flags {
+    VFS_FS_REQUIRES_DEV = 1UL << 0,
+    VFS_FS_BINARY_MOUNTDATA = 1UL << 1,
+    VFS_FS_USERNS_MOUNT = 1UL << 2,
+    VFS_FS_HAS_SUBTYPE = 1UL << 3,
+    VFS_FS_VIRTUAL = 1UL << 4,
+};
+
+enum vfs_rename_flags {
+    VFS_RENAME_NOREPLACE = 1U << 0,
+    VFS_RENAME_EXCHANGE = 1U << 1,
+    VFS_RENAME_WHITEOUT = 1U << 2,
+};
+
+struct vfs_path {
+    struct vfs_mount *mnt;
+    struct vfs_dentry *dentry;
+};
+
+struct vfs_dir_context {
+    loff_t pos;
+    int (*actor)(struct vfs_dir_context *ctx, const char *name, int namelen,
+                 loff_t pos, uint64_t ino, unsigned type);
+    void *private;
+};
+
+struct vfs_poll_table {
+    void (*queue_proc)(struct vfs_file *file, struct vfs_poll_table *pt);
+    void *private_data;
+};
+
+struct vfs_address_space_operations {
+    int (*readpage)(struct vfs_file *file, struct vfs_address_space *mapping,
+                    uint64_t index, void *page);
+    int (*writepage)(struct vfs_file *file, struct vfs_address_space *mapping,
+                     uint64_t index, const void *page);
+    void (*invalidatepage)(struct vfs_address_space *mapping, uint64_t index);
+};
+
+struct vfs_address_space {
+    struct vfs_inode *host;
+    const struct vfs_address_space_operations *a_ops;
+    void *private_data;
+    spinlock_t lock;
+};
+
+struct vfs_super_operations {
+    struct vfs_inode *(*alloc_inode)(struct vfs_super_block *sb);
+    void (*destroy_inode)(struct vfs_inode *inode);
+    void (*dirty_inode)(struct vfs_inode *inode, int flags);
+    void (*evict_inode)(struct vfs_inode *inode);
+    void (*put_super)(struct vfs_super_block *sb);
+    int (*sync_fs)(struct vfs_super_block *sb, int wait);
+    int (*freeze_fs)(struct vfs_super_block *sb);
+    int (*thaw_fs)(struct vfs_super_block *sb);
+    int (*statfs)(struct vfs_path *path, void *buf);
+};
+
+struct vfs_dentry_operations {
+    int (*d_revalidate)(struct vfs_dentry *dentry, unsigned int flags);
+    int (*d_hash)(const struct vfs_qstr *name, struct vfs_qstr *out);
+    int (*d_compare)(const struct vfs_dentry *dentry, const struct vfs_qstr *a,
+                     const struct vfs_qstr *b);
+    void (*d_release)(struct vfs_dentry *dentry);
+};
+
+struct vfs_rename_ctx {
+    struct vfs_inode *old_dir;
+    struct vfs_dentry *old_dentry;
+    struct vfs_inode *new_dir;
+    struct vfs_dentry *new_dentry;
+    unsigned int flags;
+};
+
+struct vfs_inode_operations {
+    struct vfs_dentry *(*lookup)(struct vfs_inode *dir,
+                                 struct vfs_dentry *dentry, unsigned int flags);
+    int (*create)(struct vfs_inode *dir, struct vfs_dentry *dentry,
+                  umode_t mode, bool excl);
+    int (*link)(struct vfs_dentry *old_dentry, struct vfs_inode *dir,
+                struct vfs_dentry *new_dentry);
+    int (*unlink)(struct vfs_inode *dir, struct vfs_dentry *dentry);
+    int (*symlink)(struct vfs_inode *dir, struct vfs_dentry *dentry,
+                   const char *target);
+    int (*mkdir)(struct vfs_inode *dir, struct vfs_dentry *dentry,
+                 umode_t mode);
+    int (*rmdir)(struct vfs_inode *dir, struct vfs_dentry *dentry);
+    int (*mknod)(struct vfs_inode *dir, struct vfs_dentry *dentry, umode_t mode,
+                 dev64_t dev);
+    int (*rename)(struct vfs_rename_ctx *ctx);
+    const char *(*get_link)(struct vfs_dentry *dentry, struct vfs_inode *inode,
+                            struct vfs_nameidata *nd);
+    int (*permission)(struct vfs_inode *inode, int mask);
+    int (*getattr)(const struct vfs_path *path, struct vfs_kstat *stat,
+                   uint32_t request_mask, unsigned int flags);
+    int (*setattr)(struct vfs_dentry *dentry, const struct vfs_kstat *stat);
+    int (*atomic_open)(struct vfs_inode *dir, struct vfs_dentry *dentry,
+                       struct vfs_file *file, unsigned int open_flags,
+                       umode_t mode);
+    int (*tmpfile)(struct vfs_inode *dir, struct vfs_file *file, umode_t mode);
+};
+
+struct vfs_file_operations {
+    loff_t (*llseek)(struct vfs_file *file, loff_t offset, int whence);
+    ssize_t (*read)(struct vfs_file *file, void *buf, size_t count,
+                    loff_t *ppos);
+    ssize_t (*write)(struct vfs_file *file, const void *buf, size_t count,
+                     loff_t *ppos);
+    int (*iterate_shared)(struct vfs_file *file, struct vfs_dir_context *ctx);
+    long (*unlocked_ioctl)(struct vfs_file *file, unsigned long cmd,
+                           unsigned long arg);
+    __poll_t (*poll)(struct vfs_file *file, struct vfs_poll_table *pt);
+    void *(*mmap)(struct vfs_file *file, void *addr, size_t offset, size_t size,
+                  size_t prot, uint64_t flags);
+    int (*open)(struct vfs_inode *inode, struct vfs_file *file);
+    int (*flush)(struct vfs_file *file);
+    int (*release)(struct vfs_inode *inode, struct vfs_file *file);
+    int (*fsync)(struct vfs_file *file, loff_t start, loff_t end, int datasync);
+};
+
+struct vfs_super_block {
+    const struct vfs_super_operations *s_op;
+    const struct vfs_dentry_operations *s_d_op;
+    struct vfs_file_system_type *s_type;
+    void *s_fs_info;
+    dev64_t s_dev;
+    uint64_t s_magic;
+    unsigned long s_flags;
+    unsigned long s_iflags;
+    struct vfs_dentry *s_root;
+    spinlock_t s_inode_lock;
+    struct llist_header s_inodes;
+    spinlock_t s_mount_lock;
+    struct llist_header s_mounts;
+    vfs_ref_t s_ref;
+    volatile uint64_t s_seq;
+};
+
+struct vfs_inode {
+    struct vfs_super_block *i_sb;
+    const struct vfs_inode_operations *i_op;
+    const struct vfs_file_operations *i_fop;
+    struct vfs_address_space i_mapping;
+    void *i_private;
+    ino64_t i_ino;
+    umode_t i_mode;
+    uid32_t i_uid;
+    gid32_t i_gid;
+    dev64_t i_rdev;
+    ino64_t inode;
+    uint32_t i_nlink;
+    uint32_t type;
+    uint32_t rw_hint;
+    uint64_t i_size;
+    uint64_t i_blocks;
+    uint32_t i_blkbits;
+    struct vfs_timespec64 i_atime;
+    struct vfs_timespec64 i_btime;
+    struct vfs_timespec64 i_ctime;
+    struct vfs_timespec64 i_mtime;
+    unsigned long i_state;
+    uint64_t i_version;
+    mutex_t i_rwsem;
+    spinlock_t i_lock;
+    vfs_bsd_lock_t flock_lock;
+    spinlock_t file_locks_lock;
+    struct llist_header file_locks;
+    struct llist_header i_dentry_aliases;
+    struct llist_header i_sb_list;
+    vfs_ref_t i_ref;
+    spinlock_t poll_waiters_lock;
+    struct llist_header poll_waiters;
+    uint64_t poll_seq_in;
+    uint64_t poll_seq_out;
+    uint64_t poll_seq_pri;
+};
+
+struct vfs_dentry {
+    struct vfs_qstr d_name;
+    struct vfs_dentry *d_parent;
+    struct vfs_inode *d_inode;
+    struct vfs_super_block *d_sb;
+    const struct vfs_dentry_operations *d_op;
+    void *d_fsdata;
+    unsigned long d_flags;
+    uint64_t d_seq;
+    struct vfs_mount *d_mounted;
+    vfs_lockref_t d_lockref;
+    spinlock_t d_lock;
+    spinlock_t d_children_lock;
+    struct hlist_node d_hash;
+    struct llist_header d_child;
+    struct llist_header d_subdirs;
+    struct llist_header d_alias;
+};
+
+struct vfs_mount {
+    struct vfs_mount *mnt_parent;
+    struct vfs_mount *mnt_master;
+    struct vfs_dentry *mnt_mountpoint;
+    struct vfs_dentry *mnt_root;
+    struct vfs_super_block *mnt_sb;
+    unsigned long mnt_flags;
+    unsigned int mnt_id;
+    vfs_ref_t mnt_ref;
+    spinlock_t mnt_lock;
+    struct llist_header mnt_sb_link;
+    struct llist_header mnt_child;
+    struct llist_header mnt_mounts;
+};
+
+struct vfs_file {
+    const struct vfs_file_operations *f_op;
+    struct vfs_path f_path;
+    struct vfs_inode *f_inode;
+    void *private_data;
+    unsigned int f_mode;
+    unsigned int f_flags;
+    loff_t f_pos;
+    mutex_t f_pos_lock;
+    spinlock_t f_lock;
+    vfs_ref_t f_ref;
+    struct vfs_inode *node;
+    bool close_on_exec;
+};
+
+typedef struct vfs_inode vfs_node_t;
+typedef struct vfs_file fd_t;
+
+struct vfs_nameidata {
+    struct vfs_path path;
+    struct vfs_path root;
+    struct vfs_qstr last;
+    unsigned int flags;
+    unsigned int depth;
+    uint64_t rename_seq;
+    uint64_t mount_seq;
+};
+
+struct vfs_fs_context {
+    struct vfs_file_system_type *fs_type;
+    unsigned long sb_flags;
+    unsigned long mnt_flags;
+    const char *source;
+    void *fs_private;
+    struct vfs_super_block *sb;
+};
+
+struct vfs_file_system_type {
+    const char *name;
+    unsigned long fs_flags;
+    int (*init_fs_context)(struct vfs_fs_context *fc);
+    int (*get_tree)(struct vfs_fs_context *fc);
+    void (*kill_sb)(struct vfs_super_block *sb);
+    struct llist_header fs_list;
+};
+
+struct vfs_process_fs {
+    struct vfs_path root;
+    struct vfs_path pwd;
+    spinlock_t lock;
+    uint64_t seq;
+};
+
+struct vfs_mount_namespace {
+    struct vfs_mount *root;
+    mutex_t lock;
+    uint64_t seq;
+};
+
+extern struct vfs_mount_namespace vfs_init_mnt_ns;
+extern struct vfs_path vfs_root_path;
+
+static inline void vfs_ref_init(vfs_ref_t *ref, int value) {
+    if (!ref)
         return;
-    __atomic_add_fetch(&node->refcount, 1, __ATOMIC_ACQ_REL);
+    __atomic_store_n(&ref->refs, value, __ATOMIC_RELEASE);
 }
 
-static inline int vfs_node_ref_put(vfs_node_t *node, bool *dropped_ref) {
-    if (dropped_ref)
-        *dropped_ref = false;
-    if (!node)
+static inline int vfs_ref_read(const vfs_ref_t *ref) {
+    if (!ref)
         return 0;
-
-    int refs = __atomic_load_n(&node->refcount, __ATOMIC_ACQUIRE);
-    while (refs > 0) {
-        int new_refs = refs - 1;
-        if (__atomic_compare_exchange_n(&node->refcount, &refs, new_refs, false,
-                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-            if (dropped_ref)
-                *dropped_ref = true;
-            return new_refs;
-        }
-    }
-
-    return refs;
+    return __atomic_load_n(&ref->refs, __ATOMIC_ACQUIRE);
 }
 
-struct mount_point {
-    struct llist_header node;
-    fs_t *fs;
-    vfs_node_t *dir;
-    vfs_node_t *original_dir_root;
-    vfs_node_t *root_node;
-    char *devname;
-};
+static inline int vfs_ref_get(vfs_ref_t *ref) {
+    if (!ref)
+        return 0;
+    return __atomic_add_fetch(&ref->refs, 1, __ATOMIC_ACQ_REL);
+}
 
-vfs_node_t *vfs_create_detached_mount_root(vfs_node_t *dir);
-int vfs_bind_mount_root(vfs_node_t *root, vfs_node_t *dir);
+static inline bool vfs_ref_put(vfs_ref_t *ref) {
+    if (!ref)
+        return false;
+    return __atomic_sub_fetch(&ref->refs, 1, __ATOMIC_ACQ_REL) == 0;
+}
 
-#define IN_ACCESS 0x1
-#define IN_ATTRIB 0x4
-#define IN_CLOSE_WRITE 0x8
-#define IN_CLOSE_NOWRITE 0x10
-#define IN_CREATE 0x100
-#define IN_DELETE 0x200
-#define IN_DELETE_SELF 0x400
-#define IN_MODIFY 0x2
-#define IN_MOVE_SELF 0x800
-#define IN_MOVED_FROM 0x40
-#define IN_MOVED_TO 0x80
-#define IN_OPEN 0x20
-#define IN_MOVE (IN_MOVED_FROM | IN_MOVED_TO)
-#define IN_CLOSE (IN_CLOSE_WRITE | IN_CLOSE_NOWRITE)
-#define IN_DONT_FOLLOW 0x2000000
-#define IN_EXCL_UNLINK 0x4000000
-#define IN_MASK_ADD 0x20000000
-#define IN_ONESHOT 0x80000000
-#define IN_ONLYDIR 0x1000000
-#define IN_IGNORED 0x8000
-#define IN_ISDIR 0x40000000
-#define IN_Q_OVERFLOW 0x4000
-#define IN_UNMOUNT 0x2000
-#define IN_ALL_EVENTS                                                          \
-    (IN_ACCESS | IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE | IN_CLOSE_NOWRITE |   \
-     IN_OPEN | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE |           \
-     IN_DELETE_SELF | IN_MOVE_SELF)
+static inline void vfs_lockref_init(vfs_lockref_t *lockref, int value) {
+    if (!lockref)
+        return;
+    spin_init(&lockref->lock);
+    __atomic_store_n(&lockref->count, value, __ATOMIC_RELEASE);
+}
 
-struct vfs_notify_event {
-    struct llist_header node;
-    uint64_t mask;
-    uint32_t cookie;
-    uint32_t name_len;
-    char *name;
-};
+static inline int vfs_lockref_get(vfs_lockref_t *lockref) {
+    if (!lockref)
+        return 0;
+    return __atomic_add_fetch(&lockref->count, 1, __ATOMIC_ACQ_REL);
+}
 
-struct notifyfs_handle;
-typedef struct notifyfs_handle notifyfs_handle_t;
+static inline bool vfs_lockref_put(vfs_lockref_t *lockref) {
+    if (!lockref)
+        return false;
+    return __atomic_sub_fetch(&lockref->count, 1, __ATOMIC_ACQ_REL) == 0;
+}
 
-typedef struct notifyfs_watch {
-    uint64_t wd;
-    vfs_node_t *watch_node;
-    notifyfs_handle_t *owner;
-    uint64_t mask;
-    bool active;
-    struct llist_header node;
-    struct llist_header all_watches_node;
-    spinlock_t events_lock;
-    struct llist_header events;
-} notifyfs_watch_t;
+static inline uint64_t fd_get_offset(const fd_t *fd) {
+    if (!fd)
+        return 0;
+    return (uint64_t)__atomic_load_n(&fd->f_pos, __ATOMIC_ACQUIRE);
+}
 
-struct notifyfs_handle {
-    struct llist_header watches;
-    vfs_node_t *node;
-};
+static inline void fd_set_offset(fd_t *fd, uint64_t offset) {
+    if (!fd)
+        return;
+    __atomic_store_n(&fd->f_pos, (loff_t)offset, __ATOMIC_RELEASE);
+}
 
-bool notifyfs_watch_queue_event_locked(notifyfs_watch_t *watch,
-                                       vfs_node_t *changed_node,
-                                       const char *name, uint64_t mask,
-                                       uint32_t cookie);
-void notifyfs_watch_deactivate_locked(notifyfs_watch_t *watch,
-                                      bool queue_ignored);
+static inline uint64_t fd_add_offset(fd_t *fd, int64_t delta) {
+    if (!fd)
+        return 0;
+    return (uint64_t)__atomic_add_fetch(&fd->f_pos, delta, __ATOMIC_ACQ_REL);
+}
 
-void vfs_on_new_event(vfs_node_t *node, uint64_t mask);
-void vfs_on_child_event(vfs_node_t *dir, vfs_node_t *child, uint64_t mask,
-                        uint32_t cookie);
-void vfs_on_named_child_event(vfs_node_t *dir, vfs_node_t *child,
-                              const char *name, uint64_t mask, uint32_t cookie);
-void vfs_mark_dirty(vfs_node_t *node, uint64_t dirty_flags);
+static inline uint64_t fd_get_flags(const fd_t *fd) {
+    if (!fd)
+        return 0;
+    return __atomic_load_n(&fd->f_flags, __ATOMIC_ACQUIRE);
+}
 
-void vfs_poll_wait_init(vfs_poll_wait_t *wait, task_t *task, uint32_t events);
+static inline void fd_set_flags(fd_t *fd, uint64_t flags) {
+    if (!fd)
+        return;
+    __atomic_store_n(&fd->f_flags, (unsigned int)flags, __ATOMIC_RELEASE);
+}
+
+void vfs_qstr_make(struct vfs_qstr *qstr, const char *name);
+void vfs_qstr_dup(struct vfs_qstr *qstr, const char *name);
+void vfs_qstr_destroy(struct vfs_qstr *qstr);
+
+int vfs_init(void);
+
+int vfs_register_filesystem(struct vfs_file_system_type *fs);
+void vfs_unregister_filesystem(struct vfs_file_system_type *fs);
+struct vfs_file_system_type *vfs_get_fs_type(const char *name);
+
+struct vfs_super_block *vfs_alloc_super(struct vfs_file_system_type *type,
+                                        unsigned long sb_flags);
+void vfs_get_super(struct vfs_super_block *sb);
+void vfs_put_super(struct vfs_super_block *sb);
+
+struct vfs_inode *vfs_alloc_inode(struct vfs_super_block *sb);
+struct vfs_inode *vfs_igrab(struct vfs_inode *inode);
+void vfs_iput(struct vfs_inode *inode);
+void vfs_inode_init_owner(struct vfs_inode *inode, struct vfs_inode *dir,
+                          umode_t mode);
+
+struct vfs_dentry *vfs_d_alloc(struct vfs_super_block *sb,
+                               struct vfs_dentry *parent,
+                               const struct vfs_qstr *name);
+struct vfs_dentry *vfs_dget(struct vfs_dentry *dentry);
+void vfs_dput(struct vfs_dentry *dentry);
+void vfs_d_add(struct vfs_dentry *parent, struct vfs_dentry *dentry);
+void vfs_d_instantiate(struct vfs_dentry *dentry, struct vfs_inode *inode);
+struct vfs_dentry *vfs_d_lookup(struct vfs_dentry *parent,
+                                const struct vfs_qstr *name);
+
+struct vfs_mount *vfs_mount_alloc(struct vfs_super_block *sb,
+                                  unsigned long mnt_flags);
+struct vfs_mount *vfs_mntget(struct vfs_mount *mnt);
+void vfs_mntput(struct vfs_mount *mnt);
+int vfs_mount_attach(struct vfs_mount *parent, struct vfs_dentry *mountpoint,
+                     struct vfs_mount *child);
+void vfs_mount_detach(struct vfs_mount *mnt);
+struct vfs_mount *vfs_path_mount(const struct vfs_path *path);
+int vfs_reconfigure_mount(struct vfs_mount *mnt, const struct vfs_path *to_path,
+                          bool detached);
+
+void vfs_path_get(struct vfs_path *path);
+void vfs_path_put(struct vfs_path *path);
+bool vfs_path_equal(const struct vfs_path *a, const struct vfs_path *b);
+
+struct vfs_file *vfs_alloc_file(const struct vfs_path *path,
+                                unsigned int open_flags);
+struct vfs_file *vfs_file_get(struct vfs_file *file);
+void vfs_file_put(struct vfs_file *file);
+
+void vfs_fill_generic_kstat(const struct vfs_path *path,
+                            struct vfs_kstat *stat);
+char *vfs_path_to_string(const struct vfs_path *path,
+                         const struct vfs_path *root);
+bool vfs_path_is_ancestor(const struct vfs_path *ancestor,
+                          const struct vfs_path *path);
+
+int vfs_filename_lookup(int dfd, const char *name, unsigned int lookup_flags,
+                        struct vfs_path *path);
+int vfs_path_parent_lookup(int dfd, const char *name, unsigned int lookup_flags,
+                           struct vfs_path *parent, struct vfs_qstr *last,
+                           unsigned int *type);
+
+int vfs_openat(int dfd, const char *name, const struct vfs_open_how *how,
+               struct vfs_file **out);
+int vfs_close_file(struct vfs_file *file);
+ssize_t vfs_read_file(struct vfs_file *file, void *buf, size_t count,
+                      loff_t *ppos);
+ssize_t vfs_write_file(struct vfs_file *file, const void *buf, size_t count,
+                       loff_t *ppos);
+loff_t vfs_llseek_file(struct vfs_file *file, loff_t offset, int whence);
+int vfs_iterate_dir(struct vfs_file *file, struct vfs_dir_context *ctx);
+long vfs_ioctl_file(struct vfs_file *file, unsigned long cmd,
+                    unsigned long arg);
+int vfs_fsync_file(struct vfs_file *file);
+int vfs_truncate_path(const struct vfs_path *path, uint64_t size);
+int vfs_poll(vfs_node_t *node, size_t events);
+
+int vfs_mkdirat(int dfd, const char *pathname, umode_t mode);
+int vfs_mknodat(int dfd, const char *pathname, umode_t mode, dev64_t dev);
+int vfs_unlinkat(int dfd, const char *pathname, int flags);
+int vfs_linkat(int olddfd, const char *oldname, int newdfd, const char *newname,
+               int flags);
+int vfs_symlinkat(const char *target, int newdfd, const char *newname);
+int vfs_renameat2(int olddfd, const char *oldname, int newdfd,
+                  const char *newname, unsigned int flags);
+int vfs_statx(int dfd, const char *pathname, int flags, uint32_t mask,
+              struct vfs_kstat *stat);
+
+int vfs_kern_mount(const char *fs_name, unsigned long mnt_flags,
+                   const char *source, void *data, struct vfs_mount **out);
+int vfs_do_mount(int dfd, const char *pathname, const char *fs_name,
+                 unsigned long mnt_flags, const char *source, void *data);
+int vfs_do_move_mount(int from_dfd, const char *from_pathname, int to_dfd,
+                      const char *to_pathname);
+int vfs_do_umount(int dfd, const char *pathname, int flags);
+
+void vfs_poll_wait_init(vfs_poll_wait_t *wait, struct task *task,
+                        uint32_t events);
 int vfs_poll_wait_arm(vfs_node_t *node, vfs_poll_wait_t *wait);
 void vfs_poll_wait_disarm(vfs_poll_wait_t *wait);
 int vfs_poll_wait_sleep(vfs_node_t *node, vfs_poll_wait_t *wait,
                         int64_t timeout_ns, const char *reason);
 void vfs_poll_notify(vfs_node_t *node, uint32_t events);
 
-void vfs_add_mount_point(vfs_node_t *dir, char *devname);
-void vfs_delete_mount_point_by_dir(vfs_node_t *dir);
-
-extern vfs_node_t *rootdir; // vfs 根目录
-
-vfs_node_t *vfs_node_alloc(vfs_node_t *parent, const char *name);
-void vfs_free(vfs_node_t *vfs);
-void vfs_detach_child(vfs_node_t *node);
-void vfs_attach_child(vfs_node_t *parent, vfs_node_t *child);
-// 一定要记得手动设置一下child的type
-vfs_node_t *vfs_child_find(vfs_node_t *parent, const char *name);
-
-bool vfs_init();
-
-/**
- *\brief 注册一个文件系统
- *
- *\param fs      文件系统
- *\return 文件系统 id
- */
-int vfs_regist(fs_t *fs);
-
-#define PATH_MAX 4096    // 路径最大长度
-#define FILENAME_MAX 256 // 文件名最大长度
-
-vfs_node_t *vfs_open_at(vfs_node_t *start, const char *_path, uint64_t flags);
-
-vfs_node_t *vfs_open(const char *_path, uint64_t flags);
-
-vfs_node_t *vfs_find_node_by_inode(uint64_t inode);
-
-/**
- *\brief 创建文件夹
- *
- *\param name     文件夹名
- *\return 0 成功，-1 失败
- */
-int vfs_mkdir_at(vfs_node_t *start, const char *name);
-int vfs_mkdir(const char *name);
-int vfs_mkfile_at(vfs_node_t *start, const char *name);
-int vfs_mkfile(const char *name);
-int vfs_link_at(vfs_node_t *start, const char *name, const char *target_name);
-int vfs_link_existing_at(vfs_node_t *start, const char *name,
-                         vfs_node_t *target);
-int vfs_link(const char *name, const char *target_name);
-int vfs_link_existing(const char *name, vfs_node_t *target);
-int vfs_symlink_at(vfs_node_t *start, const char *name,
-                   const char *target_name);
-int vfs_symlink(const char *name, const char *target_name);
-
-int vfs_mknod_at(vfs_node_t *start, const char *name, uint16_t umode, int dev);
-int vfs_mknod(const char *name, uint16_t umode, int dev);
-
-int vfs_chmod(const char *path, uint16_t mode);
-int vfs_fchmod(fd_t *fd, uint16_t mode);
-
-int vfs_chown(const char *path, uint64_t uid, uint64_t gid);
-
-/**
- *\brief 读取文件
- *
- *\param file     文件句柄
- *\param addr     读取的数据
- *\param offset   读取的偏移
- *\param size     读取的大小
- *\return 0 成功，-1 失败
- */
-ssize_t vfs_read(vfs_node_t *file, void *addr, size_t offset, size_t size);
-ssize_t vfs_read_nocache(vfs_node_t *file, void *addr, size_t offset,
-                         size_t size);
-/**
- *\brief 写入文件
- *
- *\param file     文件句柄
- *\param addr     写入的数据
- *\param offset   写入的偏移
- *\param size     写入的大小
- *\return 0 成功，-1 失败
- */
-ssize_t vfs_write(vfs_node_t *file, const void *addr, size_t offset,
-                  size_t size);
-
-ssize_t vfs_read_fd(fd_t *fd, void *addr, size_t offset, size_t size);
-ssize_t vfs_read_fd_nocache(fd_t *fd, void *addr, size_t offset, size_t size);
-ssize_t vfs_write_fd(fd_t *fd, const void *addr, size_t offset, size_t size);
-
-/**
- *\brief 挂载文件系统
- *
- *\param src      源文件地址
- *\param node     挂载到的节点
- *\return 0 成功，-1 失败
- */
-int vfs_mount(uint64_t dev, vfs_node_t *node, const char *type);
-/**
- *\brief 卸载文件系统
- *
- *\param path     文件路径
- *\return 0 成功，-1 失败
- */
-int vfs_unmount(const char *path);
-
-/**
- *\brief 关闭文件
- *
- *\param node     文件节点
- *\return 0 成功，-1 失败
- */
-int vfs_close(vfs_node_t *fd);
-
-/**
- *\brief 删除文件
- *
- *\param node     文件节点
- *\return 0 成功，-1 失败
- */
-int vfs_delete(vfs_node_t *node);
-
-/**
- *\brief 重命名文件
- *
- *\param node     文件节点
- *\param new      新路径
- *\return 0 成功，-1 失败
- */
-int vfs_rename(vfs_node_t *node, const char *new);
-
-/**
- *\brief 控制文件
- *
- *\param node     文件节点
- *\param cmd      命令
- *\param arg      参数
- *\return 0 成功，-1 失败
- */
-int vfs_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg);
-
-/**
- *\brief 读取链接
- *
- *\param path   目录
- *\param node    节点
- *\return 0 成功，-1 失败
- */
-int vfs_readlink(vfs_node_t *node, char *buf, size_t bufsize);
-
-/**
- *\brief 更新文件信息
- *
- *\param node     文件节点
- */
-void vfs_update(vfs_node_t *node);
-
-/**
- *\brief 修改文件大小
- *
- *\param node     文件节点
- *\param size     新长度
- */
-int vfs_resize(vfs_node_t *node, uint64_t size);
-
-/**
- *\brief 获取文件的完整路径
- *
- *\param node     文件节点
- */
-char *vfs_get_fullpath(vfs_node_t *node);
-char *vfs_get_fullpath_at(vfs_node_t *node, vfs_node_t *root);
-bool vfs_is_ancestor(vfs_node_t *ancestor, vfs_node_t *node);
-
-/**
- *\brief 轮询等待
- *
- *\param node     文件节点
- */
-int vfs_poll(vfs_node_t *node, size_t event);
-int vfs_fsync(vfs_node_t *node);
-
-fd_t *fd_create(vfs_node_t *node, uint64_t flags, bool close_on_exec);
-void fd_destroy(fd_t *fd);
-void fd_release(fd_t *fd);
-fd_t *vfs_dup(fd_t *fd);
-
-void *vfs_map(fd_t *fd, uint64_t addr, uint64_t len, uint64_t prot,
-              uint64_t flags, uint64_t offset);
-
-extern int fs_nextid;
-
-static inline uint32_t alloc_fake_inode() {
-    static uint32_t next_inode = 0x80000001;
-    return next_inode++;
-}
-
-void vfs_merge_nodes_to(vfs_node_t *dest, vfs_node_t *source);
-vfs_node_t *vfs_get_real_node(vfs_node_t *node);
+int vfs_sys_openat(int dfd, const char *pathname,
+                   const struct vfs_open_how *how);
+int vfs_sys_close(int fd);
+ssize_t vfs_sys_read(int fd, void *buf, size_t count);
+ssize_t vfs_sys_pread64(int fd, void *buf, size_t count, loff_t pos);
+ssize_t vfs_sys_write(int fd, const void *buf, size_t count);
+ssize_t vfs_sys_pwrite64(int fd, const void *buf, size_t count, loff_t pos);

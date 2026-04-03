@@ -4,6 +4,8 @@
 #include <libs/keys.h>
 #include <libs/llist.h>
 
+typedef struct vfs_inode vfs_node_t;
+
 #define KDGETMODE 0x4B3B // 获取终端模式命令
 #define KDSETMODE 0x4B3A // 设置终端模式命令
 #define KD_TEXT 0x00     // 文本模式
@@ -85,9 +87,6 @@ struct input_event {
     uint16_t code;
     int32_t value;
 };
-
-struct vfs_node;
-typedef struct vfs_node vfs_node_t;
 
 typedef struct dev_input_event {
     char *devname;
