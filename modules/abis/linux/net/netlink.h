@@ -31,6 +31,9 @@
 #define NETLINK_CRYPTO 21
 #define NETLINK_SMC 22
 
+#define NETLINK_ADD_MEMBERSHIP 1
+#define NETLINK_DROP_MEMBERSHIP 2
+
 #define NETLINK_BUFFER_SIZE 8192
 
 struct sockaddr_nl {

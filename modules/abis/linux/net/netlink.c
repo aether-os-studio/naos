@@ -146,19 +146,73 @@ static inline void netlink_notify_sock(struct netlink_sock *sock,
     vfs_poll_notify(sock->node, events);
 }
 
+static bool netlink_group_mask_matches(uint32_t subscribed_groups,
+                                       uint32_t target_groups) {
+    return target_groups != 0 && (subscribed_groups & target_groups) != 0;
+}
+
+static bool netlink_portid_in_use_locked(const struct netlink_sock *self,
+                                         uint32_t portid) {
+    if (!portid)
+        return true;
+
+    for (int i = 0; i < MAX_NETLINK_SOCKETS; i++) {
+        struct netlink_sock *sock = netlink_sockets[i];
+        if (!sock || sock == self)
+            continue;
+        if (sock->portid == portid)
+            return true;
+    }
+
+    return false;
+}
+
+static uint32_t netlink_resolve_portid_locked(struct netlink_sock *self,
+                                              uint32_t requested_portid) {
+    if (requested_portid) {
+        if (netlink_portid_in_use_locked(self, requested_portid))
+            return 0;
+        return requested_portid;
+    }
+
+    uint32_t candidate = (uint32_t)current_task->pid;
+    if (!candidate)
+        candidate = 1;
+
+    while (netlink_portid_in_use_locked(self, candidate)) {
+        candidate++;
+        if (!candidate)
+            candidate = 1;
+    }
+
+    return candidate;
+}
+
 static int netlink_wait_sock(struct netlink_sock *sock, uint32_t events,
                              const char *reason) {
     if (!sock || !sock->node || !current_task)
         return -EINVAL;
 
     uint32_t want = events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
-    if (vfs_poll(sock->node, want) & want)
+    int polled = vfs_poll(sock->node, want);
+    if (polled < 0)
+        return polled;
+    if (polled & (int)want)
         return EOK;
 
     vfs_poll_wait_t wait;
     vfs_poll_wait_init(&wait, current_task, want);
     if (vfs_poll_wait_arm(sock->node, &wait) < 0)
         return -EINVAL;
+    polled = vfs_poll(sock->node, want);
+    if (polled < 0) {
+        vfs_poll_wait_disarm(&wait);
+        return polled;
+    }
+    if (polled & (int)want) {
+        vfs_poll_wait_disarm(&wait);
+        return EOK;
+    }
     int ret = vfs_poll_wait_sleep(sock->node, &wait, -1, reason);
     vfs_poll_wait_disarm(&wait);
     return ret;
@@ -416,7 +470,7 @@ static void netlink_deliver_historical_messages(struct netlink_sock *sock) {
         if (entry->protocol != sock->protocol)
             continue;
 
-        if (entry->nl_groups != sock->groups)
+        if (!netlink_group_mask_matches(sock->groups, entry->nl_groups))
             continue;
 
         // 投递消息到 socket buffer
@@ -474,7 +528,7 @@ void netlink_broadcast_to_group(const char *buf, size_t len,
 
         spin_lock(&sock->lock);
 
-        if (sock->groups == target_groups) {
+        if (netlink_group_mask_matches(sock->groups, target_groups)) {
             netlink_buffer_write_packet(sock, buf, len, sender_pid,
                                         target_groups);
         }
@@ -487,6 +541,10 @@ void netlink_broadcast_to_group(const char *buf, size_t len,
 
 int netlink_bind(uint64_t fd, const struct sockaddr_un *addr,
                  socklen_t addrlen) {
+    if (addr == NULL || addrlen < sizeof(struct sockaddr_nl)) {
+        return -EINVAL;
+    }
+
     if (current_task->fd_info->fds[fd] == NULL ||
         current_task->fd_info->fds[fd]->node == NULL) {
         return -EBADF;
@@ -505,24 +563,31 @@ int netlink_bind(uint64_t fd, const struct sockaddr_un *addr,
         return -EAFNOSUPPORT;
     }
 
-    spin_lock(&sock->lock);
+    spin_lock(&netlink_sockets_lock);
+    uint32_t portid = netlink_resolve_portid_locked(sock, nl_addr->nl_pid);
+    if (!portid) {
+        spin_unlock(&netlink_sockets_lock);
+        return -EADDRINUSE;
+    }
 
-    sock->portid = nl_addr->nl_pid;
+    spin_lock(&sock->lock);
+    sock->portid = portid;
     sock->groups = nl_addr->nl_groups;
 
     if (sock->bind_addr == NULL) {
         sock->bind_addr = malloc(sizeof(struct sockaddr_nl));
         if (sock->bind_addr == NULL) {
             spin_unlock(&sock->lock);
+            spin_unlock(&netlink_sockets_lock);
             return -ENOMEM;
         }
     }
     memcpy(sock->bind_addr, nl_addr, sizeof(struct sockaddr_nl));
     sock->bind_addr->nl_pid = sock->portid;
+    spin_unlock(&sock->lock);
+    spin_unlock(&netlink_sockets_lock);
 
     netlink_deliver_historical_messages(sock);
-
-    spin_unlock(&sock->lock);
 
     return 0;
 }
@@ -617,7 +682,30 @@ size_t netlink_setsockopt(uint64_t fd, int level, int optname,
             return -ENOPROTOOPT;
         }
     } else if (level == SOL_NETLINK) {
-        return 0;
+        switch (optname) {
+        case NETLINK_ADD_MEMBERSHIP:
+        case NETLINK_DROP_MEMBERSHIP: {
+            if (!optval || optlen < sizeof(uint32_t))
+                return -EINVAL;
+
+            uint32_t group = *(const uint32_t *)optval;
+            if (group == 0 || group > 32)
+                return -EINVAL;
+
+            uint32_t bit = 1U << (group - 1);
+            spin_lock(&nl_sk->lock);
+            if (optname == NETLINK_ADD_MEMBERSHIP)
+                nl_sk->groups |= bit;
+            else
+                nl_sk->groups &= ~bit;
+            if (nl_sk->bind_addr)
+                nl_sk->bind_addr->nl_groups = nl_sk->groups;
+            spin_unlock(&nl_sk->lock);
+            return 0;
+        }
+        default:
+            return -ENOPROTOOPT;
+        }
     } else {
         return -ENOPROTOOPT;
     }
@@ -662,9 +750,12 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
         return -EINVAL;
     }
 
+    bool peek = !!(flags & MSG_PEEK);
     bool noblock =
         !!(flags & MSG_DONTWAIT) ||
         !!(fd_get_flags(current_task->fd_info->fds[fd]) & O_NONBLOCK);
+
+    msg->msg_flags = 0;
 
     // Check if there's a complete message available
     bool has_msg = netlink_buffer_has_msg(nl_sk);
@@ -692,7 +783,7 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
 
     // Read the complete message into a temporary buffer with sender info
     size_t bytes_read = netlink_buffer_read_packet(
-        nl_sk, temp_buf, sizeof(temp_buf), &sender_pid, &sender_groups, false);
+        nl_sk, temp_buf, sizeof(temp_buf), &sender_pid, &sender_groups, peek);
     if (bytes_read == 0) {
         return -EAGAIN;
     }
@@ -915,10 +1006,7 @@ size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
         !!(fd_get_flags(current_task->fd_info->fds[fd]) & O_NONBLOCK);
 
     bool peek = !!(flags & MSG_PEEK);
-
     size_t msg_len = netlink_buffer_peek_msg_len(nl_sk);
-    if (peek && msg_len > 0)
-        return msg_len;
 
     // Check if there's a complete message available
     bool has_msg = netlink_buffer_has_msg(nl_sk);
@@ -943,7 +1031,7 @@ size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
     char temp_buffer[NETLINK_BUFFER_SIZE];
     // Read the complete message directly into the user buffer
     size_t bytes_read = netlink_buffer_read_packet(
-        nl_sk, temp_buffer, limit, &sender_pid, &sender_groups, false);
+        nl_sk, temp_buffer, limit, &sender_pid, &sender_groups, peek);
     if (bytes_read == 0) {
         return -EAGAIN;
     }

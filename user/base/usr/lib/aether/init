@@ -15,6 +15,12 @@ export SDL_VIDEODRIVER=wayland
 export SDL_AUDIODRIVER=pipewire
 export LIBGL_ALWAYS_SOFTWARE=1
 
+mkdir -p /run/udev/data/c226:0
+mkdir -p /run/udev/data/c13:0
+mkdir -p /run/udev/data/c13:1
+mkdir -p /run/udev/data/c13:2
+mkdir -p /run/udev/data/c13:3
+
 mkdir -p /tmp/.X11-unix
 mkdir -p /tmp/.ICE-unix
 mkdir -p $HOME/.config/dconf
