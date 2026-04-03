@@ -787,22 +787,34 @@ vfs_node_t *sysfs_regist_dev(char t, int major, int minor,
     vfs_iput(uevent);
 
     int seqnum = alloc_seq_num();
-    size_t msg_len =
+    size_t buffer_len =
         snprintf(NULL, 0, "add@%s\nACTION=add\nSEQNUM=%d\nTAGS=:systemd:\n%s\n",
                  devpath_for_event, seqnum, buf) +
         1;
-    char *msg = malloc(msg_len);
-    if (msg) {
-        snprintf(msg, msg_len,
-                 "add@%s\nACTION=add\nSEQNUM=%d\nTAGS=:systemd:\n%s\n",
-                 devpath_for_event, seqnum, buf);
-        for (size_t i = 0; i < msg_len; ++i) {
-            if (msg[i] == '\n')
-                msg[i] = '\0';
+    char *buffer = malloc(buffer_len);
+    snprintf(buffer, buffer_len,
+             "add@%s\nACTION=add\nSEQNUM=%d\nTAGS=:systemd:\n%s\n",
+             devpath_for_event, seqnum, buf);
+    size_t src_len = strlen(buffer);
+    size_t dst_len = 0;
+    bool last_was_nul = false;
+    for (size_t i = 0; i < src_len; i++) {
+        char c = buffer[i];
+        if (c == '\n')
+            c = '\0';
+        if (c == '\0') {
+            if (last_was_nul)
+                continue;
+            last_was_nul = true;
+        } else {
+            last_was_nul = false;
         }
-        netlink_kernel_uevent_send(msg, (int)msg_len);
-        free(msg);
+        buffer[dst_len++] = c;
     }
+    if (dst_len == 0 || buffer[dst_len - 1] != '\0')
+        buffer[dst_len++] = '\0';
+    netlink_kernel_uevent_send(buffer, (int)dst_len);
+    free(buffer);
 
     return device_root;
 }
