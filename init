@@ -27,12 +27,6 @@ fi
 
 /bin/umount /dev
 
-/bin/rm -rf /mnt/dev
-/bin/rm -rf /mnt/proc
-/bin/rm -rf /mnt/sys
-/bin/rm -rf /mnt/run
-/bin/rm -rf /mnt/tmp
-
 /bin/mkdir -p /mnt/dev/
 /bin/mkdir -p /mnt/proc/
 /bin/mkdir -p /mnt/sys/

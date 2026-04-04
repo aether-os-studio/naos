@@ -1028,16 +1028,12 @@ size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
     // 重新获取消息长度（用于 MSG_TRUNC）
     msg_len = netlink_buffer_peek_msg_len(nl_sk);
 
-    char temp_buffer[NETLINK_BUFFER_SIZE];
     // Read the complete message directly into the user buffer
     size_t bytes_read = netlink_buffer_read_packet(
-        nl_sk, temp_buffer, limit, &sender_pid, &sender_groups, peek);
+        nl_sk, out, limit, &sender_pid, &sender_groups, peek);
     if (bytes_read == 0) {
         return -EAGAIN;
     }
-
-    if (copy_to_user(out, temp_buffer, bytes_read))
-        return (size_t)-EFAULT;
 
     // Fill in socket address if requested
     if (addr) {
@@ -1047,16 +1043,12 @@ size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
         nl_addr_out.nl_groups = sender_groups;
         nl_addr_out.nl_pad = 0;
 
-        if (copy_to_user(addr, &nl_addr_out, sizeof(struct sockaddr_nl))) {
-            return -EFAULT;
-        }
+        memcpy(addr, &nl_addr_out, sizeof(struct sockaddr_nl));
     }
 
     if (len) {
         uint32_t addr_len = sizeof(struct sockaddr_nl);
-        if (copy_to_user(len, &addr_len, sizeof(uint32_t))) {
-            return -EFAULT;
-        }
+        memcpy(len, &addr_len, sizeof(uint32_t));
     }
 
     // 如果设置了 MSG_TRUNC，返回原始消息长度
