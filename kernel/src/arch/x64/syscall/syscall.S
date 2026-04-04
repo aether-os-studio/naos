@@ -2,7 +2,6 @@
 #include "settings.h"
 
 ENTRY(syscall_handler_asm)
-    cli
     cld
 
     swapgs

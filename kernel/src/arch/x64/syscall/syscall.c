@@ -42,7 +42,9 @@ void syscall_init() {
 
 syscall_handle_t syscall_handlers[MAX_SYSCALL_NUM];
 
-void syscall_handler_init() { memset(syscall_handlers, 0, MAX_SYSCALL_NUM); }
+void syscall_handler_init() {
+    memset(syscall_handlers, 0, sizeof(syscall_handlers));
+}
 
 spinlock_t syscall_debug_lock = SPIN_INIT;
 
@@ -57,6 +59,8 @@ static inline uint64_t syscall_account_running_ns(task_t *task,
 }
 
 void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
+    uint64_t idx = regs->rax & 0xFFFFFFFF;
+
     regs->rip = regs->rcx;
     regs->rflags = regs->r11;
     regs->rflags |= (1 << 9);
@@ -73,21 +77,18 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
 
     task_membarrier_checkpoint(self);
 
-    uint64_t idx = regs->rax & 0xFFFFFFFF;
-
     uint64_t arg1 = regs->rdi;
     uint64_t arg2 = regs->rsi;
     uint64_t arg3 = regs->rdx;
     uint64_t arg4 = regs->r10;
     uint64_t arg5 = regs->r8;
     uint64_t arg6 = regs->r9;
-    uint64_t seccomp_args[6] = {arg1, arg2, arg3, arg4, arg5, arg6};
 
     if (self)
         syscall_account_running_ns(self, nano_time());
     uint64_t syscall_user_base = self ? self->user_time_ns : 0;
 
-    if (idx > MAX_SYSCALL_NUM) {
+    if (idx >= MAX_SYSCALL_NUM) {
         regs->rax = (uint64_t)-ENOSYS;
         goto done;
     }
@@ -178,7 +179,8 @@ done:
         serial_fprintk("syscall %d accessed a invalid address\n", idx);
     }
 
-    task_signal(regs);
+    if (self && self->signal && self->signal->signal != 0)
+        task_signal(regs);
 
     regs->rcx = regs->rip;
     regs->r11 = regs->rflags;

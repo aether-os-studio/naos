@@ -187,23 +187,58 @@ static uint64_t sys_sched_yield_linux(void) {
     return 0;
 }
 
+static inline uint64_t getrandom_next(uint64_t *state) {
+    uint64_t x = *state;
+
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    *state = x;
+    return x * 2685821657736338717ULL;
+}
+
 uint64_t sys_getrandom(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     uint8_t *buffer = (uint8_t *)arg1;
     size_t get_len = (size_t)arg2;
     uint32_t flags = (uint32_t)arg3;
+    uint64_t state;
+    size_t copied = 0;
+    uint8_t chunk[256];
 
-    if (get_len == 0 || get_len > 1024 * 1024) {
+    (void)flags;
+
+    if (get_len == 0) {
+        return 0;
+    }
+    if (get_len > 1024 * 1024) {
         return (uint64_t)-EINVAL;
     }
 
-    for (size_t i = 0; i < get_len; i++) {
-        tm time;
-        uint64_t next = nano_time();
-        next = next * 1103515245 + 12345;
-        uint8_t rand_byte = ((uint8_t)(next / 65536) % 32768);
-        if (copy_to_user(buffer + i, &rand_byte, sizeof(rand_byte))) {
+    if (!buffer || check_user_overflow((uint64_t)buffer, get_len)) {
+        return (uint64_t)-EFAULT;
+    }
+
+    state = nano_time() ^ rdtsc_ordered();
+    if (current_task)
+        state ^= current_task->pid ^ ((uint64_t)current_task->cpu_id << 32);
+    if (state == 0)
+        state = 0x9e3779b97f4a7c15ULL;
+
+    while (copied < get_len) {
+        size_t todo = MIN(sizeof(chunk), get_len - copied);
+        size_t offset = 0;
+
+        while (offset < todo) {
+            uint64_t value = getrandom_next(&state);
+            size_t take = MIN(sizeof(value), todo - offset);
+            memcpy(chunk + offset, &value, take);
+            offset += take;
+        }
+
+        if (copy_to_user(buffer + copied, chunk, todo)) {
             return (uint64_t)-EFAULT;
         }
+        copied += todo;
     }
 
     return get_len;
@@ -269,8 +304,6 @@ uint64_t sys_clock_getres(uint64_t arg1, uint64_t arg2) {
 }
 
 uint64_t sys_time(uint64_t arg1) {
-    tm time;
-    time_read(&time);
     uint64_t timestamp = boot_get_boottime() + nano_time() / 1000000000;
     if (arg1) {
         if (copy_to_user((void *)arg1, &timestamp, sizeof(timestamp))) {
@@ -288,8 +321,6 @@ uint64_t sys_accept_normal(uint64_t arg1, struct sockaddr_un *arg2,
 uint64_t sys_pipe_normal(uint64_t arg1) { return sys_pipe((int *)arg1, 0); }
 
 uint64_t sys_gettimeofday(uint64_t arg1) {
-    tm time_day;
-    time_read(&time_day);
     uint64_t nano = nano_time();
     uint64_t timestamp = boot_get_boottime() + nano / 1000000000;
     return copy_timeval_to_user(arg1, timestamp, (nano % 1000000000ULL) / 1000);

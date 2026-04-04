@@ -8,6 +8,7 @@ struct futex_wait {
     uintptr_t key_ctx;
     task_t *task;
     struct futex_wait *next;
+    uint32_t bucket_id;
     uint32_t bitset; // For FUTEX_WAIT_BITSET
 };
 

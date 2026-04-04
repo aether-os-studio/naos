@@ -37,6 +37,9 @@ static bool tsc_deadline_supported;
 static uint64_t tsc_freq_hz;
 static uint64_t tsc_base_cycles;
 static uint64_t tsc_base_ns;
+static uint64_t tsc_ns_scale;
+
+#define TSC_NS_SCALE_SHIFT 32U
 
 static uint64_t hpet_main_counter(void) {
     if (hpet_addr == NULL)
@@ -100,6 +103,13 @@ static void tsc_calibrate_with_hpet(void) {
         return;
     }
 
+    tsc_ns_scale =
+        ((__uint128_t)1000000000ULL << TSC_NS_SCALE_SHIFT) / tsc_freq_hz;
+    if (tsc_ns_scale == 0) {
+        tsc_deadline_supported = false;
+        return;
+    }
+
     tsc_base_cycles = end_tsc;
     tsc_base_ns = end_ns;
     tsc_clocksource_enabled = true;
@@ -111,7 +121,8 @@ uint64_t nano_time() {
 
     uint64_t now = rdtsc_ordered();
     uint64_t delta = now - tsc_base_cycles;
-    return tsc_base_ns + ((__uint128_t)delta * 1000000000ULL) / tsc_freq_hz;
+    return tsc_base_ns +
+           (((__uint128_t)delta * tsc_ns_scale) >> TSC_NS_SCALE_SHIFT);
 }
 
 bool tsc_clocksource_available() { return tsc_clocksource_enabled; }

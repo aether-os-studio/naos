@@ -289,6 +289,28 @@ static int generic_get_fd_path(int fd, struct vfs_path *path) {
     return 0;
 }
 
+static inline int rw_validate_user_buffer(const void *buf, uint64_t len) {
+    if (!len)
+        return 0;
+    if (!buf || check_user_overflow((uint64_t)buf, len))
+        return -EFAULT;
+    return 0;
+}
+
+static uint64_t rw_validate_iovecs(const struct iovec *kiov, uint64_t count) {
+    if (!kiov && count)
+        return (uint64_t)-EFAULT;
+
+    for (uint64_t i = 0; i < count; i++) {
+        if (kiov[i].len == 0)
+            continue;
+        if (rw_validate_user_buffer(kiov[i].iov_base, kiov[i].len) < 0)
+            return (uint64_t)-EFAULT;
+    }
+
+    return 0;
+}
+
 static void generic_fill_stat_from_kstat(struct stat *buf,
                                          const struct vfs_kstat *stat) {
     if (!buf || !stat)
@@ -929,8 +951,7 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {
     if (!len) {
         return 0;
     }
-    if (!buf || check_user_overflow((uint64_t)buf, len) ||
-        check_unmapped((uint64_t)buf, len)) {
+    if (rw_validate_user_buffer(buf, len) < 0) {
         return (uint64_t)-EFAULT;
     }
     file = task_get_file(current_task, (int)fd);
@@ -952,8 +973,7 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
     if (!len) {
         return 0;
     }
-    if (!buf || check_user_overflow((uint64_t)buf, len) ||
-        check_unmapped((uint64_t)buf, len)) {
+    if (rw_validate_user_buffer(buf, len) < 0) {
         return (uint64_t)-EFAULT;
     }
 
@@ -977,8 +997,7 @@ uint64_t sys_pread64(int fd, void *buf, size_t len, uint64_t offset) {
     if (!len) {
         return 0;
     }
-    if (!buf || check_user_overflow((uint64_t)buf, len) ||
-        check_unmapped((uint64_t)buf, len)) {
+    if (rw_validate_user_buffer(buf, len) < 0) {
         return (uint64_t)-EFAULT;
     }
 
@@ -1002,8 +1021,7 @@ uint64_t sys_pwrite64(int fd, const void *buf, size_t len, uint64_t offset) {
     if (!len) {
         return 0;
     }
-    if (!buf || check_user_overflow((uint64_t)buf, len) ||
-        check_unmapped((uint64_t)buf, len)) {
+    if (rw_validate_user_buffer(buf, len) < 0) {
         return (uint64_t)-EFAULT;
     }
 
@@ -1205,12 +1223,13 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
 }
 
 uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
+    struct vfs_file *file;
+
     if (count == 0) {
         return 0;
     }
     if (!iovec || count > SIZE_MAX / sizeof(struct iovec) ||
-        check_user_overflow((uint64_t)iovec, count * sizeof(struct iovec)) ||
-        check_unmapped((uint64_t)iovec, count * sizeof(struct iovec))) {
+        check_user_overflow((uint64_t)iovec, count * sizeof(struct iovec))) {
         return (uint64_t)-EFAULT;
     }
 
@@ -1221,6 +1240,23 @@ uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
     if (copy_from_user(kiov, iovec, count * sizeof(struct iovec))) {
         free(kiov);
         return (uint64_t)-EFAULT;
+    }
+
+    uint64_t validate_ret = rw_validate_iovecs(kiov, count);
+    if ((int64_t)validate_ret < 0) {
+        free(kiov);
+        return validate_ret;
+    }
+
+    file = task_get_file(current_task, (int)fd);
+    if (!file) {
+        free(kiov);
+        return (uint64_t)-EBADF;
+    }
+    if (S_ISDIR(file->f_inode->i_mode)) {
+        vfs_file_put(file);
+        free(kiov);
+        return (uint64_t)-EISDIR;
     }
 
     ssize_t total_read = 0;
@@ -1228,13 +1264,15 @@ uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
         if (kiov[i].iov_base == NULL || kiov[i].len == 0)
             continue;
 
-        ssize_t ret = sys_read(fd, kiov[i].iov_base, kiov[i].len);
+        ssize_t ret = vfs_read_file(file, kiov[i].iov_base, kiov[i].len, NULL);
         if (ret < 0) {
             if (total_read > 0 &&
                 (ret == -EAGAIN || ret == -EWOULDBLOCK || ret == -EINTR)) {
+                vfs_file_put(file);
                 free(kiov);
                 return total_read;
             }
+            vfs_file_put(file);
             free(kiov);
             return (uint64_t)ret;
         }
@@ -1242,17 +1280,19 @@ uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
         if ((size_t)ret < kiov[i].len)
             break;
     }
+    vfs_file_put(file);
     free(kiov);
     return total_read;
 }
 
 uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count) {
+    struct vfs_file *file;
+
     if (count == 0) {
         return 0;
     }
     if (!iovec || count > SIZE_MAX / sizeof(struct iovec) ||
-        check_user_overflow((uint64_t)iovec, count * sizeof(struct iovec)) ||
-        check_unmapped((uint64_t)iovec, count * sizeof(struct iovec))) {
+        check_user_overflow((uint64_t)iovec, count * sizeof(struct iovec))) {
         return (uint64_t)-EFAULT;
     }
 
@@ -1265,18 +1305,37 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count) {
         return (uint64_t)-EFAULT;
     }
 
+    uint64_t validate_ret = rw_validate_iovecs(kiov, count);
+    if ((int64_t)validate_ret < 0) {
+        free(kiov);
+        return validate_ret;
+    }
+
+    file = task_get_file(current_task, (int)fd);
+    if (!file) {
+        free(kiov);
+        return (uint64_t)-EBADF;
+    }
+    if (S_ISDIR(file->f_inode->i_mode)) {
+        vfs_file_put(file);
+        free(kiov);
+        return (uint64_t)-EISDIR;
+    }
+
     ssize_t total_written = 0;
     for (uint64_t i = 0; i < count; i++) {
         if (kiov[i].iov_base == NULL || kiov[i].len == 0)
             continue;
 
-        ssize_t ret = sys_write(fd, kiov[i].iov_base, kiov[i].len);
+        ssize_t ret = vfs_write_file(file, kiov[i].iov_base, kiov[i].len, NULL);
         if (ret < 0) {
             if (total_written > 0 &&
                 (ret == -EAGAIN || ret == -EWOULDBLOCK || ret == -EINTR)) {
+                vfs_file_put(file);
                 free(kiov);
                 return total_written;
             }
+            vfs_file_put(file);
             free(kiov);
             return (uint64_t)ret;
         }
@@ -1284,6 +1343,7 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count) {
         if ((size_t)ret < kiov[i].len)
             break;
     }
+    vfs_file_put(file);
     free(kiov);
     return total_written;
 }
