@@ -461,6 +461,8 @@ typedef struct pidfd_info {
 #define PIDFD_GET_INFO _IOWR(PIDFS_IOCTL_MAGIC, 11, struct pidfd_info)
 
 uint64_t sys_pidfd_open(int pid, uint64_t flags);
+uint64_t sys_pidfd_send_signal(uint64_t pidfd, int sig, siginfo_t *info,
+                               uint64_t flags);
 uint64_t pidfd_create_for_pid(uint64_t pid, uint64_t flags, bool cloexec);
 int pidfd_get_pid_from_fd(uint64_t fd, uint64_t *pid_out);
 void pidfd_on_task_exit(task_t *task);

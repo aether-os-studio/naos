@@ -982,8 +982,8 @@ void x64_register_syscalls() {
     // regist_syscall_handler(SYS_IO_PGETEVENTS,
     // (syscall_handle_t)sys_io_pgetevents);
     regist_syscall_handler(SYS_RSEQ, (syscall_handle_t)sys_rseq);
-    // regist_syscall_handler(SYS_PIDFD_SEND_SIGNAL,
-    // (syscall_handle_t)sys_pidfd_send_signal);
+    regist_syscall_handler(SYS_PIDFD_SEND_SIGNAL,
+                           (syscall_handle_t)sys_pidfd_send_signal);
     // regist_syscall_handler(SYS_IO_URING_SETUP,
     // (syscall_handle_t)sys_io_uring_setup);
     // regist_syscall_handler(SYS_IO_URING_ENTER,
@@ -1442,8 +1442,8 @@ void aarch64_register_syscalls() {
     // regist_syscall_handler(SYS_IO_PGETEVENTS,
     // (syscall_handle_t)sys_io_pgetevents);
     regist_syscall_handler(SYS_RSEQ, (syscall_handle_t)sys_rseq);
-    // regist_syscall_handler(SYS_PIDFD_SEND_SIGNAL,
-    // (syscall_handle_t)sys_pidfd_send_signal);
+    regist_syscall_handler(SYS_PIDFD_SEND_SIGNAL,
+                           (syscall_handle_t)sys_pidfd_send_signal);
     // regist_syscall_handler(SYS_IO_URING_SETUP,
     // (syscall_handle_t)sys_io_uring_setup);
     // regist_syscall_handler(SYS_IO_URING_ENTER,

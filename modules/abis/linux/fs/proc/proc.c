@@ -258,6 +258,14 @@ static size_t procfs_fdinfo_render(proc_handle_t *handle, char *buf,
     if (len >= buflen)
         len = buflen - 1;
 
+    if (fd->f_op && fd->f_op->show_fdinfo && len < buflen - 1) {
+        size_t extra = fd->f_op->show_fdinfo(fd, buf + len, buflen - len);
+        if (extra >= buflen - len)
+            len = buflen - 1;
+        else
+            len += extra;
+    }
+
 out:
     if (fd)
         vfs_close_file(fd);

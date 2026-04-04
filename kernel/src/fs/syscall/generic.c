@@ -463,8 +463,8 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
                                            dirname);
     }
 
-    if (flags & (MS_BIND | MS_REMOUNT | MS_SHARED | MS_PRIVATE | MS_SLAVE |
-                 MS_UNBINDABLE)) {
+    if (flags &
+        (MS_BIND | MS_REMOUNT | MS_SHARED | MS_PRIVATE | MS_UNBINDABLE)) {
         return (uint64_t)-EOPNOTSUPP;
     }
 

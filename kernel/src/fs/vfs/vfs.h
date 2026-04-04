@@ -199,6 +199,7 @@ enum vfs_lookup_flags {
     LOOKUP_EMPTY = 1U << 11,
     LOOKUP_RCU = 1U << 12,
     LOOKUP_CACHED = 1U << 13,
+    LOOKUP_NO_LAST_MOUNT = 1U << 14,
 };
 
 enum vfs_resolve_flags {
@@ -356,6 +357,7 @@ struct vfs_file_operations {
     int (*flush)(struct vfs_file *file);
     int (*release)(struct vfs_inode *inode, struct vfs_file *file);
     int (*fsync)(struct vfs_file *file, loff_t start, loff_t end, int datasync);
+    size_t (*show_fdinfo)(struct vfs_file *file, char *buf, size_t size);
 };
 
 struct vfs_super_block {
@@ -437,6 +439,8 @@ struct vfs_dentry {
 struct vfs_mount {
     struct vfs_mount *mnt_parent;
     struct vfs_mount *mnt_master;
+    struct vfs_mount *mnt_stack_prev;
+    struct vfs_mount *mnt_stack_next;
     struct vfs_dentry *mnt_mountpoint;
     struct vfs_dentry *mnt_root;
     struct vfs_super_block *mnt_sb;

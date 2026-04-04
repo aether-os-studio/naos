@@ -483,7 +483,8 @@ static int __vfs_filename_lookup(struct vfs_path *start,
 
         vfs_path_replace(&path, path.mnt, next);
         vfs_dput(next);
-        vfs_follow_mount(&path);
+        if (!(lookup_flags & LOOKUP_NO_LAST_MOUNT) || has_remaining)
+            vfs_follow_mount(&path);
     }
 
     if ((lookup_flags & LOOKUP_DIRECTORY) && path.dentry &&
@@ -963,13 +964,18 @@ int vfs_mount_attach(struct vfs_mount *parent, struct vfs_dentry *mountpoint,
         return -EINVAL;
 
     mutex_lock(&vfs_mount_lock);
-    if (mountpoint->d_mounted) {
+    if (child->mnt_mountpoint || child->mnt_stack_prev ||
+        child->mnt_stack_next || !llist_empty(&child->mnt_child)) {
         mutex_unlock(&vfs_mount_lock);
         return -EBUSY;
     }
 
     child->mnt_parent = parent ? parent : child;
     child->mnt_mountpoint = vfs_dget(mountpoint);
+    child->mnt_stack_prev = mountpoint->d_mounted;
+    child->mnt_stack_next = NULL;
+    if (child->mnt_stack_prev)
+        child->mnt_stack_prev->mnt_stack_next = child;
     mountpoint->d_mounted = child;
     mountpoint->d_flags |= VFS_DENTRY_MOUNTPOINT;
     if (parent)
@@ -984,19 +990,42 @@ int vfs_mount_attach(struct vfs_mount *parent, struct vfs_dentry *mountpoint,
 }
 
 void vfs_mount_detach(struct vfs_mount *mnt) {
+    struct vfs_dentry *mountpoint;
+    struct vfs_mount *below;
+    struct vfs_mount *above;
+
     if (!mnt)
         return;
 
     mutex_lock(&vfs_mount_lock);
-    if (mnt->mnt_mountpoint && mnt->mnt_mountpoint->d_mounted == mnt) {
-        mnt->mnt_mountpoint->d_mounted = NULL;
-        mnt->mnt_mountpoint->d_flags &= ~VFS_DENTRY_MOUNTPOINT;
-    }
+    mountpoint = mnt->mnt_mountpoint;
+    below = mnt->mnt_stack_prev;
+    above = mnt->mnt_stack_next;
+
+    if (above)
+        above->mnt_stack_prev = below;
+    if (below)
+        below->mnt_stack_next = above;
+
+    if (mountpoint && mountpoint->d_mounted == mnt)
+        mountpoint->d_mounted = below;
+    if (mountpoint && !mountpoint->d_mounted)
+        mountpoint->d_flags &= ~VFS_DENTRY_MOUNTPOINT;
+
+    mnt->mnt_parent = mnt;
+    mnt->mnt_mountpoint = NULL;
+    mnt->mnt_stack_prev = NULL;
+    mnt->mnt_stack_next = NULL;
+
     if (!llist_empty(&mnt->mnt_child))
         llist_delete(&mnt->mnt_child);
+
     __atomic_add_fetch(&vfs_mount_seq, 1, __ATOMIC_ACQ_REL);
     vfs_init_mnt_ns.seq++;
     mutex_unlock(&vfs_mount_lock);
+
+    if (mountpoint)
+        vfs_dput(mountpoint);
 }
 
 struct vfs_mount *vfs_path_mount(const struct vfs_path *path) {
@@ -1031,11 +1060,11 @@ int vfs_reconfigure_mount(struct vfs_mount *mnt, const struct vfs_path *to_path,
     if (!S_ISDIR(to_path->dentry->d_inode->i_mode))
         return -ENOTDIR;
 
-    if (!detached && mnt == to_path->mnt &&
-        mnt->mnt_mountpoint == to_path->dentry)
+    if (!detached && mnt->mnt_parent == to_path->mnt &&
+        mnt->mnt_mountpoint == to_path->dentry &&
+        to_path->dentry->d_mounted == mnt) {
         return 0;
-    if (to_path->dentry->d_mounted)
-        return -EBUSY;
+    }
 
     old_root = *to_path;
     vfs_path_get(&old_root);
@@ -2159,7 +2188,8 @@ int vfs_do_mount(int dfd, const char *pathname, const char *fs_name,
     if (ret < 0)
         return ret;
 
-    ret = vfs_filename_lookup(dfd, pathname, LOOKUP_FOLLOW, &target);
+    ret = vfs_filename_lookup(dfd, pathname,
+                              LOOKUP_FOLLOW | LOOKUP_NO_LAST_MOUNT, &target);
     if (ret < 0)
         goto out;
 
@@ -2190,7 +2220,8 @@ int vfs_do_move_mount(int from_dfd, const char *from_pathname, int to_dfd,
     if (ret < 0)
         return ret;
 
-    ret = vfs_filename_lookup(to_dfd, to_pathname, LOOKUP_FOLLOW, &to);
+    ret = vfs_filename_lookup(to_dfd, to_pathname,
+                              LOOKUP_FOLLOW | LOOKUP_NO_LAST_MOUNT, &to);
     if (ret < 0)
         goto out;
 
@@ -2228,6 +2259,7 @@ int vfs_do_umount(int dfd, const char *pathname, int flags) {
 
     vfs_mount_detach(mnt);
     vfs_path_put(&target);
+    vfs_mntput(mnt);
     vfs_mntput(mnt);
     return 0;
 }

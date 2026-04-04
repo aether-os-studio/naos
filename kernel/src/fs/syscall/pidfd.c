@@ -260,6 +260,7 @@ static const struct vfs_file_operations pidfdfs_file_ops = {
     .poll = pidfd_poll,
     .open = pidfd_open_file,
     .release = pidfd_release,
+    .show_fdinfo = pidfd_procfs_fdinfo_render,
 };
 
 static struct vfs_mount *pidfdfs_get_internal_mount(void) {
@@ -467,6 +468,41 @@ uint64_t sys_pidfd_open(int pid, uint64_t flags) {
     if (pid <= 0)
         return (uint64_t)-EINVAL;
     return pidfd_create_for_pid((uint64_t)pid, flags, true);
+}
+
+uint64_t sys_pidfd_send_signal(uint64_t pidfd, int sig, siginfo_t *info,
+                               uint64_t flags) {
+    uint64_t pid = 0;
+    task_t *target;
+
+    if (sig < 0 || sig >= MAXSIG)
+        return (uint64_t)-EINVAL;
+    if (flags != 0)
+        return (uint64_t)-EINVAL;
+
+    int ret = pidfd_get_pid_from_fd(pidfd, &pid);
+    if (ret < 0)
+        return (uint64_t)ret;
+
+    target = task_find_by_pid(pid);
+    if (!target)
+        return (uint64_t)-ESRCH;
+
+    if (sig == 0)
+        return 0;
+
+    if (!info) {
+        task_send_signal(target, sig, SI_USER);
+        return 0;
+    }
+
+    siginfo_t kinfo;
+    if (copy_from_user(&kinfo, info, sizeof(kinfo)))
+        return (uint64_t)-EFAULT;
+
+    kinfo.si_signo = sig;
+    task_commit_signal(target, sig, &kinfo);
+    return 0;
 }
 
 int pidfd_get_pid_from_fd(uint64_t fd, uint64_t *pid_out) {
