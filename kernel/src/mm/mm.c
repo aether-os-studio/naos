@@ -1,6 +1,7 @@
 #include <arch/arch.h>
 #include <boot/boot.h>
 #include <mm/bitmap.h>
+#include <mm/buddy.h>
 #include <mm/mm.h>
 #include <mm/page.h>
 #include <stdbool.h>
@@ -107,7 +108,7 @@ static void process_memory_region(uintptr_t start, uintptr_t end) {
         uintptr_t usable_end = region_current;
 
         if (usable_end > usable_start) {
-            tlsf_add_region(usable_start, usable_end);
+            add_memory_region(usable_start, usable_end, ZONE_NORMAL);
         }
 
         current = region_current;
@@ -185,10 +186,10 @@ void frame_init(void) {
 
     page_init();
 
-    // 初始化 TLSF 物理页分配器
-    tlsf_init();
+    // 初始化 buddy 分配器
+    buddy_init();
 
-    // 将可用内存添加到 TLSF 分配器
+    // 将可用内存添加到 buddy 分配器
     for (uint64_t i = 0; i < memory_map->entry_count; i++) {
         boot_memory_map_entry_t *region = &memory_map->entries[i];
 

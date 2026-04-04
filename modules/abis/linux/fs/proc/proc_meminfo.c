@@ -38,10 +38,18 @@ char *proc_gen_meminfo(size_t *context_len) {
         sizeof(meminfo_origin) / sizeof(meminfo_origin[0]);
     uint64_t values[55] = {0};
     uint64_t reclaimable_pages = 0;
+    uint64_t managed_pages = 0;
+    uint64_t free_pages = 0;
     cache_stats_t cache_stats = {0};
     const uint64_t page_kb = PAGE_SIZE / 1024;
-    uint64_t managed_pages = tlsf_managed_pages();
-    uint64_t free_pages = tlsf_free_pages();
+
+    for (int i = 0; i < __MAX_NR_ZONES; i++) {
+        zone_t *zone = zones[i];
+        if (!zone)
+            continue;
+        managed_pages += zone->managed_pages;
+        free_pages += zone_free_pages(zone);
+    }
 
     cache_get_stats(&cache_stats);
     reclaimable_pages = cache_stats.block_pages + cache_stats.page_pages;

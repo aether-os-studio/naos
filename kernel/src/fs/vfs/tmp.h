@@ -1,6 +1,7 @@
 #pragma once
 
 #include <fs/vfs/vfs.h>
+#include <fs/vfs/paged_store.h>
 
 typedef struct tmpfs_fs_info {
     uint64_t next_ino;
@@ -17,9 +18,8 @@ typedef struct tmpfs_dirent {
 typedef struct tmpfs_inode_info {
     struct vfs_inode vfs_inode;
     spinlock_t lock;
-    char *data;
-    size_t size;
-    size_t capacity;
+    paged_file_store_t store;
+    char *link_target;
     struct llist_header children;
 } tmpfs_inode_info_t;
 

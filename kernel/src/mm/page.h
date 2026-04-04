@@ -5,18 +5,17 @@
 typedef struct page {
     int refcount;
     uint8_t flags;
-    uint8_t allocator_state;
-    uint16_t reserved;
-    uint32_t span_pages;
-    uint64_t allocator_prev_pfn;
-    uint64_t allocator_next_pfn;
+    uint8_t buddy_order;
+    uint8_t zone_id;
+    uint8_t reserved;
+    uint64_t buddy_prev_pfn;
+    uint64_t buddy_next_pfn;
 } page_t;
 
-#define PAGE_FLAG_BLOCK_HEAD 0x01
-#define PAGE_FLAG_BLOCK_TAIL 0x02
-#define PAGE_FLAG_BLOCK_FREE 0x04
+#define PAGE_FLAG_BUDDY 0x01
+#define PAGE_FLAG_PCPU 0x02
 
-#define PAGE_LINK_NONE UINT64_MAX
+#define PAGE_LIST_NONE UINT64_MAX
 
 extern page_t *page_maps;
 

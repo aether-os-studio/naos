@@ -9,7 +9,9 @@
 #include <net/netlink.h>
 #include <boot/boot.h>
 #include <arch/arch.h>
+#include <fs/vfs/paged_store.h>
 #include <fs/vfs/tmpfs_limit.h>
+#include <mm/mm_syscall.h>
 
 #define DEVTMPFS_MAGIC 0x01021994ULL
 #define MAX_DEVTMPFS_FILE_SIZE (128 * 1024 * 1024)
@@ -24,9 +26,7 @@ typedef struct devtmpfs_inode_info {
     struct vfs_inode vfs_inode;
     mutex_t lock;
     struct llist_header children;
-    char *content;
-    size_t size;
-    size_t capacity;
+    paged_file_store_t store;
     char *link_target;
 } devtmpfs_inode_info_t;
 
@@ -74,9 +74,9 @@ static unsigned char devtmpfs_dtype(umode_t mode) {
 
 static int devtmpfs_resize_inode(struct vfs_inode *inode, uint64_t new_size) {
     devtmpfs_inode_info_t *info = devtmpfs_i(inode);
-    uint64_t old_capacity;
-    uint64_t new_capacity;
-    void *new_data = NULL;
+    uint64_t old_size;
+    size_t old_pages;
+    size_t new_pages;
     int ret;
 
     if (!info || S_ISDIR(inode->i_mode) || S_ISCHR(inode->i_mode) ||
@@ -85,44 +85,57 @@ static int devtmpfs_resize_inode(struct vfs_inode *inode, uint64_t new_size) {
     if (new_size > MAX_DEVTMPFS_FILE_SIZE)
         return -EFBIG;
 
-    old_capacity = info->capacity;
-    new_capacity = new_size ? tmpfs_mem_align(new_size) : 0;
-    if (old_capacity == new_capacity) {
-        if (new_size > info->size && info->content)
-            memset(info->content + info->size, 0, new_size - info->size);
-        info->size = new_size;
-        inode->i_size = new_size;
-        inode->i_blocks = tmpfs_mem_align(new_size) >> 9;
-        inode->i_version++;
+    old_size = info->store.size;
+    if (old_size == new_size)
         return 0;
-    }
 
-    ret = tmpfs_mem_resize_reserve(old_capacity, new_capacity);
+    old_pages = paged_file_store_pages_for_size(old_size);
+    new_pages = paged_file_store_pages_for_size(new_size);
+
+    ret = tmpfs_mem_resize_reserve(old_size, new_size);
     if (ret < 0)
         return ret;
 
-    if (new_capacity) {
-        new_data = alloc_frames_bytes(new_capacity);
-        if (!new_data) {
-            tmpfs_mem_resize_reserve(new_capacity, old_capacity);
-            return -ENOMEM;
+    mutex_lock(&info->lock);
+    if (new_size > old_size) {
+        ret = paged_file_store_ensure_slots(&info->store, new_pages);
+        if (ret < 0) {
+            mutex_unlock(&info->lock);
+            tmpfs_mem_resize_reserve(new_size, old_size);
+            return ret;
         }
-        memset(new_data, 0, new_capacity);
-        if (info->content && info->size) {
-            memcpy(new_data, info->content,
-                   MIN((uint64_t)info->size, MIN(old_capacity, new_capacity)));
-        }
+    } else {
+        paged_file_store_zero_tail(&info->store, new_size);
     }
 
-    if (info->content && old_capacity)
-        free_frames_bytes(info->content, old_capacity);
-
-    info->content = new_data;
-    info->capacity = new_capacity;
-    info->size = new_size;
+    info->store.size = new_size;
     inode->i_size = new_size;
     inode->i_blocks = tmpfs_mem_align(new_size) >> 9;
     inode->i_version++;
+    mutex_unlock(&info->lock);
+
+    if (new_size < old_size) {
+        uint64_t zap_start = PADDING_UP(new_size, PAGE_SIZE);
+        uint64_t zap_end = PADDING_UP(old_size, PAGE_SIZE);
+
+        if (zap_start < zap_end)
+            paged_file_store_zap_shared_mappings(inode, zap_start, zap_end);
+
+        for (size_t i = new_pages; i < old_pages; i++) {
+            uint64_t paddr = 0;
+
+            mutex_lock(&info->lock);
+            if (i < info->store.page_slots) {
+                paddr = info->store.pages[i];
+                info->store.pages[i] = 0;
+            }
+            mutex_unlock(&info->lock);
+
+            if (paddr)
+                address_release(paddr);
+        }
+    }
+
     return 0;
 }
 
@@ -262,16 +275,6 @@ static int devtmpfs_create_common(struct vfs_inode *dir,
     info = devtmpfs_i(inode);
     inode->i_rdev = rdev;
 
-    if (S_ISREG(mode) || S_ISLNK(mode)) {
-        info->capacity = PAGE_SIZE;
-        info->content = alloc_frames_bytes(info->capacity);
-        if (!info->content) {
-            vfs_iput(inode);
-            return -ENOMEM;
-        }
-        memset(info->content, 0, info->capacity);
-    }
-
     if (S_ISLNK(mode) && symlink_target) {
         info->link_target = strdup(symlink_target);
         if (!info->link_target) {
@@ -280,10 +283,23 @@ static int devtmpfs_create_common(struct vfs_inode *dir,
         }
         ret = devtmpfs_resize_inode(inode, strlen(symlink_target));
         if (ret < 0) {
+            free(info->link_target);
+            info->link_target = NULL;
             vfs_iput(inode);
             return ret;
         }
-        memcpy(info->content, symlink_target, info->size);
+
+        loff_t pos = 0;
+        mutex_lock(&info->lock);
+        ret = (int)paged_file_store_write_locked(&info->store, symlink_target,
+                                                 strlen(symlink_target), &pos);
+        mutex_unlock(&info->lock);
+        if (ret < 0) {
+            free(info->link_target);
+            info->link_target = NULL;
+            vfs_iput(inode);
+            return ret;
+        }
     }
 
     ret = devtmpfs_add_dirent(dir, dentry->d_name.name, inode);
@@ -509,7 +525,6 @@ static loff_t devtmpfs_llseek(struct vfs_file *file, loff_t offset,
 static ssize_t devtmpfs_read(struct vfs_file *file, void *buf, size_t count,
                              loff_t *ppos) {
     devtmpfs_inode_info_t *info;
-    size_t pos, n;
 
     if (!file || !file->f_inode || !buf || !ppos)
         return -EINVAL;
@@ -518,21 +533,20 @@ static ssize_t devtmpfs_read(struct vfs_file *file, void *buf, size_t count,
                            file);
 
     info = devtmpfs_i(file->f_inode);
-    pos = (size_t)*ppos;
-    if (pos >= info->size)
-        return 0;
+    if (!info)
+        return -EINVAL;
 
-    n = MIN(count, info->size - pos);
-    memcpy(buf, info->content + pos, n);
-    *ppos += (loff_t)n;
-    return (ssize_t)n;
+    mutex_lock(&info->lock);
+    ssize_t ret = paged_file_store_read_locked(&info->store, buf, count, ppos);
+    mutex_unlock(&info->lock);
+    return ret;
 }
 
 static ssize_t devtmpfs_write(struct vfs_file *file, const void *buf,
                               size_t count, loff_t *ppos) {
     devtmpfs_inode_info_t *info;
     uint64_t end;
-    int ret;
+    ssize_t ret;
 
     if (!file || !file->f_inode || !buf || !ppos)
         return -EINVAL;
@@ -547,17 +561,18 @@ static ssize_t devtmpfs_write(struct vfs_file *file, const void *buf,
         return -EFBIG;
 
     end = (uint64_t)*ppos + count;
-    ret = devtmpfs_resize_inode(file->f_inode, MAX((uint64_t)info->size, end));
+    ret = devtmpfs_resize_inode(file->f_inode, MAX(info->store.size, end));
     if (ret < 0)
         return ret;
 
-    memcpy(info->content + *ppos, buf, count);
-    if (end > info->size)
-        info->size = end;
-    file->f_inode->i_size = info->size;
+    mutex_lock(&info->lock);
+    ret = paged_file_store_write_locked(&info->store, buf, count, ppos);
+    if (ret > 0 && end > info->store.size)
+        info->store.size = end;
+    file->f_inode->i_size = info->store.size;
     file->f_inode->i_version++;
-    *ppos += (loff_t)count;
-    return (ssize_t)count;
+    mutex_unlock(&info->lock);
+    return ret;
 }
 
 static int devtmpfs_iterate_shared(struct vfs_file *file,
@@ -616,13 +631,47 @@ static long devtmpfs_ioctl(struct vfs_file *file, unsigned long cmd,
 
 static void *devtmpfs_mmap(struct vfs_file *file, void *addr, size_t offset,
                            size_t size, size_t prot, uint64_t flags) {
+    devtmpfs_inode_info_t *info;
+    uint64_t pt_flags = PT_FLAG_U;
+    uint64_t *pgdir;
+    int ret;
+
     if (!file || !file->f_inode)
         return (void *)(int64_t)-EINVAL;
     if (S_ISCHR(file->f_inode->i_mode) || S_ISBLK(file->f_inode->i_mode)) {
         return device_map(file->f_inode->i_rdev, addr, offset, size, prot,
                           file);
     }
-    return (void *)(int64_t)-ENODEV;
+    if (!S_ISREG(file->f_inode->i_mode))
+        return (void *)(int64_t)-ENODEV;
+    if ((flags & MAP_TYPE) == MAP_PRIVATE)
+        return general_map(file, (uint64_t)addr, size, prot, flags, offset);
+    if (offset > SIZE_MAX - size)
+        return (void *)(int64_t)-EINVAL;
+
+    info = devtmpfs_i(file->f_inode);
+    if (!info)
+        return (void *)(int64_t)-EINVAL;
+
+    if (prot & PROT_READ)
+        pt_flags |= PT_FLAG_R;
+    if (prot & PROT_WRITE)
+        pt_flags |= PT_FLAG_W;
+    if (prot & PROT_EXEC)
+        pt_flags |= PT_FLAG_X;
+    if (!(pt_flags & (PT_FLAG_R | PT_FLAG_W | PT_FLAG_X)))
+        pt_flags |= PT_FLAG_R;
+
+    pgdir = get_current_page_dir(true);
+    mutex_lock(&info->lock);
+    ret = paged_file_store_map_shared_locked(&info->store, pgdir,
+                                             (uint64_t)addr, (uint64_t)offset,
+                                             (uint64_t)size, pt_flags);
+    mutex_unlock(&info->lock);
+    if (ret < 0)
+        return (void *)(int64_t)ret;
+
+    return addr;
 }
 
 static __poll_t devtmpfs_poll_file(struct vfs_file *file,
@@ -653,10 +702,8 @@ static void devtmpfs_evict_inode(struct vfs_inode *inode) {
 
     if (!info)
         return;
-    if (info->content && info->capacity) {
-        tmpfs_mem_release(info->capacity);
-        free_frames_bytes(info->content, info->capacity);
-    }
+    tmpfs_mem_release(info->store.size);
+    paged_file_store_destroy(&info->store);
     free(info->link_target);
     llist_for_each(de, tmp, &info->children, node) {
         llist_delete(&de->node);

@@ -1429,8 +1429,6 @@ uint64_t task_execve(const char *path_user, const char **argv,
         goto exec_fail_restore_mm;
     }
 
-    self->exec_file = NULL;
-
     if (!self->is_kernel)
         free_page_table(old_mm);
 
@@ -1455,6 +1453,8 @@ uint64_t task_execve(const char *path_user, const char **argv,
     self->clone_flags = 0;
     self->is_clone = false;
     self->is_kernel = false;
+
+    self->exec_file = exec_file;
 
     arch_to_user_mode(self->arch_context,
                       interpreter_entry ? interpreter_entry : e_entry, stack);
