@@ -41,4 +41,4 @@ while [ ! -e "/run/udev/control" ]; do
     sleep 0.1
 done
 
-exec dbus-run-session -- seatd-launch -- weston --xwayland
+exec dbus-run-session -- seatd-launch -- sway

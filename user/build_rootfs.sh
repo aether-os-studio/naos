@@ -22,7 +22,7 @@ sudo XBPS_ARCH=$ARCH $XBPS_INSTALL_PATH/usr/bin/xbps-install -S -r $ROOTFS_SYSRO
     base-minimal bash coreutils util-linux \
     gcc binutils make \
     glibc-locales ncurses tzdata which shadow grep elfutils curl \
-    seatd eudev dbus weston xorg-server-xwayland xrandr \
+    seatd eudev dbus sway xdg-desktop-portal xdg-desktop-portal-wlr alacritty xorg-server-xwayland xrandr \
     fastfetch mesa mesa-dri mesa-demos lite-xl qemu-system-amd64 netsurf \
     adwaita-icon-theme dejavu-fonts-ttf
 
