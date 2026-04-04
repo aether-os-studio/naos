@@ -1,5 +1,6 @@
 #include "fs/vfs/vfs.h"
 #include "fs/vfs/notify.h"
+#include "fs/fs_syscall.h"
 #include "task/task.h"
 
 struct vfs_mount_namespace vfs_init_mnt_ns = {0};
@@ -15,6 +16,7 @@ static mutex_t vfs_filesystems_lock;
 static mutex_t vfs_mount_lock;
 static mutex_t vfs_rename_lock;
 static volatile unsigned int vfs_next_mnt_id = 1;
+static volatile unsigned int vfs_next_peer_group_id = 1;
 static volatile uint64_t vfs_mount_seq = 1;
 static volatile uint64_t vfs_rename_seq = 1;
 
@@ -110,6 +112,56 @@ static uint32_t vfs_mode_to_type(umode_t mode) {
     case S_IFREG:
     default:
         return file_none;
+    }
+}
+
+static unsigned int vfs_alloc_peer_group_id(void) {
+    return __atomic_add_fetch(&vfs_next_peer_group_id, 1, __ATOMIC_ACQ_REL);
+}
+
+static void
+vfs_mount_apply_propagation(struct vfs_mount *mnt,
+                            enum vfs_mount_propagation propagation) {
+    if (!mnt)
+        return;
+
+    mnt->mnt_propagation = (uint8_t)propagation;
+    switch (propagation) {
+    case VFS_MNT_PROP_SHARED:
+        if (!mnt->mnt_group_id)
+            mnt->mnt_group_id = vfs_alloc_peer_group_id();
+        mnt->mnt_master = NULL;
+        break;
+    case VFS_MNT_PROP_SLAVE:
+        mnt->mnt_group_id = 0;
+        if (mnt->mnt_parent && mnt->mnt_parent != mnt) {
+            if (mnt->mnt_parent->mnt_propagation == VFS_MNT_PROP_SHARED)
+                mnt->mnt_master = mnt->mnt_parent;
+            else
+                mnt->mnt_master = mnt->mnt_parent->mnt_master;
+        } else {
+            mnt->mnt_master = NULL;
+        }
+        break;
+    case VFS_MNT_PROP_UNBINDABLE:
+    case VFS_MNT_PROP_PRIVATE:
+    default:
+        mnt->mnt_group_id = 0;
+        mnt->mnt_master = NULL;
+        break;
+    }
+}
+
+static void vfs_mount_apply_propagation_tree(struct vfs_mount *mnt,
+                                             enum vfs_mount_propagation prop) {
+    struct vfs_mount *child, *tmp;
+
+    if (!mnt)
+        return;
+
+    vfs_mount_apply_propagation(mnt, prop);
+    llist_for_each(child, tmp, &mnt->mnt_mounts, mnt_child) {
+        vfs_mount_apply_propagation_tree(child, prop);
     }
 }
 
@@ -918,6 +970,7 @@ struct vfs_mount *vfs_mount_alloc(struct vfs_super_block *sb,
     mnt->mnt_root = vfs_dget(sb->s_root);
     mnt->mnt_sb = sb;
     mnt->mnt_flags = mnt_flags;
+    mnt->mnt_propagation = VFS_MNT_PROP_PRIVATE;
     mnt->mnt_id = __atomic_add_fetch(&vfs_next_mnt_id, 1, __ATOMIC_ACQ_REL);
     vfs_ref_init(&mnt->mnt_ref, 1);
     spin_init(&mnt->mnt_lock);
@@ -980,6 +1033,24 @@ int vfs_mount_attach(struct vfs_mount *parent, struct vfs_dentry *mountpoint,
     mountpoint->d_flags |= VFS_DENTRY_MOUNTPOINT;
     if (parent)
         llist_append(&parent->mnt_mounts, &child->mnt_child);
+
+    if (parent) {
+        switch (parent->mnt_propagation) {
+        case VFS_MNT_PROP_SHARED:
+            vfs_mount_apply_propagation(child, VFS_MNT_PROP_SHARED);
+            break;
+        case VFS_MNT_PROP_SLAVE:
+            vfs_mount_apply_propagation(child, VFS_MNT_PROP_SLAVE);
+            break;
+        case VFS_MNT_PROP_UNBINDABLE:
+            vfs_mount_apply_propagation(child, VFS_MNT_PROP_UNBINDABLE);
+            break;
+        case VFS_MNT_PROP_PRIVATE:
+        default:
+            vfs_mount_apply_propagation(child, VFS_MNT_PROP_PRIVATE);
+            break;
+        }
+    }
 
     __atomic_add_fetch(&vfs_mount_seq, 1, __ATOMIC_ACQ_REL);
     vfs_init_mnt_ns.seq++;
@@ -1091,6 +1162,56 @@ out:
         vfs_dput(old_mountpoint);
     vfs_path_put(&old_root);
     return ret;
+}
+
+int vfs_mount_set_propagation(struct vfs_mount *mnt, unsigned long flags,
+                              bool recursive) {
+    enum vfs_mount_propagation propagation;
+
+    if (!mnt)
+        return -EINVAL;
+
+    switch (flags) {
+    case MS_SHARED:
+        propagation = VFS_MNT_PROP_SHARED;
+        break;
+    case MS_PRIVATE:
+        propagation = VFS_MNT_PROP_PRIVATE;
+        break;
+    case MS_SLAVE:
+        propagation = VFS_MNT_PROP_SLAVE;
+        break;
+    case MS_UNBINDABLE:
+        propagation = VFS_MNT_PROP_UNBINDABLE;
+        break;
+    default:
+        return -EINVAL;
+    }
+
+    mutex_lock(&vfs_mount_lock);
+    if (recursive)
+        vfs_mount_apply_propagation_tree(mnt, propagation);
+    else
+        vfs_mount_apply_propagation(mnt, propagation);
+    __atomic_add_fetch(&vfs_mount_seq, 1, __ATOMIC_ACQ_REL);
+    vfs_init_mnt_ns.seq++;
+    mutex_unlock(&vfs_mount_lock);
+    return 0;
+}
+
+bool vfs_mount_is_shared(const struct vfs_mount *mnt) {
+    return mnt && mnt->mnt_propagation == VFS_MNT_PROP_SHARED &&
+           mnt->mnt_group_id != 0;
+}
+
+unsigned int vfs_mount_peer_group_id(const struct vfs_mount *mnt) {
+    return mnt ? mnt->mnt_group_id : 0;
+}
+
+unsigned int vfs_mount_master_group_id(const struct vfs_mount *mnt) {
+    if (!mnt || !mnt->mnt_master)
+        return 0;
+    return mnt->mnt_master->mnt_group_id;
 }
 
 void vfs_path_get(struct vfs_path *path) {

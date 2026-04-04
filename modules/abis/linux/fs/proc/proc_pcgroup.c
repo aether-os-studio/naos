@@ -1,17 +1,31 @@
 #include <fs/proc.h>
+#include <fs/cgroup/cgroupfs.h>
+#include <task/task.h>
 
-size_t proc_pcgroup_stat(proc_handle_t *handle) { return strlen("0::/\n"); }
+size_t proc_pcgroup_stat(proc_handle_t *handle) {
+    task_t *task = handle && handle->task ? handle->task : current_task;
+    char *path = cgroupfs_task_path(task);
+    size_t len = path ? strlen(path) + strlen("0::\n") : strlen("0::/\n");
+    free(path);
+    return len;
+}
 
 size_t proc_pcgroup_read(proc_handle_t *handle, void *addr, size_t offset,
                          size_t size) {
-    /* We do not expose per-task cgroup membership yet. Returning the root
-     * hierarchy is more compatible than advertising a scope path that does
-     * not actually exist in cgroupfs. */
-    const char *content = "0::/\n";
-    size_t content_len = strlen(content);
-    if (offset >= content_len)
+    task_t *task = handle && handle->task ? handle->task : current_task;
+    char *path = cgroupfs_task_path(task);
+    char buf[VFS_PATH_MAX];
+    const char *cgroup_path = path ? path : "/";
+    size_t content_len;
+
+    snprintf(buf, sizeof(buf), "0::%s\n", cgroup_path);
+    content_len = strlen(buf);
+    if (offset >= content_len) {
+        free(path);
         return 0;
+    }
     size_t to_copy = MIN(size, content_len - offset);
-    memcpy(addr, content + offset, to_copy);
+    memcpy(addr, buf + offset, to_copy);
+    free(path);
     return to_copy;
 }

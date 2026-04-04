@@ -1,17 +1,29 @@
 #include <fs/proc/proc.h>
+#include <task/task.h>
 
-const char *mount_info = "";
-
-size_t proc_mounts_stat(proc_handle_t *handle) { return strlen(mount_info); }
+size_t proc_mounts_stat(proc_handle_t *handle) {
+    task_t *task = handle && handle->task ? handle->task : current_task;
+    size_t content_len = 0;
+    char *content = procfs_generate_mount_table(task, false, &content_len);
+    free(content);
+    return content_len;
+}
 
 size_t proc_mounts_read(proc_handle_t *handle, void *addr, size_t offset,
                         size_t size) {
-    size_t fs_size = strlen(mount_info);
-    if (offset < fs_size) {
-        if (size > fs_size - offset)
-            size = fs_size - offset;
-        memcpy(addr, mount_info + offset, size);
-        return size;
-    } else
+    task_t *task = handle && handle->task ? handle->task : current_task;
+    size_t content_len = 0;
+    char *content = procfs_generate_mount_table(task, false, &content_len);
+
+    if (!content)
         return 0;
+    if (offset >= content_len) {
+        free(content);
+        return 0;
+    }
+
+    size_t to_copy = MIN(size, content_len - offset);
+    memcpy(addr, content + offset, to_copy);
+    free(content);
+    return to_copy;
 }

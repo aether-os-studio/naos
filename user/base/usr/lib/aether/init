@@ -14,6 +14,8 @@ export XCURSOR_PATH="/usr/share/icons:/usr/share/pixmaps"
 export SDL_VIDEODRIVER=wayland
 export SDL_AUDIODRIVER=pipewire
 export LIBGL_ALWAYS_SOFTWARE=1
+export WLR_RENDERER_ALLOW_SOFTWARE=1
+export WLR_RENDERER=pixman
 
 mkdir -p /run/udev/data/c226:0
 mkdir -p /run/udev/data/c13:0

@@ -239,6 +239,13 @@ enum vfs_mount_flags {
     VFS_MNT_LOCKED = 1UL << 5,
 };
 
+enum vfs_mount_propagation {
+    VFS_MNT_PROP_PRIVATE = 0,
+    VFS_MNT_PROP_SHARED,
+    VFS_MNT_PROP_SLAVE,
+    VFS_MNT_PROP_UNBINDABLE,
+};
+
 enum vfs_filesystem_flags {
     VFS_FS_REQUIRES_DEV = 1UL << 0,
     VFS_FS_BINARY_MOUNTDATA = 1UL << 1,
@@ -445,6 +452,8 @@ struct vfs_mount {
     struct vfs_dentry *mnt_root;
     struct vfs_super_block *mnt_sb;
     unsigned long mnt_flags;
+    unsigned int mnt_group_id;
+    uint8_t mnt_propagation;
     unsigned int mnt_id;
     vfs_ref_t mnt_ref;
     spinlock_t mnt_lock;
@@ -629,6 +638,11 @@ void vfs_mount_detach(struct vfs_mount *mnt);
 struct vfs_mount *vfs_path_mount(const struct vfs_path *path);
 int vfs_reconfigure_mount(struct vfs_mount *mnt, const struct vfs_path *to_path,
                           bool detached);
+int vfs_mount_set_propagation(struct vfs_mount *mnt, unsigned long flags,
+                              bool recursive);
+bool vfs_mount_is_shared(const struct vfs_mount *mnt);
+unsigned int vfs_mount_peer_group_id(const struct vfs_mount *mnt);
+unsigned int vfs_mount_master_group_id(const struct vfs_mount *mnt);
 
 void vfs_path_get(struct vfs_path *path);
 void vfs_path_put(struct vfs_path *path);

@@ -90,6 +90,8 @@ size_t proc_sys_kernel_osrelease_read(proc_handle_t *handle, void *addr,
 size_t proc_pressure_memory_stat(proc_handle_t *handle);
 size_t proc_pressure_memory_read(proc_handle_t *handle, void *addr,
                                  size_t offset, size_t size);
+char *procfs_generate_mount_table(task_t *task, bool mountinfo,
+                                  size_t *content_len);
 size_t proc_pmountinfo_stat(proc_handle_t *handle);
 size_t proc_pmountinfo_stat(proc_handle_t *handle);
 int proc_pmountinfo_poll(proc_handle_t *handle, int events);

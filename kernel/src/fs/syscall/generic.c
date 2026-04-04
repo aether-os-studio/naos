@@ -428,6 +428,8 @@ out:
 uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
                    uint64_t flags, void *data) {
     unsigned long mnt_flags = 0;
+    unsigned long propagation_flags =
+        flags & (MS_SHARED | MS_PRIVATE | MS_SLAVE | MS_UNBINDABLE);
     char devname[128] = "none";
     char dirname[512] = {0};
     char type[128] = "tmpfs";
@@ -463,8 +465,37 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
                                            dirname);
     }
 
-    if (flags &
-        (MS_BIND | MS_REMOUNT | MS_SHARED | MS_PRIVATE | MS_UNBINDABLE)) {
+    if (propagation_flags) {
+        struct vfs_path target = {0};
+        struct vfs_mount *mnt = NULL;
+        int ret;
+
+        if ((propagation_flags & (propagation_flags - 1)) != 0)
+            return (uint64_t)-EINVAL;
+        if (flags & ~(MS_REC | MS_SILENT | MS_SHARED | MS_PRIVATE | MS_SLAVE |
+                      MS_UNBINDABLE))
+            return (uint64_t)-EOPNOTSUPP;
+
+        ret = vfs_filename_lookup(AT_FDCWD, dirname, LOOKUP_FOLLOW, &target);
+        if (ret < 0)
+            return (uint64_t)ret;
+
+        mnt = vfs_path_mount(&target);
+        if (!mnt && target.mnt)
+            mnt = vfs_mntget(target.mnt);
+        if (!mnt) {
+            vfs_path_put(&target);
+            return (uint64_t)-EINVAL;
+        }
+
+        ret = vfs_mount_set_propagation(mnt, propagation_flags,
+                                        (flags & MS_REC) != 0);
+        vfs_mntput(mnt);
+        vfs_path_put(&target);
+        return (uint64_t)ret;
+    }
+
+    if (flags & (MS_BIND | MS_REMOUNT)) {
         return (uint64_t)-EOPNOTSUPP;
     }
 

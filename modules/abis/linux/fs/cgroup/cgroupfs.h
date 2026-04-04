@@ -2,10 +2,8 @@
 
 #include <fs/vfs/vfs.h>
 
-typedef struct cgroupfs_node {
-    vfs_node_t *node;
-    // for file type
-    char *content;
-    int size;
-    int capability;
-} cgroupfs_node_t;
+struct task;
+typedef struct task task_t;
+
+void cgroupfs_init(void);
+char *cgroupfs_task_path(task_t *task);
