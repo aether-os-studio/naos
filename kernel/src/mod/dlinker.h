@@ -4,8 +4,8 @@
 #include <mod/module.h>
 #include <libs/elf.h>
 
-#define KERNEL_MODULES_SPACE_START 0xffffb00000000000
-#define KERNEL_MODULES_SPACE_END 0xffffc00000000000
+#define KERNEL_MODULES_SPACE_START 0xfffffffb00000000
+#define KERNEL_MODULES_SPACE_END 0xffffffffe0000000
 
 typedef int (*dlinit_t)(void);
 
