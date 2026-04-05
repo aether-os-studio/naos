@@ -2189,11 +2189,9 @@ uint64_t sys_unshare(uint64_t unshare_flags) {
     }
 
     need_unshare_fs =
-        !!(unshare_flags & CLONE_FS) ||
-        !!((unshare_flags & CLONE_NEWNS) && self->fs && self->fs->ref_count > 1);
-    need_unshare_files =
-        !!(unshare_flags & CLONE_FILES) && self->fd_info &&
-        self->fd_info->ref_count > 1;
+        !!(unshare_flags & CLONE_FS) || !!(unshare_flags & CLONE_NEWNS);
+    need_unshare_files = !!(unshare_flags & CLONE_FILES) && self->fd_info &&
+                         self->fd_info->ref_count > 1;
 
     if (ns_flags) {
         new_nsproxy = task_ns_proxy_clone(self, ns_flags);
@@ -2372,6 +2370,9 @@ uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
         if (arg2 != 0 || arg3 != 0 || arg4 != 0 || arg5 != 0)
             return (uint64_t)-EINVAL;
         return current_task->no_new_privs ? 1 : 0;
+
+    case PR_CAP_AMBIENT:
+        return 0;
 
     case PR_GET_TIMERSLACK:
         return 0;

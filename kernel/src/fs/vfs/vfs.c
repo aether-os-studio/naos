@@ -362,6 +362,11 @@ static struct vfs_dentry *vfs_lookup_component(struct vfs_path *parent,
                 dentry = NULL;
             }
         }
+        if (dentry && !dentry->d_inode) {
+            vfs_dentry_unhash(dentry);
+            vfs_dput(dentry);
+            dentry = NULL;
+        }
         if (dentry)
             return dentry;
     }
@@ -790,8 +795,9 @@ struct vfs_inode *vfs_alloc_inode(struct vfs_super_block *sb) {
     inode->rw_hint = 0;
     spin_init(&inode->i_lock);
     mutex_init(&inode->i_rwsem);
-    inode->flock_lock.l_pid = 0;
+    spin_init(&inode->flock_lock.spin);
     inode->flock_lock.l_type = F_UNLCK;
+    inode->flock_lock.owner = 0;
     spin_init(&inode->file_locks_lock);
     llist_init_head(&inode->file_locks);
     llist_init_head(&inode->i_dentry_aliases);
@@ -1387,6 +1393,16 @@ void vfs_file_put(struct vfs_file *file) {
     if (!vfs_ref_put(&file->f_ref))
         return;
 
+    if (file->f_inode) {
+        vfs_bsd_lock_t *flock = &file->f_inode->flock_lock;
+        spin_lock(&flock->spin);
+        if (flock->owner == (uintptr_t)file) {
+            flock->l_type = F_UNLCK;
+            flock->owner = 0;
+        }
+        spin_unlock(&flock->spin);
+    }
+
     if (file->f_op && file->f_op->release)
         file->f_op->release(file->f_inode, file);
     if (file->f_inode)
@@ -1729,10 +1745,12 @@ int vfs_openat(int dfd, const char *name, const struct vfs_open_how *how,
             ret = -ENOENT;
             goto out;
         }
-        dentry = vfs_d_alloc(parent.dentry->d_sb, parent.dentry, &last);
         if (!dentry) {
-            ret = -ENOMEM;
-            goto out;
+            dentry = vfs_d_alloc(parent.dentry->d_sb, parent.dentry, &last);
+            if (!dentry) {
+                ret = -ENOMEM;
+                goto out;
+            }
         }
         if (!dir->i_op || !dir->i_op->create) {
             ret = -EOPNOTSUPP;
@@ -2322,6 +2340,14 @@ int vfs_renameat2(int olddfd, const char *oldname, int newdfd,
     ret = ctx.old_dir->i_op->rename(&ctx);
     if (ret == 0) {
         uint32_t cookie = notifyfs_next_cookie();
+
+        if (old_dentry != new_dentry) {
+            if (!(new_dentry->d_flags & VFS_DENTRY_HASHED))
+                vfs_d_add(new_parent.dentry, new_dentry);
+            vfs_d_instantiate(new_dentry, moved_inode);
+            vfs_dentry_unhash(old_dentry);
+            vfs_d_instantiate(old_dentry, NULL);
+        }
 
         __atomic_add_fetch(&vfs_rename_seq, 1, __ATOMIC_ACQ_REL);
         notifyfs_queue_inode_event(ctx.old_dir, moved_inode, old_last.name,

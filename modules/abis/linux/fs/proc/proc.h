@@ -117,6 +117,8 @@ size_t proc_psetgroups_read(proc_handle_t *handle, void *addr, size_t offset,
                             size_t size);
 ssize_t proc_psetgroups_write(proc_handle_t *handle, const void *addr,
                               size_t offset, size_t size);
+ssize_t proc_oom_score_adj_write(proc_handle_t *handle, const void *addr,
+                                 size_t offset, size_t size);
 size_t proc_oom_score_adj_stat(proc_handle_t *handle);
 int proc_oom_score_adj_poll(proc_handle_t *handle, int events);
 size_t proc_oom_score_adj_read(proc_handle_t *handle, void *addr, size_t offset,

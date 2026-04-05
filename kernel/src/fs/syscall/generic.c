@@ -442,9 +442,11 @@ static void generic_fill_statx_from_kstat(struct statx *buf,
     buf->stx_blocks = stat->blocks;
     buf->stx_attributes = 0;
     buf->stx_attributes_mask = 0;
-    if (path && path->mnt && path->dentry &&
-        path->mnt->mnt_root == path->dentry)
+    if (path) {
         buf->stx_attributes_mask |= STATX_ATTR_MOUNT_ROOT;
+        if (path->mnt && path->dentry && path->mnt->mnt_root == path->dentry)
+            buf->stx_attributes |= STATX_ATTR_MOUNT_ROOT;
+    }
     buf->stx_dev_major = (uint32_t)((stat->dev >> 8) & 0xFF);
     buf->stx_dev_minor = (uint32_t)(stat->dev & 0xFF);
     buf->stx_rdev_major = (uint32_t)((stat->rdev >> 8) & 0xFF);
@@ -898,10 +900,6 @@ uint64_t sys_close(uint64_t fd) {
             break;
 
         file_lock_release_pid(entry->f_inode, self->pid);
-        if (entry->f_inode->flock_lock.l_pid == self->pid) {
-            entry->f_inode->flock_lock.l_type = F_UNLCK;
-            entry->f_inode->flock_lock.l_pid = 0;
-        }
 
         self->fd_info->fds[fd] = NULL;
         self->fd_info->fd_flags[fd] = 0;
@@ -997,10 +995,6 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
                 continue;
 
             file_lock_release_pid(entry->f_inode, self->pid);
-            if (entry->f_inode->flock_lock.l_pid == self->pid) {
-                entry->f_inode->flock_lock.l_type = F_UNLCK;
-                entry->f_inode->flock_lock.l_pid = 0;
-            }
 
             self->fd_info->fds[fd_] = NULL;
             self->fd_info->fd_flags[fd_] = 0;
@@ -2601,15 +2595,16 @@ uint64_t sys_ftruncate(int fd, uint64_t length) {
 
 uint64_t sys_flock(int fd, uint64_t operation) {
     task_t *self = current_task;
+    fd_t *file;
 
     if (fd < 0 || fd >= MAX_FD_NUM || !self->fd_info->fds[fd])
         return -EBADF;
 
-    vfs_node_t *node = self->fd_info->fds[fd]->f_inode;
+    file = self->fd_info->fds[fd];
+    vfs_node_t *node = file->f_inode;
     vfs_bsd_lock_t *lock = &node->flock_lock;
-    uint64_t pid = self->pid;
+    uintptr_t owner = (uintptr_t)file;
 
-    // 提前检查参数有效性
     switch (operation & ~LOCK_NB) {
     case LOCK_SH:
     case LOCK_EX:
@@ -2619,32 +2614,37 @@ uint64_t sys_flock(int fd, uint64_t operation) {
         return -EINVAL;
     }
 
-    // 非阻塞模式下立即检查冲突
-    if (operation & LOCK_NB) {
-        if ((operation & LOCK_SH) && lock->l_type == F_WRLCK)
-            return -EWOULDBLOCK;
-        if ((operation & LOCK_EX) && lock->l_type != F_UNLCK)
-            return -EWOULDBLOCK;
-    }
-
-    // 实际加锁逻辑
     switch (operation & ~LOCK_NB) {
     case LOCK_SH:
     case LOCK_EX:
-        while (lock->l_type != F_UNLCK && lock->l_pid != pid) {
+        for (;;) {
+            bool conflict;
+
+            spin_lock(&lock->spin);
+            conflict = lock->l_type != F_UNLCK && lock->owner != owner;
+            if (!conflict) {
+                lock->l_type = (operation & LOCK_EX) ? F_WRLCK : F_RDLCK;
+                lock->owner = owner;
+                spin_unlock(&lock->spin);
+                break;
+            }
+            spin_unlock(&lock->spin);
+
             if (operation & LOCK_NB)
                 return -EWOULDBLOCK;
             arch_pause();
         }
-        lock->l_type = (operation & LOCK_EX) ? F_WRLCK : F_RDLCK;
-        lock->l_pid = pid;
         break;
 
     case LOCK_UN:
-        if (lock->l_pid != pid)
+        spin_lock(&lock->spin);
+        if (lock->owner != owner) {
+            spin_unlock(&lock->spin);
             return -EACCES;
+        }
         lock->l_type = F_UNLCK;
-        lock->l_pid = 0;
+        lock->owner = 0;
+        spin_unlock(&lock->spin);
         break;
     }
 

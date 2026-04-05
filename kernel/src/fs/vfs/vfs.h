@@ -102,9 +102,9 @@ typedef struct flock {
 } flock_t;
 
 typedef struct vfs_bsd_lock {
-    volatile uint64_t l_pid;
+    spinlock_t spin;
     volatile uint64_t l_type;
-    volatile uint64_t lock;
+    volatile uintptr_t owner;
 } vfs_bsd_lock_t;
 
 typedef struct vfs_file_lock {

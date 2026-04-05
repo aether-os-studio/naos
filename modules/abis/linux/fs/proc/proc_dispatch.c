@@ -106,9 +106,9 @@ void procfs_nodes_init() {
     create_procfs_handle("proc_setgroups", proc_psetgroups_read,
                          proc_psetgroups_write, proc_psetgroups_stat, NULL,
                          NULL);
-    create_procfs_handle("proc_oom_score_adj", proc_oom_score_adj_read, NULL,
-                         proc_oom_score_adj_stat, NULL,
-                         proc_oom_score_adj_poll);
+    create_procfs_handle("proc_oom_score_adj", proc_oom_score_adj_read,
+                         proc_oom_score_adj_write, proc_oom_score_adj_stat,
+                         NULL, proc_oom_score_adj_poll);
     create_procfs_handle("proc_sys_kernel_osrelease",
                          proc_sys_kernel_osrelease_read, NULL,
                          proc_sys_kernel_osrelease_stat, NULL, NULL);
