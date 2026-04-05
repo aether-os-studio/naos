@@ -1801,6 +1801,33 @@ static int madvise_check_vmas(uint64_t addr, uint64_t end) {
     return 0;
 }
 
+static int madvise_check_vmas_madv_free(uint64_t addr, uint64_t end) {
+    if (addr >= end)
+        return 0;
+
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+    spin_lock(&mgr->lock);
+
+    for (uint64_t cursor = addr; cursor < end;) {
+        vma_t *vma = vma_find(mgr, cursor);
+        if (!vma) {
+            spin_unlock(&mgr->lock);
+            return -ENOMEM;
+        }
+
+        if (vma->vm_type != VMA_TYPE_ANON ||
+            (vma->vm_flags & (VMA_SHARED | VMA_SHM | VMA_DEVICE))) {
+            spin_unlock(&mgr->lock);
+            return -EINVAL;
+        }
+
+        cursor = MIN(vma->vm_end, end);
+    }
+
+    spin_unlock(&mgr->lock);
+    return 0;
+}
+
 static uint64_t madvise_prefault_range(uint64_t addr, uint64_t len,
                                        uint64_t fault_flags) {
     for (uint64_t cursor = addr; cursor < addr + len; cursor += PAGE_SIZE) {
@@ -1847,6 +1874,20 @@ static uint64_t madvise_dontneed_range(uint64_t addr, uint64_t len) {
     return 0;
 }
 
+static uint64_t madvise_free_range(uint64_t addr, uint64_t len) {
+    int check_ret = madvise_check_vmas_madv_free(addr, addr + len);
+    if (check_ret < 0)
+        return (uint64_t)check_ret;
+
+    /*
+     * Linux MADV_FREE only applies to private anonymous memory and permits the
+     * kernel to reclaim pages lazily. This kernel does not yet track lazy-free
+     * anonymous pages separately, so use the stricter MADV_DONTNEED behavior as
+     * a compatibility fallback after enforcing the same VMA constraints.
+     */
+    return madvise_dontneed_range(addr, len);
+}
+
 uint64_t sys_madvise(uint64_t addr, uint64_t len, int behavior) {
     uint64_t aligned_len = 0;
     uint64_t end = 0;
@@ -1880,11 +1921,12 @@ uint64_t sys_madvise(uint64_t addr, uint64_t len, int behavior) {
         return madvise_prefault_range(addr, aligned_len, PF_ACCESS_WRITE);
     case MADV_DONTNEED:
         return madvise_dontneed_range(addr, aligned_len);
+    case MADV_FREE:
+        return madvise_free_range(addr, aligned_len);
     case MADV_GUARD_INSTALL:
         return madvise_guard_install_range(addr, aligned_len);
     case MADV_GUARD_REMOVE:
         return madvise_guard_remove_range(addr, aligned_len);
-    case MADV_FREE:
     case MADV_REMOVE:
         printk("madvise unsupported behavior=%s(%d) addr=%#018lx "
                "len=%#018lx\n",

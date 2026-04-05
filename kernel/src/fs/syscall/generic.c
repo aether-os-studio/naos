@@ -645,6 +645,14 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
     return (uint64_t)vfs_sys_openat(AT_FDCWD, name, &how);
 }
 
+uint64_t sys_creat(const char *path, uint64_t mode) {
+    char name[512];
+    if (copy_from_user_str(name, path, sizeof(name)))
+        return (uint64_t)-EFAULT;
+
+    return do_sys_open(name, O_CREAT | O_WRONLY | O_TRUNC, mode);
+}
+
 uint64_t sys_open(const char *path, uint64_t flags, uint64_t mode) {
     char name[512];
     if (copy_from_user_str(name, path, sizeof(name)))

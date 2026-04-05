@@ -654,7 +654,7 @@ void x64_register_syscalls() {
     regist_syscall_handler(SYS_RENAME, (syscall_handle_t)sys_rename);
     regist_syscall_handler(SYS_MKDIR, (syscall_handle_t)sys_mkdir);
     regist_syscall_handler(SYS_RMDIR, (syscall_handle_t)sys_rmdir);
-    // regist_syscall_handler(SYS_CREAT, (syscall_handle_t)sys_creat);
+    regist_syscall_handler(SYS_CREAT, (syscall_handle_t)sys_creat);
     regist_syscall_handler(SYS_LINK, (syscall_handle_t)sys_link);
     regist_syscall_handler(SYS_SYMLINK, (syscall_handle_t)sys_symlink);
     regist_syscall_handler(SYS_UNLINK, (syscall_handle_t)sys_unlink);
