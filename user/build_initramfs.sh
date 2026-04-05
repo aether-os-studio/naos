@@ -7,7 +7,7 @@ SCRIPT=$(realpath "$0")
 SCRIPTPATH=$(dirname "$SCRIPT")
 
 APK_PATH="$SCRIPTPATH/cache/$(uname -m)-apk-static"
-APK_URI="https://gitlab.alpinelinux.org/api/v4/projects/5/packages/generic/v2.14.10/$(uname -m)/apk.static"
+APK_URI="http://gitlab.alpinelinux.org/api/v4/projects/5/packages/generic/v2.14.10/$(uname -m)/apk.static"
 
 mkdir -p "$(dirname "$APK_PATH")"
 [ -f "$APK_PATH" ] || wget "$APK_URI" -O "$APK_PATH"
