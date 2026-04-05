@@ -13,6 +13,8 @@ typedef size_t (*stat_entry_t)(proc_handle_t *handle);
 typedef int (*poll_entry_t)(proc_handle_t *handle, int events);
 typedef size_t (*read_entry_t)(proc_handle_t *handle, void *addr, size_t offset,
                                size_t size);
+typedef ssize_t (*write_entry_t)(proc_handle_t *handle, const void *addr,
+                                 size_t offset, size_t size);
 typedef ssize_t (*readlink_entry_t)(proc_handle_t *handle, void *addr,
                                     size_t offset, size_t size);
 
@@ -28,6 +30,7 @@ typedef struct proc_handle_node {
     char *name;
     uint64_t hash;
     read_entry_t read_entry;
+    write_entry_t write_entry;
     stat_entry_t stat_entry;
     readlink_entry_t readlink_entry;
     poll_entry_t poll_entry;
@@ -44,6 +47,8 @@ void procfs_stat_dispatch(proc_handle_t *handle, vfs_node_t *node);
 int procfs_poll_dispatch(proc_handle_t *handle, vfs_node_t *node, int events);
 size_t procfs_read_dispatch(proc_handle_t *handle, void *addr, size_t offset,
                             size_t size);
+ssize_t procfs_write_dispatch(proc_handle_t *handle, const void *addr,
+                              size_t offset, size_t size);
 ssize_t procfs_readlink_dispatch(proc_handle_t *handle, void *addr,
                                  size_t offset, size_t size);
 
@@ -97,6 +102,21 @@ size_t proc_pmountinfo_stat(proc_handle_t *handle);
 int proc_pmountinfo_poll(proc_handle_t *handle, int events);
 size_t proc_pmountinfo_read(proc_handle_t *handle, void *addr, size_t offset,
                             size_t size);
+size_t proc_puid_map_stat(proc_handle_t *handle);
+size_t proc_puid_map_read(proc_handle_t *handle, void *addr, size_t offset,
+                          size_t size);
+ssize_t proc_puid_map_write(proc_handle_t *handle, const void *addr,
+                            size_t offset, size_t size);
+size_t proc_pgid_map_stat(proc_handle_t *handle);
+size_t proc_pgid_map_read(proc_handle_t *handle, void *addr, size_t offset,
+                          size_t size);
+ssize_t proc_pgid_map_write(proc_handle_t *handle, const void *addr,
+                            size_t offset, size_t size);
+size_t proc_psetgroups_stat(proc_handle_t *handle);
+size_t proc_psetgroups_read(proc_handle_t *handle, void *addr, size_t offset,
+                            size_t size);
+ssize_t proc_psetgroups_write(proc_handle_t *handle, const void *addr,
+                              size_t offset, size_t size);
 size_t proc_oom_score_adj_stat(proc_handle_t *handle);
 int proc_oom_score_adj_poll(proc_handle_t *handle, int events);
 size_t proc_oom_score_adj_read(proc_handle_t *handle, void *addr, size_t offset,

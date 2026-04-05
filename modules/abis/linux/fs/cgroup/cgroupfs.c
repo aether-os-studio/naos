@@ -1,4 +1,5 @@
 #include <fs/cgroup/cgroupfs.h>
+#include <fs/fs_syscall.h>
 #include <fs/vfs/vfs.h>
 #include <libs/string_builder.h>
 #include <task/task.h>
@@ -136,8 +137,25 @@ static cgroupfs_cgroup_t *cgroupfs_create_cgroup(cgroupfs_cgroup_t *parent,
 
     llist_init_head(&cgroup->sibling);
     llist_init_head(&cgroup->children);
+    if (!parent)
+        cgroup->subtree_control = CGROUPFS_ALL_CONTROLLERS;
     cgroup->ref_count = 1;
     return cgroup;
+}
+
+static int cgroupfs_statfs(struct vfs_path *path, void *buf) {
+    struct statfs *st = (struct statfs *)buf;
+
+    (void)path;
+    if (!st)
+        return -EINVAL;
+
+    memset(st, 0, sizeof(*st));
+    st->f_type = 0x63677270ULL;
+    st->f_bsize = PAGE_SIZE;
+    st->f_frsize = PAGE_SIZE;
+    st->f_namelen = 255;
+    return 0;
 }
 
 static struct vfs_inode *cgroupfs_new_inode(struct vfs_super_block *sb,
@@ -960,6 +978,7 @@ static const struct vfs_super_operations cgroupfs_super_ops = {
     .alloc_inode = cgroupfs_alloc_inode,
     .destroy_inode = cgroupfs_destroy_inode,
     .evict_inode = cgroupfs_evict_inode,
+    .statfs = cgroupfs_statfs,
 };
 
 static const struct vfs_inode_operations cgroupfs_inode_ops = {

@@ -2132,6 +2132,135 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork) {
     return sys_clone(regs, flags, 0, NULL, NULL, 0);
 }
 
+static fd_info_t *task_fd_info_clone(fd_info_t *old) {
+    fd_info_t *new_info;
+
+    if (!old)
+        return NULL;
+
+    new_info = calloc(1, sizeof(*new_info));
+    if (!new_info)
+        return NULL;
+
+    mutex_init(&new_info->fdt_lock);
+    new_info->ref_count = 1;
+
+    with_fd_info_lock(old, {
+        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+            if (!old->fds[i])
+                continue;
+            new_info->fds[i] = vfs_file_get(old->fds[i]);
+            new_info->fd_flags[i] = old->fd_flags[i];
+        }
+    });
+
+    return new_info;
+}
+
+uint64_t sys_unshare(uint64_t unshare_flags) {
+    static const uint64_t allowed_flags =
+        CLONE_FS | CLONE_FILES | CLONE_SYSVSEM | CLONE_NEWNS | CLONE_NEWUTS |
+        CLONE_NEWIPC | CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNET |
+        CLONE_NEWCGROUP;
+    static const uint64_t namespace_flags =
+        CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWUSER |
+        CLONE_NEWPID | CLONE_NEWNET | CLONE_NEWCGROUP;
+
+    task_t *self = current_task;
+    task_ns_proxy_t *new_nsproxy = NULL;
+    task_ns_proxy_t *old_nsproxy = NULL;
+    task_fs_t *new_fs = NULL;
+    task_fs_t *old_fs = NULL;
+    fd_info_t *new_fd_info = NULL;
+    fd_info_t *old_fd_info = NULL;
+    uint64_t ns_flags = unshare_flags & namespace_flags;
+    bool need_unshare_fs;
+    bool need_unshare_files;
+
+    if (!self)
+        return (uint64_t)-EINVAL;
+
+    if (unshare_flags & ~allowed_flags)
+        return (uint64_t)-EINVAL;
+
+    if ((unshare_flags & CLONE_NEWUSER) &&
+        task_thread_group_count(task_effective_tgid(self)) > 1) {
+        return (uint64_t)-EINVAL;
+    }
+
+    need_unshare_fs =
+        !!(unshare_flags & CLONE_FS) ||
+        !!((unshare_flags & CLONE_NEWNS) && self->fs && self->fs->ref_count > 1);
+    need_unshare_files =
+        !!(unshare_flags & CLONE_FILES) && self->fd_info &&
+        self->fd_info->ref_count > 1;
+
+    if (ns_flags) {
+        new_nsproxy = task_ns_proxy_clone(self, ns_flags);
+        if (!new_nsproxy)
+            return (uint64_t)-ENOMEM;
+    }
+
+    if (need_unshare_fs && self->fs) {
+        new_fs = task_fs_create(&self->fs->vfs.root, &self->fs->vfs.pwd);
+        if (!new_fs)
+            goto fail;
+
+        if ((ns_flags & CLONE_NEWNS) && new_nsproxy && new_nsproxy->mnt_ns &&
+            new_fs->vfs.root.mnt != new_nsproxy->mnt_ns->root) {
+            vfs_path_put(&new_fs->vfs.root);
+            new_fs->vfs.root.mnt = vfs_mntget(new_nsproxy->mnt_ns->root);
+            new_fs->vfs.root.dentry =
+                new_nsproxy->mnt_ns->root
+                    ? vfs_dget(new_nsproxy->mnt_ns->root->mnt_root)
+                    : NULL;
+        }
+    }
+
+    if (need_unshare_files) {
+        new_fd_info = task_fd_info_clone(self->fd_info);
+        if (!new_fd_info)
+            goto fail;
+    }
+
+    if (new_nsproxy) {
+        old_nsproxy = self->nsproxy;
+        self->nsproxy = new_nsproxy;
+    }
+
+    if (new_fs) {
+        old_fs = self->fs;
+        self->fs = new_fs;
+    }
+
+    if (new_fd_info) {
+        old_fd_info = self->fd_info;
+        self->fd_info = new_fd_info;
+    }
+
+    if (old_nsproxy)
+        task_ns_proxy_put(old_nsproxy);
+    if (old_fs)
+        task_fs_put(old_fs);
+    if (old_fd_info) {
+        with_fd_info_lock(old_fd_info, {
+            if (old_fd_info->ref_count > 0)
+                old_fd_info->ref_count--;
+        });
+    }
+
+    return 0;
+
+fail:
+    if (new_fd_info)
+        task_fd_info_put(new_fd_info, self);
+    if (new_fs)
+        task_fs_put(new_fs);
+    if (new_nsproxy)
+        task_ns_proxy_put(new_nsproxy);
+    return (uint64_t)-ENOMEM;
+}
+
 uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem) {
     if (req->tv_sec < 0)
         return (uint64_t)-EINVAL;

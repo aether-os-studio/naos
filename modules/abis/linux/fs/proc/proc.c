@@ -12,10 +12,12 @@ typedef enum procfs_inode_kind {
     PROCFS_INO_PRESSURE_DIR,
     PROCFS_INO_TASK_DIR,
     PROCFS_INO_TASK_THREADS_DIR,
+    PROCFS_INO_NS_DIR,
     PROCFS_INO_FD_DIR,
     PROCFS_INO_FDINFO_DIR,
     PROCFS_INO_FILE,
     PROCFS_INO_SYMLINK,
+    PROCFS_INO_NS_HANDLE,
     PROCFS_INO_SELF,
     PROCFS_INO_THREAD_SELF,
 } procfs_inode_kind_t;
@@ -31,6 +33,7 @@ typedef struct procfs_inode_info {
 
 static struct vfs_file_system_type procfs_fs_type;
 static const struct vfs_super_operations procfs_super_ops;
+static const struct vfs_dentry_operations procfs_dentry_ops;
 static const struct vfs_inode_operations procfs_inode_ops;
 static const struct vfs_file_operations procfs_dir_file_ops;
 static const struct vfs_file_operations procfs_file_ops;
@@ -44,6 +47,18 @@ static inline procfs_inode_info_t *procfs_i(vfs_node_t *inode) {
 
 static inline bool procfs_task_is_alive(task_t *task) {
     return task && task->state != TASK_DIED;
+}
+
+static uint64_t procfs_task_mnt_ns_inum(task_t *task) {
+    if (!task || !task->nsproxy || !task->nsproxy->mnt_ns)
+        return 0;
+    return task->nsproxy->mnt_ns->common.inum;
+}
+
+static uint64_t procfs_task_user_ns_inum(task_t *task) {
+    if (!task || !task->nsproxy || !task->nsproxy->user_ns)
+        return 0;
+    return task->nsproxy->user_ns->common.inum;
 }
 
 static int procfs_parse_decimal(const char *name, int *out) {
@@ -63,6 +78,25 @@ static int procfs_parse_decimal(const char *name, int *out) {
 
     *out = (int)value;
     return 0;
+}
+
+static bool procfs_lookup_wants_nofollow_inode(unsigned int flags) {
+    return (flags & LOOKUP_NOFOLLOW) && !(flags & LOOKUP_FOLLOW);
+}
+
+static bool procfs_is_ns_symlink_name(const char *name) {
+    return name &&
+           (!strcmp(name, "proc_ns_mnt") || !strcmp(name, "proc_ns_user"));
+}
+
+static bool procfs_is_ns_link_inode(const procfs_inode_info_t *info) {
+    if (!info)
+        return false;
+    if (info->kind == PROCFS_INO_NS_HANDLE)
+        return true;
+    if (info->kind != PROCFS_INO_SYMLINK)
+        return false;
+    return procfs_is_ns_symlink_name(info->dispatch_name);
 }
 
 static inline ssize_t procfs_copy_string(const char *str, void *addr,
@@ -162,6 +196,33 @@ static vfs_node_t *procfs_new_inode(struct vfs_super_block *sb, umode_t mode,
         }
     }
 
+    return inode;
+}
+
+static vfs_node_t *procfs_new_ns_inode(struct vfs_super_block *sb, task_t *task,
+                                       const char *name,
+                                       unsigned int lookup_flags) {
+    bool want_symlink = procfs_lookup_wants_nofollow_inode(lookup_flags);
+    bool is_user_ns = name && !strcmp(name, "user");
+    uint64_t ns_inum = is_user_ns ? procfs_task_user_ns_inum(task)
+                                  : procfs_task_mnt_ns_inum(task);
+    vfs_node_t *inode;
+
+    if (want_symlink) {
+        return procfs_new_inode(sb, S_IFLNK | 0777, PROCFS_INO_SYMLINK, task,
+                                -1,
+                                is_user_ns ? "proc_ns_user" : "proc_ns_mnt");
+    }
+
+    inode = procfs_new_inode(sb, S_IFREG | 0444, PROCFS_INO_NS_HANDLE, task, -1,
+                             NULL);
+    if (!inode)
+        return NULL;
+
+    if (ns_inum) {
+        inode->i_ino = ns_inum;
+        inode->inode = ns_inum;
+    }
     return inode;
 }
 
@@ -331,6 +392,20 @@ static ssize_t procfs_dynamic_readlink(procfs_inode_info_t *info, void *addr,
             free(target);
             return len;
         }
+        if (!strcmp(info->dispatch_name, "proc_ns_mnt")) {
+            char nslink[64];
+
+            snprintf(nslink, sizeof(nslink), "mnt:[%llu]",
+                     (unsigned long long)procfs_task_mnt_ns_inum(handle.task));
+            return procfs_copy_string(nslink, addr, offset, size);
+        }
+        if (!strcmp(info->dispatch_name, "proc_ns_user")) {
+            char nslink[64];
+
+            snprintf(nslink, sizeof(nslink), "user:[%llu]",
+                     (unsigned long long)procfs_task_user_ns_inum(handle.task));
+            return procfs_copy_string(nslink, addr, offset, size);
+        }
         return -EINVAL;
     default:
         return -EINVAL;
@@ -363,6 +438,23 @@ static const char *procfs_get_link(struct vfs_dentry *dentry,
     if (!info->link_target)
         return ERR_PTR(-ENOMEM);
     return info->link_target;
+}
+
+static int procfs_d_revalidate(struct vfs_dentry *dentry, unsigned int flags) {
+    procfs_inode_info_t *info;
+    bool want_symlink;
+
+    if (!dentry || !dentry->d_inode)
+        return 1;
+
+    info = procfs_i(dentry->d_inode);
+    if (!procfs_is_ns_link_inode(info))
+        return 1;
+
+    want_symlink = procfs_lookup_wants_nofollow_inode(flags);
+    if (want_symlink)
+        return info->kind == PROCFS_INO_SYMLINK ? 1 : 0;
+    return info->kind == PROCFS_INO_NS_HANDLE ? 1 : 0;
 }
 
 static int procfs_permission(struct vfs_inode *inode, int mask) {
@@ -439,10 +531,18 @@ static ssize_t procfs_read(struct vfs_file *file, void *addr, size_t count,
 
 static ssize_t procfs_write(struct vfs_file *file, const void *addr,
                             size_t count, loff_t *ppos) {
-    (void)file;
-    (void)addr;
-    (void)ppos;
-    return (ssize_t)count;
+    proc_handle_t handle;
+
+    if (!file || !file->f_inode || !ppos)
+        return -EINVAL;
+    procfs_fill_handle(&handle, file->f_inode);
+    if (!handle.name[0])
+        return -EINVAL;
+
+    ssize_t ret = procfs_write_dispatch(&handle, addr, (size_t)*ppos, count);
+    if (ret > 0)
+        *ppos += (loff_t)ret;
+    return ret;
 }
 
 static int procfs_emit_entry(struct vfs_dir_context *ctx, loff_t *index,
@@ -473,8 +573,12 @@ static int procfs_iterate_task_entries(struct vfs_dir_context *ctx, loff_t *idx,
         {"status", DT_REG, PROCFS_INO_FILE, "proc_status"},
         {"cgroup", DT_REG, PROCFS_INO_FILE, "proc_cgroup"},
         {"mountinfo", DT_REG, PROCFS_INO_FILE, "proc_mountinfo"},
+        {"uid_map", DT_REG, PROCFS_INO_FILE, "proc_uid_map"},
+        {"gid_map", DT_REG, PROCFS_INO_FILE, "proc_gid_map"},
+        {"setgroups", DT_REG, PROCFS_INO_FILE, "proc_setgroups"},
         {"oom_score_adj", DT_REG, PROCFS_INO_FILE, "proc_oom_score_adj"},
         {"exe", DT_LNK, PROCFS_INO_SYMLINK, "proc_exe"},
+        {"ns", DT_DIR, PROCFS_INO_NS_DIR, NULL},
         {"fd", DT_DIR, PROCFS_INO_FD_DIR, NULL},
         {"fdinfo", DT_DIR, PROCFS_INO_FDINFO_DIR, NULL},
         {"task", DT_DIR, PROCFS_INO_TASK_THREADS_DIR, NULL},
@@ -604,6 +708,16 @@ static int procfs_iterate_shared(struct vfs_file *file,
         }
         spin_unlock(&task_queue_lock);
         break;
+    case PROCFS_INO_NS_DIR:
+        if (procfs_emit_entry(ctx, &index, "mnt", DT_LNK,
+                              procfs_ino_for(PROCFS_INO_SYMLINK, info->task, -1,
+                                             "proc_ns_mnt")) != 0 ||
+            procfs_emit_entry(ctx, &index, "user", DT_LNK,
+                              procfs_ino_for(PROCFS_INO_SYMLINK, info->task, -1,
+                                             "proc_ns_user")) != 0) {
+            break;
+        }
+        break;
     case PROCFS_INO_FD_DIR:
     case PROCFS_INO_FDINFO_DIR:
         if (info->task && info->task->fd_info) {
@@ -698,12 +812,24 @@ static vfs_node_t *procfs_make_task_child(struct vfs_super_block *sb,
     if (!strcmp(name, "mountinfo"))
         return procfs_new_inode(sb, S_IFREG | 0444, PROCFS_INO_FILE, task, -1,
                                 "proc_mountinfo");
+    if (!strcmp(name, "uid_map"))
+        return procfs_new_inode(sb, S_IFREG | 0644, PROCFS_INO_FILE, task, -1,
+                                "proc_uid_map");
+    if (!strcmp(name, "gid_map"))
+        return procfs_new_inode(sb, S_IFREG | 0644, PROCFS_INO_FILE, task, -1,
+                                "proc_gid_map");
+    if (!strcmp(name, "setgroups"))
+        return procfs_new_inode(sb, S_IFREG | 0644, PROCFS_INO_FILE, task, -1,
+                                "proc_setgroups");
     if (!strcmp(name, "oom_score_adj"))
         return procfs_new_inode(sb, S_IFREG | 0644, PROCFS_INO_FILE, task, -1,
                                 "proc_oom_score_adj");
     if (!strcmp(name, "exe"))
         return procfs_new_inode(sb, S_IFLNK | 0777, PROCFS_INO_SYMLINK, task,
                                 -1, "proc_exe");
+    if (!strcmp(name, "ns"))
+        return procfs_new_inode(sb, S_IFDIR | 0555, PROCFS_INO_NS_DIR, task, -1,
+                                NULL);
     if (!strcmp(name, "fd"))
         return procfs_new_inode(sb, S_IFDIR | 0555, PROCFS_INO_FD_DIR, task, -1,
                                 NULL);
@@ -724,7 +850,6 @@ static struct vfs_dentry *procfs_lookup(struct vfs_inode *dir,
     task_t *task = NULL;
     int fd_num;
 
-    (void)flags;
     if (!info || !dentry || !dentry->d_name.name)
         return ERR_PTR(-EINVAL);
 
@@ -816,6 +941,15 @@ static struct vfs_dentry *procfs_lookup(struct vfs_inode *dir,
         }
         break;
     }
+    case PROCFS_INO_NS_DIR:
+        if (!strcmp(dentry->d_name.name, "mnt")) {
+            inode = procfs_new_ns_inode(dir->i_sb, info->task,
+                                        dentry->d_name.name, flags);
+        } else if (!strcmp(dentry->d_name.name, "user")) {
+            inode = procfs_new_ns_inode(dir->i_sb, info->task,
+                                        dentry->d_name.name, flags);
+        }
+        break;
     case PROCFS_INO_FD_DIR:
     case PROCFS_INO_FDINFO_DIR:
         if (procfs_parse_decimal(dentry->d_name.name, &fd_num) == 0 &&
@@ -862,6 +996,7 @@ static int procfs_get_tree(struct vfs_fs_context *fc) {
         return -ENOMEM;
 
     sb->s_op = &procfs_super_ops;
+    sb->s_d_op = &procfs_dentry_ops;
     sb->s_type = &procfs_fs_type;
     sb->s_magic = PROCFS_MAGIC;
 
@@ -889,6 +1024,10 @@ static const struct vfs_super_operations procfs_super_ops = {
     .alloc_inode = procfs_alloc_inode,
     .destroy_inode = procfs_destroy_inode,
     .evict_inode = procfs_evict_inode,
+};
+
+static const struct vfs_dentry_operations procfs_dentry_ops = {
+    .d_revalidate = procfs_d_revalidate,
 };
 
 static const struct vfs_inode_operations procfs_inode_ops = {

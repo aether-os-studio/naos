@@ -36,6 +36,7 @@ fi
 /bin/mount -t devtmpfs devtmpfs /mnt/dev
 /bin/mount -t proc proc /mnt/proc
 /bin/mount -t sysfs sysfs /mnt/sys
+/bin/mount -t cgroup2 cgroup2 /mnt/sys/fs/cgroup
 /bin/mount -t tmpfs tmpfs /mnt/run
 /bin/mount -t tmpfs tmpfs /mnt/tmp
 

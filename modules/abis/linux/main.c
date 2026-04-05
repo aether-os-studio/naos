@@ -916,7 +916,7 @@ void x64_register_syscalls() {
     regist_syscall_handler(SYS_FACCESSAT, (syscall_handle_t)sys_faccessat);
     regist_syscall_handler(SYS_PSELECT6, (syscall_handle_t)sys_pselect6);
     regist_syscall_handler(SYS_PPOLL, (syscall_handle_t)sys_ppoll);
-    // regist_syscall_handler(SYS_UNSHARE, (syscall_handle_t)sys_unshare);
+    regist_syscall_handler(SYS_UNSHARE, (syscall_handle_t)sys_unshare);
     regist_syscall_handler(SYS_SET_ROBUST_LIST,
                            (syscall_handle_t)sys_set_robust_list);
     regist_syscall_handler(SYS_GET_ROBUST_LIST,
@@ -1378,7 +1378,7 @@ void aarch64_register_syscalls() {
     regist_syscall_handler(SYS_FACCESSAT, (syscall_handle_t)sys_faccessat);
     regist_syscall_handler(SYS_PSELECT6, (syscall_handle_t)sys_pselect6);
     regist_syscall_handler(SYS_PPOLL, (syscall_handle_t)sys_ppoll);
-    // regist_syscall_handler(SYS_UNSHARE, (syscall_handle_t)sys_unshare);
+    regist_syscall_handler(SYS_UNSHARE, (syscall_handle_t)sys_unshare);
     regist_syscall_handler(SYS_SET_ROBUST_LIST,
                            (syscall_handle_t)sys_set_robust_list);
     regist_syscall_handler(SYS_GET_ROBUST_LIST,

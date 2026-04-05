@@ -30,7 +30,7 @@ static int initramfs_set_mode(const char *path, uint32_t mode) {
 
     if (lookup.dentry && lookup.dentry->d_inode) {
         umode_t type = lookup.dentry->d_inode->i_mode & S_IFMT;
-        lookup.dentry->d_inode->i_mode = type | (mode & 0777);
+        lookup.dentry->d_inode->i_mode = type | (mode & 07777);
     }
     vfs_path_put(&lookup);
     return 0;

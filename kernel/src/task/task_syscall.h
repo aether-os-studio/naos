@@ -32,6 +32,7 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
 uint64_t sys_getrusage(int who, struct rusage *ru);
 uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                    int *parent_tid, int *child_tid, uint64_t tls);
+uint64_t sys_unshare(uint64_t unshare_flags);
 
 typedef struct clone_args {
     uint64_t flags;

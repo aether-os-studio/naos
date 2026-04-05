@@ -32,13 +32,35 @@ typedef struct task_mount_namespace {
     task_ns_common_t common;
     struct vfs_mount *root;
     uint64_t seq;
+    bool owns_tree;
 } task_mount_namespace_t;
+
+#define TASK_USERNS_MAX_ID_MAPS 8
+
+typedef struct task_id_map_range {
+    uint32_t inside_id;
+    uint32_t outside_id;
+    uint32_t length;
+} task_id_map_range_t;
+
+typedef enum task_userns_setgroups_state {
+    TASK_USERNS_SETGROUPS_ALLOW = 0,
+    TASK_USERNS_SETGROUPS_DENY = 1,
+} task_userns_setgroups_state_t;
 
 typedef struct task_user_namespace {
     task_ns_common_t common;
     uint32_t level;
     int64_t owner_uid;
     int64_t owner_gid;
+    mutex_t lock;
+    task_id_map_range_t uid_map[TASK_USERNS_MAX_ID_MAPS];
+    task_id_map_range_t gid_map[TASK_USERNS_MAX_ID_MAPS];
+    size_t uid_map_count;
+    size_t gid_map_count;
+    bool uid_map_written;
+    bool gid_map_written;
+    task_userns_setgroups_state_t setgroups_state;
 } task_user_namespace_t;
 
 typedef struct task_simple_namespace {
@@ -71,3 +93,4 @@ void task_ns_proxy_put(task_ns_proxy_t *nsproxy);
 
 struct vfs_mount *task_mount_namespace_root(task_t *task);
 int task_mount_namespace_set_root(task_t *task, struct vfs_mount *root);
+task_user_namespace_t *task_user_namespace_of_task(task_t *task);

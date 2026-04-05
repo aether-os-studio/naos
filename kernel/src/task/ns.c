@@ -158,6 +158,7 @@ static task_mount_namespace_t *
 task_mount_namespace_create(struct vfs_mount *root,
                             const task_mount_namespace_t *parent) {
     task_mount_namespace_t *mnt_ns;
+    struct vfs_mount *mnt_root;
 
     if (!root)
         return NULL;
@@ -167,7 +168,22 @@ task_mount_namespace_create(struct vfs_mount *root,
         return NULL;
 
     task_ns_common_init(&mnt_ns->common);
-    mnt_ns->root = vfs_mntget(root);
+    if (parent) {
+        mnt_root = vfs_clone_mount_tree(root);
+        if (!mnt_root) {
+            free(mnt_ns);
+            return NULL;
+        }
+        mnt_ns->owns_tree = true;
+    } else {
+        mnt_root = vfs_mntget(root);
+        if (!mnt_root) {
+            free(mnt_ns);
+            return NULL;
+        }
+    }
+
+    mnt_ns->root = mnt_root;
     mnt_ns->seq = parent ? parent->seq : 1;
     return mnt_ns;
 }
@@ -179,6 +195,8 @@ task_user_namespace_create(const task_user_namespace_t *parent, task_t *owner) {
         return NULL;
 
     task_ns_common_init(&user_ns->common);
+    mutex_init(&user_ns->lock);
+    user_ns->setgroups_state = TASK_USERNS_SETGROUPS_ALLOW;
     if (parent) {
         user_ns->level = parent->level + 1;
         if (owner) {
@@ -191,6 +209,17 @@ task_user_namespace_create(const task_user_namespace_t *parent, task_t *owner) {
     } else if (owner) {
         user_ns->owner_uid = owner->euid;
         user_ns->owner_gid = owner->egid;
+    }
+
+    if (!parent) {
+        user_ns->uid_map[0] = (task_id_map_range_t){
+            .inside_id = 0, .outside_id = 0, .length = UINT32_MAX};
+        user_ns->gid_map[0] = (task_id_map_range_t){
+            .inside_id = 0, .outside_id = 0, .length = UINT32_MAX};
+        user_ns->uid_map_count = 1;
+        user_ns->gid_map_count = 1;
+        user_ns->uid_map_written = true;
+        user_ns->gid_map_written = true;
     }
 
     return user_ns;
@@ -217,8 +246,12 @@ static void task_mount_namespace_put(task_mount_namespace_t *mnt_ns) {
         return;
     if (!task_ns_common_put(&mnt_ns->common))
         return;
-    if (mnt_ns->root)
-        vfs_mntput(mnt_ns->root);
+    if (mnt_ns->root) {
+        if (mnt_ns->owns_tree)
+            vfs_put_mount_tree(mnt_ns->root);
+        else
+            vfs_mntput(mnt_ns->root);
+    }
     free(mnt_ns);
 }
 
@@ -301,6 +334,12 @@ int task_mount_namespace_set_root(task_t *task, struct vfs_mount *root) {
     mnt_ns->root = vfs_mntget(root);
     mnt_ns->seq++;
     return 0;
+}
+
+task_user_namespace_t *task_user_namespace_of_task(task_t *task) {
+    if (!task || !task->nsproxy)
+        return NULL;
+    return task->nsproxy->user_ns;
 }
 
 task_ns_proxy_t *task_ns_proxy_clone(task_t *task, uint64_t clone_flags) {

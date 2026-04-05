@@ -14,6 +14,94 @@
 static uint64_t do_unlink(const char *name);
 static volatile uint64_t tmpfile_seq = 1;
 
+typedef struct linux_file_handle_prefix {
+    unsigned int handle_bytes;
+    int handle_type;
+} linux_file_handle_prefix_t;
+
+static int
+generic_copy_file_handle_prefix_from_user(const struct file_handle *user_handle,
+                                          linux_file_handle_prefix_t *prefix) {
+    if (!user_handle || !prefix)
+        return -EINVAL;
+    if (check_user_overflow((uint64_t)user_handle, sizeof(*prefix)))
+        return -EFAULT;
+    if (copy_from_user(prefix, user_handle, sizeof(*prefix)))
+        return -EFAULT;
+    return 0;
+}
+
+static int generic_copy_file_handle_prefix_to_user(
+    struct file_handle *user_handle, const linux_file_handle_prefix_t *prefix) {
+    if (!user_handle || !prefix)
+        return -EINVAL;
+    if (check_user_overflow((uint64_t)user_handle, sizeof(*prefix)))
+        return -EFAULT;
+    if (copy_to_user(user_handle, prefix, sizeof(*prefix)))
+        return -EFAULT;
+    return 0;
+}
+
+static int generic_copy_handle_bytes_from_user(const struct file_handle *handle,
+                                               void *buf, size_t size) {
+    const void *src;
+
+    if (!handle || !buf)
+        return -EINVAL;
+    src = (const void *)((uint64_t)handle + sizeof(linux_file_handle_prefix_t));
+    if (check_user_overflow((uint64_t)src, size))
+        return -EFAULT;
+    if (copy_from_user(buf, src, size))
+        return -EFAULT;
+    return 0;
+}
+
+static int generic_copy_handle_bytes_to_user(struct file_handle *handle,
+                                             const void *buf, size_t size) {
+    void *dst;
+
+    if (!handle || !buf)
+        return -EINVAL;
+    dst = (void *)((uint64_t)handle + sizeof(linux_file_handle_prefix_t));
+    if (check_user_overflow((uint64_t)dst, size))
+        return -EFAULT;
+    if (copy_to_user(dst, buf, size))
+        return -EFAULT;
+    return 0;
+}
+
+static struct vfs_inode *generic_find_inode_by_ino(struct vfs_super_block *sb,
+                                                   uint64_t ino) {
+    struct vfs_inode *inode, *tmp;
+    struct vfs_inode *found = NULL;
+
+    if (!sb)
+        return NULL;
+
+    spin_lock(&sb->s_inode_lock);
+    if (!llist_empty(&sb->s_inodes)) {
+        llist_for_each(inode, tmp, &sb->s_inodes, i_sb_list) {
+            if (inode->i_ino != ino)
+                continue;
+            found = vfs_igrab(inode);
+            break;
+        }
+    }
+    spin_unlock(&sb->s_inode_lock);
+    return found;
+}
+
+static struct vfs_dentry *generic_inode_alias(struct vfs_inode *inode) {
+    struct vfs_dentry *dentry;
+
+    if (!inode || llist_empty(&inode->i_dentry_aliases))
+        return NULL;
+
+    dentry =
+        list_entry(inode->i_dentry_aliases.next, struct vfs_dentry, d_alias);
+    return vfs_dget(dentry);
+}
+
 static uint64_t fd_open_file_flags(uint64_t open_flags) {
     return (open_flags & O_ACCMODE_FLAGS) | (open_flags & O_STATUS_FLAGS);
 }
@@ -579,18 +667,23 @@ uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags,
 uint64_t sys_name_to_handle_at(int dfd, const char *name,
                                struct file_handle *handle, int *mnt_id,
                                int flag) {
+    linux_file_handle_prefix_t prefix;
     struct vfs_kstat stat;
     int ret;
+    const unsigned int required_size = sizeof(uint64_t);
 
     if (!name || !handle || check_user_overflow((uint64_t)name, 1) ||
-        check_user_overflow((uint64_t)handle, sizeof(struct file_handle))) {
+        check_user_overflow((uint64_t)handle, sizeof(prefix))) {
         return (uint64_t)-EFAULT;
     }
 
-    const unsigned int required_size = sizeof(uint64_t);
+    ret = generic_copy_file_handle_prefix_from_user(handle, &prefix);
+    if (ret < 0)
+        return (uint64_t)ret;
 
-    if (handle->handle_bytes < required_size) {
-        handle->handle_bytes = required_size;
+    if (prefix.handle_bytes < required_size) {
+        prefix.handle_bytes = required_size;
+        (void)generic_copy_file_handle_prefix_to_user(handle, &prefix);
         return (uint64_t)-EOVERFLOW;
     }
 
@@ -600,24 +693,23 @@ uint64_t sys_name_to_handle_at(int dfd, const char *name,
     if (ret < 0)
         return (uint64_t)ret;
 
-    handle->handle_bytes = required_size;
-    handle->handle_type = 1; // Generic file handle type
+    prefix.handle_bytes = required_size;
+    prefix.handle_type = 1;
+    ret = generic_copy_file_handle_prefix_to_user(handle, &prefix);
+    if (ret < 0)
+        return (uint64_t)ret;
+    ret =
+        generic_copy_handle_bytes_to_user(handle, &stat.ino, sizeof(uint64_t));
+    if (ret < 0)
+        return (uint64_t)ret;
 
-    if (check_user_overflow((uint64_t)handle->f_handle, required_size)) {
-        return (uint64_t)-EFAULT;
-    }
-
-    if (copy_to_user(handle->f_handle, &stat.ino, sizeof(uint64_t))) {
-        return (uint64_t)-EFAULT;
-    }
-
-    int mount_id = (int)stat.mnt_id;
+    int mount_id_value = (int)stat.mnt_id;
 
     if (mnt_id) {
         if (check_user_overflow((uint64_t)mnt_id, sizeof(int))) {
             return (uint64_t)-EFAULT;
         }
-        if (copy_to_user(mnt_id, &mount_id, sizeof(int))) {
+        if (copy_to_user(mnt_id, &mount_id_value, sizeof(int))) {
             return (uint64_t)-EFAULT;
         }
     }
@@ -627,10 +719,67 @@ uint64_t sys_name_to_handle_at(int dfd, const char *name,
 
 uint64_t sys_open_by_handle_at(int mountdirfd, struct file_handle *handle,
                                int flags) {
-    (void)mountdirfd;
-    (void)handle;
-    (void)flags;
-    return (uint64_t)-EOPNOTSUPP;
+    linux_file_handle_prefix_t prefix;
+    struct vfs_path mount_path = {0};
+    struct vfs_path open_path = {0};
+    struct vfs_inode *inode = NULL;
+    struct vfs_dentry *dentry = NULL;
+    struct vfs_file *file = NULL;
+    uint64_t ino = 0;
+    int ret;
+    int fd;
+
+    if (!handle)
+        return (uint64_t)-EFAULT;
+
+    ret = generic_copy_file_handle_prefix_from_user(handle, &prefix);
+    if (ret < 0)
+        return (uint64_t)ret;
+    if (prefix.handle_type != 1 || prefix.handle_bytes != sizeof(uint64_t))
+        return (uint64_t)-EINVAL;
+
+    ret = generic_copy_handle_bytes_from_user(handle, &ino, sizeof(ino));
+    if (ret < 0)
+        return (uint64_t)ret;
+
+    ret = generic_get_fd_path(mountdirfd, &mount_path);
+    if (ret < 0)
+        return (uint64_t)ret;
+
+    inode = generic_find_inode_by_ino(
+        mount_path.mnt ? mount_path.mnt->mnt_sb : NULL, ino);
+    if (!inode) {
+        vfs_path_put(&mount_path);
+        return (uint64_t)-ESTALE;
+    }
+
+    dentry = generic_inode_alias(inode);
+    if (!dentry) {
+        vfs_iput(inode);
+        vfs_path_put(&mount_path);
+        return (uint64_t)-ESTALE;
+    }
+
+    open_path.mnt = mount_path.mnt ? vfs_mntget(mount_path.mnt) : NULL;
+    open_path.dentry = dentry;
+    file = vfs_alloc_file(&open_path, (unsigned int)flags);
+    vfs_path_put(&open_path);
+    vfs_iput(inode);
+    vfs_path_put(&mount_path);
+    if (!file)
+        return (uint64_t)-ENOMEM;
+
+    if (file->f_op && file->f_op->open) {
+        ret = file->f_op->open(file->f_inode, file);
+        if (ret < 0) {
+            vfs_file_put(file);
+            return (uint64_t)ret;
+        }
+    }
+
+    fd = task_install_file(current_task, file, 0, 0);
+    vfs_file_put(file);
+    return fd < 0 ? (uint64_t)fd : (uint64_t)fd;
 }
 
 uint64_t sys_inotify_init() { return sys_inotify_init1(0); }

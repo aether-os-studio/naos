@@ -635,6 +635,8 @@ void vfs_mntput(struct vfs_mount *mnt);
 int vfs_mount_attach(struct vfs_mount *parent, struct vfs_dentry *mountpoint,
                      struct vfs_mount *child);
 void vfs_mount_detach(struct vfs_mount *mnt);
+struct vfs_mount *vfs_clone_mount_tree(struct vfs_mount *root);
+void vfs_put_mount_tree(struct vfs_mount *root);
 struct vfs_mount *vfs_path_mount(const struct vfs_path *path);
 int vfs_reconfigure_mount(struct vfs_mount *mnt, const struct vfs_path *to_path,
                           bool detached);

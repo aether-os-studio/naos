@@ -30,6 +30,20 @@ static struct vfs_mount *vfs_active_namespace_root_mount(void) {
     return vfs_root_path.mnt;
 }
 
+static struct vfs_mount *vfs_child_mount_at(struct vfs_mount *parent,
+                                            struct vfs_dentry *mountpoint) {
+    struct vfs_mount *mnt;
+
+    if (!parent || !mountpoint)
+        return NULL;
+
+    for (mnt = mountpoint->d_mounted; mnt; mnt = mnt->mnt_stack_prev) {
+        if (mnt->mnt_parent == parent)
+            return mnt;
+    }
+    return NULL;
+}
+
 static void vfs_rebind_task_root_paths(const struct vfs_path *old_root,
                                        struct vfs_mount *new_mnt) {
     struct vfs_process_fs *fs;
@@ -335,8 +349,22 @@ static struct vfs_dentry *vfs_lookup_component(struct vfs_path *parent,
 
     vfs_qstr_make(&qstr, component);
     dentry = vfs_d_lookup(parent->dentry, &qstr);
-    if (dentry)
-        return dentry;
+    if (dentry) {
+        if (dentry->d_op && dentry->d_op->d_revalidate) {
+            int ret = dentry->d_op->d_revalidate(dentry, flags);
+            if (ret < 0) {
+                vfs_dput(dentry);
+                return ERR_PTR(ret);
+            }
+            if (ret == 0) {
+                vfs_dentry_unhash(dentry);
+                vfs_dput(dentry);
+                dentry = NULL;
+            }
+        }
+        if (dentry)
+            return dentry;
+    }
 
     dir = parent->dentry->d_inode;
     if (!dir || !dir->i_op || !dir->i_op->lookup)
@@ -366,8 +394,8 @@ static struct vfs_dentry *vfs_lookup_component(struct vfs_path *parent,
 }
 
 static void vfs_follow_mount(struct vfs_path *path) {
-    while (path && path->dentry && path->dentry->d_mounted) {
-        struct vfs_mount *mounted = path->dentry->d_mounted;
+    while (path && path->dentry) {
+        struct vfs_mount *mounted = vfs_child_mount_at(path->mnt, path->dentry);
         if (!mounted || !mounted->mnt_root)
             break;
         vfs_path_replace(path, mounted, mounted->mnt_root);
@@ -1106,14 +1134,96 @@ struct vfs_mount *vfs_path_mount(const struct vfs_path *path) {
     if (!path)
         return NULL;
 
-    mnt = path->dentry ? path->dentry->d_mounted : NULL;
+    root_mnt = vfs_active_namespace_root_mount();
+    mnt = (path->mnt && path->dentry)
+              ? vfs_child_mount_at(path->mnt, path->dentry)
+              : NULL;
     if (mnt)
         return vfs_mntget(mnt);
 
-    root_mnt = vfs_active_namespace_root_mount();
     if (path->mnt && path->mnt != root_mnt)
         return vfs_mntget(path->mnt);
     return NULL;
+}
+
+static struct vfs_mount *vfs_clone_single_mount(struct vfs_mount *src) {
+    struct vfs_mount *dst;
+
+    if (!src)
+        return NULL;
+
+    dst = vfs_mount_alloc(src->mnt_sb, src->mnt_flags);
+    if (!dst)
+        return NULL;
+
+    vfs_mount_apply_propagation(dst, src->mnt_propagation);
+    return dst;
+}
+
+static int vfs_clone_mount_children(struct vfs_mount *src_parent,
+                                    struct vfs_mount *dst_parent) {
+    struct vfs_mount *src_child, *tmp;
+
+    llist_for_each(src_child, tmp, &src_parent->mnt_mounts, mnt_child) {
+        struct vfs_mount *dst_child = vfs_clone_single_mount(src_child);
+        int ret;
+
+        if (!dst_child)
+            return -ENOMEM;
+
+        ret =
+            vfs_mount_attach(dst_parent, src_child->mnt_mountpoint, dst_child);
+        if (ret < 0) {
+            vfs_mntput(dst_child);
+            return ret;
+        }
+
+        ret = vfs_clone_mount_children(src_child, dst_child);
+        if (ret < 0)
+            return ret;
+    }
+
+    return 0;
+}
+
+struct vfs_mount *vfs_clone_mount_tree(struct vfs_mount *root) {
+    struct vfs_mount *clone;
+    int ret;
+
+    if (!root)
+        return NULL;
+
+    clone = vfs_clone_single_mount(root);
+    if (!clone)
+        return NULL;
+
+    clone->mnt_parent = clone;
+    clone->mnt_mountpoint = NULL;
+    clone->mnt_stack_prev = NULL;
+    clone->mnt_stack_next = NULL;
+
+    ret = vfs_clone_mount_children(root, clone);
+    if (ret < 0) {
+        vfs_put_mount_tree(clone);
+        return NULL;
+    }
+
+    return clone;
+}
+
+void vfs_put_mount_tree(struct vfs_mount *root) {
+    struct vfs_mount *child, *tmp;
+
+    if (!root)
+        return;
+
+    llist_for_each(child, tmp, &root->mnt_mounts, mnt_child) {
+        vfs_put_mount_tree(child);
+    }
+
+    if (root->mnt_mountpoint)
+        vfs_mount_detach(root);
+    vfs_mntput(root);
 }
 
 int vfs_reconfigure_mount(struct vfs_mount *mnt, const struct vfs_path *to_path,
