@@ -1,8 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <task/signal.h>
-#include <fs/fs_syscall.h>
-#include <fs/pipe.h>
+#include <fs/vfs/pipe.h>
 #include <fs/vfs/vfs.h>
 #include <init/callbacks.h>
 
@@ -40,6 +39,63 @@ static inline pipe_specific_t *pipefs_spec_from_file(struct vfs_file *file) {
     if (file->private_data)
         return (pipe_specific_t *)file->private_data;
     return pipefs_spec_from_inode(file->f_inode);
+}
+
+static pipe_info_t *pipefs_named_info(struct vfs_inode *inode) {
+    return inode ? (pipe_info_t *)inode->i_private : NULL;
+}
+
+static pipe_info_t *pipefs_alloc_info(void) {
+    pipe_info_t *info = calloc(1, sizeof(*info));
+
+    if (!info)
+        return NULL;
+
+    info->buf = malloc(PIPE_BUFF);
+    if (!info->buf) {
+        free(info);
+        return NULL;
+    }
+
+    memset(info->buf, 0, PIPE_BUFF);
+    spin_init(&info->lock);
+    return info;
+}
+
+static pipe_info_t *pipefs_named_ensure_info(struct vfs_inode *inode) {
+    pipe_info_t *pipe;
+    pipe_info_t *new_pipe;
+    pipe_info_t *expected = NULL;
+
+    if (!inode)
+        return NULL;
+
+    pipe = pipefs_named_info(inode);
+    if (pipe)
+        return pipe;
+
+    new_pipe = pipefs_alloc_info();
+    if (!new_pipe)
+        return NULL;
+
+    new_pipe->read_node = inode;
+    new_pipe->write_node = inode;
+
+    if (!__atomic_compare_exchange_n((pipe_info_t **)&inode->i_private,
+                                     &expected, new_pipe, false,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        free(new_pipe->buf);
+        free(new_pipe);
+        pipe = expected;
+    } else {
+        pipe = new_pipe;
+    }
+
+    if (pipe) {
+        pipe->read_node = inode;
+        pipe->write_node = inode;
+    }
+    return pipe;
 }
 
 static struct vfs_inode *pipefs_alloc_inode(struct vfs_super_block *sb) {
@@ -229,6 +285,8 @@ static ssize_t pipe_read_inner(struct vfs_file *file, void *addr, size_t size,
 
     if (!spec || !spec->info)
         return -EINVAL;
+    if (!spec->read)
+        return -EBADF;
     pipe = spec->info;
 
     while (true) {
@@ -303,6 +361,8 @@ static ssize_t pipe_write_inner(struct vfs_file *file, const void *addr,
 
     if (!spec || !spec->info)
         return -EINVAL;
+    if (!spec->write)
+        return -EBADF;
     pipe = spec->info;
 
     while (true) {
@@ -398,9 +458,9 @@ static __poll_t pipefs_poll(struct vfs_file *file, struct vfs_poll_table *pt) {
     pipe = spec->info;
 
     spin_lock(&pipe->lock);
-    if (!spec->write && pipe->write_fds == 0)
+    if (spec->read && pipe->write_fds == 0)
         out |= EPOLLHUP;
-    if (!spec->write && pipe->ptr > 0)
+    if (spec->read && pipe->ptr > 0)
         out |= EPOLLIN | EPOLLRDNORM;
 
     if (spec->write && pipe->read_fds == 0)
@@ -423,7 +483,7 @@ static int pipefs_open(struct vfs_inode *inode, struct vfs_file *file) {
     spin_lock(&pipe->lock);
     if (spec->write)
         pipe->write_fds++;
-    else
+    if (spec->read)
         pipe->read_fds++;
     spin_unlock(&pipe->lock);
 
@@ -436,6 +496,7 @@ static int pipefs_release(struct vfs_inode *inode, struct vfs_file *file) {
     pipe_specific_t *spec = pipefs_spec_from_file(file);
     pipe_info_t *pipe;
     uint32_t write_events = EPOLLHUP;
+    bool free_spec = false;
 
     (void)inode;
     if (!spec || !spec->info)
@@ -446,7 +507,8 @@ static int pipefs_release(struct vfs_inode *inode, struct vfs_file *file) {
     if (spec->write) {
         if (pipe->write_fds > 0)
             pipe->write_fds--;
-    } else {
+    }
+    if (spec->read) {
         if (pipe->read_fds > 0)
             pipe->read_fds--;
     }
@@ -459,7 +521,10 @@ static int pipefs_release(struct vfs_inode *inode, struct vfs_file *file) {
         vfs_poll_notify(pipe->write_node, write_events);
     spin_unlock(&pipe->lock);
 
+    free_spec = file->private_data && file->private_data != inode->i_private;
     file->private_data = NULL;
+    if (free_spec)
+        free(spec);
     return 0;
 }
 
@@ -519,6 +584,7 @@ static int pipefs_create_endpoint(struct vfs_file **out_file, pipe_info_t *pipe,
     inode->i_fop = &pipefs_file_ops;
     inode->i_private = spec;
 
+    spec->read = !write_end;
     spec->write = write_end;
     spec->info = pipe;
 
@@ -564,6 +630,75 @@ void pipefs_init(void) {
     vfs_register_filesystem(&pipefs_fs_type);
 }
 
+ssize_t pipefs_named_read(struct vfs_file *file, void *buf, size_t count,
+                          loff_t *ppos) {
+    return pipefs_read(file, buf, count, ppos);
+}
+
+ssize_t pipefs_named_write(struct vfs_file *file, const void *buf, size_t count,
+                           loff_t *ppos) {
+    return pipefs_write(file, buf, count, ppos);
+}
+
+__poll_t pipefs_named_poll(struct vfs_file *file, struct vfs_poll_table *pt) {
+    return pipefs_poll(file, pt);
+}
+
+int pipefs_named_open(struct vfs_inode *inode, struct vfs_file *file) {
+    pipe_info_t *pipe;
+    pipe_specific_t *spec;
+    unsigned int accmode;
+
+    if (!inode || !file || !S_ISFIFO(inode->i_mode))
+        return -EINVAL;
+
+    pipe = pipefs_named_ensure_info(inode);
+    if (!pipe)
+        return -ENOMEM;
+
+    accmode = file->f_flags & O_ACCMODE_FLAGS;
+    spec = calloc(1, sizeof(*spec));
+    if (!spec)
+        return -ENOMEM;
+
+    spec->read = accmode != O_WRONLY;
+    spec->write = accmode != O_RDONLY;
+    spec->info = pipe;
+
+    spin_lock(&pipe->lock);
+    if (spec->read)
+        pipe->read_fds++;
+    if (spec->write)
+        pipe->write_fds++;
+    pipe->read_node = inode;
+    pipe->write_node = inode;
+    spin_unlock(&pipe->lock);
+
+    file->private_data = spec;
+    return 0;
+}
+
+int pipefs_named_release(struct vfs_inode *inode, struct vfs_file *file) {
+    return pipefs_release(inode, file);
+}
+
+void pipefs_named_evict_inode(struct vfs_inode *inode) {
+    pipe_info_t *pipe;
+
+    if (!inode || !S_ISFIFO(inode->i_mode))
+        return;
+
+    pipe = pipefs_named_info(inode);
+    if (!pipe)
+        return;
+
+    pipe->read_node = NULL;
+    pipe->write_node = NULL;
+    free(pipe->buf);
+    free(pipe);
+    inode->i_private = NULL;
+}
+
 uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     struct vfs_file *read_file = NULL;
     struct vfs_file *write_file = NULL;
@@ -574,18 +709,9 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
     if (!pipefd)
         return -EFAULT;
 
-    info = calloc(1, sizeof(*info));
+    info = pipefs_alloc_info();
     if (!info)
         return -ENOMEM;
-
-    info->buf = malloc(PIPE_BUFF);
-    if (!info->buf) {
-        free(info);
-        return -ENOMEM;
-    }
-
-    memset(info->buf, 0, PIPE_BUFF);
-    spin_init(&info->lock);
 
     ret = pipefs_create_endpoint(&read_file, info, false,
                                  O_RDONLY | (flags & O_NONBLOCK));

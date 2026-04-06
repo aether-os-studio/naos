@@ -310,6 +310,34 @@ static inline bool unix_socket_get_peer_cred(const socket_t *sock,
     return true;
 }
 
+static int unix_socket_maybe_add_passcred(socket_t *peer,
+                                          unix_socket_ancillary_t **ancillary) {
+    bool peer_passcred = false;
+
+    if (!peer || !ancillary)
+        return 0;
+
+    mutex_lock(&peer->lock);
+    peer_passcred = peer->passcred;
+    mutex_unlock(&peer->lock);
+
+    if (!peer_passcred)
+        return 0;
+
+    if (!*ancillary) {
+        *ancillary = calloc(1, sizeof(**ancillary));
+        if (!*ancillary)
+            return -ENOMEM;
+    }
+
+    if (!(*ancillary)->has_cred) {
+        unix_socket_fill_cred_from_task(&(*ancillary)->cred, current_task);
+        (*ancillary)->has_cred = true;
+    }
+
+    return 0;
+}
+
 static uint64_t unix_socket_name_hash(const char *name) {
     uint64_t hash = 1469598103934665603ULL;
     if (!name)
@@ -1961,6 +1989,16 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
     }
     free(safe);
 
+    if (unix_socket_is_dgram_type(sock->type)) {
+        unix_socket_fill_cred_from_task(&sock->cred, current_task);
+        unix_socket_snapshot_peer_cred(sock, &listen_sock->cred);
+        sock->peer = listen_sock;
+        sock->established = true;
+        socket_notify_sock(sock, EPOLLOUT);
+        unix_socket_release_lookup_ref(listen_sock);
+        return 0;
+    }
+
     while (true) {
         mutex_lock(&listen_sock->lock);
         if (listen_sock->closed || !listen_sock->connMax) {
@@ -2055,6 +2093,8 @@ size_t unix_socket_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
     socket_t *sock = handle->sock;
     socket_t *peer = sock->peer;
     bool peer_needs_unref = false;
+    unix_socket_ancillary_t *ancillary = NULL;
+    int ret;
 
     if (!peer) {
         if (unix_socket_is_connected_type(sock->type) && sock->established) {
@@ -2084,11 +2124,20 @@ size_t unix_socket_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
     }
 
 done:
-    size_t ret =
-        unix_socket_send_to_peer(sock, peer, in, limit, flags, caller_fd, NULL);
+    ret = unix_socket_maybe_add_passcred(peer, &ancillary);
+    if (ret < 0) {
+        if (peer_needs_unref)
+            unix_socket_release_lookup_ref(peer);
+        return (size_t)ret;
+    }
+
+    ret = unix_socket_send_to_peer(sock, peer, in, limit, flags, caller_fd,
+                                   &ancillary);
+    if (ancillary)
+        unix_socket_ancillary_free(ancillary);
     if (peer_needs_unref)
         unix_socket_release_lookup_ref(peer);
-    return ret;
+    return (size_t)ret;
 }
 
 size_t unix_socket_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
@@ -2152,37 +2201,11 @@ done:
         return (size_t)ancillary_ret;
     }
 
-    bool peer_passcred = false;
-    if (peer) {
-        if (peer_needs_unref) {
-            if (mutex_trylock(&peer->lock)) {
-                peer_passcred = peer->passcred;
-                mutex_unlock(&peer->lock);
-            }
-        } else {
-            socket_t *p = sock->peer;
-            if (p && mutex_trylock(&p->lock)) {
-                peer_passcred = p->passcred;
-                mutex_unlock(&p->lock);
-            }
-        }
-    }
-
-    if (peer_passcred) {
-        if (!ancillary) {
-            ancillary = calloc(1, sizeof(*ancillary));
-            if (!ancillary) {
-                if (peer_needs_unref)
-                    unix_socket_release_lookup_ref(peer);
-                return (size_t)-ENOMEM;
-            }
-        }
-        if (!ancillary->has_cred) {
-            ancillary->cred.pid = unix_socket_cred_pid_for_task(current_task);
-            ancillary->cred.uid = current_task->uid;
-            ancillary->cred.gid = current_task->gid;
-            ancillary->has_cred = true;
-        }
+    ancillary_ret = unix_socket_maybe_add_passcred(peer, &ancillary);
+    if (ancillary_ret < 0) {
+        if (peer_needs_unref)
+            unix_socket_release_lookup_ref(peer);
+        return (size_t)ancillary_ret;
     }
 
     if (ancillary && total_len == 0) {
@@ -2449,6 +2472,8 @@ ssize_t socket_read(fd_t *fd, void *buf, size_t offset, size_t limit) {
 ssize_t socket_write(fd_t *fd, const void *buf, size_t offset, size_t limit) {
     socket_handle_t *handle = sockfs_file_handle(fd);
     socket_t *sock = handle->sock;
+    unix_socket_ancillary_t *ancillary = NULL;
+    int ret;
 
     if (!sock->peer) {
         if (unix_socket_is_dgram_type(sock->type))
@@ -2460,7 +2485,15 @@ ssize_t socket_write(fd_t *fd, const void *buf, size_t offset, size_t limit) {
         return -(ENOTCONN);
     }
 
-    return unix_socket_send_to_peer(sock, sock->peer, buf, limit, 0, fd, NULL);
+    ret = unix_socket_maybe_add_passcred(sock->peer, &ancillary);
+    if (ret < 0)
+        return ret;
+
+    ret = unix_socket_send_to_peer(sock, sock->peer, buf, limit, 0, fd,
+                                   &ancillary);
+    if (ancillary)
+        unix_socket_ancillary_free(ancillary);
+    return ret;
 }
 
 int unix_socket_pair(int domain, int type, int protocol, int *sv) {

@@ -1,4 +1,5 @@
 #include <boot/boot.h>
+#include <fs/vfs/cgroup/cgroupfs.h>
 #include <init/abis.h>
 #include <init/callbacks.h>
 #include <libs/string_builder.h>
@@ -10,6 +11,10 @@ extern hashmap_t task_parent_map;
 extern hashmap_t task_pgid_map;
 extern struct llist_header should_free_tasks;
 extern spinlock_t should_free_lock;
+
+static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
+                                   uint64_t newsp, int *parent_tid,
+                                   int *child_tid, uint64_t tls, int cgroup_fd);
 
 static inline bool timer_clockid_supported(clockid_t clockid) {
     return clockid == CLOCK_REALTIME || clockid == CLOCK_MONOTONIC;
@@ -1815,11 +1820,14 @@ uint64_t sys_clone3(struct pt_regs *regs, clone_args_t *args_user,
          check_unmapped(args.pidfd, sizeof(int)))) {
         return (uint64_t)-EFAULT;
     }
+    if ((args.flags & CLONE_INTO_CGROUP) && args.cgroup == 0)
+        return (uint64_t)-EINVAL;
 
     uint64_t clone_flags = args.flags | (args.exit_signal & 0xFFULL);
-    uint64_t ret =
-        sys_clone(regs, clone_flags, args.stack + args.stack_size,
-                  (int *)args.parent_tid, (int *)args.child_tid, args.tls);
+    uint64_t ret = sys_clone_internal(
+        regs, clone_flags, args.stack + args.stack_size, (int *)args.parent_tid,
+        (int *)args.child_tid, args.tls,
+        (args.flags & CLONE_INTO_CGROUP) ? (int)args.cgroup : -1);
     if ((int64_t)ret < 0) {
         return ret;
     }
@@ -1854,6 +1862,14 @@ void before_ret_from_fork() {
 
 uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                    int *parent_tid, int *child_tid, uint64_t tls) {
+    return sys_clone_internal(regs, flags, newsp, parent_tid, child_tid, tls,
+                              -1);
+}
+
+static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
+                                   uint64_t newsp, int *parent_tid,
+                                   int *child_tid, uint64_t tls,
+                                   int cgroup_fd) {
     arch_disable_interrupt();
 
     if ((flags & CLONE_THREAD) &&
@@ -2094,6 +2110,12 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
     child->current_state = TASK_READY;
 
     self->child_vfork_done = false;
+
+    if (cgroup_fd >= 0) {
+        ret = (uint64_t)cgroupfs_set_task_cgroup_by_fd(child, cgroup_fd);
+        if ((int64_t)ret < 0)
+            goto fail;
+    }
 
     child->sched_info = calloc(1, sizeof(struct sched_entity));
     if (!child->sched_info) {

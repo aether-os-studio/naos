@@ -9,6 +9,7 @@
 #include <net/rtnl.h>
 #include <init/abis.h>
 #include <init/callbacks.h>
+#include <fs/vfs/cgroup/cgroupfs.h>
 #include <fs/dev.h>
 #include <fs/proc.h>
 #include <fs/sys.h>
@@ -514,19 +515,26 @@ int linuxabi_on_send_signal(task_t *task, int sig, const siginfo_t *info) {
     return 0;
 }
 
-int linuxabi_on_new_task(task_t *task) { procfs_on_new_task(task); }
+int linuxabi_on_new_task(task_t *task) {
+    procfs_on_new_task(task);
+    cgroupfs_on_new_task(task);
+    return 0;
+}
 
 int linuxabi_on_exit_task(task_t *task) {
+    cgroupfs_on_exit_task(task);
     procfs_on_exit_task(task);
     return 0;
 }
 
 int linuxabi_on_open_file(task_t *task, int fd) {
     procfs_on_open_file(task, fd);
+    return 0;
 }
 
 int linuxabi_on_close_file(task_t *task, int fd, fd_t *file) {
     procfs_on_close_file(task, fd);
+    return 0;
 }
 
 int linuxabi_on_new_device(device_t *dev) {

@@ -1,4 +1,5 @@
 #include <fs/vfs/tmp.h>
+#include <fs/vfs/pipe.h>
 #include <fs/vfs/tmpfs_limit.h>
 #include <mm/mm.h>
 #include <mm/mm_syscall.h>
@@ -541,6 +542,8 @@ static ssize_t tmpfs_read(struct vfs_file *file, void *buf, size_t count,
 
     if (!file || !file->f_inode || !buf || !ppos)
         return -EINVAL;
+    if (S_ISFIFO(file->f_inode->i_mode))
+        return pipefs_named_read(file, buf, count, ppos);
     info = tmpfs_i(file->f_inode);
     if (!info)
         return -EINVAL;
@@ -559,6 +562,8 @@ static ssize_t tmpfs_write(struct vfs_file *file, const void *buf, size_t count,
 
     if (!file || !file->f_inode || !buf || !ppos)
         return -EINVAL;
+    if (S_ISFIFO(file->f_inode->i_mode))
+        return pipefs_named_write(file, buf, count, ppos);
 
     info = tmpfs_i(file->f_inode);
     if (*ppos < 0)
@@ -608,11 +613,16 @@ static int tmpfs_iterate_shared(struct vfs_file *file,
 static int tmpfs_open(struct vfs_inode *inode, struct vfs_file *file) {
     if (!inode || !file)
         return -EINVAL;
+    if (S_ISFIFO(inode->i_mode))
+        return pipefs_named_open(inode, file);
     file->f_op = inode->i_fop;
     return 0;
 }
 
 static int tmpfs_release(struct vfs_inode *inode, struct vfs_file *file) {
+    if (inode && S_ISFIFO(inode->i_mode))
+        return pipefs_named_release(inode, file);
+
     (void)inode;
     (void)file;
     return 0;
@@ -669,6 +679,9 @@ static void *tmpfs_mmap(struct vfs_file *file, void *addr, size_t offset,
 }
 
 static __poll_t tmpfs_poll(struct vfs_file *file, struct vfs_poll_table *pt) {
+    if (file && file->f_inode && S_ISFIFO(file->f_inode->i_mode))
+        return pipefs_named_poll(file, pt);
+
     (void)file;
     (void)pt;
     return EPOLLIN | EPOLLOUT | EPOLLRDNORM | EPOLLWRNORM;
@@ -702,6 +715,9 @@ static void tmpfs_evict_inode(struct vfs_inode *inode) {
         llist_delete(&de->node);
         tmpfs_free_dirent(de);
     }
+
+    if (S_ISFIFO(inode->i_mode))
+        pipefs_named_evict_inode(inode);
 }
 
 static void tmpfs_put_super(struct vfs_super_block *sb) {

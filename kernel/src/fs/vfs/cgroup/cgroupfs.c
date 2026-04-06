@@ -1,4 +1,4 @@
-#include <fs/cgroup/cgroupfs.h>
+#include <fs/vfs/cgroup/cgroupfs.h>
 #include <fs/fs_syscall.h>
 #include <fs/vfs/vfs.h>
 #include <libs/string_builder.h>
@@ -137,8 +137,6 @@ static cgroupfs_cgroup_t *cgroupfs_create_cgroup(cgroupfs_cgroup_t *parent,
 
     llist_init_head(&cgroup->sibling);
     llist_init_head(&cgroup->children);
-    if (!parent)
-        cgroup->subtree_control = CGROUPFS_ALL_CONTROLLERS;
     cgroup->ref_count = 1;
     return cgroup;
 }
@@ -321,6 +319,93 @@ static int cgroupfs_set_task_cgroup_locked(uint64_t pid,
     llist_init_head(&entry->node);
     llist_append(&cgroupfs_assignments, &entry->node);
     return 0;
+}
+
+static int cgroupfs_target_cgroup_from_fd(int fd,
+                                          cgroupfs_cgroup_t **ret_cgroup) {
+    struct vfs_file *file = NULL;
+    struct vfs_inode *inode = NULL;
+    cgroupfs_inode_info_t *info = NULL;
+    cgroupfs_cgroup_t *cgroup = NULL;
+
+    if (!ret_cgroup)
+        return -EINVAL;
+    *ret_cgroup = NULL;
+
+    if (!current_task || fd < 0 || fd >= MAX_FD_NUM)
+        return -EBADF;
+
+    file = task_get_file(current_task, fd);
+    if (!file)
+        return -EBADF;
+
+    inode = file->f_inode;
+    if (!inode || !inode->i_sb || inode->i_sb->s_type != &cgroupfs_fs_type) {
+        vfs_file_put(file);
+        return -EBADF;
+    }
+
+    info = cgroupfs_i(inode);
+    if (!info || info->kind != CGROUPFS_INODE_DIR || !info->cgroup) {
+        vfs_file_put(file);
+        return -EINVAL;
+    }
+
+    cgroup = cgroupfs_cgroup_get(info->cgroup);
+    vfs_file_put(file);
+    if (!cgroup)
+        return -EINVAL;
+
+    *ret_cgroup = cgroup;
+    return 0;
+}
+
+int cgroupfs_set_task_cgroup_by_fd(task_t *task, int fd) {
+    cgroupfs_cgroup_t *cgroup = NULL;
+    int ret;
+
+    if (!task)
+        return -ESRCH;
+
+    ret = cgroupfs_target_cgroup_from_fd(fd, &cgroup);
+    if (ret < 0)
+        return ret;
+
+    mutex_lock(&cgroupfs_lock);
+    ret = cgroupfs_set_task_cgroup_locked(task->pid, cgroup);
+    mutex_unlock(&cgroupfs_lock);
+
+    cgroupfs_cgroup_put(cgroup);
+    return ret;
+}
+
+void cgroupfs_on_new_task(task_t *task) {
+    cgroupfs_cgroup_t *parent_cgroup;
+
+    if (!task || !task_has_parent(task))
+        return;
+
+    mutex_lock(&cgroupfs_lock);
+
+    if (cgroupfs_find_assignment_locked(task->pid)) {
+        mutex_unlock(&cgroupfs_lock);
+        return;
+    }
+
+    parent_cgroup = cgroupfs_task_cgroup_locked(task->parent->pid);
+    if (parent_cgroup && parent_cgroup != cgroupfs_root)
+        (void)cgroupfs_set_task_cgroup_locked(task->pid, parent_cgroup);
+
+    mutex_unlock(&cgroupfs_lock);
+}
+
+void cgroupfs_on_exit_task(task_t *task) {
+    if (!task)
+        return;
+
+    mutex_lock(&cgroupfs_lock);
+    (void)cgroupfs_set_task_cgroup_locked(task->pid, cgroupfs_root);
+    mutex_unlock(&cgroupfs_lock);
 }
 
 static size_t cgroupfs_collect_members(cgroupfs_cgroup_t *cgroup, bool threads,
@@ -675,6 +760,30 @@ static int cgroupfs_write_freeze(cgroupfs_cgroup_t *cgroup, const char *buf) {
     return 0;
 }
 
+static int cgroupfs_setattr(struct vfs_dentry *dentry,
+                            const struct vfs_kstat *stat) {
+    struct vfs_inode *inode;
+
+    if (!dentry || !dentry->d_inode || !stat)
+        return -EINVAL;
+
+    inode = dentry->d_inode;
+
+    if (!S_ISDIR(inode->i_mode) && stat->size != inode->i_size) {
+        if (stat->size != 0)
+            return -EOPNOTSUPP;
+        inode->i_size = 0;
+    }
+
+    if (stat->mode)
+        inode->i_mode = stat->mode;
+    inode->i_uid = stat->uid;
+    inode->i_gid = stat->gid;
+    inode->inode = inode->i_ino;
+    inode->type = S_ISDIR(inode->i_mode) ? file_dir : file_none;
+    return 0;
+}
+
 static struct vfs_dentry *cgroupfs_lookup(struct vfs_inode *dir,
                                           struct vfs_dentry *dentry,
                                           unsigned int flags) {
@@ -985,6 +1094,7 @@ static const struct vfs_inode_operations cgroupfs_inode_ops = {
     .lookup = cgroupfs_lookup,
     .mkdir = cgroupfs_mkdir,
     .rmdir = cgroupfs_rmdir,
+    .setattr = cgroupfs_setattr,
 };
 
 static const struct vfs_file_operations cgroupfs_dir_file_ops = {
