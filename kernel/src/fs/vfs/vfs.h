@@ -701,6 +701,7 @@ int vfs_kern_mount(const char *fs_name, unsigned long mnt_flags,
                    const char *source, void *data, struct vfs_mount **out);
 int vfs_do_mount(int dfd, const char *pathname, const char *fs_name,
                  unsigned long mnt_flags, const char *source, void *data);
+int vfs_do_remount(int dfd, const char *pathname, unsigned long mnt_flags);
 int vfs_do_move_mount(int from_dfd, const char *from_pathname, int to_dfd,
                       const char *to_pathname);
 int vfs_do_umount(int dfd, const char *pathname, int flags);

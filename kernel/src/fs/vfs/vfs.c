@@ -2463,6 +2463,42 @@ out:
     return ret;
 }
 
+int vfs_do_remount(int dfd, const char *pathname, unsigned long mnt_flags) {
+    struct vfs_path target = {0};
+    struct vfs_mount *mnt = NULL;
+    unsigned long preserved_flags;
+    int ret;
+
+    if (!pathname)
+        return -EINVAL;
+
+    ret = vfs_filename_lookup(dfd, pathname, LOOKUP_FOLLOW, &target);
+    if (ret < 0)
+        return ret;
+
+    mnt = vfs_path_mount(&target);
+    if (!mnt && target.mnt)
+        mnt = vfs_mntget(target.mnt);
+    if (!mnt) {
+        ret = -EINVAL;
+        goto out;
+    }
+
+    spin_lock(&mnt->mnt_lock);
+    preserved_flags =
+        mnt->mnt_flags & ~(VFS_MNT_READONLY | VFS_MNT_NOSUID | VFS_MNT_NODEV |
+                           VFS_MNT_NOEXEC | VFS_MNT_NOSYMFOLLOW);
+    mnt->mnt_flags = preserved_flags | mnt_flags;
+    spin_unlock(&mnt->mnt_lock);
+    ret = 0;
+
+out:
+    if (mnt)
+        vfs_mntput(mnt);
+    vfs_path_put(&target);
+    return ret;
+}
+
 int vfs_do_move_mount(int from_dfd, const char *from_pathname, int to_dfd,
                       const char *to_pathname) {
     struct vfs_path from = {0};

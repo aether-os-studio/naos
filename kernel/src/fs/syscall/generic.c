@@ -15,6 +15,16 @@
 static uint64_t do_unlink(const char *name);
 static volatile uint64_t tmpfile_seq = 1;
 
+#define GENERIC_MS_TO_VFS_MASK                                                 \
+    (MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_NOSYMFOLLOW)
+#define GENERIC_MS_REMOUNT_IGNORED_MASK                                        \
+    (MS_SILENT | MS_SYNCHRONOUS | MS_MANDLOCK | MS_DIRSYNC | MS_NOATIME |      \
+     MS_NODIRATIME | MS_RELATIME | MS_STRICTATIME | MS_I_VERSION |             \
+     MS_LAZYTIME)
+#define GENERIC_MS_REMOUNT_ALLOWED_MASK                                        \
+    (MS_REMOUNT | MS_BIND | GENERIC_MS_TO_VFS_MASK |                           \
+     GENERIC_MS_REMOUNT_IGNORED_MASK)
+
 typedef struct linux_file_handle_prefix {
     unsigned int handle_bytes;
     int handle_type;
@@ -105,6 +115,23 @@ static struct vfs_dentry *generic_inode_alias(struct vfs_inode *inode) {
 
 static uint64_t fd_open_file_flags(uint64_t open_flags) {
     return (open_flags & O_ACCMODE_FLAGS) | (open_flags & O_STATUS_FLAGS);
+}
+
+static unsigned long generic_mount_flags_to_vfs(uint64_t flags) {
+    unsigned long mnt_flags = 0;
+
+    if (flags & MS_RDONLY)
+        mnt_flags |= VFS_MNT_READONLY;
+    if (flags & MS_NOSUID)
+        mnt_flags |= VFS_MNT_NOSUID;
+    if (flags & MS_NODEV)
+        mnt_flags |= VFS_MNT_NODEV;
+    if (flags & MS_NOEXEC)
+        mnt_flags |= VFS_MNT_NOEXEC;
+    if (flags & MS_NOSYMFOLLOW)
+        mnt_flags |= VFS_MNT_NOSYMFOLLOW;
+
+    return mnt_flags;
 }
 
 static bool file_lock_ranges_overlap(uint64_t start1, uint64_t end1,
@@ -540,42 +567,33 @@ out:
 
 uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
                    uint64_t flags, void *data) {
-    unsigned long mnt_flags = 0;
+    unsigned long mnt_flags = generic_mount_flags_to_vfs(flags);
     unsigned long propagation_flags =
         flags & (MS_SHARED | MS_PRIVATE | MS_SLAVE | MS_UNBINDABLE);
     char devname[128] = "none";
     char dirname[512] = {0};
     char type[128] = "tmpfs";
 
-    if (type_user) {
-        if (copy_from_user_str(type, type_user, sizeof(type)))
-            return (uint64_t)-EFAULT;
-    }
-    if (dev_name) {
-        if (copy_from_user_str(devname, dev_name, sizeof(devname)))
-            return (uint64_t)-EFAULT;
-    }
     if (copy_from_user_str(dirname, dir_name, sizeof(dirname)))
         return (uint64_t)-EFAULT;
-
-    if (flags & MS_RDONLY)
-        mnt_flags |= VFS_MNT_READONLY;
-    if (flags & MS_NOSUID)
-        mnt_flags |= VFS_MNT_NOSUID;
-    if (flags & MS_NODEV)
-        mnt_flags |= VFS_MNT_NODEV;
-    if (flags & MS_NOEXEC)
-        mnt_flags |= VFS_MNT_NOEXEC;
-    if (flags & MS_NOSYMFOLLOW)
-        mnt_flags |= VFS_MNT_NOSYMFOLLOW;
 
     if (flags & MS_MOVE) {
         if (!dev_name)
             return (uint64_t)-EINVAL;
         if (flags & ~MS_MOVE)
             return (uint64_t)-EOPNOTSUPP;
+        if (copy_from_user_str(devname, dev_name, sizeof(devname)))
+            return (uint64_t)-EFAULT;
         return (uint64_t)vfs_do_move_mount(AT_FDCWD, devname, AT_FDCWD,
                                            dirname);
+    }
+
+    if (flags & MS_REMOUNT) {
+        if (propagation_flags)
+            return (uint64_t)-EINVAL;
+        if (flags & ~GENERIC_MS_REMOUNT_ALLOWED_MASK)
+            return (uint64_t)-EOPNOTSUPP;
+        return (uint64_t)vfs_do_remount(AT_FDCWD, dirname, mnt_flags);
     }
 
     if (propagation_flags) {
@@ -585,9 +603,6 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
 
         if ((propagation_flags & (propagation_flags - 1)) != 0)
             return (uint64_t)-EINVAL;
-        if (flags & ~(MS_REC | MS_SILENT | MS_SHARED | MS_PRIVATE | MS_SLAVE |
-                      MS_UNBINDABLE))
-            return (uint64_t)-EOPNOTSUPP;
 
         ret = vfs_filename_lookup(AT_FDCWD, dirname, LOOKUP_FOLLOW, &target);
         if (ret < 0)
@@ -608,8 +623,17 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
         return (uint64_t)ret;
     }
 
-    if (flags & (MS_BIND | MS_REMOUNT)) {
+    if (flags & MS_BIND) {
         return (uint64_t)-EOPNOTSUPP;
+    }
+
+    if (type_user) {
+        if (copy_from_user_str(type, type_user, sizeof(type)))
+            return (uint64_t)-EFAULT;
+    }
+    if (dev_name) {
+        if (copy_from_user_str(devname, dev_name, sizeof(devname)))
+            return (uint64_t)-EFAULT;
     }
 
     return (uint64_t)vfs_do_mount(AT_FDCWD, dirname, type, mnt_flags, devname,
