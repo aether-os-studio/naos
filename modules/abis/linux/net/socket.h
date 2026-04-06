@@ -4,6 +4,7 @@
 #include <fs/fs_syscall.h>
 #include <net/real_socket.h>
 #include <libs/mutex.h>
+#include <libs/skb_buff.h>
 
 #define MAX_SOCKETS 256
 
@@ -54,7 +55,6 @@ struct ucred {
 
 typedef struct unix_socket_ancillary {
     struct unix_socket_ancillary *next;
-    uint64_t seq;
     fd_t *files[MAX_PENDING_FILES_COUNT];
     uint32_t file_count;
     struct ucred cred;
@@ -69,15 +69,10 @@ typedef struct socket {
     int type;
     int protocol;
 
-    // 接收 buffer（别人发给我的数据存在这里）
+    // 接收队列（统一 skb 缓冲）
     mutex_t lock;
-    uint8_t *recv_buff;
-    size_t recv_head;
-    size_t recv_pos;
+    skb_queue_t recv_queue;
     size_t recv_size;
-    uint64_t recv_seq;
-    unix_socket_ancillary_t *ancillary_head;
-    unix_socket_ancillary_t *ancillary_tail;
 
     // 我自己的凭据
     struct ucred cred;

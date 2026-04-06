@@ -246,6 +246,10 @@ static inline bool unix_socket_is_dgram_type(int type) {
     return type == SOCK_DGRAM;
 }
 
+static inline bool unix_socket_is_message_type(int type) {
+    return type == SOCK_DGRAM || type == SOCK_SEQPACKET;
+}
+
 static inline bool unix_socket_is_connected_type(int type) {
     return type == SOCK_STREAM || type == SOCK_SEQPACKET;
 }
@@ -486,101 +490,21 @@ static bool unix_socket_backlog_reserve_locked(socket_t *sock,
 }
 
 static inline size_t unix_socket_recv_used_locked(const socket_t *sock) {
-    return sock ? sock->recv_pos : 0;
+    return sock ? skb_queue_bytes(&sock->recv_queue) : 0;
 }
 
 static inline size_t unix_socket_recv_space_locked(const socket_t *sock) {
-    if (!sock || sock->recv_pos >= sock->recv_size)
-        return 0;
-    return sock->recv_size - sock->recv_pos;
+    return sock ? skb_queue_space(&sock->recv_queue) : 0;
 }
 
-static size_t unix_socket_recv_write_locked(socket_t *sock, const uint8_t *data,
-                                            size_t len) {
-    if (!sock || !data || !len)
+static inline size_t unix_socket_next_packet_len_locked(const socket_t *sock) {
+    skb_buff_t *skb = NULL;
+
+    if (!sock)
         return 0;
 
-    size_t to_copy = MIN(len, unix_socket_recv_space_locked(sock));
-    if (!to_copy)
-        return 0;
-
-    size_t tail = (sock->recv_head + sock->recv_pos) % sock->recv_size;
-    size_t first = MIN(to_copy, sock->recv_size - tail);
-    memcpy(sock->recv_buff + tail, data, first);
-    if (to_copy > first) {
-        memcpy(sock->recv_buff, data + first, to_copy - first);
-    }
-
-    sock->recv_pos += to_copy;
-    return to_copy;
-}
-
-static size_t unix_socket_recv_copy_out_locked(const socket_t *sock,
-                                               size_t start, uint8_t *out,
-                                               size_t len) {
-    if (!sock || !out || !len || !sock->recv_size)
-        return 0;
-
-    size_t head = (sock->recv_head + start) % sock->recv_size;
-    size_t first = MIN(len, sock->recv_size - head);
-    memcpy(out, sock->recv_buff + head, first);
-    if (len > first) {
-        memcpy(out + first, sock->recv_buff, len - first);
-    }
-
-    return len;
-}
-
-static size_t unix_socket_recv_read_locked(socket_t *sock, uint8_t *out,
-                                           size_t len, bool peek) {
-    if (!sock || !out || !len)
-        return 0;
-
-    size_t to_copy = MIN(len, unix_socket_recv_used_locked(sock));
-    if (!to_copy)
-        return 0;
-
-    unix_socket_recv_copy_out_locked(sock, 0, out, to_copy);
-
-    if (!peek) {
-        sock->recv_head = (sock->recv_head + to_copy) % sock->recv_size;
-        sock->recv_pos -= to_copy;
-        if (!sock->recv_pos)
-            sock->recv_head = 0;
-    }
-
-    return to_copy;
-}
-
-static size_t unix_socket_recv_readv_locked(socket_t *sock,
-                                            const struct iovec *iov,
-                                            size_t iovlen, size_t len_total,
-                                            bool peek) {
-    if (!sock || !iov || !iovlen || !len_total)
-        return 0;
-
-    size_t remaining = MIN(len_total, unix_socket_recv_used_locked(sock));
-    size_t consumed = 0;
-
-    for (size_t i = 0; i < iovlen && remaining > 0; i++) {
-        if (!iov[i].iov_base || !iov[i].len)
-            continue;
-
-        size_t copy_len = MIN(iov[i].len, remaining);
-        unix_socket_recv_copy_out_locked(sock, consumed, iov[i].iov_base,
-                                         copy_len);
-        consumed += copy_len;
-        remaining -= copy_len;
-    }
-
-    if (!peek && consumed > 0) {
-        sock->recv_head = (sock->recv_head + consumed) % sock->recv_size;
-        sock->recv_pos -= consumed;
-        if (!sock->recv_pos)
-            sock->recv_head = 0;
-    }
-
-    return consumed;
+    skb = skb_queue_peek(&sock->recv_queue);
+    return skb ? skb_unread_len(skb) : 0;
 }
 
 static void unix_socket_ancillary_free(unix_socket_ancillary_t *ancillary) {
@@ -604,33 +528,20 @@ unix_socket_ancillary_free_list(unix_socket_ancillary_t *ancillary_list) {
     }
 }
 
-static void unix_socket_ancillary_enqueue_locked(socket_t *sock,
-                                                 unix_socket_ancillary_t *anc) {
-    if (!sock || !anc)
-        return;
+static int unix_socket_ancillary_append(unix_socket_ancillary_t **head,
+                                        unix_socket_ancillary_t **tail,
+                                        unix_socket_ancillary_t *ancillary) {
+    if (!ancillary)
+        return 0;
 
-    anc->next = NULL;
-    if (sock->ancillary_tail) {
-        sock->ancillary_tail->next = anc;
+    ancillary->next = NULL;
+    if (*tail) {
+        (*tail)->next = ancillary;
     } else {
-        sock->ancillary_head = anc;
+        *head = ancillary;
     }
-    sock->ancillary_tail = anc;
-}
-
-static void unix_socket_ancillary_drop_before_locked(socket_t *sock,
-                                                     uint64_t seq_limit) {
-    if (!sock)
-        return;
-
-    while (sock->ancillary_head && sock->ancillary_head->seq < seq_limit) {
-        unix_socket_ancillary_t *stale = sock->ancillary_head;
-        sock->ancillary_head = stale->next;
-        if (!sock->ancillary_head)
-            sock->ancillary_tail = NULL;
-        stale->next = NULL;
-        unix_socket_ancillary_free(stale);
-    }
+    *tail = ancillary;
+    return 0;
 }
 
 static unix_socket_ancillary_t *
@@ -642,7 +553,6 @@ unix_socket_ancillary_clone_one(const unix_socket_ancillary_t *src) {
     if (!clone)
         return NULL;
 
-    clone->seq = src->seq;
     clone->file_count = src->file_count;
     clone->cred = src->cred;
     clone->has_cred = src->has_cred;
@@ -658,6 +568,36 @@ unix_socket_ancillary_clone_one(const unix_socket_ancillary_t *src) {
     return clone;
 }
 
+static int unix_socket_collect_skb_ancillary(skb_buff_t *skb, bool peek,
+                                             unix_socket_ancillary_t **head,
+                                             unix_socket_ancillary_t **tail) {
+    unix_socket_ancillary_t *ancillary = NULL;
+
+    if (!skb || skb->offset != 0 || !skb->priv)
+        return 0;
+
+    if (peek) {
+        ancillary = unix_socket_ancillary_clone_one(
+            (unix_socket_ancillary_t *)skb->priv);
+        if (!ancillary)
+            return -ENOMEM;
+    } else {
+        ancillary = (unix_socket_ancillary_t *)skb_detach_priv(skb);
+    }
+
+    return unix_socket_ancillary_append(head, tail, ancillary);
+}
+
+static void unix_socket_drop_skb_ancillary(skb_buff_t *skb) {
+    unix_socket_ancillary_t *ancillary = NULL;
+
+    if (!skb || skb->offset != 0 || !skb->priv)
+        return;
+
+    ancillary = (unix_socket_ancillary_t *)skb_detach_priv(skb);
+    unix_socket_ancillary_free(ancillary);
+}
+
 static size_t unix_socket_iov_total_len(const struct iovec *iov,
                                         size_t iovlen) {
     size_t total = 0;
@@ -671,20 +611,250 @@ static size_t unix_socket_iov_total_len(const struct iovec *iov,
     return total;
 }
 
-static size_t unix_socket_stream_read_limit_locked(const socket_t *sock,
-                                                   size_t requested) {
-    size_t limit = MIN(requested, unix_socket_recv_used_locked(sock));
-    if (!sock || !limit)
-        return limit;
+static size_t unix_socket_iov_copy_out(const struct iovec *iov, size_t iovlen,
+                                       size_t dest_offset, const uint8_t *src,
+                                       size_t len) {
+    size_t copied = 0;
+    size_t skipped = 0;
 
-    unix_socket_ancillary_t *ancillary = sock->ancillary_head;
-    while (ancillary && ancillary->seq < sock->recv_seq)
-        ancillary = ancillary->next;
+    if (!iov || !src || !len)
+        return 0;
 
-    if (ancillary && ancillary->seq < sock->recv_seq + limit)
-        limit = (size_t)(ancillary->seq - sock->recv_seq + 1);
+    for (size_t i = 0; i < iovlen && copied < len; i++) {
+        if (!iov[i].iov_base || !iov[i].len)
+            continue;
 
-    return limit;
+        if (dest_offset >= skipped + iov[i].len) {
+            skipped += iov[i].len;
+            continue;
+        }
+
+        size_t inner_off = 0;
+        if (dest_offset > skipped)
+            inner_off = dest_offset - skipped;
+
+        size_t room = iov[i].len - inner_off;
+        size_t copy_len = MIN(room, len - copied);
+        memcpy((uint8_t *)iov[i].iov_base + inner_off, src + copied, copy_len);
+        copied += copy_len;
+        skipped += iov[i].len;
+    }
+
+    return copied;
+}
+
+static skb_buff_t *unix_socket_build_skb(const uint8_t *data, size_t len,
+                                         unix_socket_ancillary_t *ancillary) {
+    skb_buff_t *skb = skb_alloc(len);
+
+    if (!skb) {
+        unix_socket_ancillary_free(ancillary);
+        return NULL;
+    }
+
+    if (len > 0 && data)
+        memcpy(skb->data, data, len);
+    skb->priv = ancillary;
+    return skb;
+}
+
+static skb_buff_t *
+unix_socket_build_skb_from_iov(const struct iovec *iov, size_t iovlen,
+                               size_t total_len, unix_socket_ancillary_t *anc) {
+    skb_buff_t *skb = skb_alloc(total_len);
+    size_t copied = 0;
+
+    if (!skb) {
+        unix_socket_ancillary_free(anc);
+        return NULL;
+    }
+
+    for (size_t i = 0; i < iovlen; i++) {
+        if (!iov[i].iov_base || !iov[i].len)
+            continue;
+        memcpy(skb->data + copied, iov[i].iov_base, iov[i].len);
+        copied += iov[i].len;
+    }
+
+    skb->priv = anc;
+    return skb;
+}
+
+static size_t
+unix_socket_stream_read_locked(socket_t *sock, uint8_t *out, size_t len,
+                               bool peek,
+                               unix_socket_ancillary_t **ancillary_head,
+                               unix_socket_ancillary_t **ancillary_tail) {
+    size_t copied = 0;
+    skb_buff_t *skb = NULL;
+
+    if (!sock || !len)
+        return 0;
+
+    for (skb = skb_queue_peek(&sock->recv_queue); skb && copied < len;) {
+        size_t unread = skb_unread_len(skb);
+        size_t chunk = MIN(len - copied, unread);
+        if (!chunk)
+            break;
+
+        if (out)
+            skb_copy_data(skb, 0, out + copied, chunk);
+
+        if (ancillary_head && ancillary_tail) {
+            if (unix_socket_collect_skb_ancillary(skb, peek, ancillary_head,
+                                                  ancillary_tail) < 0)
+                return (size_t)-ENOMEM;
+        } else if (!peek) {
+            unix_socket_drop_skb_ancillary(skb);
+        }
+
+        copied += chunk;
+
+        if (peek) {
+            skb = skb->next;
+            continue;
+        }
+
+        sock->recv_queue.byte_count -= chunk;
+        skb->offset += chunk;
+        if (skb_unread_len(skb) == 0) {
+            skb_buff_t *done = skb_queue_pop(&sock->recv_queue);
+            skb_free(done, NULL);
+        }
+
+        skb = skb_queue_peek(&sock->recv_queue);
+    }
+
+    return copied;
+}
+
+static size_t
+unix_socket_stream_readv_locked(socket_t *sock, const struct iovec *iov,
+                                size_t iovlen, size_t len_total, bool peek,
+                                unix_socket_ancillary_t **ancillary_head,
+                                unix_socket_ancillary_t **ancillary_tail) {
+    size_t copied = 0;
+    skb_buff_t *skb = NULL;
+
+    if (!sock || !iov || !iovlen || !len_total)
+        return 0;
+
+    for (skb = skb_queue_peek(&sock->recv_queue); skb && copied < len_total;) {
+        size_t unread = skb_unread_len(skb);
+        size_t chunk = MIN(len_total - copied, unread);
+        if (!chunk)
+            break;
+
+        if (iov)
+            unix_socket_iov_copy_out(iov, iovlen, copied,
+                                     skb->data + skb->offset, chunk);
+
+        if (ancillary_head && ancillary_tail) {
+            if (unix_socket_collect_skb_ancillary(skb, peek, ancillary_head,
+                                                  ancillary_tail) < 0)
+                return (size_t)-ENOMEM;
+        } else if (!peek) {
+            unix_socket_drop_skb_ancillary(skb);
+        }
+
+        copied += chunk;
+
+        if (peek) {
+            skb = skb->next;
+            continue;
+        }
+
+        sock->recv_queue.byte_count -= chunk;
+        skb->offset += chunk;
+        if (skb_unread_len(skb) == 0) {
+            skb_buff_t *done = skb_queue_pop(&sock->recv_queue);
+            skb_free(done, NULL);
+        }
+
+        skb = skb_queue_peek(&sock->recv_queue);
+    }
+
+    return copied;
+}
+
+static size_t unix_socket_packet_readv_locked(
+    socket_t *sock, const struct iovec *iov, size_t iovlen, size_t len_total,
+    bool peek, bool *truncated, unix_socket_ancillary_t **ancillary_head,
+    unix_socket_ancillary_t **ancillary_tail) {
+    skb_buff_t *skb = NULL;
+    size_t packet_len = 0;
+    size_t copied = 0;
+
+    if (!sock || !iov || !iovlen)
+        return 0;
+
+    skb = skb_queue_peek(&sock->recv_queue);
+    if (!skb)
+        return 0;
+
+    packet_len = skb_unread_len(skb);
+    copied = MIN(len_total, packet_len);
+    if (truncated)
+        *truncated = packet_len > copied;
+
+    if (copied > 0)
+        unix_socket_iov_copy_out(iov, iovlen, 0, skb->data + skb->offset,
+                                 copied);
+
+    if (ancillary_head && ancillary_tail) {
+        if (unix_socket_collect_skb_ancillary(skb, peek, ancillary_head,
+                                              ancillary_tail) < 0)
+            return (size_t)-ENOMEM;
+    } else if (!peek) {
+        unix_socket_drop_skb_ancillary(skb);
+    }
+
+    if (!peek) {
+        skb_buff_t *done = skb_queue_pop(&sock->recv_queue);
+        skb_free(done, NULL);
+    }
+
+    return copied;
+}
+
+static size_t
+unix_socket_packet_read_locked(socket_t *sock, uint8_t *out, size_t len,
+                               bool peek, bool *truncated,
+                               unix_socket_ancillary_t **ancillary_head,
+                               unix_socket_ancillary_t **ancillary_tail) {
+    skb_buff_t *skb = NULL;
+    size_t packet_len = 0;
+    size_t copied = 0;
+
+    if (!sock)
+        return 0;
+
+    skb = skb_queue_peek(&sock->recv_queue);
+    if (!skb)
+        return 0;
+
+    packet_len = skb_unread_len(skb);
+    copied = MIN(len, packet_len);
+    if (truncated)
+        *truncated = packet_len > copied;
+
+    if (copied > 0 && out)
+        skb_copy_data(skb, 0, out, copied);
+
+    if (ancillary_head && ancillary_tail) {
+        if (unix_socket_collect_skb_ancillary(skb, peek, ancillary_head,
+                                              ancillary_tail) < 0)
+            return (size_t)-ENOMEM;
+    } else if (!peek) {
+        unix_socket_drop_skb_ancillary(skb);
+    }
+
+    if (!peek) {
+        skb_buff_t *done = skb_queue_pop(&sock->recv_queue);
+        skb_free(done, NULL);
+    }
+
+    return copied;
 }
 
 static int unix_socket_prepare_ancillary(const struct msghdr *msg,
@@ -772,57 +942,6 @@ static int unix_socket_prepare_ancillary(const struct msghdr *msg,
     }
 
     *out_anc = anc;
-    return 0;
-}
-
-static int unix_socket_collect_ancillary_locked(socket_t *sock,
-                                                uint64_t end_seq, bool peek,
-                                                unix_socket_ancillary_t **out) {
-    if (!out)
-        return -EINVAL;
-
-    *out = NULL;
-    if (!sock)
-        return 0;
-
-    unix_socket_ancillary_t *list = NULL;
-    unix_socket_ancillary_t *tail = NULL;
-
-    if (peek) {
-        for (unix_socket_ancillary_t *curr = sock->ancillary_head;
-             curr && curr->seq < end_seq; curr = curr->next) {
-            unix_socket_ancillary_t *clone =
-                unix_socket_ancillary_clone_one(curr);
-            if (!clone) {
-                unix_socket_ancillary_free_list(list);
-                return -ENOMEM;
-            }
-
-            if (tail) {
-                tail->next = clone;
-            } else {
-                list = clone;
-            }
-            tail = clone;
-        }
-    } else {
-        while (sock->ancillary_head && sock->ancillary_head->seq < end_seq) {
-            unix_socket_ancillary_t *curr = sock->ancillary_head;
-            sock->ancillary_head = curr->next;
-            if (!sock->ancillary_head)
-                sock->ancillary_tail = NULL;
-            curr->next = NULL;
-
-            if (tail) {
-                tail->next = curr;
-            } else {
-                list = curr;
-            }
-            tail = curr;
-        }
-    }
-
-    *out = list;
     return 0;
 }
 
@@ -973,17 +1092,9 @@ socket_t *unix_socket_alloc() {
     mutex_init(&sock->lock);
 
     sock->recv_size = BUFFER_SIZE;
-    sock->recv_buff = malloc(BUFFER_SIZE);
-    if (!sock->recv_buff) {
-        free(sock);
-        return NULL;
-    }
-    sock->recv_head = 0;
-    sock->recv_pos = 0;
-    sock->recv_seq = 0;
+    skb_queue_init(&sock->recv_queue, sock->recv_size,
+                   (skb_priv_destructor_t)unix_socket_ancillary_free);
     sock->node = NULL;
-    sock->ancillary_head = NULL;
-    sock->ancillary_tail = NULL;
 
     // 设置凭据
     unix_socket_fill_cred_from_task(&sock->cred, current_task);
@@ -1041,8 +1152,7 @@ void unix_socket_free(socket_t *sock) {
     spin_unlock(&unix_socket_list_lock);
 
     // 释放资源
-    if (sock->recv_buff)
-        free(sock->recv_buff);
+    skb_queue_purge(&sock->recv_queue);
     if (sock->bindAddr)
         free(sock->bindAddr);
     if (sock->filename)
@@ -1051,8 +1161,6 @@ void unix_socket_free(socket_t *sock) {
         free(sock->backlog);
     if (sock->filter)
         free(sock->filter);
-
-    unix_socket_ancillary_free_list(sock->ancillary_head);
 
     free(sock);
 }
@@ -1116,32 +1224,22 @@ static void unix_socket_handle_release(socket_handle_t *handle) {
     free(handle);
 }
 
-// 发送数据到对端的 recv_buff
-static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
-                                       const uint8_t *data, size_t len,
-                                       int flags, fd_t *fd_handle,
-                                       unix_socket_ancillary_t **ancillary) {
+static size_t unix_socket_send_stream_to_peer(
+    socket_t *self, socket_t *peer, const uint8_t *data, size_t len, int flags,
+    fd_t *fd_handle, unix_socket_ancillary_t **ancillary) {
     socket_t *active_peer = peer;
-    if (self && !unix_socket_is_dgram_type(self->type))
-        active_peer = self->peer;
-
-    if (self && self->shut_wr) {
-        if (!(flags & MSG_NOSIGNAL))
-            task_commit_signal(current_task, SIGPIPE, NULL);
-        return -EPIPE;
-    }
-
-    if (!active_peer || active_peer->closed || active_peer->shut_rd) {
-        if (!(flags & MSG_NOSIGNAL))
-            task_commit_signal(current_task, SIGPIPE, NULL);
-        return -EPIPE;
-    }
 
     if (!len)
         return 0;
 
     while (true) {
-        if (self && !unix_socket_is_dgram_type(self->type))
+        if (self && self->shut_wr) {
+            if (!(flags & MSG_NOSIGNAL))
+                task_commit_signal(current_task, SIGPIPE, NULL);
+            return -EPIPE;
+        }
+
+        if (self && unix_socket_is_connected_type(self->type))
             active_peer = self->peer;
         if (!active_peer) {
             if (!(flags & MSG_NOSIGNAL))
@@ -1156,16 +1254,30 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
                 task_commit_signal(current_task, SIGPIPE, NULL);
             return -EPIPE;
         }
+
         size_t available = unix_socket_recv_space_locked(active_peer);
         if (available > 0) {
+            size_t to_copy = MIN(len, available);
+            unix_socket_ancillary_t *skb_ancillary = NULL;
+            skb_buff_t *skb = NULL;
+
             if (ancillary && *ancillary) {
-                (*ancillary)->seq =
-                    active_peer->recv_seq + active_peer->recv_pos;
-                unix_socket_ancillary_enqueue_locked(active_peer, *ancillary);
+                skb_ancillary = *ancillary;
                 *ancillary = NULL;
             }
-            size_t to_copy =
-                unix_socket_recv_write_locked(active_peer, data, len);
+
+            skb = unix_socket_build_skb(data, to_copy, skb_ancillary);
+            if (!skb) {
+                mutex_unlock(&active_peer->lock);
+                return -ENOMEM;
+            }
+            if (!skb_queue_push(&active_peer->recv_queue, skb)) {
+                skb_free(skb,
+                         (skb_priv_destructor_t)unix_socket_ancillary_free);
+                mutex_unlock(&active_peer->lock);
+                continue;
+            }
+
             mutex_unlock(&active_peer->lock);
             socket_notify_sock(active_peer, EPOLLIN);
             return to_copy;
@@ -1178,65 +1290,166 @@ static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
         }
 
         vfs_node_t *wait_node = NULL;
-        if (self && !unix_socket_is_dgram_type(self->type) && self->node)
+        if (self && unix_socket_is_connected_type(self->type) && self->node)
             wait_node = self->node;
         if (!wait_node && active_peer->node)
             wait_node = active_peer->node;
         if (!wait_node)
             return -EINVAL;
+
         int reason = socket_wait_node(wait_node, EPOLLOUT, "socket_send");
         if (reason != EOK)
             return -EINTR;
     }
-
-    return 0;
 }
 
-// 从自己的 recv_buff 接收数据
+static size_t unix_socket_send_skb_to_peer(socket_t *self, socket_t *peer,
+                                           skb_buff_t *skb, int flags,
+                                           fd_t *fd_handle) {
+    socket_t *active_peer = peer;
+    size_t packet_len = skb ? skb_unread_len(skb) : 0;
+
+    if (!skb)
+        return -EINVAL;
+
+    while (true) {
+        if (self && self->shut_wr) {
+            if (!(flags & MSG_NOSIGNAL))
+                task_commit_signal(current_task, SIGPIPE, NULL);
+            skb_free(skb, (skb_priv_destructor_t)unix_socket_ancillary_free);
+            return -EPIPE;
+        }
+
+        if (self && unix_socket_is_connected_type(self->type))
+            active_peer = self->peer;
+        if (!active_peer) {
+            if (!(flags & MSG_NOSIGNAL))
+                task_commit_signal(current_task, SIGPIPE, NULL);
+            skb_free(skb, (skb_priv_destructor_t)unix_socket_ancillary_free);
+            return -EPIPE;
+        }
+
+        mutex_lock(&active_peer->lock);
+        if (active_peer->closed || active_peer->shut_rd) {
+            mutex_unlock(&active_peer->lock);
+            if (!(flags & MSG_NOSIGNAL))
+                task_commit_signal(current_task, SIGPIPE, NULL);
+            skb_free(skb, (skb_priv_destructor_t)unix_socket_ancillary_free);
+            return -EPIPE;
+        }
+
+        if (packet_len > active_peer->recv_size) {
+            mutex_unlock(&active_peer->lock);
+            skb_free(skb, (skb_priv_destructor_t)unix_socket_ancillary_free);
+            return -EMSGSIZE;
+        }
+
+        if (unix_socket_recv_space_locked(active_peer) >= packet_len) {
+            if (!skb_queue_push(&active_peer->recv_queue, skb)) {
+                mutex_unlock(&active_peer->lock);
+                continue;
+            }
+
+            mutex_unlock(&active_peer->lock);
+            socket_notify_sock(active_peer, EPOLLIN);
+            return packet_len;
+        }
+        mutex_unlock(&active_peer->lock);
+
+        if ((fd_handle && (fd_get_flags(fd_handle) & O_NONBLOCK)) ||
+            (flags & MSG_DONTWAIT)) {
+            skb_free(skb, (skb_priv_destructor_t)unix_socket_ancillary_free);
+            return -(EWOULDBLOCK);
+        }
+
+        vfs_node_t *wait_node = NULL;
+        if (self && unix_socket_is_connected_type(self->type) && self->node)
+            wait_node = self->node;
+        if (!wait_node && active_peer->node)
+            wait_node = active_peer->node;
+        if (!wait_node) {
+            skb_free(skb, (skb_priv_destructor_t)unix_socket_ancillary_free);
+            return -EINVAL;
+        }
+
+        int reason = socket_wait_node(wait_node, EPOLLOUT, "socket_send");
+        if (reason != EOK) {
+            skb_free(skb, (skb_priv_destructor_t)unix_socket_ancillary_free);
+            return -EINTR;
+        }
+    }
+}
+
+static size_t unix_socket_send_to_peer(socket_t *self, socket_t *peer,
+                                       const uint8_t *data, size_t len,
+                                       int flags, fd_t *fd_handle,
+                                       unix_socket_ancillary_t **ancillary) {
+    if (self && unix_socket_is_message_type(self->type)) {
+        unix_socket_ancillary_t *skb_ancillary = NULL;
+        skb_buff_t *skb = NULL;
+
+        if (ancillary && *ancillary) {
+            skb_ancillary = *ancillary;
+            *ancillary = NULL;
+        }
+
+        skb = unix_socket_build_skb(data, len, skb_ancillary);
+        if (!skb)
+            return -ENOMEM;
+
+        return unix_socket_send_skb_to_peer(self, peer, skb, flags, fd_handle);
+    }
+
+    return unix_socket_send_stream_to_peer(self, peer, data, len, flags,
+                                           fd_handle, ancillary);
+}
+
 static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
                                          uint8_t *buf, size_t len, int flags,
                                          fd_t *fd_handle) {
     bool peek = !!(flags & MSG_PEEK);
 
+    if (!self)
+        return -EINVAL;
     if (self->shut_rd)
         return 0;
-    if (!len)
+    if (!len && !unix_socket_is_message_type(self->type))
         return 0;
 
-    // 等待数据
     while (true) {
         mutex_lock(&self->lock);
 
-        if (self->recv_pos > 0) {
-            size_t limit = len;
-            if (!unix_socket_is_dgram_type(self->type))
-                limit = unix_socket_stream_read_limit_locked(self, len);
-            size_t to_copy =
-                unix_socket_recv_read_locked(self, buf, limit, peek);
-            if (!peek) {
-                self->recv_seq += to_copy;
-                unix_socket_ancillary_drop_before_locked(self, self->recv_seq);
-            }
+        bool has_data = unix_socket_is_message_type(self->type)
+                            ? (skb_queue_packets(&self->recv_queue) > 0)
+                            : (unix_socket_recv_used_locked(self) > 0);
+        if (has_data) {
+            bool truncated = false;
+            size_t copied =
+                unix_socket_is_message_type(self->type)
+                    ? unix_socket_packet_read_locked(self, buf, len, peek,
+                                                     &truncated, NULL, NULL)
+                    : unix_socket_stream_read_locked(self, buf, len, peek, NULL,
+                                                     NULL);
             mutex_unlock(&self->lock);
+
             if (!peek) {
                 socket_notify_sock(self, EPOLLOUT);
                 if (self->peer)
                     socket_notify_sock(self->peer, EPOLLOUT);
             }
-            return to_copy;
+            return copied;
         }
 
         socket_t *active_peer = peer;
-        if (!unix_socket_is_dgram_type(self->type))
+        if (unix_socket_is_connected_type(self->type))
             active_peer = self->peer;
         bool eof =
+            unix_socket_is_connected_type(self->type) &&
             (!active_peer || active_peer->closed || active_peer->shut_wr);
         mutex_unlock(&self->lock);
 
-        // 对端关闭且没有数据 = EOF
-        if (eof) {
+        if (eof)
             return 0;
-        }
 
         if ((fd_handle && (fd_get_flags(fd_handle) & O_NONBLOCK)) ||
             (flags & MSG_DONTWAIT)) {
@@ -1251,37 +1464,65 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
     }
 }
 
-static size_t unix_socket_recvmsg_from_self(socket_t *self, socket_t *peer,
-                                            struct msghdr *msg, int flags,
-                                            fd_t *fd_handle,
-                                            uint64_t *start_seq_out) {
+static size_t
+unix_socket_recvmsg_from_self(socket_t *self, socket_t *peer,
+                              struct msghdr *msg, int flags, fd_t *fd_handle,
+                              unix_socket_ancillary_t **ancillary_out) {
     bool peek = !!(flags & MSG_PEEK);
+    size_t len_total = 0;
 
     if (!self || !msg)
         return -EINVAL;
+    if (ancillary_out)
+        *ancillary_out = NULL;
     if (self->shut_rd)
         return 0;
 
-    size_t len_total = unix_socket_iov_total_len(msg->msg_iov, msg->msg_iovlen);
-
-    if (!len_total)
+    len_total = unix_socket_iov_total_len(msg->msg_iov, msg->msg_iovlen);
+    if (!len_total && !unix_socket_is_message_type(self->type))
         return 0;
 
     while (true) {
         mutex_lock(&self->lock);
 
-        if (self->recv_pos > 0) {
-            uint64_t start_seq = self->recv_seq;
-            size_t limit = len_total;
-            if (!unix_socket_is_dgram_type(self->type))
-                limit = unix_socket_stream_read_limit_locked(self, len_total);
-            size_t copied = unix_socket_recv_readv_locked(
-                self, msg->msg_iov, msg->msg_iovlen, limit, peek);
-            if (!peek)
-                self->recv_seq += copied;
+        bool has_data = unix_socket_is_message_type(self->type)
+                            ? (skb_queue_packets(&self->recv_queue) > 0)
+                            : (unix_socket_recv_used_locked(self) > 0);
+        if (has_data) {
+            unix_socket_ancillary_t *ancillary_list = NULL;
+            unix_socket_ancillary_t *ancillary_tail = NULL;
+            bool truncated = false;
+            size_t copied = 0;
+
+            if (unix_socket_is_message_type(self->type)) {
+                if (len_total > 0) {
+                    copied = unix_socket_packet_readv_locked(
+                        self, msg->msg_iov, msg->msg_iovlen, len_total, peek,
+                        &truncated, &ancillary_list, &ancillary_tail);
+                } else {
+                    copied = unix_socket_packet_read_locked(
+                        self, NULL, 0, peek, &truncated, &ancillary_list,
+                        &ancillary_tail);
+                }
+            } else {
+                copied = unix_socket_stream_readv_locked(
+                    self, msg->msg_iov, msg->msg_iovlen, len_total, peek,
+                    &ancillary_list, &ancillary_tail);
+            }
             mutex_unlock(&self->lock);
-            if (start_seq_out)
-                *start_seq_out = start_seq;
+
+            if ((ssize_t)copied < 0) {
+                unix_socket_ancillary_free_list(ancillary_list);
+                return copied;
+            }
+
+            if (truncated)
+                msg->msg_flags |= MSG_TRUNC;
+            if (ancillary_out)
+                *ancillary_out = ancillary_list;
+            else
+                unix_socket_ancillary_free_list(ancillary_list);
+
             if (!peek) {
                 socket_notify_sock(self, EPOLLOUT);
                 if (self->peer)
@@ -1291,9 +1532,10 @@ static size_t unix_socket_recvmsg_from_self(socket_t *self, socket_t *peer,
         }
 
         socket_t *active_peer = peer;
-        if (!unix_socket_is_dgram_type(self->type))
+        if (unix_socket_is_connected_type(self->type))
             active_peer = self->peer;
         bool eof =
+            unix_socket_is_connected_type(self->type) &&
             (!active_peer || active_peer->closed || active_peer->shut_wr);
         mutex_unlock(&self->lock);
 
@@ -1815,7 +2057,7 @@ size_t unix_socket_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
     bool peer_needs_unref = false;
 
     if (!peer) {
-        if (!unix_socket_is_dgram_type(sock->type) && sock->established) {
+        if (unix_socket_is_connected_type(sock->type) && sock->established) {
             if (!(flags & MSG_NOSIGNAL))
                 task_commit_signal(current_task, SIGPIPE, NULL);
             return (size_t)-EPIPE;
@@ -1856,8 +2098,9 @@ size_t unix_socket_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
     fd_t *caller_fd = current_task->fd_info->fds[fd];
     socket_t *sock = handle->sock;
 
-    if (!unix_socket_is_dgram_type(sock->type) && !sock->peer &&
-        !sock->established && sock->recv_pos == 0)
+    if (unix_socket_is_connected_type(sock->type) && !sock->peer &&
+        !sock->established && unix_socket_recv_used_locked(sock) == 0 &&
+        skb_queue_packets(&sock->recv_queue) == 0)
         return -(ENOTCONN);
 
     return unix_socket_recv_from_self(sock, sock->peer, out, limit, flags,
@@ -1873,7 +2116,7 @@ size_t unix_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
     bool peer_needs_unref = false;
 
     if (!peer) {
-        if (!unix_socket_is_dgram_type(sock->type) && sock->established) {
+        if (unix_socket_is_connected_type(sock->type) && sock->established) {
             if (!(flags & MSG_NOSIGNAL))
                 task_commit_signal(current_task, SIGPIPE, NULL);
             return (size_t)-EPIPE;
@@ -1949,7 +2192,23 @@ done:
         return (size_t)-EINVAL;
     }
 
-    // 发送数据
+    if (unix_socket_is_message_type(sock->type)) {
+        skb_buff_t *skb = unix_socket_build_skb_from_iov(
+            msg->msg_iov, msg->msg_iovlen, total_len, ancillary);
+        size_t ret = 0;
+
+        if (!skb) {
+            if (peer_needs_unref)
+                unix_socket_release_lookup_ref(peer);
+            return -ENOMEM;
+        }
+
+        ret = unix_socket_send_skb_to_peer(sock, peer, skb, flags, caller_fd);
+        if (peer_needs_unref)
+            unix_socket_release_lookup_ref(peer);
+        return ret;
+    }
+
     size_t cnt = 0;
     bool noblock = !!(flags & MSG_DONTWAIT);
     unix_socket_ancillary_t *ancillary_to_attach = ancillary;
@@ -1968,9 +2227,8 @@ done:
                     unix_socket_release_lookup_ref(peer);
                 if (ancillary_to_attach)
                     unix_socket_ancillary_free(ancillary_to_attach);
-                if (cnt > 0) {
+                if (cnt > 0)
                     return cnt;
-                }
                 return ret;
             }
             if (ret == 0) {
@@ -1997,25 +2255,17 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
         sockfs_file_handle(current_task->fd_info->fds[fd]);
     fd_t *caller_fd = current_task->fd_info->fds[fd];
     socket_t *sock = handle->sock;
-    if (!unix_socket_is_dgram_type(sock->type) && !sock->peer &&
-        !sock->established && sock->recv_pos == 0)
+    if (unix_socket_is_connected_type(sock->type) && !sock->peer &&
+        !sock->established && unix_socket_recv_used_locked(sock) == 0 &&
+        skb_queue_packets(&sock->recv_queue) == 0)
         return (size_t)-ENOTCONN;
 
     msg->msg_flags = 0;
-    uint64_t start_seq = 0;
+    unix_socket_ancillary_t *ancillary_list = NULL;
     size_t cnt = unix_socket_recvmsg_from_self(sock, NULL, msg, flags,
-                                               caller_fd, &start_seq);
+                                               caller_fd, &ancillary_list);
     if ((int64_t)cnt < 0)
         return cnt;
-
-    uint64_t end_seq = start_seq + cnt;
-    unix_socket_ancillary_t *ancillary_list = NULL;
-    mutex_lock(&sock->lock);
-    int ancillary_ret = unix_socket_collect_ancillary_locked(
-        sock, end_seq, !!(flags & MSG_PEEK), &ancillary_list);
-    mutex_unlock(&sock->lock);
-    if (ancillary_ret < 0)
-        return (size_t)ancillary_ret;
 
     if (ancillary_list && msg->msg_control &&
         msg->msg_controllen >= sizeof(struct cmsghdr)) {
@@ -2097,12 +2347,10 @@ int socket_poll(vfs_node_t *node, size_t events) {
         mutex_unlock(&sock->lock);
     } else if (unix_socket_is_dgram_type(sock->type)) {
         mutex_lock(&sock->lock);
-        if ((events & EPOLLOUT) && !sock->closed && !sock->shut_wr &&
-            sock->recv_pos < sock->recv_size)
+        if ((events & EPOLLOUT) && !sock->closed && !sock->shut_wr)
             revents |= EPOLLOUT;
 
-        if ((events & EPOLLIN) &&
-            (sock->recv_pos > 0 || sock->ancillary_head != NULL))
+        if ((events & EPOLLIN) && skb_queue_packets(&sock->recv_queue) > 0)
             revents |= EPOLLIN;
         if (sock->closed || sock->shut_rd)
             revents |= EPOLLERR | EPOLLHUP;
@@ -2118,16 +2366,23 @@ int socket_poll(vfs_node_t *node, size_t events) {
                 if ((events & EPOLLRDHUP) && (peer->closed || peer->shut_wr))
                     revents |= EPOLLRDHUP;
                 if ((events & EPOLLOUT) && !sock->shut_wr && !peer->closed &&
-                    peer->recv_pos < peer->recv_size)
+                    unix_socket_recv_space_locked(peer) > 0)
                     revents |= EPOLLOUT;
 
-                if ((events & EPOLLIN) &&
-                    (sock->recv_pos > 0 || sock->ancillary_head != NULL ||
-                     sock->shut_rd || peer->shut_wr || peer->closed))
+                bool has_input =
+                    unix_socket_is_message_type(sock->type)
+                        ? (skb_queue_packets(&sock->recv_queue) > 0)
+                        : (unix_socket_recv_used_locked(sock) > 0);
+                if ((events & EPOLLIN) && (has_input || sock->shut_rd ||
+                                           peer->shut_wr || peer->closed))
                     revents |= EPOLLIN;
                 mutex_unlock(&peer->lock);
             } else {
-                if ((events & EPOLLIN) && sock->recv_pos > 0)
+                bool has_input =
+                    unix_socket_is_message_type(sock->type)
+                        ? (skb_queue_packets(&sock->recv_queue) > 0)
+                        : (unix_socket_recv_used_locked(sock) > 0);
+                if ((events & EPOLLIN) && has_input)
                     revents |= EPOLLIN;
                 if (sock->closed || peer->closed)
                     revents |= EPOLLHUP | EPOLLERR;
@@ -2164,7 +2419,9 @@ int socket_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
             return -EFAULT;
         {
             mutex_lock(&sock->lock);
-            int value = (int)sock->recv_pos;
+            int value = (int)(unix_socket_is_message_type(sock->type)
+                                  ? unix_socket_next_packet_len_locked(sock)
+                                  : unix_socket_recv_used_locked(sock));
             mutex_unlock(&sock->lock);
             if (copy_to_user((void *)arg, &value, sizeof(value)))
                 return -EFAULT;
@@ -2181,8 +2438,9 @@ ssize_t socket_read(fd_t *fd, void *buf, size_t offset, size_t limit) {
     socket_handle_t *handle = sockfs_file_handle(fd);
     socket_t *sock = handle->sock;
 
-    if (!unix_socket_is_dgram_type(sock->type) && !sock->peer &&
-        !sock->established && sock->recv_pos == 0)
+    if (unix_socket_is_connected_type(sock->type) && !sock->peer &&
+        !sock->established && unix_socket_recv_used_locked(sock) == 0 &&
+        skb_queue_packets(&sock->recv_queue) == 0)
         return -(ENOTCONN);
 
     return unix_socket_recv_from_self(sock, sock->peer, buf, limit, 0, fd);
@@ -2409,20 +2667,8 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
                 new_size = BUFFER_SIZE;
 
             mutex_lock(&sock->lock);
-            void *newBuff = malloc(new_size);
-            if (!newBuff) {
-                mutex_unlock(&sock->lock);
-                return -ENOMEM;
-            }
-            size_t preserved = MIN((size_t)new_size, sock->recv_pos);
-            if (preserved) {
-                unix_socket_recv_copy_out_locked(sock, 0, newBuff, preserved);
-            }
-            free(sock->recv_buff);
-            sock->recv_buff = newBuff;
             sock->recv_size = new_size;
-            sock->recv_head = 0;
-            sock->recv_pos = preserved;
+            skb_queue_set_limit(&sock->recv_queue, sock->recv_size);
             mutex_unlock(&sock->lock);
         }
         break;
