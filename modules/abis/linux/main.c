@@ -773,7 +773,7 @@ void x64_register_syscalls() {
     // (syscall_handle_t)sys_get_kernel_syms);
     // regist_syscall_handler(SYS_QUERY_MODULE,
     // (syscall_handle_t)sys_query_module);
-    // regist_syscall_handler(SYS_QUOTACTL, (syscall_handle_t)sys_quotactl);
+    regist_syscall_handler(SYS_QUOTACTL, (syscall_handle_t)sys_quotactl);
     // regist_syscall_handler(SYS_NFSSERVCTL,
     // (syscall_handle_t)sys_nfsservctl); regist_syscall_handler(SYS_GETPMSG,
     // (syscall_handle_t)sys_getpmsg); regist_syscall_handler(SYS_PUTPMSG,
@@ -1243,7 +1243,7 @@ void aarch64_register_syscalls() {
     // (syscall_handle_t)sys_get_kernel_syms);
     // regist_syscall_handler(SYS_QUERY_MODULE,
     // (syscall_handle_t)sys_query_module);
-    // regist_syscall_handler(SYS_QUOTACTL, (syscall_handle_t)sys_quotactl);
+    regist_syscall_handler(SYS_QUOTACTL, (syscall_handle_t)sys_quotactl);
     // regist_syscall_handler(SYS_NFSSERVCTL,
     // (syscall_handle_t)sys_nfsservctl); regist_syscall_handler(SYS_GETPMSG,
     // (syscall_handle_t)sys_getpmsg); regist_syscall_handler(SYS_PUTPMSG,

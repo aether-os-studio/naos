@@ -64,6 +64,42 @@ struct iovec {
 
 #define PIDFD_NONBLOCK O_NONBLOCK
 
+#ifndef USRQUOTA
+#define USRQUOTA 0
+#endif
+
+#ifndef SUBCMDMASK
+#define SUBCMDMASK 0x00ff
+#endif
+
+#ifndef SUBCMDSHIFT
+#define SUBCMDSHIFT 8
+#endif
+
+#ifndef QCMD
+#define QCMD(cmd, type) (((cmd) << SUBCMDSHIFT) | ((type) & SUBCMDMASK))
+#endif
+
+#ifndef Q_GETQUOTA
+#define Q_GETQUOTA 0x800007
+#endif
+
+#ifndef QIF_BLIMITS
+#define QIF_BLIMITS (1U << 0)
+#endif
+
+struct dqblk {
+    uint64_t dqb_bhardlimit;
+    uint64_t dqb_bsoftlimit;
+    uint64_t dqb_curspace;
+    uint64_t dqb_ihardlimit;
+    uint64_t dqb_isoftlimit;
+    uint64_t dqb_curinodes;
+    uint64_t dqb_btime;
+    uint64_t dqb_itime;
+    uint32_t dqb_valid;
+};
+
 #define F_DUPFD 0
 #define F_GETFD 1
 #define F_SETFD 2
@@ -375,6 +411,8 @@ struct sysinfo {
 uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
                    void *data);
 uint64_t sys_umount2(const char *target, uint64_t flags);
+uint64_t sys_quotactl(uint32_t cmd, const char *special, uint32_t id,
+                      struct dqblk *addr);
 
 uint64_t sys_creat(const char *path, uint64_t mode);
 uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode);

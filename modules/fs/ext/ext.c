@@ -4,16 +4,29 @@
 #include <boot/boot.h>
 
 #include <dev/device.h>
+#include <fs/fs_syscall.h>
 #include <mm/mm_syscall.h>
 
 #include <mm/mm.h>
 #include <arch/arch.h>
+#include <task/task.h>
 
 static spinlock_t rwlock = SPIN_INIT;
 
 #define EXT_MAP_CACHE_TARGET_BYTES (128u * 1024u)
 #define EXT_MAP_CACHE_MIN_ENTRIES 16u
 #define EXT_MAP_CACHE_MAX_ENTRIES 128u
+
+#define EXT_QUOTA_USER_MAGIC 0xd9c01f11u
+#define EXT_QUOTA_BLOCK_SIZE 1024u
+#define EXT_QUOTA_TREEOFF 1u
+#define EXT_QUOTA_BLOCK_HEADER_SIZE 16u
+#define EXT_QUOTA_ENTRY_SIZE 72u
+#define EXT_QUOTA_PTRS_PER_BLOCK                                               \
+    ((EXT_QUOTA_BLOCK_SIZE - EXT_QUOTA_BLOCK_HEADER_SIZE) / sizeof(uint32_t))
+#define EXT_QUOTA_ENTRIES_PER_BLOCK                                            \
+    ((EXT_QUOTA_BLOCK_SIZE - EXT_QUOTA_BLOCK_HEADER_SIZE) /                    \
+     EXT_QUOTA_ENTRY_SIZE)
 
 typedef struct ext_map_cache_entry {
     uint32_t block;
@@ -42,6 +55,32 @@ typedef struct ext_inode_info {
     bool inode_valid;
     char *symlink;
 } ext_inode_info_t;
+
+typedef struct ext_quota_header {
+    uint32_t dqh_magic;
+    uint32_t dqh_version;
+} __attribute__((packed)) ext_quota_header_t;
+
+typedef struct ext_quota_block_header {
+    uint32_t dqdh_next_free;
+    uint32_t dqdh_prev_free;
+    uint16_t dqdh_entries;
+    uint16_t dqdh_pad1;
+    uint32_t dqdh_pad2;
+} __attribute__((packed)) ext_quota_block_header_t;
+
+typedef struct ext_quota_disk_entry {
+    uint32_t dqb_id;
+    uint32_t dqb_pad;
+    uint64_t dqb_ihardlimit;
+    uint64_t dqb_isoftlimit;
+    uint64_t dqb_curinodes;
+    uint64_t dqb_bhardlimit;
+    uint64_t dqb_bsoftlimit;
+    uint64_t dqb_curspace;
+    uint64_t dqb_btime;
+    uint64_t dqb_itime;
+} __attribute__((packed)) ext_quota_disk_entry_t;
 
 typedef struct ext_dir_lookup {
     bool found;
@@ -252,6 +291,42 @@ static uint64_t ext_group_inodes_count(ext_mount_ctx_t *fs, uint32_t group) {
     if (start >= fs->inodes_count)
         return 0;
     return MIN((uint64_t)fs->sb.s_inodes_per_group, fs->inodes_count - start);
+}
+
+static uint64_t ext_sb_reserved_blocks_count(const ext_super_block_t *sb) {
+    if (!sb)
+        return 0;
+
+    return (uint64_t)sb->s_r_blocks_count_lo |
+           ((uint64_t)sb->s_r_blocks_count_hi << 32);
+}
+
+static uint64_t ext_group_free_blocks_count(const ext_group_desc_t *gd) {
+    if (!gd)
+        return 0;
+
+    return (uint64_t)gd->bg_free_blocks_count_lo |
+           ((uint64_t)gd->bg_free_blocks_count_hi << 16);
+}
+
+static uint64_t ext_group_free_inodes_count(const ext_group_desc_t *gd) {
+    if (!gd)
+        return 0;
+
+    return (uint64_t)gd->bg_free_inodes_count_lo |
+           ((uint64_t)gd->bg_free_inodes_count_hi << 16);
+}
+
+static bool ext_reserved_blocks_available_to_caller(const ext_mount_ctx_t *fs) {
+    task_t *task = current_task;
+
+    if (!fs || !task)
+        return false;
+
+    return task->euid == 0 || task->uid == (int64_t)fs->sb.s_def_resuid ||
+           task->euid == (int64_t)fs->sb.s_def_resuid ||
+           task->gid == (int64_t)fs->sb.s_def_resgid ||
+           task->egid == (int64_t)fs->sb.s_def_resgid;
 }
 
 static int ext_dev_read_direct(ext_mount_ctx_t *fs, uint64_t offset, void *buf,
@@ -1220,6 +1295,214 @@ static int ext_read_inode_data_locked(ext_mount_ctx_t *fs, uint32_t ino,
     return (int)done;
 }
 
+static int ext_quota_read_locked(ext_mount_ctx_t *fs, uint32_t quota_ino,
+                                 ext_inode_disk_t *quota_inode, uint32_t block,
+                                 void *buf) {
+    int ret;
+
+    if (!buf)
+        return -EINVAL;
+
+    ret = ext_read_inode_data_locked(fs, quota_ino, quota_inode, buf,
+                                     (size_t)block * EXT_QUOTA_BLOCK_SIZE,
+                                     EXT_QUOTA_BLOCK_SIZE);
+    if (ret < 0)
+        return ret;
+    if ((size_t)ret != EXT_QUOTA_BLOCK_SIZE)
+        return -EIO;
+    return 0;
+}
+
+static unsigned int ext_quota_tree_depth(void) {
+    uint64_t entries = EXT_QUOTA_PTRS_PER_BLOCK;
+    unsigned int depth = 1;
+
+    while (entries < (1ULL << 32)) {
+        entries *= EXT_QUOTA_PTRS_PER_BLOCK;
+        depth++;
+    }
+
+    return depth;
+}
+
+static void ext_quota_tree_path(uint32_t id, uint32_t *path,
+                                unsigned int depth) {
+    uint64_t div = 1;
+
+    for (unsigned int i = 1; i < depth; i++)
+        div *= EXT_QUOTA_PTRS_PER_BLOCK;
+
+    for (unsigned int i = 0; i < depth; i++) {
+        path[i] = (uint32_t)((id / div) % EXT_QUOTA_PTRS_PER_BLOCK);
+        if (div > 1)
+            div /= EXT_QUOTA_PTRS_PER_BLOCK;
+    }
+}
+
+static int ext_quota_find_data_block_locked(ext_mount_ctx_t *fs,
+                                            uint32_t quota_ino,
+                                            ext_inode_disk_t *quota_inode,
+                                            uint32_t id, uint32_t *block_out) {
+    uint8_t block[EXT_QUOTA_BLOCK_SIZE];
+    uint32_t tree_path[8] = {0};
+    uint32_t block_no = EXT_QUOTA_TREEOFF;
+    unsigned int depth = ext_quota_tree_depth();
+    int ret;
+
+    if (!block_out)
+        return -EINVAL;
+    if (depth > sizeof(tree_path) / sizeof(tree_path[0]))
+        return -EIO;
+
+    ext_quota_tree_path(id, tree_path, depth);
+
+    for (unsigned int level = 0; level < depth; level++) {
+        uint32_t *entries;
+
+        ret =
+            ext_quota_read_locked(fs, quota_ino, quota_inode, block_no, block);
+        if (ret)
+            return ret;
+
+        entries = (uint32_t *)(block + EXT_QUOTA_BLOCK_HEADER_SIZE);
+        block_no = entries[tree_path[level]];
+        if (!block_no) {
+            *block_out = 0;
+            return 0;
+        }
+    }
+
+    *block_out = block_no;
+    return 0;
+}
+
+static bool ext_quota_entry_empty(const ext_quota_disk_entry_t *entry) {
+    return entry && entry->dqb_id == 0 && entry->dqb_pad == 0 &&
+           entry->dqb_ihardlimit == 0 && entry->dqb_isoftlimit == 0 &&
+           entry->dqb_curinodes == 0 && entry->dqb_bhardlimit == 0 &&
+           entry->dqb_bsoftlimit == 0 && entry->dqb_curspace == 0 &&
+           entry->dqb_btime == 0 && entry->dqb_itime == 0;
+}
+
+static int ext_quota_extract_bhardlimit_locked(
+    ext_mount_ctx_t *fs, uint32_t quota_ino, ext_inode_disk_t *quota_inode,
+    uint32_t id, uint64_t *bhardlimit_out, uint64_t *bsoftlimit_out,
+    uint32_t *valid_out) {
+    uint8_t block[EXT_QUOTA_BLOCK_SIZE];
+    uint64_t quota_size;
+    uint32_t data_block = 0;
+    int ret;
+
+    if (!bhardlimit_out || !bsoftlimit_out || !valid_out)
+        return -EINVAL;
+
+    *bhardlimit_out = 0;
+    *bsoftlimit_out = 0;
+    *valid_out = QIF_BLIMITS;
+    quota_size = ext_inode_size_get(quota_inode);
+
+    ret = ext_quota_find_data_block_locked(fs, quota_ino, quota_inode, id,
+                                           &data_block);
+    if (ret)
+        return ret;
+
+    if (data_block) {
+        ret = ext_quota_read_locked(fs, quota_ino, quota_inode, data_block,
+                                    block);
+        if (ret)
+            return ret;
+
+        for (uint32_t i = 0; i < EXT_QUOTA_ENTRIES_PER_BLOCK; i++) {
+            ext_quota_disk_entry_t *entry =
+                (ext_quota_disk_entry_t *)(block + EXT_QUOTA_BLOCK_HEADER_SIZE +
+                                           i * sizeof(ext_quota_disk_entry_t));
+            if (entry->dqb_id != id)
+                continue;
+            if (id == 0 && ext_quota_entry_empty(entry))
+                continue;
+            *bhardlimit_out = entry->dqb_bhardlimit;
+            *bsoftlimit_out = entry->dqb_bsoftlimit;
+            return 0;
+        }
+    }
+
+    for (uint64_t off = EXT_QUOTA_BLOCK_SIZE;
+         off + EXT_QUOTA_BLOCK_SIZE <= quota_size;
+         off += EXT_QUOTA_BLOCK_SIZE) {
+        ext_quota_block_header_t *hdr;
+
+        ret = ext_read_inode_data_locked(fs, quota_ino, quota_inode, block,
+                                         (size_t)off, EXT_QUOTA_BLOCK_SIZE);
+        if (ret < 0)
+            return ret;
+        if ((size_t)ret != EXT_QUOTA_BLOCK_SIZE)
+            return -EIO;
+
+        hdr = (ext_quota_block_header_t *)block;
+        if (hdr->dqdh_entries > EXT_QUOTA_ENTRIES_PER_BLOCK)
+            continue;
+
+        for (uint32_t i = 0; i < EXT_QUOTA_ENTRIES_PER_BLOCK; i++) {
+            ext_quota_disk_entry_t *entry =
+                (ext_quota_disk_entry_t *)(block + EXT_QUOTA_BLOCK_HEADER_SIZE +
+                                           i * sizeof(ext_quota_disk_entry_t));
+            if (entry->dqb_id != id)
+                continue;
+            if (id == 0 && ext_quota_entry_empty(entry))
+                continue;
+            *bhardlimit_out = entry->dqb_bhardlimit;
+            *bsoftlimit_out = entry->dqb_bsoftlimit;
+            return 0;
+        }
+    }
+
+    return 0;
+}
+
+static int ext_get_quota(struct vfs_super_block *sb, unsigned int type,
+                         uint32_t id, uint64_t *bhardlimit,
+                         uint64_t *bsoftlimit, uint32_t *valid) {
+    ext_mount_ctx_t *fs = ext_sb_info(sb);
+    ext_inode_disk_t quota_inode = {0};
+    ext_quota_header_t header = {0};
+    uint32_t quota_ino;
+    int ret;
+
+    if (!fs || !bhardlimit || !bsoftlimit || !valid)
+        return -EINVAL;
+    if (type != USRQUOTA)
+        return -EOPNOTSUPP;
+
+    quota_ino = fs->sb.s_usr_quota_inum;
+    if (!quota_ino)
+        return -ESRCH;
+
+    spin_lock(&rwlock);
+    ret = ext_read_inode(fs, quota_ino, &quota_inode);
+    if (ret)
+        goto out;
+
+    ret = ext_read_inode_data_locked(fs, quota_ino, &quota_inode, &header, 0,
+                                     sizeof(header));
+    if (ret < 0)
+        goto out;
+    if ((size_t)ret != sizeof(header)) {
+        ret = -EIO;
+        goto out;
+    }
+    if (header.dqh_magic != EXT_QUOTA_USER_MAGIC) {
+        ret = -ESRCH;
+        goto out;
+    }
+
+    ret = ext_quota_extract_bhardlimit_locked(fs, quota_ino, &quota_inode, id,
+                                              bhardlimit, bsoftlimit, valid);
+
+out:
+    spin_unlock(&rwlock);
+    return ret;
+}
+
 static int ext_write_inode_data_locked(ext_mount_ctx_t *fs, uint32_t ino,
                                        ext_inode_disk_t *inode, const void *buf,
                                        size_t offset, size_t size) {
@@ -2081,8 +2364,6 @@ static int ext_resolve_mount_dev(struct vfs_fs_context *fc, uint64_t *dev_out);
 static int ext_init_fs_context(struct vfs_fs_context *fc);
 static int ext_get_tree(struct vfs_fs_context *fc);
 
-/* implementation continues below */
-
 static int ext_mount_prepare_locked(ext_mount_ctx_t *fs, uint64_t dev) {
     int ret;
     uint64_t gdt_block;
@@ -2841,8 +3122,45 @@ static void ext_put_super(struct vfs_super_block *sb) {
 }
 
 static int ext_statfs(struct vfs_path *path, void *buf) {
-    (void)path;
-    (void)buf;
+    struct statfs *st = (struct statfs *)buf;
+    struct vfs_super_block *sb;
+    ext_mount_ctx_t *fs;
+    uint64_t free_blocks = 0;
+    uint64_t free_inodes = 0;
+    uint64_t reserved_blocks;
+
+    if (!path || !path->dentry || !path->dentry->d_inode || !st)
+        return -EINVAL;
+
+    sb = path->dentry->d_inode->i_sb;
+    fs = ext_sb_info(sb);
+    if (!fs)
+        return -EINVAL;
+
+    memset(st, 0, sizeof(*st));
+
+    spin_lock(&rwlock);
+    for (uint32_t i = 0; i < fs->group_count; i++) {
+        free_blocks += ext_group_free_blocks_count(&fs->groups[i]);
+        free_inodes += ext_group_free_inodes_count(&fs->groups[i]);
+    }
+
+    reserved_blocks = ext_sb_reserved_blocks_count(&fs->sb);
+
+    st->f_bsize = fs->block_size;
+    st->f_frsize = fs->block_size;
+    st->f_blocks = fs->blocks_count;
+    st->f_bfree = free_blocks;
+    st->f_bavail =
+        ext_reserved_blocks_available_to_caller(fs)
+            ? free_blocks
+            : (free_blocks > reserved_blocks ? free_blocks - reserved_blocks
+                                             : 0);
+    st->f_files = fs->inodes_count;
+    st->f_ffree = free_inodes;
+    st->f_namelen = VFS_NAME_MAX;
+    spin_unlock(&rwlock);
+
     return 0;
 }
 
@@ -2955,6 +3273,7 @@ static const struct vfs_super_operations ext_super_ops = {
     .destroy_inode = ext_destroy_inode,
     .put_super = ext_put_super,
     .statfs = ext_statfs,
+    .get_quota = ext_get_quota,
 };
 
 static const struct vfs_file_operations ext_dir_ops = {

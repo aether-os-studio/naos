@@ -6,6 +6,7 @@
 #include <drivers/kernel_logger.h>
 #include <mm/cache.h>
 #include <fs/vfs/notify.h>
+#include <task/ns.h>
 #include <task/task_syscall.h>
 
 #define FIONBIO_INTERNAL_DISABLE ((ssize_t) - 1)
@@ -620,6 +621,117 @@ uint64_t sys_umount2(const char *target, uint64_t flags) {
     if (copy_from_user_str(target_k, target, sizeof(target_k)))
         return (uint64_t)-EFAULT;
     return (uint64_t)vfs_do_umount(AT_FDCWD, target_k, (int)flags);
+}
+
+static struct vfs_mount *generic_namespace_root_mount(void) {
+    struct vfs_mount *mnt = task_mount_namespace_root(current_task);
+
+    if (mnt)
+        return mnt;
+    if (vfs_init_mnt_ns.root)
+        return vfs_init_mnt_ns.root;
+    return vfs_root_path.mnt;
+}
+
+static struct vfs_mount *
+generic_find_mount_by_dev_recursive(struct vfs_mount *mnt, dev64_t dev) {
+    struct vfs_mount *child, *tmp;
+
+    if (!mnt)
+        return NULL;
+    if (mnt->mnt_sb && mnt->mnt_sb->s_dev == dev)
+        return vfs_mntget(mnt);
+
+    llist_for_each(child, tmp, &mnt->mnt_mounts, mnt_child) {
+        struct vfs_mount *found =
+            generic_find_mount_by_dev_recursive(child, dev);
+        if (found)
+            return found;
+    }
+
+    return NULL;
+}
+
+static int generic_quotactl_resolve_sb(const char *special,
+                                       struct vfs_super_block **sb_out) {
+    char special_k[VFS_PATH_MAX];
+    struct vfs_path path = {0};
+    struct vfs_mount *mnt = NULL;
+    int ret;
+
+    if (!special || !sb_out)
+        return -EFAULT;
+    if (copy_from_user_str(special_k, special, sizeof(special_k)))
+        return -EFAULT;
+
+    ret = vfs_filename_lookup(AT_FDCWD, special_k, LOOKUP_FOLLOW, &path);
+    if (ret < 0)
+        return ret;
+
+    mnt = vfs_path_mount(&path);
+    if (!mnt && path.mnt)
+        mnt = vfs_mntget(path.mnt);
+    if (!mnt && path.dentry && path.dentry->d_inode &&
+        S_ISBLK(path.dentry->d_inode->i_mode) && path.dentry->d_inode->i_rdev) {
+        mnt = generic_find_mount_by_dev_recursive(
+            generic_namespace_root_mount(), path.dentry->d_inode->i_rdev);
+    }
+
+    *sb_out =
+        mnt ? mnt->mnt_sb
+            : (path.dentry && path.dentry->d_inode ? path.dentry->d_inode->i_sb
+                                                   : NULL);
+    if (!*sb_out)
+        ret = -ENOENT;
+
+    if (mnt)
+        vfs_mntput(mnt);
+    vfs_path_put(&path);
+    return ret;
+}
+
+static bool generic_quotactl_can_get_user_quota(uint32_t id) {
+    task_t *task = current_task;
+
+    if (!task)
+        return false;
+    if (task->uid == 0 || task->euid == 0)
+        return true;
+    return task->uid == (int64_t)id || task->euid == (int64_t)id;
+}
+
+uint64_t sys_quotactl(uint32_t cmd, const char *special, uint32_t id,
+                      struct dqblk *addr) {
+    struct vfs_super_block *sb = NULL;
+    struct dqblk dq = {0};
+    uint32_t subcmd = cmd >> SUBCMDSHIFT;
+    uint32_t type = cmd & SUBCMDMASK;
+    int ret;
+
+    if (subcmd != Q_GETQUOTA || type != USRQUOTA)
+        return (uint64_t)-EINVAL;
+    if (!addr)
+        return (uint64_t)-EFAULT;
+    if (!generic_quotactl_can_get_user_quota(id))
+        return (uint64_t)-EPERM;
+
+    ret = generic_quotactl_resolve_sb(special, &sb);
+    if (ret < 0)
+        return (uint64_t)ret;
+    if (!sb || !sb->s_op || !sb->s_op->get_quota)
+        return (uint64_t)-EOPNOTSUPP;
+
+    ret = sb->s_op->get_quota(sb, type, id, &dq.dqb_bhardlimit,
+                              &dq.dqb_bsoftlimit, &dq.dqb_valid);
+    if (ret < 0)
+        return (uint64_t)ret;
+
+    if (check_user_overflow((uint64_t)addr, sizeof(dq)) ||
+        copy_to_user(addr, &dq, sizeof(dq))) {
+        return (uint64_t)-EFAULT;
+    }
+
+    return 0;
 }
 
 uint64_t sys_umask(uint64_t mask) {
@@ -1946,8 +2058,9 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
                    uint64_t mask, struct statx *buff_user) {
     struct vfs_path path = {0};
     struct vfs_kstat stat;
-    char pathname[512];
-    if (copy_from_user_str(pathname, pathname_user, sizeof(pathname)))
+    char pathname[512] = {0};
+    if (pathname_user &&
+        copy_from_user_str(pathname, pathname_user, sizeof(pathname)))
         return (uint64_t)-EFAULT;
 
     struct statx res;

@@ -22,8 +22,8 @@ sudo XBPS_ARCH=$ARCH $XBPS_INSTALL_PATH/usr/bin/xbps-install -S -r $ROOTFS_SYSRO
     base-minimal bash coreutils util-linux \
     gcc binutils make \
     glibc-locales ncurses tzdata which shadow grep elfutils curl \
-    seatd eudev dbus sway xdg-desktop-portal xdg-desktop-portal-wlr alacritty xorg-server-xwayland xrandr \
-    fastfetch mesa mesa-dri mesa-demos lite-xl qemu-system-amd64 netsurf \
+    seatd eudev dbus weston xorg-server-xwayland xrandr \
+    fastfetch mesa mesa-dri mesa-demos lite-xl qemu-system-amd64 libwebkit2gtk41 \
     adwaita-icon-theme dejavu-fonts-ttf
 
 sudo ln -sf /usr/share/zoneinfo/Asia/Shanghai $ROOTFS_SYSROOT/etc/localtime

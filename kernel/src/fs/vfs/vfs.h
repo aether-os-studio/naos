@@ -302,6 +302,9 @@ struct vfs_super_operations {
     int (*freeze_fs)(struct vfs_super_block *sb);
     int (*thaw_fs)(struct vfs_super_block *sb);
     int (*statfs)(struct vfs_path *path, void *buf);
+    int (*get_quota)(struct vfs_super_block *sb, unsigned int type, uint32_t id,
+                     uint64_t *bhardlimit, uint64_t *bsoftlimit,
+                     uint32_t *valid);
 };
 
 struct vfs_dentry_operations {

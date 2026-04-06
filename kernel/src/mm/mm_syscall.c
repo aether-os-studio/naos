@@ -557,6 +557,37 @@ static bool should_eager_map_anon(uint64_t flags) {
     return (flags & (MAP_POPULATE | MAP_LOCKED)) != 0;
 }
 
+static char *mmap_resolve_vm_name(fd_t *file) {
+    const struct vfs_path *root;
+    const char *fs_name = NULL;
+    char buf[256];
+
+    if (!file || !file->f_inode)
+        return NULL;
+
+    root = task_fs_root_path(current_task);
+    if (root && root->mnt && root->dentry && file->f_path.mnt &&
+        file->f_path.dentry && vfs_path_is_ancestor(root, &file->f_path)) {
+        char *fullpath = vfs_path_to_string(&file->f_path, root);
+        if (fullpath)
+            return fullpath;
+    }
+
+    if (file->f_path.dentry && file->f_path.dentry->d_name.name &&
+        file->f_path.dentry->d_name.name[0]) {
+        return strdup(file->f_path.dentry->d_name.name);
+    }
+
+    if (file->f_inode->i_sb && file->f_inode->i_sb->s_type)
+        fs_name = file->f_inode->i_sb->s_type->name;
+    if (fs_name) {
+        snprintf(buf, sizeof(buf), "[%s]", fs_name);
+        return strdup(buf);
+    }
+
+    return NULL;
+}
+
 uint64_t sys_brk(uint64_t brk) {
     task_mm_info_t *mm = current_task->mm;
     vma_manager_t *mgr = &mm->task_vma_mgr;
@@ -760,6 +791,9 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         spin_unlock(&mgr->lock);
         goto out_map_fd_nomem;
     }
+
+    if (!anonymous)
+        vma->vm_name = mmap_resolve_vm_name(map_fd_ref);
 
     if (vma_insert(mgr, vma) != 0) {
         spin_unlock(&mgr->lock);
