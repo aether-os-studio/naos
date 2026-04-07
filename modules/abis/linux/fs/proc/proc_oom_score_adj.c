@@ -31,5 +31,5 @@ size_t proc_oom_score_adj_read(proc_handle_t *handle, void *addr, size_t offset,
 
 ssize_t proc_oom_score_adj_write(proc_handle_t *handle, const void *addr,
                                  size_t offset, size_t size) {
-    return 0;
+    return size;
 }

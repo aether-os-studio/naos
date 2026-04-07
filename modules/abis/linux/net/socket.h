@@ -59,6 +59,8 @@ typedef struct unix_socket_ancillary {
     uint32_t file_count;
     struct ucred cred;
     bool has_cred;
+    struct timeval timestamp;
+    bool has_timestamp;
 } unix_socket_ancillary_t;
 
 typedef struct socket {
@@ -106,6 +108,7 @@ typedef struct socket {
 
     // 选项
     int passcred;
+    int timestamp_legacy;
     int reuseaddr;
     int keepalive;
     struct timeval sndtimeo;

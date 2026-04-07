@@ -62,16 +62,15 @@ struct netlink_sock {
     uint32_t groups;
     vfs_node_t *node;
     struct sockaddr_nl *bind_addr;
-    struct netlink_buffer *buffer; // Circular buffer for messages
+    struct netlink_buffer *buffer; // skb-backed receive queue
     struct sock_fprog *filter;
     spinlock_t lock;
 };
 
 // Netlink socket buffer management
 struct netlink_buffer {
-    char data[NETLINK_BUFFER_SIZE];
-    size_t head;
-    size_t tail;
+    skb_queue_t queue;
+    size_t used_bytes;
     size_t size;
     spinlock_t lock;
 };

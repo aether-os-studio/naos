@@ -133,9 +133,39 @@ static bool netlink_msg_pool_get_by_devpath(const char *devpath, char *buffer,
     return found;
 }
 
+static void netlink_packet_meta_destroy(void *priv) { free(priv); }
+
+static skb_buff_t *netlink_packet_build_skb(const char *data, size_t len,
+                                            uint32_t nl_pid,
+                                            uint32_t nl_groups) {
+    skb_buff_t *skb = NULL;
+    struct netlink_packet_hdr *hdr = NULL;
+
+    skb = skb_alloc(len);
+    if (!skb)
+        return NULL;
+
+    hdr = malloc(sizeof(*hdr));
+    if (!hdr) {
+        skb_free(skb, NULL);
+        return NULL;
+    }
+
+    if (len > 0)
+        memcpy(skb->data, data, len);
+
+    hdr->nl_pid = nl_pid;
+    hdr->nl_groups = nl_groups;
+    hdr->length = (uint32_t)len;
+    skb->priv = hdr;
+    return skb;
+}
+
 static void netlink_buffer_init(struct netlink_buffer *buf) {
     memset(buf, 0, sizeof(struct netlink_buffer));
     buf->size = NETLINK_BUFFER_SIZE;
+    skb_queue_init(&buf->queue, NETLINK_BUFFER_SIZE,
+                   netlink_packet_meta_destroy);
     buf->lock = SPIN_INIT;
 }
 
@@ -218,11 +248,13 @@ static int netlink_wait_sock(struct netlink_sock *sock, uint32_t events,
     return ret;
 }
 
-// Circular buffer operations for netlink packets with sender info
+// skb queue operations for netlink packets with sender info
 size_t netlink_buffer_write_packet(struct netlink_sock *sock, const char *data,
                                    size_t len, uint32_t nl_pid,
                                    uint32_t nl_groups) {
     struct netlink_buffer *buf = sock->buffer;
+    skb_buff_t *skb = NULL;
+    size_t total_needed = 0;
 
     if (buf == NULL || data == NULL || len == 0) {
         return 0;
@@ -236,43 +268,23 @@ size_t netlink_buffer_write_packet(struct netlink_sock *sock, const char *data,
         len = MIN(len, accept_bytes);
     }
 
+    total_needed = sizeof(struct netlink_packet_hdr) + len;
+    if (total_needed > buf->size - 1)
+        return 0;
+
+    skb = netlink_packet_build_skb(data, len, nl_pid, nl_groups);
+    if (!skb)
+        return 0;
+
     spin_lock(&buf->lock);
-
-    // 计算可用空间
-    size_t used;
-    if (buf->tail >= buf->head) {
-        used = buf->tail - buf->head;
-    } else {
-        used = buf->size - buf->head + buf->tail;
-    }
-    size_t available_space = buf->size - used - 1;
-
-    // 检查是否有足够空间存储 包头 + 消息内容
-    size_t total_needed = sizeof(struct netlink_packet_hdr) + len;
-    if (available_space < total_needed) {
+    if (buf->used_bytes + total_needed > buf->size - 1 ||
+        !skb_queue_push(&buf->queue, skb)) {
         spin_unlock(&buf->lock);
-        return 0; // 没有足够空间
+        skb_free(skb, netlink_packet_meta_destroy);
+        return 0;
     }
 
-    // 准备包头
-    struct netlink_packet_hdr hdr;
-    hdr.nl_pid = nl_pid;
-    hdr.nl_groups = nl_groups;
-    hdr.length = (uint32_t)len;
-
-    // 写入包头
-    char *hdr_bytes = (char *)&hdr;
-    for (size_t i = 0; i < sizeof(struct netlink_packet_hdr); i++) {
-        buf->data[buf->tail] = hdr_bytes[i];
-        buf->tail = (buf->tail + 1) % buf->size;
-    }
-
-    // 写入消息内容
-    for (size_t i = 0; i < len; i++) {
-        buf->data[buf->tail] = data[i];
-        buf->tail = (buf->tail + 1) % buf->size;
-    }
-
+    buf->used_bytes += total_needed;
     spin_unlock(&buf->lock);
     netlink_notify_sock(sock, EPOLLIN);
     return len;
@@ -283,74 +295,43 @@ static size_t netlink_buffer_read_packet(struct netlink_sock *sock, char *out,
                                          size_t out_len, uint32_t *nl_pid,
                                          uint32_t *nl_groups, bool peek) {
     struct netlink_buffer *buf = sock->buffer;
+    skb_buff_t *skb = NULL;
+    struct netlink_packet_hdr *hdr = NULL;
+    size_t packet_len = 0;
+    size_t copy_len = 0;
 
     if (buf == NULL) {
         return 0;
     }
 
     spin_lock(&buf->lock);
-
-    // 计算当前buffer中的数据量
-    size_t available;
-    if (buf->tail >= buf->head) {
-        available = buf->tail - buf->head;
-    } else {
-        available = buf->size - buf->head + buf->tail;
-    }
-
-    // 至少需要包头大小
-    if (available < sizeof(struct netlink_packet_hdr)) {
+    skb = skb_queue_peek(&buf->queue);
+    if (!skb) {
         spin_unlock(&buf->lock);
         return 0;
     }
 
-    // 读取包头
-    struct netlink_packet_hdr hdr;
-    char *hdr_bytes = (char *)&hdr;
-    size_t pos = buf->head;
-    for (size_t i = 0; i < sizeof(struct netlink_packet_hdr); i++) {
-        hdr_bytes[i] = buf->data[pos];
-        pos = (pos + 1) % buf->size;
-    }
+    hdr = (struct netlink_packet_hdr *)skb->priv;
+    packet_len = skb_unread_len(skb);
 
-    // 检查是否有完整消息
-    if (available < sizeof(struct netlink_packet_hdr) + hdr.length) {
-        spin_unlock(&buf->lock);
-        return 0;
-    }
-
-    // 返回sender信息
     if (nl_pid)
-        *nl_pid = hdr.nl_pid;
+        *nl_pid = hdr ? hdr->nl_pid : 0;
     if (nl_groups)
-        *nl_groups = hdr.nl_groups;
+        *nl_groups = hdr ? hdr->nl_groups : 0;
 
-    // 确定实际复制的长度
-    size_t copy_len = 0;
     if (out != NULL && out_len > 0) {
-        copy_len = (hdr.length < out_len) ? hdr.length : out_len;
-
-        // 读取消息内容到输出缓冲区
-        for (size_t i = 0; i < copy_len; i++) {
-            out[i] = buf->data[pos];
-            pos = (pos + 1) % buf->size;
-        }
-
-        // 如果消息长度大于输出缓冲区，跳过剩余部分
-        for (size_t i = copy_len; i < hdr.length; i++) {
-            pos = (pos + 1) % buf->size;
-        }
+        copy_len = MIN(packet_len, out_len);
+        skb_copy_data(skb, 0, out, copy_len);
     } else {
-        // 没有输出 buffer，跳过整个消息
-        for (size_t i = 0; i < hdr.length; i++) {
-            pos = (pos + 1) % buf->size;
-        }
-        copy_len = hdr.length; // 返回消息实际长度
+        copy_len = packet_len;
     }
 
-    // 如果不是peek模式，更新head指针
     if (!peek) {
-        buf->head = pos;
+        skb_buff_t *done = skb_queue_pop(&buf->queue);
+        if (done) {
+            buf->used_bytes -= sizeof(struct netlink_packet_hdr) + done->len;
+            skb_free(done, netlink_packet_meta_destroy);
+        }
     }
 
     spin_unlock(&buf->lock);
@@ -360,37 +341,14 @@ static size_t netlink_buffer_read_packet(struct netlink_sock *sock, char *out,
 // Check if a complete message is available
 static bool netlink_buffer_has_msg(struct netlink_sock *sock) {
     struct netlink_buffer *buf = sock->buffer;
+    bool has_complete_msg = false;
 
     if (buf == NULL) {
         return false;
     }
 
     spin_lock(&buf->lock);
-
-    // 计算当前buffer中的数据量
-    size_t available;
-    if (buf->tail >= buf->head) {
-        available = buf->tail - buf->head;
-    } else {
-        available = buf->size - buf->head + buf->tail;
-    }
-
-    if (available < sizeof(struct netlink_packet_hdr)) {
-        spin_unlock(&buf->lock);
-        return false;
-    }
-
-    struct netlink_packet_hdr hdr;
-    char *hdr_bytes = (char *)&hdr;
-    size_t pos = buf->head;
-    for (size_t i = 0; i < sizeof(struct netlink_packet_hdr); i++) {
-        hdr_bytes[i] = buf->data[pos];
-        pos = (pos + 1) % buf->size;
-    }
-
-    bool has_complete_msg =
-        (available >= sizeof(struct netlink_packet_hdr) + hdr.length);
-
+    has_complete_msg = skb_queue_packets(&buf->queue) > 0;
     spin_unlock(&buf->lock);
     return has_complete_msg;
 }
@@ -398,41 +356,19 @@ static bool netlink_buffer_has_msg(struct netlink_sock *sock) {
 // Get the length of next message without consuming it
 static size_t netlink_buffer_peek_msg_len(struct netlink_sock *sock) {
     struct netlink_buffer *buf = sock->buffer;
+    skb_buff_t *skb = NULL;
+    size_t msg_len = 0;
 
     if (buf == NULL) {
         return 0;
     }
 
     spin_lock(&buf->lock);
-
-    size_t available;
-    if (buf->tail >= buf->head) {
-        available = buf->tail - buf->head;
-    } else {
-        available = buf->size - buf->head + buf->tail;
-    }
-
-    if (available < sizeof(struct netlink_packet_hdr)) {
-        spin_unlock(&buf->lock);
-        return 0;
-    }
-
-    struct netlink_packet_hdr hdr;
-    char *hdr_bytes = (char *)&hdr;
-    size_t pos = buf->head;
-    for (size_t i = 0; i < sizeof(struct netlink_packet_hdr); i++) {
-        hdr_bytes[i] = buf->data[pos];
-        pos = (pos + 1) % buf->size;
-    }
-
-    // 检查完整性
-    if (available < sizeof(struct netlink_packet_hdr) + hdr.length) {
-        spin_unlock(&buf->lock);
-        return 0;
-    }
-
+    skb = skb_queue_peek(&buf->queue);
+    if (skb)
+        msg_len = skb_unread_len(skb);
     spin_unlock(&buf->lock);
-    return hdr.length;
+    return msg_len;
 }
 
 static size_t netlink_buffer_available(struct netlink_buffer *buf) {
@@ -441,50 +377,55 @@ static size_t netlink_buffer_available(struct netlink_buffer *buf) {
     }
 
     spin_lock(&buf->lock);
-    size_t avail;
-    if (buf->tail >= buf->head) {
-        avail = buf->tail - buf->head;
-    } else {
-        avail = buf->size - buf->head + buf->tail;
-    }
+    size_t avail = buf->used_bytes;
     spin_unlock(&buf->lock);
     return avail;
 }
 
 static void netlink_deliver_historical_messages(struct netlink_sock *sock) {
+    int start = 0;
+
     if (sock == NULL || sock->buffer == NULL || sock->groups == 0) {
         return;
     }
 
     spin_lock(&netlink_msg_pool_lock);
+    start = netlink_msg_pool_next;
+    spin_unlock(&netlink_msg_pool_lock);
 
-    int start = netlink_msg_pool_next;
     for (int count = 0; count < MAX_NETLINK_MSG_POOL_SIZE; count++) {
-        int i = (start + count) % MAX_NETLINK_MSG_POOL_SIZE;
-        struct netlink_msg_pool_entry *entry = &netlink_msg_pool[i];
+        char message[NETLINK_BUFFER_SIZE];
+        size_t length = 0;
+        uint32_t nl_pid = 0;
+        uint32_t nl_groups = 0;
+        int protocol = 0;
+        bool should_deliver = false;
 
-        if (!entry->valid)
+        spin_lock(&netlink_msg_pool_lock);
+        struct netlink_msg_pool_entry *entry =
+            &netlink_msg_pool[(start + count) % MAX_NETLINK_MSG_POOL_SIZE];
+
+        if (entry->valid) {
+            protocol = entry->protocol;
+            nl_groups = entry->nl_groups;
+            if (protocol == sock->protocol &&
+                netlink_group_mask_matches(sock->groups, nl_groups)) {
+                length = entry->length;
+                nl_pid = entry->nl_pid;
+                memcpy(message, entry->message, length);
+                should_deliver = true;
+            }
+        }
+        spin_unlock(&netlink_msg_pool_lock);
+
+        if (!should_deliver)
             continue;
 
-        // 检查 protocol 和 groups 是否匹配
-        if (entry->protocol != sock->protocol)
-            continue;
-
-        if (!netlink_group_mask_matches(sock->groups, entry->nl_groups))
-            continue;
-
-        // 投递消息到 socket buffer
-        size_t written =
-            netlink_buffer_write_packet(sock, entry->message, entry->length,
-                                        entry->nl_pid, entry->nl_groups);
-
-        if (written == 0) {
-            // Buffer 满了，停止投递
+        if (netlink_buffer_write_packet(sock, message, length, nl_pid,
+                                        nl_groups) == 0) {
             break;
         }
     }
-
-    spin_unlock(&netlink_msg_pool_lock);
 }
 
 // 内部发送函数，用于向指定 socket 发送消息
@@ -616,16 +557,21 @@ size_t netlink_getsockopt(uint64_t fd, int level, int optname, void *optval,
             break;
         case SO_PASSCRED:
             break;
-        case SO_RCVBUF:
-            break;
         case SO_SNDBUF:
+        case SO_SNDBUFFORCE:
+        case SO_RCVBUF:
+        case SO_RCVBUFFORCE:
             break;
         default:
+            printk("%s:%d Unsupported optlevel or optname %d %d\n", __FILE__,
+                   __LINE__, level, optname);
             return -ENOPROTOOPT;
         }
     } else if (level == SOL_NETLINK) {
         return 0;
     } else {
+        printk("%s:%d Unsupported optlevel or optname %d %d\n", __FILE__,
+               __LINE__, level, optname);
         return -ENOPROTOOPT;
     }
 
@@ -674,11 +620,14 @@ size_t netlink_setsockopt(uint64_t fd, int level, int optname,
             break;
         case SO_PASSCRED:
             break;
-        case SO_RCVBUF:
-            break;
         case SO_SNDBUF:
+        case SO_SNDBUFFORCE:
+        case SO_RCVBUF:
+        case SO_RCVBUFFORCE:
             break;
         default:
+            printk("%s:%d Unsupported optlevel or optname %d %d\n", __FILE__,
+                   __LINE__, level, optname);
             return -ENOPROTOOPT;
         }
     } else if (level == SOL_NETLINK) {
@@ -704,9 +653,13 @@ size_t netlink_setsockopt(uint64_t fd, int level, int optname,
             return 0;
         }
         default:
+            printk("%s:%d Unsupported optlevel or optname %d %d\n", __FILE__,
+                   __LINE__, level, optname);
             return -ENOPROTOOPT;
         }
     } else {
+        printk("%s:%d Unsupported optlevel or optname %d %d\n", __FILE__,
+               __LINE__, level, optname);
         return -ENOPROTOOPT;
     }
 
@@ -1290,6 +1243,7 @@ static void netlink_handle_release(socket_handle_t *handle) {
         spin_unlock(&netlink_sockets_lock);
 
         if (nl_sk->buffer != NULL) {
+            skb_queue_purge(&nl_sk->buffer->queue);
             free(nl_sk->buffer);
         }
         if (nl_sk->bind_addr != NULL) {

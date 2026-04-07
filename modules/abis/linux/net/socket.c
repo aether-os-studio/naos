@@ -1,4 +1,5 @@
 #include <arch/arch.h>
+#include <boot/boot.h>
 #include <net/net_syscall.h>
 #include <arch/arch.h>
 #include <drivers/kernel_logger.h>
@@ -50,6 +51,17 @@ int socket_poll(vfs_node_t *node, size_t events);
 int socket_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg);
 ssize_t socket_read(fd_t *fd, void *buf, size_t offset, size_t limit);
 ssize_t socket_write(fd_t *fd, const void *buf, size_t offset, size_t limit);
+
+static inline void unix_socket_fill_timestamp_now(struct timeval *tv) {
+    uint64_t now_ns;
+
+    if (!tv)
+        return;
+
+    now_ns = nano_time();
+    tv->tv_sec = boot_get_boottime() + now_ns / 1000000000ULL;
+    tv->tv_usec = (now_ns % 1000000000ULL) / 1000ULL;
+}
 
 static inline sockfs_info_t *sockfs_sb_info(struct vfs_super_block *sb) {
     return sb ? (sockfs_info_t *)sb->s_fs_info : NULL;
@@ -338,6 +350,35 @@ static int unix_socket_maybe_add_passcred(socket_t *peer,
     return 0;
 }
 
+static int
+unix_socket_maybe_add_timestamp(socket_t *peer,
+                                unix_socket_ancillary_t **ancillary) {
+    bool peer_timestamp = false;
+
+    if (!peer || !ancillary)
+        return 0;
+
+    mutex_lock(&peer->lock);
+    peer_timestamp = peer->timestamp_legacy != 0;
+    mutex_unlock(&peer->lock);
+
+    if (!peer_timestamp)
+        return 0;
+
+    if (!*ancillary) {
+        *ancillary = calloc(1, sizeof(**ancillary));
+        if (!*ancillary)
+            return -ENOMEM;
+    }
+
+    if (!(*ancillary)->has_timestamp) {
+        unix_socket_fill_timestamp_now(&(*ancillary)->timestamp);
+        (*ancillary)->has_timestamp = true;
+    }
+
+    return 0;
+}
+
 static uint64_t unix_socket_name_hash(const char *name) {
     uint64_t hash = 1469598103934665603ULL;
     if (!name)
@@ -398,6 +439,19 @@ static socket_t *unix_socket_lookup_bound(const char *name, size_t len,
 
 static inline void unix_socket_release_lookup_ref(socket_t *sock) {
     (void)sock;
+}
+
+static int unix_socket_missing_peer_error(const char *safe, bool is_dgram) {
+    if (safe && safe[0] && safe[0] != '@') {
+        struct vfs_path path_node = {0};
+        if (vfs_filename_lookup(AT_FDCWD, safe, LOOKUP_FOLLOW, &path_node) ==
+            0) {
+            vfs_path_put(&path_node);
+            return -ECONNREFUSED;
+        }
+    }
+
+    return is_dgram ? -EDESTADDRREQ : -ENOTCONN;
 }
 
 char *unix_socket_addr_safe(const struct sockaddr_un *addr, size_t len) {
@@ -584,6 +638,8 @@ unix_socket_ancillary_clone_one(const unix_socket_ancillary_t *src) {
     clone->file_count = src->file_count;
     clone->cred = src->cred;
     clone->has_cred = src->has_cred;
+    clone->timestamp = src->timestamp;
+    clone->has_timestamp = src->has_timestamp;
 
     for (uint32_t i = 0; i < src->file_count; i++) {
         clone->files[i] = vfs_file_get(src->files[i]);
@@ -1181,6 +1237,8 @@ void unix_socket_free(socket_t *sock) {
 
     // 释放资源
     skb_queue_purge(&sock->recv_queue);
+    if (sock->bindAddr && sock->bindAddr[0] != '@')
+        unix_socket_unlink_bound_path(sock->bindAddr);
     if (sock->bindAddr)
         free(sock->bindAddr);
     if (sock->filename)
@@ -2035,6 +2093,7 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
     server_sock->protocol = listen_sock->protocol;
     server_sock->cred = listen_sock->cred;
     server_sock->passcred = listen_sock->passcred;
+    server_sock->timestamp_legacy = listen_sock->timestamp_legacy;
     unix_socket_fill_cred_from_task(&sock->cred, current_task);
     unix_socket_snapshot_peer_cred(sock, &server_sock->cred);
     unix_socket_snapshot_peer_cred(server_sock, &sock->cred);
@@ -2108,24 +2167,38 @@ size_t unix_socket_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
             if (((uint64_t)safe & ERRNO_MASK) == ERRNO_MASK)
                 return (uint64_t)safe;
             size_t safeLen = strlen(safe);
+            int missing_peer = 0;
             socket_t *peer_sock =
                 unix_socket_lookup_bound(safe, safeLen, sock, true);
-            free(safe);
 
             if (peer_sock) {
+                free(safe);
                 peer = peer_sock;
                 peer_needs_unref = true;
                 goto done;
             }
+
+            missing_peer = unix_socket_missing_peer_error(
+                safe, unix_socket_is_dgram_type(sock->type));
+            free(safe);
+            return (size_t)missing_peer;
         }
-        if (unix_socket_is_dgram_type(sock->type))
-            return (size_t)-EDESTADDRREQ;
-        return (size_t)-ENOTCONN;
+        return (size_t)unix_socket_missing_peer_error(
+            NULL, unix_socket_is_dgram_type(sock->type));
     }
 
 done:
     ret = unix_socket_maybe_add_passcred(peer, &ancillary);
     if (ret < 0) {
+        if (peer_needs_unref)
+            unix_socket_release_lookup_ref(peer);
+        return (size_t)ret;
+    }
+
+    ret = unix_socket_maybe_add_timestamp(peer, &ancillary);
+    if (ret < 0) {
+        if (ancillary)
+            unix_socket_ancillary_free(ancillary);
         if (peer_needs_unref)
             unix_socket_release_lookup_ref(peer);
         return (size_t)ret;
@@ -2176,19 +2249,24 @@ size_t unix_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
             if (((uint64_t)safe & ERRNO_MASK) == ERRNO_MASK)
                 return (uint64_t)safe;
             size_t safeLen = strlen(safe);
+            int missing_peer = 0;
             socket_t *peer_sock =
                 unix_socket_lookup_bound(safe, safeLen, sock, true);
-            free(safe);
 
             if (peer_sock) {
+                free(safe);
                 peer = peer_sock;
                 peer_needs_unref = true;
                 goto done;
             }
+
+            missing_peer = unix_socket_missing_peer_error(
+                safe, unix_socket_is_dgram_type(sock->type));
+            free(safe);
+            return (size_t)missing_peer;
         }
-        if (unix_socket_is_dgram_type(sock->type))
-            return (size_t)-EDESTADDRREQ;
-        return (size_t)-ENOTCONN;
+        return (size_t)unix_socket_missing_peer_error(
+            NULL, unix_socket_is_dgram_type(sock->type));
     }
 
 done:
@@ -2203,6 +2281,17 @@ done:
 
     ancillary_ret = unix_socket_maybe_add_passcred(peer, &ancillary);
     if (ancillary_ret < 0) {
+        if (ancillary)
+            unix_socket_ancillary_free(ancillary);
+        if (peer_needs_unref)
+            unix_socket_release_lookup_ref(peer);
+        return (size_t)ancillary_ret;
+    }
+
+    ancillary_ret = unix_socket_maybe_add_timestamp(peer, &ancillary);
+    if (ancillary_ret < 0) {
+        if (ancillary)
+            unix_socket_ancillary_free(ancillary);
         if (peer_needs_unref)
             unix_socket_release_lookup_ref(peer);
         return (size_t)ancillary_ret;
@@ -2295,6 +2384,7 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
         size_t controllen_used = 0;
         struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
         bool emitted_cred = false;
+        bool emitted_timestamp = false;
 
         for (unix_socket_ancillary_t *anc = ancillary_list; anc != NULL;
              anc = anc->next) {
@@ -2334,6 +2424,27 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
                     controllen_used += CMSG_SPACE(sizeof(struct ucred));
                     cmsg = CMSG_NXTHDR(msg, cmsg);
                     emitted_cred = true;
+                } else {
+                    msg->msg_flags |= MSG_CTRUNC;
+                }
+            }
+
+            if (anc->has_timestamp) {
+                size_t space_left;
+
+                if (emitted_timestamp)
+                    continue;
+
+                space_left = msg->msg_controllen - controllen_used;
+                if (cmsg && space_left >= CMSG_SPACE(sizeof(struct timeval))) {
+                    cmsg->cmsg_level = SOL_SOCKET;
+                    cmsg->cmsg_type = SO_TIMESTAMP_OLD;
+                    cmsg->cmsg_len = CMSG_LEN(sizeof(struct timeval));
+                    memcpy(CMSG_DATA(cmsg), &anc->timestamp,
+                           sizeof(struct timeval));
+                    controllen_used += CMSG_SPACE(sizeof(struct timeval));
+                    cmsg = CMSG_NXTHDR(msg, cmsg);
+                    emitted_timestamp = true;
                 } else {
                     msg->msg_flags |= MSG_CTRUNC;
                 }
@@ -2489,6 +2600,13 @@ ssize_t socket_write(fd_t *fd, const void *buf, size_t offset, size_t limit) {
     if (ret < 0)
         return ret;
 
+    ret = unix_socket_maybe_add_timestamp(sock->peer, &ancillary);
+    if (ret < 0) {
+        if (ancillary)
+            unix_socket_ancillary_free(ancillary);
+        return ret;
+    }
+
     ret = unix_socket_send_to_peer(sock, sock->peer, buf, limit, 0, fd,
                                    &ancillary);
     if (ancillary)
@@ -2640,8 +2758,11 @@ size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr,
 
 size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
                               const void *optval, socklen_t optlen) {
-    if (level != SOL_SOCKET)
+    if (level != SOL_SOCKET) {
+        printk("%s:%d Unsupported optlevel or optname %d %d\n", __FILE__,
+               __LINE__, level, optname);
         return -ENOPROTOOPT;
+    }
 
     if (!current_task->fd_info->fds[fd])
         return (size_t)-EBADF;
@@ -2691,7 +2812,9 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
         break;
 
     case SO_SNDBUF:
+    case SO_SNDBUFFORCE:
     case SO_RCVBUF:
+    case SO_RCVBUFFORCE:
         if (optlen < sizeof(int))
             return -EINVAL;
         {
@@ -2712,6 +2835,12 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
         sock->passcred = *(int *)optval;
         break;
 
+    case SO_TIMESTAMP_OLD:
+        if (optlen < sizeof(int))
+            return -EINVAL;
+        sock->timestamp_legacy = *(int *)optval;
+        break;
+
     case SO_PRIORITY:
         break;
 
@@ -2719,6 +2848,8 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
         return -ENOPROTOOPT; // 只读
 
     default:
+        printk("%s:%d Unsupported optlevel or optname %d %d\n", __FILE__,
+               __LINE__, level, optname);
         return -ENOPROTOOPT;
     }
 
@@ -2727,8 +2858,11 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
 
 size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, void *optval,
                               socklen_t *optlen) {
-    if (level != SOL_SOCKET)
+    if (level != SOL_SOCKET) {
+        printk("%s:%d Unsupported optlevel or optname %d %d\n", __FILE__,
+               __LINE__, level, optname);
         return -ENOPROTOOPT;
+    }
 
     if (!current_task->fd_info->fds[fd])
         return (size_t)-EBADF;
@@ -2804,7 +2938,9 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, void *optval,
         break;
 
     case SO_SNDBUF:
+    case SO_SNDBUFFORCE:
     case SO_RCVBUF:
+    case SO_RCVBUFFORCE:
         if (*optlen < sizeof(int))
             return -EINVAL;
         *(int *)optval = sock->recv_size;
@@ -2815,6 +2951,13 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, void *optval,
         if (*optlen < sizeof(int))
             return -EINVAL;
         *(int *)optval = sock->passcred;
+        *optlen = sizeof(int);
+        break;
+
+    case SO_TIMESTAMP_OLD:
+        if (*optlen < sizeof(int))
+            return -EINVAL;
+        *(int *)optval = sock->timestamp_legacy;
         *optlen = sizeof(int);
         break;
 
@@ -2843,6 +2986,8 @@ size_t unix_socket_getsockopt(uint64_t fd, int level, int optname, void *optval,
         break;
 
     default:
+        printk("%s:%d Unsupported optlevel or optname %d %d\n", __FILE__,
+               __LINE__, level, optname);
         return -ENOPROTOOPT;
     }
 
