@@ -41,12 +41,61 @@ static const struct vfs_super_operations devtmpfs_super_ops;
 static const struct vfs_inode_operations devtmpfs_inode_ops;
 static const struct vfs_file_operations devtmpfs_dir_file_ops;
 static const struct vfs_file_operations devtmpfs_file_ops;
+static void devtmpfs_free_dirent(devtmpfs_dirent_t *de);
 
 vfs_node_t *devtmpfs_root = NULL;
 bool devfs_initialized = false;
 
 static inline devtmpfs_inode_info_t *devtmpfs_i(vfs_node_t *inode) {
     return inode ? container_of(inode, devtmpfs_inode_info_t, vfs_inode) : NULL;
+}
+
+static devtmpfs_dirent_t *
+devtmpfs_find_dirent_locked(devtmpfs_inode_info_t *info, const char *name) {
+    devtmpfs_dirent_t *de, *tmp;
+
+    if (!info || !name)
+        return NULL;
+
+    llist_for_each(de, tmp, &info->children, node) {
+        if (de->name && streq(de->name, name))
+            return de;
+    }
+
+    return NULL;
+}
+
+static void devtmpfs_lock_dir_infos(devtmpfs_inode_info_t *a,
+                                    devtmpfs_inode_info_t *b) {
+    if (!a)
+        return;
+
+    if (!b || a == b) {
+        mutex_lock(&a->lock);
+        return;
+    }
+
+    if ((uintptr_t)a < (uintptr_t)b) {
+        mutex_lock(&a->lock);
+        mutex_lock(&b->lock);
+    } else {
+        mutex_lock(&b->lock);
+        mutex_lock(&a->lock);
+    }
+}
+
+static void devtmpfs_unlock_dir_infos(devtmpfs_inode_info_t *a,
+                                      devtmpfs_inode_info_t *b) {
+    if (!a)
+        return;
+
+    if (!b || a == b) {
+        mutex_unlock(&a->lock);
+        return;
+    }
+
+    mutex_unlock(&a->lock);
+    mutex_unlock(&b->lock);
 }
 
 static inline devtmpfs_fs_info_t *devtmpfs_sb_info(struct vfs_super_block *sb) {
@@ -142,16 +191,15 @@ static int devtmpfs_resize_inode(struct vfs_inode *inode, uint64_t new_size) {
 static devtmpfs_dirent_t *devtmpfs_find_dirent(struct vfs_inode *dir,
                                                const char *name) {
     devtmpfs_inode_info_t *info = devtmpfs_i(dir);
-    devtmpfs_dirent_t *de, *tmp;
+    devtmpfs_dirent_t *de;
 
     if (!info || !S_ISDIR(dir->i_mode) || !name)
         return NULL;
 
-    llist_for_each(de, tmp, &info->children, node) {
-        if (de->name && streq(de->name, name))
-            return de;
-    }
-    return NULL;
+    mutex_lock(&info->lock);
+    de = devtmpfs_find_dirent_locked(info, name);
+    mutex_unlock(&info->lock);
+    return de;
 }
 
 static int devtmpfs_add_dirent(struct vfs_inode *dir, const char *name,
@@ -161,8 +209,6 @@ static int devtmpfs_add_dirent(struct vfs_inode *dir, const char *name,
 
     if (!info || !inode || !name || !name[0])
         return -EINVAL;
-    if (devtmpfs_find_dirent(dir, name))
-        return -EEXIST;
 
     de = calloc(1, sizeof(*de));
     if (!de)
@@ -176,7 +222,14 @@ static int devtmpfs_add_dirent(struct vfs_inode *dir, const char *name,
 
     de->inode = vfs_igrab(inode);
     llist_init_head(&de->node);
+    mutex_lock(&info->lock);
+    if (devtmpfs_find_dirent_locked(info, name)) {
+        mutex_unlock(&info->lock);
+        devtmpfs_free_dirent(de);
+        return -EEXIST;
+    }
     llist_append(&info->children, &de->node);
+    mutex_unlock(&info->lock);
     return 0;
 }
 
@@ -188,12 +241,15 @@ static devtmpfs_dirent_t *devtmpfs_detach_dirent(struct vfs_inode *dir,
     if (!info || !name)
         return NULL;
 
+    mutex_lock(&info->lock);
     llist_for_each(de, tmp, &info->children, node) {
         if (!de->name || !streq(de->name, name))
             continue;
         llist_delete(&de->node);
+        mutex_unlock(&info->lock);
         return de;
     }
+    mutex_unlock(&info->lock);
     return NULL;
 }
 
@@ -240,7 +296,8 @@ static struct vfs_inode *devtmpfs_new_inode(struct vfs_super_block *sb,
 static struct vfs_dentry *devtmpfs_lookup(struct vfs_inode *dir,
                                           struct vfs_dentry *dentry,
                                           unsigned int flags) {
-    devtmpfs_dirent_t *de;
+    devtmpfs_inode_info_t *info;
+    struct vfs_inode *inode = NULL;
 
     (void)flags;
     if (!dir || !dentry)
@@ -248,11 +305,20 @@ static struct vfs_dentry *devtmpfs_lookup(struct vfs_inode *dir,
 
     devtmpfs_ensure_populated(dir->i_sb);
 
-    de = devtmpfs_find_dirent(dir, dentry->d_name.name);
+    info = devtmpfs_i(dir);
+    if (!info)
+        return ERR_PTR(-EINVAL);
+
+    mutex_lock(&info->lock);
+    devtmpfs_dirent_t *de =
+        devtmpfs_find_dirent_locked(info, dentry->d_name.name);
     if (de)
-        vfs_d_instantiate(dentry, de->inode);
-    else
-        vfs_d_instantiate(dentry, NULL);
+        inode = vfs_igrab(de->inode);
+    mutex_unlock(&info->lock);
+
+    vfs_d_instantiate(dentry, inode);
+    if (inode)
+        vfs_iput(inode);
     return dentry;
 }
 
@@ -381,13 +447,17 @@ static int devtmpfs_unlink(struct vfs_inode *dir, struct vfs_dentry *dentry) {
 static int devtmpfs_rmdir(struct vfs_inode *dir, struct vfs_dentry *dentry) {
     devtmpfs_dirent_t *de;
     devtmpfs_inode_info_t *info;
+    bool has_children;
 
     if (!dir || !dentry || !dentry->d_inode ||
         !S_ISDIR(dentry->d_inode->i_mode))
         return -ENOTDIR;
 
     info = devtmpfs_i(dentry->d_inode);
-    if (!llist_empty(&info->children))
+    mutex_lock(&info->lock);
+    has_children = !llist_empty(&info->children);
+    mutex_unlock(&info->lock);
+    if (has_children)
         return -ENOTEMPTY;
 
     de = devtmpfs_detach_dirent(dir, dentry->d_name.name);
@@ -403,8 +473,12 @@ static int devtmpfs_rmdir(struct vfs_inode *dir, struct vfs_dentry *dentry) {
 }
 
 static int devtmpfs_rename(struct vfs_rename_ctx *ctx) {
+    devtmpfs_inode_info_t *old_info;
+    devtmpfs_inode_info_t *new_info;
     devtmpfs_dirent_t *old_de;
     devtmpfs_dirent_t *victim = NULL;
+    char *new_name;
+    char *old_name = NULL;
 
     if (!ctx || !ctx->old_dir || !ctx->new_dir || !ctx->old_dentry ||
         !ctx->new_dentry)
@@ -413,30 +487,54 @@ static int devtmpfs_rename(struct vfs_rename_ctx *ctx) {
     if (ctx->flags & (VFS_RENAME_EXCHANGE | VFS_RENAME_WHITEOUT))
         return -EOPNOTSUPP;
 
-    old_de = devtmpfs_detach_dirent(ctx->old_dir, ctx->old_dentry->d_name.name);
-    if (!old_de)
-        return -ENOENT;
+    old_info = devtmpfs_i(ctx->old_dir);
+    new_info = devtmpfs_i(ctx->new_dir);
+    if (!old_info || !new_info)
+        return -EINVAL;
 
-    victim = devtmpfs_detach_dirent(ctx->new_dir, ctx->new_dentry->d_name.name);
+    new_name = strdup(ctx->new_dentry->d_name.name);
+    if (!new_name)
+        return -ENOMEM;
+
+    devtmpfs_lock_dir_infos(old_info, new_info);
+    old_de =
+        devtmpfs_find_dirent_locked(old_info, ctx->old_dentry->d_name.name);
+    if (!old_de) {
+        devtmpfs_unlock_dir_infos(old_info, new_info);
+        free(new_name);
+        return -ENOENT;
+    }
+    llist_delete(&old_de->node);
+
+    victim =
+        devtmpfs_find_dirent_locked(new_info, ctx->new_dentry->d_name.name);
+    if (victim)
+        llist_delete(&victim->node);
     if (victim) {
         if (S_ISDIR(victim->inode->i_mode) != S_ISDIR(old_de->inode->i_mode)) {
             llist_init_head(&old_de->node);
-            llist_append(&devtmpfs_i(ctx->old_dir)->children, &old_de->node);
+            llist_append(&old_info->children, &old_de->node);
             llist_init_head(&victim->node);
-            llist_append(&devtmpfs_i(ctx->new_dir)->children, &victim->node);
+            llist_append(&new_info->children, &victim->node);
+            devtmpfs_unlock_dir_infos(old_info, new_info);
+            free(new_name);
             return -ENOTEMPTY;
         }
-        devtmpfs_free_dirent(victim);
     } else if (ctx->flags & VFS_RENAME_NOREPLACE) {
         llist_init_head(&old_de->node);
-        llist_append(&devtmpfs_i(ctx->old_dir)->children, &old_de->node);
+        llist_append(&old_info->children, &old_de->node);
+        devtmpfs_unlock_dir_infos(old_info, new_info);
+        free(new_name);
         return -EEXIST;
     }
 
-    free(old_de->name);
-    old_de->name = strdup(ctx->new_dentry->d_name.name);
+    old_name = old_de->name;
+    old_de->name = new_name;
     llist_init_head(&old_de->node);
-    llist_append(&devtmpfs_i(ctx->new_dir)->children, &old_de->node);
+    llist_append(&new_info->children, &old_de->node);
+    devtmpfs_unlock_dir_infos(old_info, new_info);
+    free(old_name);
+    devtmpfs_free_dirent(victim);
     return 0;
 }
 
@@ -587,6 +685,7 @@ static int devtmpfs_iterate_shared(struct vfs_file *file,
     devtmpfs_ensure_populated(file->f_inode->i_sb);
 
     info = devtmpfs_i(file->f_inode);
+    mutex_lock(&info->lock);
     llist_for_each(de, tmp, &info->children, node) {
         if (index++ < ctx->pos)
             continue;
@@ -596,18 +695,25 @@ static int devtmpfs_iterate_shared(struct vfs_file *file,
         }
         ctx->pos = index;
     }
+    mutex_unlock(&info->lock);
 
     file->f_pos = ctx->pos;
     return 0;
 }
 
 static int devtmpfs_open_file(struct vfs_inode *inode, struct vfs_file *file) {
+    ssize_t ret;
+
     if (!inode || !file)
         return -EINVAL;
     if (S_ISDIR(inode->i_mode))
         devtmpfs_ensure_populated(inode->i_sb);
-    if (S_ISCHR(inode->i_mode) || S_ISBLK(inode->i_mode))
-        device_open(inode->i_rdev, NULL);
+    if ((file->f_flags & O_PATH) == 0 &&
+        (S_ISCHR(inode->i_mode) || S_ISBLK(inode->i_mode))) {
+        ret = device_open(inode->i_rdev, NULL);
+        if (ret < 0)
+            return (int)ret;
+    }
     file->f_op = inode->i_fop;
     return 0;
 }
@@ -705,10 +811,12 @@ static void devtmpfs_evict_inode(struct vfs_inode *inode) {
     tmpfs_mem_release(info->store.size);
     paged_file_store_destroy(&info->store);
     free(info->link_target);
+    mutex_lock(&info->lock);
     llist_for_each(de, tmp, &info->children, node) {
         llist_delete(&de->node);
         devtmpfs_free_dirent(de);
     }
+    mutex_unlock(&info->lock);
 }
 
 static int devtmpfs_init_fs_context(struct vfs_fs_context *fc) {

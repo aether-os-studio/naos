@@ -1,5 +1,5 @@
 #include <fs/proc.h>
-#include <fs/cgroup/cgroupfs.h>
+#include <fs/vfs/cgroup/cgroupfs.h>
 #include <task/task.h>
 
 size_t proc_pcgroup_stat(proc_handle_t *handle) {

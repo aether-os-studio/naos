@@ -15,6 +15,7 @@
 #include <irq/softirq.h>
 #include <init/abis.h>
 #include <init/callbacks.h>
+#include <task/keyring.h>
 #include <task/ns.h>
 
 sched_rq_t *schedulers[MAX_CPU_NUM];

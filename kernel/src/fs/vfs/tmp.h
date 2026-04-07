@@ -17,7 +17,7 @@ typedef struct tmpfs_dirent {
 
 typedef struct tmpfs_inode_info {
     struct vfs_inode vfs_inode;
-    spinlock_t lock;
+    mutex_t lock;
     paged_file_store_t store;
     char *link_target;
     struct llist_header children;

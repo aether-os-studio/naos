@@ -14,6 +14,7 @@ static const struct vfs_super_operations tmpfs_super_ops;
 static const struct vfs_inode_operations tmpfs_inode_ops;
 static const struct vfs_file_operations tmpfs_dir_ops;
 static const struct vfs_file_operations tmpfs_file_ops;
+static void tmpfs_free_dirent(tmpfs_dirent_t *de);
 
 static inline tmpfs_fs_info_t *tmpfs_sb_info(struct vfs_super_block *sb) {
     return sb ? (tmpfs_fs_info_t *)sb->s_fs_info : NULL;
@@ -21,6 +22,53 @@ static inline tmpfs_fs_info_t *tmpfs_sb_info(struct vfs_super_block *sb) {
 
 static inline tmpfs_inode_info_t *tmpfs_i(struct vfs_inode *inode) {
     return inode ? container_of(inode, tmpfs_inode_info_t, vfs_inode) : NULL;
+}
+
+static tmpfs_dirent_t *tmpfs_find_dirent_locked(tmpfs_inode_info_t *info,
+                                                const char *name) {
+    tmpfs_dirent_t *de, *tmp;
+
+    if (!info || !name)
+        return NULL;
+
+    llist_for_each(de, tmp, &info->children, node) {
+        if (de->name && streq(de->name, name))
+            return de;
+    }
+
+    return NULL;
+}
+
+static void tmpfs_lock_dir_infos(tmpfs_inode_info_t *a, tmpfs_inode_info_t *b) {
+    if (!a)
+        return;
+
+    if (!b || a == b) {
+        mutex_lock(&a->lock);
+        return;
+    }
+
+    if ((uintptr_t)a < (uintptr_t)b) {
+        mutex_lock(&a->lock);
+        mutex_lock(&b->lock);
+    } else {
+        mutex_lock(&b->lock);
+        mutex_lock(&a->lock);
+    }
+}
+
+static void tmpfs_unlock_dir_infos(tmpfs_inode_info_t *a,
+                                   tmpfs_inode_info_t *b) {
+    if (!a)
+        return;
+
+    if (!b || a == b) {
+        mutex_unlock(&a->lock);
+        return;
+    }
+
+    mutex_unlock(&a->lock);
+    mutex_unlock(&b->lock);
 }
 
 static unsigned char tmpfs_dtype(umode_t mode) {
@@ -89,16 +137,15 @@ static ino64_t tmpfs_next_ino(struct vfs_super_block *sb) {
 static tmpfs_dirent_t *tmpfs_find_dirent(struct vfs_inode *dir,
                                          const char *name) {
     tmpfs_inode_info_t *info = tmpfs_i(dir);
-    tmpfs_dirent_t *de, *tmp;
+    tmpfs_dirent_t *de;
 
     if (!info || !S_ISDIR(dir->i_mode) || !name)
         return NULL;
 
-    llist_for_each(de, tmp, &info->children, node) {
-        if (de->name && streq(de->name, name))
-            return de;
-    }
-    return NULL;
+    mutex_lock(&info->lock);
+    de = tmpfs_find_dirent_locked(info, name);
+    mutex_unlock(&info->lock);
+    return de;
 }
 
 static int tmpfs_add_dirent(struct vfs_inode *dir, const char *name,
@@ -108,8 +155,6 @@ static int tmpfs_add_dirent(struct vfs_inode *dir, const char *name,
 
     if (!info || !inode || !name || !name[0])
         return -EINVAL;
-    if (tmpfs_find_dirent(dir, name))
-        return -EEXIST;
 
     de = calloc(1, sizeof(*de));
     if (!de)
@@ -123,7 +168,14 @@ static int tmpfs_add_dirent(struct vfs_inode *dir, const char *name,
 
     de->inode = vfs_igrab(inode);
     llist_init_head(&de->node);
+    mutex_lock(&info->lock);
+    if (tmpfs_find_dirent_locked(info, name)) {
+        mutex_unlock(&info->lock);
+        tmpfs_free_dirent(de);
+        return -EEXIST;
+    }
     llist_append(&info->children, &de->node);
+    mutex_unlock(&info->lock);
     return 0;
 }
 
@@ -135,12 +187,15 @@ static tmpfs_dirent_t *tmpfs_detach_dirent(struct vfs_inode *dir,
     if (!info || !name)
         return NULL;
 
+    mutex_lock(&info->lock);
     llist_for_each(de, tmp, &info->children, node) {
         if (!de->name || !streq(de->name, name))
             continue;
         llist_delete(&de->node);
+        mutex_unlock(&info->lock);
         return de;
     }
+    mutex_unlock(&info->lock);
     return NULL;
 }
 
@@ -177,11 +232,11 @@ static int tmpfs_resize_inode(struct vfs_inode *inode, uint64_t new_size) {
     if (ret < 0)
         return ret;
 
-    spin_lock(&info->lock);
+    mutex_lock(&info->lock);
     if (new_size > old_size) {
         ret = paged_file_store_ensure_slots(&info->store, new_pages);
         if (ret < 0) {
-            spin_unlock(&info->lock);
+            mutex_unlock(&info->lock);
             tmpfs_mem_resize_reserve(new_size, old_size);
             return ret;
         }
@@ -193,7 +248,7 @@ static int tmpfs_resize_inode(struct vfs_inode *inode, uint64_t new_size) {
     inode->i_size = new_size;
     inode->i_blocks = tmpfs_mem_align(new_size) >> 9;
     inode->i_version++;
-    spin_unlock(&info->lock);
+    mutex_unlock(&info->lock);
 
     if (new_size < old_size) {
         uint64_t zap_start = PADDING_UP(new_size, PAGE_SIZE);
@@ -205,12 +260,12 @@ static int tmpfs_resize_inode(struct vfs_inode *inode, uint64_t new_size) {
         for (size_t i = new_pages; i < old_pages; i++) {
             uint64_t paddr = 0;
 
-            spin_lock(&info->lock);
+            mutex_lock(&info->lock);
             if (i < info->store.page_slots) {
                 paddr = info->store.pages[i];
                 info->store.pages[i] = 0;
             }
-            spin_unlock(&info->lock);
+            mutex_unlock(&info->lock);
 
             if (paddr)
                 address_release(paddr);
@@ -228,7 +283,7 @@ static struct vfs_inode *tmpfs_new_inode(struct vfs_super_block *sb,
     if (!inode)
         return NULL;
 
-    spin_init(&info->lock);
+    mutex_init(&info->lock);
     llist_init_head(&info->children);
     inode->i_ino = tmpfs_next_ino(sb);
     inode->i_mode = mode;
@@ -255,18 +310,26 @@ static struct vfs_inode *tmpfs_new_inode(struct vfs_super_block *sb,
 static struct vfs_dentry *tmpfs_lookup(struct vfs_inode *dir,
                                        struct vfs_dentry *dentry,
                                        unsigned int flags) {
-    tmpfs_dirent_t *de;
+    tmpfs_inode_info_t *info;
+    struct vfs_inode *inode = NULL;
 
     (void)flags;
     if (!dir || !dentry)
         return ERR_PTR(-EINVAL);
 
-    de = tmpfs_find_dirent(dir, dentry->d_name.name);
-    if (de) {
-        vfs_d_instantiate(dentry, de->inode);
-    } else {
-        vfs_d_instantiate(dentry, NULL);
-    }
+    info = tmpfs_i(dir);
+    if (!info)
+        return ERR_PTR(-EINVAL);
+
+    mutex_lock(&info->lock);
+    tmpfs_dirent_t *de = tmpfs_find_dirent_locked(info, dentry->d_name.name);
+    if (de)
+        inode = vfs_igrab(de->inode);
+    mutex_unlock(&info->lock);
+
+    vfs_d_instantiate(dentry, inode);
+    if (inode)
+        vfs_iput(inode);
     return dentry;
 }
 
@@ -318,10 +381,10 @@ static int tmpfs_create_common(struct vfs_inode *dir, struct vfs_dentry *dentry,
         }
 
         loff_t pos = 0;
-        spin_lock(&info->lock);
+        mutex_lock(&info->lock);
         ret = (int)paged_file_store_write_locked(&info->store, symlink_target,
                                                  strlen(symlink_target), &pos);
-        spin_unlock(&info->lock);
+        mutex_unlock(&info->lock);
         if (ret < 0) {
             free(info->link_target);
             info->link_target = NULL;
@@ -398,13 +461,17 @@ static int tmpfs_unlink(struct vfs_inode *dir, struct vfs_dentry *dentry) {
 static int tmpfs_rmdir(struct vfs_inode *dir, struct vfs_dentry *dentry) {
     tmpfs_dirent_t *de;
     tmpfs_inode_info_t *info;
+    bool has_children;
 
     if (!dir || !dentry || !dentry->d_inode ||
         !S_ISDIR(dentry->d_inode->i_mode))
         return -ENOTDIR;
 
     info = tmpfs_i(dentry->d_inode);
-    if (!llist_empty(&info->children))
+    mutex_lock(&info->lock);
+    has_children = !llist_empty(&info->children);
+    mutex_unlock(&info->lock);
+    if (has_children)
         return -ENOTEMPTY;
 
     de = tmpfs_detach_dirent(dir, dentry->d_name.name);
@@ -420,8 +487,12 @@ static int tmpfs_rmdir(struct vfs_inode *dir, struct vfs_dentry *dentry) {
 }
 
 static int tmpfs_rename(struct vfs_rename_ctx *ctx) {
+    tmpfs_inode_info_t *old_info;
+    tmpfs_inode_info_t *new_info;
     tmpfs_dirent_t *old_de;
     tmpfs_dirent_t *victim = NULL;
+    char *new_name;
+    char *old_name = NULL;
 
     if (!ctx || !ctx->old_dir || !ctx->new_dir || !ctx->old_dentry ||
         !ctx->new_dentry) {
@@ -431,30 +502,52 @@ static int tmpfs_rename(struct vfs_rename_ctx *ctx) {
     if (ctx->flags & (VFS_RENAME_EXCHANGE | VFS_RENAME_WHITEOUT))
         return -EOPNOTSUPP;
 
-    old_de = tmpfs_detach_dirent(ctx->old_dir, ctx->old_dentry->d_name.name);
-    if (!old_de)
-        return -ENOENT;
+    old_info = tmpfs_i(ctx->old_dir);
+    new_info = tmpfs_i(ctx->new_dir);
+    if (!old_info || !new_info)
+        return -EINVAL;
 
-    victim = tmpfs_detach_dirent(ctx->new_dir, ctx->new_dentry->d_name.name);
+    new_name = strdup(ctx->new_dentry->d_name.name);
+    if (!new_name)
+        return -ENOMEM;
+
+    tmpfs_lock_dir_infos(old_info, new_info);
+    old_de = tmpfs_find_dirent_locked(old_info, ctx->old_dentry->d_name.name);
+    if (!old_de) {
+        tmpfs_unlock_dir_infos(old_info, new_info);
+        free(new_name);
+        return -ENOENT;
+    }
+    llist_delete(&old_de->node);
+
+    victim = tmpfs_find_dirent_locked(new_info, ctx->new_dentry->d_name.name);
+    if (victim)
+        llist_delete(&victim->node);
     if (victim) {
         if (S_ISDIR(victim->inode->i_mode) != S_ISDIR(old_de->inode->i_mode)) {
             llist_init_head(&old_de->node);
-            llist_append(&tmpfs_i(ctx->old_dir)->children, &old_de->node);
+            llist_append(&old_info->children, &old_de->node);
             llist_init_head(&victim->node);
-            llist_append(&tmpfs_i(ctx->new_dir)->children, &victim->node);
+            llist_append(&new_info->children, &victim->node);
+            tmpfs_unlock_dir_infos(old_info, new_info);
+            free(new_name);
             return -ENOTEMPTY;
         }
-        tmpfs_free_dirent(victim);
     } else if (ctx->flags & VFS_RENAME_NOREPLACE) {
         llist_init_head(&old_de->node);
-        llist_append(&tmpfs_i(ctx->old_dir)->children, &old_de->node);
+        llist_append(&old_info->children, &old_de->node);
+        tmpfs_unlock_dir_infos(old_info, new_info);
+        free(new_name);
         return -EEXIST;
     }
 
-    free(old_de->name);
-    old_de->name = strdup(ctx->new_dentry->d_name.name);
+    old_name = old_de->name;
+    old_de->name = new_name;
     llist_init_head(&old_de->node);
-    llist_append(&tmpfs_i(ctx->new_dir)->children, &old_de->node);
+    llist_append(&new_info->children, &old_de->node);
+    tmpfs_unlock_dir_infos(old_info, new_info);
+    free(old_name);
+    tmpfs_free_dirent(victim);
     return 0;
 }
 
@@ -548,9 +641,9 @@ static ssize_t tmpfs_read(struct vfs_file *file, void *buf, size_t count,
     if (!info)
         return -EINVAL;
 
-    spin_lock(&info->lock);
+    mutex_lock(&info->lock);
     ssize_t ret = paged_file_store_read_locked(&info->store, buf, count, ppos);
-    spin_unlock(&info->lock);
+    mutex_unlock(&info->lock);
     return ret;
 }
 
@@ -576,13 +669,13 @@ static ssize_t tmpfs_write(struct vfs_file *file, const void *buf, size_t count,
     if (ret < 0)
         return ret;
 
-    spin_lock(&info->lock);
+    mutex_lock(&info->lock);
     ret = paged_file_store_write_locked(&info->store, buf, count, ppos);
     if (ret > 0 && end > info->store.size)
         info->store.size = end;
     file->f_inode->i_size = info->store.size;
     file->f_inode->i_version++;
-    spin_unlock(&info->lock);
+    mutex_unlock(&info->lock);
     return ret;
 }
 
@@ -596,6 +689,7 @@ static int tmpfs_iterate_shared(struct vfs_file *file,
         return -ENOTDIR;
 
     info = tmpfs_i(file->f_inode);
+    mutex_lock(&info->lock);
     llist_for_each(de, tmp, &info->children, node) {
         if (index++ < ctx->pos)
             continue;
@@ -605,6 +699,7 @@ static int tmpfs_iterate_shared(struct vfs_file *file,
         }
         ctx->pos = index;
     }
+    mutex_unlock(&info->lock);
 
     file->f_pos = ctx->pos;
     return 0;
@@ -667,11 +762,11 @@ static void *tmpfs_mmap(struct vfs_file *file, void *addr, size_t offset,
         pt_flags |= PT_FLAG_R;
 
     pgdir = get_current_page_dir(true);
-    spin_lock(&info->lock);
+    mutex_lock(&info->lock);
     ret = paged_file_store_map_shared_locked(&info->store, pgdir,
                                              (uint64_t)addr, (uint64_t)offset,
                                              (uint64_t)size, pt_flags);
-    spin_unlock(&info->lock);
+    mutex_unlock(&info->lock);
     if (ret < 0)
         return (void *)(int64_t)ret;
 
@@ -711,10 +806,12 @@ static void tmpfs_evict_inode(struct vfs_inode *inode) {
     free(info->link_target);
     info->link_target = NULL;
 
+    mutex_lock(&info->lock);
     llist_for_each(de, tmp, &info->children, node) {
         llist_delete(&de->node);
         tmpfs_free_dirent(de);
     }
+    mutex_unlock(&info->lock);
 
     if (S_ISFIFO(inode->i_mode))
         pipefs_named_evict_inode(inode);

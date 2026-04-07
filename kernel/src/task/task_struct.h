@@ -282,6 +282,8 @@ typedef struct task_signal_info {
     task_sighand_t *sighand;
 } task_signal_info_t;
 
+typedef struct task_keyring task_keyring_t;
+
 typedef struct task {
     uint64_t syscall_stack;
     uint64_t kernel_stack;
@@ -325,6 +327,7 @@ typedef struct task {
     task_mm_info_t *mm;
     arch_context_t *arch_context;
     task_signal_info_t *signal;
+    task_keyring_t *session_keyring;
     task_fs_t *fs;
     fd_info_t *fd_info;
     shm_mapping_t *shm_ids;

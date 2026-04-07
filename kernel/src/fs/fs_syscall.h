@@ -444,6 +444,7 @@ uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count);
 uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count);
 
 uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size);
+uint64_t sys_getdents64(uint64_t fd, uint64_t buf, uint64_t size);
 uint64_t sys_chdir(const char *dirname);
 uint64_t sys_chroot(const char *dname);
 uint64_t sys_getcwd(char *cwd, uint64_t size);

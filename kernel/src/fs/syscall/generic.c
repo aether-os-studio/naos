@@ -1641,6 +1641,20 @@ static inline size_t dirent_reclen(size_t name_len) {
     return (DIRENT_HEADER_SIZE + name_len + 1 + 7) & ~7;
 }
 
+struct linux_dirent64 {
+    uint64_t d_ino;
+    int64_t d_off;
+    unsigned short d_reclen;
+    unsigned char d_type;
+    char d_name[];
+};
+
+#define DIRENT64_HEADER_SIZE offsetof(struct linux_dirent64, d_name)
+
+static inline size_t dirent64_reclen(size_t name_len) {
+    return (DIRENT64_HEADER_SIZE + name_len + 1 + 7) & ~7;
+}
+
 struct getdents_state {
     uint8_t *buf;
     uint64_t size;
@@ -1673,6 +1687,32 @@ static int getdents_actor(struct vfs_dir_context *ctx, const char *name,
     return 0;
 }
 
+static int getdents64_actor(struct vfs_dir_context *ctx, const char *name,
+                            int namelen, loff_t next, ino64_t ino,
+                            unsigned d_type) {
+    struct getdents_state *state = (struct getdents_state *)ctx->private;
+    struct linux_dirent64 *dent;
+    size_t reclen;
+
+    if (!state || !name || namelen < 0)
+        return -EINVAL;
+
+    reclen = dirent64_reclen((size_t)namelen);
+    if (state->written + reclen > state->size)
+        return -EINVAL;
+
+    dent = (struct linux_dirent64 *)(state->buf + state->written);
+    memset(dent, 0, reclen);
+    dent->d_ino = (uint64_t)ino;
+    dent->d_reclen = (unsigned short)reclen;
+    dent->d_off = (int64_t)next;
+    dent->d_type = (unsigned char)d_type;
+    memcpy(dent->d_name, name, (size_t)namelen);
+    dent->d_name[namelen] = '\0';
+    state->written += reclen;
+    return 0;
+}
+
 uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size) {
     struct vfs_file *file;
     struct vfs_dir_context ctx = {0};
@@ -1695,6 +1735,36 @@ uint64_t sys_getdents(uint64_t fd, uint64_t buf, uint64_t size) {
     state.size = size;
     ctx.pos = file->f_pos;
     ctx.actor = getdents_actor;
+    ctx.private = &state;
+
+    ret = vfs_iterate_dir(file, &ctx);
+    vfs_file_put(file);
+    if (ret < 0 && state.written == 0)
+        return (uint64_t)ret;
+    return state.written;
+}
+
+uint64_t sys_getdents64(uint64_t fd, uint64_t buf, uint64_t size) {
+    struct vfs_file *file;
+    struct vfs_dir_context ctx = {0};
+    struct getdents_state state = {0};
+    int ret;
+
+    if (check_user_overflow(buf, size) || check_unmapped(buf, size))
+        return (uint64_t)-EFAULT;
+
+    file = task_get_file(current_task, (int)fd);
+    if (!file)
+        return (uint64_t)-EBADF;
+    if (!S_ISDIR(file->f_inode->i_mode)) {
+        vfs_file_put(file);
+        return (uint64_t)-ENOTDIR;
+    }
+
+    state.buf = (uint8_t *)buf;
+    state.size = size;
+    ctx.pos = file->f_pos;
+    ctx.actor = getdents64_actor;
     ctx.private = &state;
 
     ret = vfs_iterate_dir(file, &ctx);

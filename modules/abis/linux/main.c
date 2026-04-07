@@ -17,6 +17,7 @@
 #include <dev/drm/drm.h>
 #include <libs/keys.h>
 #include <task/task.h>
+#include <task/keyring.h>
 
 extern void sys_yield(void);
 
@@ -844,7 +845,7 @@ void x64_register_syscalls() {
     // (syscall_handle_t)sys_epoll_wait_old);
     // regist_syscall_handler(SYS_REMAP_FILE_PAGES,
     // (syscall_handle_t)sys_remap_file_pages);
-    regist_syscall_handler(SYS_GETDENTS64, (syscall_handle_t)sys_getdents);
+    regist_syscall_handler(SYS_GETDENTS64, (syscall_handle_t)sys_getdents64);
     regist_syscall_handler(SYS_SET_TID_ADDRESS,
                            (syscall_handle_t)sys_set_tid_address);
     // regist_syscall_handler(SYS_RESTART_SYSCALL,
@@ -999,6 +1000,9 @@ void x64_register_syscalls() {
     regist_syscall_handler(SYS_RENAMEAT2, (syscall_handle_t)sys_renameat2);
     // regist_syscall_handler(SYS_SECCOMP, (syscall_handle_t)sys_seccomp);
     regist_syscall_handler(SYS_GETRANDOM, (syscall_handle_t)sys_getrandom);
+    regist_syscall_handler(SYS_ADD_KEY, (syscall_handle_t)sys_add_key);
+    regist_syscall_handler(SYS_REQUEST_KEY, (syscall_handle_t)sys_request_key);
+    regist_syscall_handler(SYS_KEYCTL, (syscall_handle_t)sys_keyctl);
     regist_syscall_handler(SYS_MEMFD_CREATE,
                            (syscall_handle_t)sys_memfd_create);
     // regist_syscall_handler(SYS_KEXEC_FILE_LOAD,
@@ -1311,7 +1315,7 @@ void aarch64_register_syscalls() {
     // (syscall_handle_t)sys_epoll_wait_old);
     // regist_syscall_handler(SYS_REMAP_FILE_PAGES,
     // (syscall_handle_t)sys_remap_file_pages);
-    regist_syscall_handler(SYS_GETDENTS64, (syscall_handle_t)sys_getdents);
+    regist_syscall_handler(SYS_GETDENTS64, (syscall_handle_t)sys_getdents64);
     regist_syscall_handler(SYS_SET_TID_ADDRESS,
                            (syscall_handle_t)sys_set_tid_address);
     // regist_syscall_handler(SYS_RESTART_SYSCALL,
@@ -1459,6 +1463,9 @@ void aarch64_register_syscalls() {
     regist_syscall_handler(SYS_RENAMEAT2, (syscall_handle_t)sys_renameat2);
     // regist_syscall_handler(SYS_SECCOMP, (syscall_handle_t)sys_seccomp);
     regist_syscall_handler(SYS_GETRANDOM, (syscall_handle_t)sys_getrandom);
+    regist_syscall_handler(SYS_ADD_KEY, (syscall_handle_t)sys_add_key);
+    regist_syscall_handler(SYS_REQUEST_KEY, (syscall_handle_t)sys_request_key);
+    regist_syscall_handler(SYS_KEYCTL, (syscall_handle_t)sys_keyctl);
     regist_syscall_handler(SYS_MEMFD_CREATE,
                            (syscall_handle_t)sys_memfd_create);
     // regist_syscall_handler(SYS_KEXEC_FILE_LOAD,

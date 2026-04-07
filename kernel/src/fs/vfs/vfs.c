@@ -1814,7 +1814,7 @@ int vfs_openat(int dfd, const char *name, const struct vfs_open_how *how,
         ret = -ENOTDIR;
         goto out;
     }
-    if ((local_how.flags & O_TRUNC) &&
+    if (!(local_how.flags & O_PATH) && (local_how.flags & O_TRUNC) &&
         ((local_how.flags & O_ACCMODE_FLAGS) == O_WRONLY ||
          (local_how.flags & O_ACCMODE_FLAGS) == O_RDWR) &&
         !S_ISDIR(dentry->d_inode->i_mode)) {
@@ -1829,7 +1829,8 @@ int vfs_openat(int dfd, const char *name, const struct vfs_open_how *how,
         goto out;
     }
 
-    if (dentry->d_inode->i_op && dentry->d_inode->i_op->atomic_open) {
+    if (!(local_how.flags & O_PATH) && dentry->d_inode->i_op &&
+        dentry->d_inode->i_op->atomic_open) {
         ret = dentry->d_inode->i_op->atomic_open(dir, dentry, file,
                                                  (unsigned int)local_how.flags,
                                                  (umode_t)local_how.mode);
@@ -1837,7 +1838,7 @@ int vfs_openat(int dfd, const char *name, const struct vfs_open_how *how,
             vfs_file_put(file);
             goto out;
         }
-    } else if (file->f_op && file->f_op->open) {
+    } else if (!(local_how.flags & O_PATH) && file->f_op && file->f_op->open) {
         ret = file->f_op->open(dentry->d_inode, file);
         if (ret < 0) {
             vfs_file_put(file);
@@ -1849,8 +1850,9 @@ int vfs_openat(int dfd, const char *name, const struct vfs_open_how *how,
         notifyfs_queue_inode_event(dir, dentry->d_inode, last.name, IN_CREATE,
                                    0);
 
-    notifyfs_queue_inode_event(dentry->d_inode, dentry->d_inode, NULL, IN_OPEN,
-                               0);
+    if (!(local_how.flags & O_PATH))
+        notifyfs_queue_inode_event(dentry->d_inode, dentry->d_inode, NULL,
+                                   IN_OPEN, 0);
     *out = file;
     ret = 0;
 

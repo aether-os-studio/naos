@@ -5,6 +5,7 @@
 #include <libs/string_builder.h>
 #include <mm/mm.h>
 #include <task/sched.h>
+#include <task/keyring.h>
 #include <task/task_syscall.h>
 
 extern hashmap_t task_parent_map;
@@ -505,6 +506,8 @@ void task_cleanup_partial(task_t *task, bool kernel_mm) {
         task->signal = NULL;
     }
 
+    task_keyring_release_task(task);
+
     if (task->arch_context) {
         arch_context_free(task->arch_context);
         free(task->arch_context);
@@ -601,6 +604,8 @@ void free_task(task_t *ptr) {
     ptr->arg_end = 0;
     ptr->env_start = 0;
     ptr->env_end = 0;
+
+    task_keyring_release_task(ptr);
 
     task_signal_free(ptr->signal);
     ptr->signal = NULL;
@@ -2011,6 +2016,7 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
     child->sgid = self->sgid;
     child->pgid = self->pgid;
     child->sid = self->sid;
+    task_keyring_inherit(child, self);
 
     child->priority = NORMAL_PRIORITY;
 
