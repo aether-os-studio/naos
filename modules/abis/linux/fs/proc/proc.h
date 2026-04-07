@@ -92,6 +92,17 @@ size_t proc_stat_read(proc_handle_t *handle, void *addr, size_t offset,
 size_t proc_sys_kernel_osrelease_stat(proc_handle_t *handle);
 size_t proc_sys_kernel_osrelease_read(proc_handle_t *handle, void *addr,
                                       size_t offset, size_t size);
+size_t proc_sys_kernel_hostname_stat(proc_handle_t *handle);
+size_t proc_sys_kernel_hostname_read(proc_handle_t *handle, void *addr,
+                                     size_t offset, size_t size);
+ssize_t proc_sys_kernel_hostname_write(proc_handle_t *handle, const void *addr,
+                                       size_t offset, size_t size);
+size_t proc_sys_kernel_domainname_stat(proc_handle_t *handle);
+size_t proc_sys_kernel_domainname_read(proc_handle_t *handle, void *addr,
+                                       size_t offset, size_t size);
+ssize_t proc_sys_kernel_domainname_write(proc_handle_t *handle,
+                                         const void *addr, size_t offset,
+                                         size_t size);
 size_t proc_pressure_memory_stat(proc_handle_t *handle);
 size_t proc_pressure_memory_read(proc_handle_t *handle, void *addr,
                                  size_t offset, size_t size);

@@ -669,9 +669,20 @@ static int procfs_iterate_shared(struct vfs_file *file,
             procfs_ino_for(PROCFS_INO_SYS_KERNEL_DIR, NULL, -1, "kernel"));
         break;
     case PROCFS_INO_SYS_KERNEL_DIR:
-        procfs_emit_entry(ctx, &index, "osrelease", DT_REG,
-                          procfs_ino_for(PROCFS_INO_FILE, NULL, -1,
-                                         "proc_sys_kernel_osrelease"));
+        if (procfs_emit_entry(ctx, &index, "osrelease", DT_REG,
+                              procfs_ino_for(PROCFS_INO_FILE, NULL, -1,
+                                             "proc_sys_kernel_osrelease")) !=
+                0 ||
+            procfs_emit_entry(ctx, &index, "hostname", DT_REG,
+                              procfs_ino_for(PROCFS_INO_FILE, NULL, -1,
+                                             "proc_sys_kernel_hostname")) !=
+                0 ||
+            procfs_emit_entry(ctx, &index, "domainname", DT_REG,
+                              procfs_ino_for(PROCFS_INO_FILE, NULL, -1,
+                                             "proc_sys_kernel_domainname")) !=
+                0) {
+            break;
+        }
         break;
     case PROCFS_INO_PRESSURE_DIR:
         procfs_emit_entry(
@@ -910,6 +921,12 @@ static struct vfs_dentry *procfs_lookup(struct vfs_inode *dir,
         if (!strcmp(dentry->d_name.name, "osrelease")) {
             inode = procfs_new_inode(dir->i_sb, S_IFREG | 0444, PROCFS_INO_FILE,
                                      NULL, -1, "proc_sys_kernel_osrelease");
+        } else if (!strcmp(dentry->d_name.name, "hostname")) {
+            inode = procfs_new_inode(dir->i_sb, S_IFREG | 0644, PROCFS_INO_FILE,
+                                     NULL, -1, "proc_sys_kernel_hostname");
+        } else if (!strcmp(dentry->d_name.name, "domainname")) {
+            inode = procfs_new_inode(dir->i_sb, S_IFREG | 0644, PROCFS_INO_FILE,
+                                     NULL, -1, "proc_sys_kernel_domainname");
         }
         break;
     case PROCFS_INO_PRESSURE_DIR:

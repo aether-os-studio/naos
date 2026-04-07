@@ -114,9 +114,6 @@ int task_fs_chroot(task_t *task, const struct vfs_path *root) {
     vfs_path_put(&task->fs->vfs.root);
     task->fs->vfs.root = *root;
     vfs_path_get(&task->fs->vfs.root);
-    vfs_path_put(&task->fs->vfs.pwd);
-    task->fs->vfs.pwd = task->fs->vfs.root;
-    vfs_path_get(&task->fs->vfs.pwd);
     task->fs->vfs.seq++;
     spin_unlock(&task->fs->vfs.lock);
     return 0;
@@ -185,6 +182,35 @@ task_mount_namespace_create(struct vfs_mount *root,
 
     mnt_ns->root = mnt_root;
     mnt_ns->seq = parent ? parent->seq : 1;
+    return mnt_ns;
+}
+
+static task_mount_namespace_t *
+task_mount_namespace_create_for_task(task_t *task,
+                                     const task_mount_namespace_t *parent) {
+    task_mount_namespace_t *mnt_ns;
+    struct vfs_mount *mnt_root = NULL;
+
+    if (!parent)
+        return task_mount_namespace_create(vfs_root_path.mnt, NULL);
+
+    if (!parent->root)
+        return task_mount_namespace_create(vfs_root_path.mnt, parent);
+
+    mnt_ns = calloc(1, sizeof(*mnt_ns));
+    if (!mnt_ns)
+        return NULL;
+
+    task_ns_common_init(&mnt_ns->common);
+    mnt_root = vfs_clone_mount_tree(parent->root);
+    if (!mnt_root) {
+        free(mnt_ns);
+        return NULL;
+    }
+
+    mnt_ns->root = mnt_root;
+    mnt_ns->seq = parent->seq;
+    mnt_ns->owns_tree = true;
     return mnt_ns;
 }
 
@@ -316,6 +342,16 @@ struct vfs_mount *task_mount_namespace_root(task_t *task) {
         return vfs_root_path.mnt;
     if (task->nsproxy->mnt_ns->root)
         return task->nsproxy->mnt_ns->root;
+
+    {
+        const struct vfs_path *fs_root = task_fs_root_path(task);
+
+        if (fs_root && fs_root->mnt && fs_root->dentry &&
+            fs_root->mnt->mnt_root == fs_root->dentry) {
+            return fs_root->mnt;
+        }
+    }
+
     return vfs_root_path.mnt;
 }
 
@@ -363,10 +399,8 @@ task_ns_proxy_t *task_ns_proxy_clone(task_t *task, uint64_t clone_flags) {
     }
 
     if (clone_flags & CLONE_NEWNS) {
-        struct vfs_mount *root = task && task->nsproxy && task->nsproxy->mnt_ns
-                                     ? task->nsproxy->mnt_ns->root
-                                     : vfs_root_path.mnt;
-        child->mnt_ns = task_mount_namespace_create(root, parent->mnt_ns);
+        child->mnt_ns =
+            task_mount_namespace_create_for_task(task, parent->mnt_ns);
     } else {
         child->mnt_ns = parent->mnt_ns;
         task_ns_common_get(&child->mnt_ns->common);

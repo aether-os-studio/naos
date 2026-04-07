@@ -1,4 +1,5 @@
 #include <boot/boot.h>
+#include <fs/vfs/vfs.h>
 #include <fs/vfs/cgroup/cgroupfs.h>
 #include <init/abis.h>
 #include <init/callbacks.h>
@@ -1871,6 +1872,12 @@ uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                               -1);
 }
 
+static int task_fs_rebind_mount_namespace(task_fs_t *fs,
+                                          struct vfs_mount *old_root,
+                                          struct vfs_mount *new_root);
+
+static struct vfs_mount *task_namespace_clone_source_root(task_t *task);
+
 static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
                                    uint64_t newsp, int *parent_tid,
                                    int *child_tid, uint64_t tls,
@@ -1943,13 +1950,13 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
     }
 
     if ((flags & CLONE_NEWNS) && child->nsproxy->mnt_ns &&
+        task_namespace_clone_source_root(self) &&
         child->fs->vfs.root.mnt != child->nsproxy->mnt_ns->root) {
-        vfs_path_put(&child->fs->vfs.root);
-        child->fs->vfs.root.mnt = vfs_mntget(child->nsproxy->mnt_ns->root);
-        child->fs->vfs.root.dentry =
-            child->nsproxy->mnt_ns->root
-                ? vfs_dget(child->nsproxy->mnt_ns->root->mnt_root)
-                : NULL;
+        if (task_fs_rebind_mount_namespace(
+                child->fs, task_namespace_clone_source_root(self),
+                child->nsproxy->mnt_ns->root) < 0) {
+            goto fail;
+        }
     }
 
     child->cpu_id = (flags & CLONE_VM) ? self->cpu_id : alloc_cpu_id();
@@ -2185,6 +2192,137 @@ static fd_info_t *task_fd_info_clone(fd_info_t *old) {
     return new_info;
 }
 
+#define TASK_MNT_TRANSLATE_MAX_DEPTH 64
+
+static struct vfs_mount *
+task_mount_namespace_find_child(struct vfs_mount *parent,
+                                const struct vfs_mount *src_child) {
+    struct vfs_mount *child;
+    struct vfs_mount *tmp;
+    struct vfs_dentry *translated_mountpoint;
+
+    if (!parent || !src_child || !src_child->mnt_parent ||
+        !src_child->mnt_parent->mnt_root || !src_child->mnt_mountpoint)
+        return NULL;
+
+    translated_mountpoint = vfs_translate_dentry_between_mounts(
+        src_child->mnt_parent->mnt_root, src_child->mnt_mountpoint,
+        parent->mnt_root);
+    if (!translated_mountpoint)
+        return NULL;
+
+    llist_for_each(child, tmp, &parent->mnt_mounts, mnt_child) {
+        if (child->mnt_mountpoint == translated_mountpoint &&
+            child->mnt_sb == src_child->mnt_sb) {
+            vfs_dput(translated_mountpoint);
+            return vfs_mntget(child);
+        }
+    }
+
+    vfs_dput(translated_mountpoint);
+    return NULL;
+}
+
+static struct vfs_mount *
+task_mount_namespace_translate_mount(struct vfs_mount *old_root,
+                                     struct vfs_mount *new_root,
+                                     struct vfs_mount *old_mnt) {
+    struct vfs_mount *chain[TASK_MNT_TRANSLATE_MAX_DEPTH];
+    struct vfs_mount *cursor;
+    struct vfs_mount *translated;
+    size_t depth = 0;
+
+    if (!old_root || !new_root || !old_mnt)
+        return NULL;
+    if (old_mnt == old_root)
+        return vfs_mntget(new_root);
+
+    for (cursor = old_mnt; cursor && cursor != old_root;
+         cursor = cursor->mnt_parent) {
+        if (depth >= TASK_MNT_TRANSLATE_MAX_DEPTH)
+            return NULL;
+        if (!cursor->mnt_parent || cursor->mnt_parent == cursor ||
+            !cursor->mnt_mountpoint) {
+            return NULL;
+        }
+        chain[depth++] = cursor;
+    }
+
+    if (cursor != old_root)
+        return NULL;
+
+    translated = vfs_mntget(new_root);
+    if (!translated)
+        return NULL;
+
+    while (depth > 0) {
+        struct vfs_mount *next =
+            task_mount_namespace_find_child(translated, chain[--depth]);
+        vfs_mntput(translated);
+        if (!next)
+            return NULL;
+        translated = next;
+    }
+
+    return translated;
+}
+
+static int task_fs_rebind_mount_namespace(task_fs_t *fs,
+                                          struct vfs_mount *old_root,
+                                          struct vfs_mount *new_root) {
+    struct vfs_mount *translated_root;
+    struct vfs_mount *translated_pwd;
+    struct vfs_dentry *root_dentry;
+    struct vfs_dentry *pwd_dentry;
+
+    if (!fs || !old_root || !new_root || !new_root->mnt_root)
+        return -EINVAL;
+
+    translated_root = task_mount_namespace_translate_mount(old_root, new_root,
+                                                           fs->vfs.root.mnt);
+    translated_pwd = task_mount_namespace_translate_mount(old_root, new_root,
+                                                          fs->vfs.pwd.mnt);
+    if (!translated_root || !translated_pwd) {
+        if (translated_root)
+            vfs_mntput(translated_root);
+        if (translated_pwd)
+            vfs_mntput(translated_pwd);
+        return -ENOENT;
+    }
+
+    root_dentry = fs->vfs.root.dentry == old_root->mnt_root
+                      ? new_root->mnt_root
+                      : fs->vfs.root.dentry;
+    pwd_dentry = fs->vfs.pwd.dentry == old_root->mnt_root ? new_root->mnt_root
+                                                          : fs->vfs.pwd.dentry;
+
+    spin_lock(&fs->vfs.lock);
+    vfs_path_put(&fs->vfs.root);
+    fs->vfs.root.mnt = translated_root;
+    fs->vfs.root.dentry = vfs_dget(root_dentry);
+
+    vfs_path_put(&fs->vfs.pwd);
+    fs->vfs.pwd.mnt = translated_pwd;
+    fs->vfs.pwd.dentry = vfs_dget(pwd_dentry);
+    fs->vfs.seq++;
+    spin_unlock(&fs->vfs.lock);
+    return 0;
+}
+
+static struct vfs_mount *task_namespace_clone_source_root(task_t *task) {
+    if (task && task->nsproxy && task->nsproxy->mnt_ns &&
+        task->nsproxy->mnt_ns->root) {
+        return task->nsproxy->mnt_ns->root;
+    }
+    {
+        const struct vfs_path *fs_root = task_fs_root_path(task);
+
+        if (fs_root && fs_root->mnt)
+            return fs_root->mnt;
+    }
+    return vfs_root_path.mnt;
+}
+
 uint64_t sys_unshare(uint64_t unshare_flags) {
     static const uint64_t allowed_flags =
         CLONE_FS | CLONE_FILES | CLONE_SYSVSEM | CLONE_NEWNS | CLONE_NEWUTS |
@@ -2201,12 +2339,21 @@ uint64_t sys_unshare(uint64_t unshare_flags) {
     task_fs_t *old_fs = NULL;
     fd_info_t *new_fd_info = NULL;
     fd_info_t *old_fd_info = NULL;
-    uint64_t ns_flags = unshare_flags & namespace_flags;
+    uint64_t ns_flags;
     bool need_unshare_fs;
     bool need_unshare_files;
 
     if (!self)
         return (uint64_t)-EINVAL;
+
+    if (unshare_flags & CLONE_NEWNS)
+        unshare_flags |= CLONE_FS;
+    if (unshare_flags & CLONE_NEWUSER)
+        unshare_flags |= CLONE_FS;
+    if (unshare_flags & CLONE_NEWIPC)
+        unshare_flags |= CLONE_SYSVSEM;
+
+    ns_flags = unshare_flags & namespace_flags;
 
     if (unshare_flags & ~allowed_flags)
         return (uint64_t)-EINVAL;
@@ -2216,8 +2363,7 @@ uint64_t sys_unshare(uint64_t unshare_flags) {
         return (uint64_t)-EINVAL;
     }
 
-    need_unshare_fs =
-        !!(unshare_flags & CLONE_FS) || !!(unshare_flags & CLONE_NEWNS);
+    need_unshare_fs = !!(unshare_flags & CLONE_FS);
     need_unshare_files = !!(unshare_flags & CLONE_FILES) && self->fd_info &&
                          self->fd_info->ref_count > 1;
 
@@ -2233,13 +2379,12 @@ uint64_t sys_unshare(uint64_t unshare_flags) {
             goto fail;
 
         if ((ns_flags & CLONE_NEWNS) && new_nsproxy && new_nsproxy->mnt_ns &&
+            task_namespace_clone_source_root(self) &&
             new_fs->vfs.root.mnt != new_nsproxy->mnt_ns->root) {
-            vfs_path_put(&new_fs->vfs.root);
-            new_fs->vfs.root.mnt = vfs_mntget(new_nsproxy->mnt_ns->root);
-            new_fs->vfs.root.dentry =
-                new_nsproxy->mnt_ns->root
-                    ? vfs_dget(new_nsproxy->mnt_ns->root->mnt_root)
-                    : NULL;
+            if (task_fs_rebind_mount_namespace(
+                    new_fs, task_namespace_clone_source_root(self),
+                    new_nsproxy->mnt_ns->root) < 0)
+                goto fail;
         }
     }
 
@@ -2263,6 +2408,13 @@ uint64_t sys_unshare(uint64_t unshare_flags) {
         old_fd_info = self->fd_info;
         self->fd_info = new_fd_info;
     }
+
+    if (unshare_flags & CLONE_FS)
+        self->clone_flags &= ~CLONE_FS;
+    if (unshare_flags & CLONE_FILES)
+        self->clone_flags &= ~CLONE_FILES;
+    if (unshare_flags & CLONE_SYSVSEM)
+        self->clone_flags &= ~CLONE_SYSVSEM;
 
     if (old_nsproxy)
         task_ns_proxy_put(old_nsproxy);

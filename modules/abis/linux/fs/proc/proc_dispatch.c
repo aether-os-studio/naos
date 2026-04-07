@@ -112,6 +112,14 @@ void procfs_nodes_init() {
     create_procfs_handle("proc_sys_kernel_osrelease",
                          proc_sys_kernel_osrelease_read, NULL,
                          proc_sys_kernel_osrelease_stat, NULL, NULL);
+    create_procfs_handle("proc_sys_kernel_hostname",
+                         proc_sys_kernel_hostname_read,
+                         proc_sys_kernel_hostname_write,
+                         proc_sys_kernel_hostname_stat, NULL, NULL);
+    create_procfs_handle("proc_sys_kernel_domainname",
+                         proc_sys_kernel_domainname_read,
+                         proc_sys_kernel_domainname_write,
+                         proc_sys_kernel_domainname_stat, NULL, NULL);
     create_procfs_handle("proc_pressure_memory", proc_pressure_memory_read,
                          NULL, proc_pressure_memory_stat, NULL, NULL);
     create_procfs_handle("proc_root", NULL, NULL, NULL, proc_root_readlink,

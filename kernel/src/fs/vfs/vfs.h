@@ -639,8 +639,13 @@ int vfs_mount_attach(struct vfs_mount *parent, struct vfs_dentry *mountpoint,
                      struct vfs_mount *child);
 void vfs_mount_detach(struct vfs_mount *mnt);
 struct vfs_mount *vfs_clone_mount_tree(struct vfs_mount *root);
+struct vfs_mount *vfs_clone_visible_mount_tree(const struct vfs_path *from);
 void vfs_put_mount_tree(struct vfs_mount *root);
 struct vfs_mount *vfs_path_mount(const struct vfs_path *path);
+struct vfs_dentry *
+vfs_translate_dentry_between_mounts(const struct vfs_dentry *src_root,
+                                    const struct vfs_dentry *src_dentry,
+                                    struct vfs_dentry *dst_root);
 int vfs_reconfigure_mount(struct vfs_mount *mnt, const struct vfs_path *to_path,
                           bool detached);
 int vfs_mount_set_propagation(struct vfs_mount *mnt, unsigned long flags,
@@ -701,6 +706,8 @@ int vfs_kern_mount(const char *fs_name, unsigned long mnt_flags,
                    const char *source, void *data, struct vfs_mount **out);
 int vfs_do_mount(int dfd, const char *pathname, const char *fs_name,
                  unsigned long mnt_flags, const char *source, void *data);
+int vfs_do_bind_mount(int from_dfd, const char *from_pathname, int to_dfd,
+                      const char *to_pathname, bool recursive);
 int vfs_do_remount(int dfd, const char *pathname, unsigned long mnt_flags);
 int vfs_do_move_mount(int from_dfd, const char *from_pathname, int to_dfd,
                       const char *to_pathname);
