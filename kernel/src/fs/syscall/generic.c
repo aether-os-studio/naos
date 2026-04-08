@@ -654,6 +654,91 @@ uint64_t sys_umount2(const char *target, uint64_t flags) {
     return (uint64_t)vfs_do_umount(AT_FDCWD, target_k, (int)flags);
 }
 
+static struct vfs_mount *
+generic_open_tree_resolve_mount(const struct vfs_path *path) {
+    struct vfs_mount *mnt;
+
+    if (!path || !path->mnt)
+        return NULL;
+
+    mnt = vfs_path_mount(path);
+    if (mnt)
+        return mnt;
+    return vfs_mntget(path->mnt);
+}
+
+extern int mountfd_create_file(struct vfs_mount *mnt, bool detached,
+                               unsigned int open_flags,
+                               struct vfs_file **out_file);
+
+uint64_t sys_open_tree(int dfd, const char *pathname, unsigned int flags) {
+    static const unsigned int allowed_flags =
+        OPEN_TREE_CLONE | OPEN_TREE_CLOEXEC | AT_EMPTY_PATH | AT_NO_AUTOMOUNT |
+        AT_SYMLINK_NOFOLLOW | AT_RECURSIVE;
+
+    struct vfs_path path = {0};
+    struct vfs_mount *mnt = NULL;
+    struct vfs_file *file = NULL;
+    char pathname_k[VFS_PATH_MAX];
+    unsigned int lookup_flags;
+    int fd_flags = 0;
+    int ret;
+
+    if (flags & ~allowed_flags)
+        return (uint64_t)-EINVAL;
+    if ((flags & AT_RECURSIVE) && !(flags & OPEN_TREE_CLONE))
+        return (uint64_t)-EINVAL;
+    if (!pathname)
+        return (uint64_t)-EFAULT;
+    if (copy_from_user_str(pathname_k, pathname, sizeof(pathname_k)))
+        return (uint64_t)-EFAULT;
+
+    if ((flags & AT_EMPTY_PATH) && pathname_k[0] == '\0') {
+        ret = generic_get_fd_path(dfd, &path);
+        if (ret < 0)
+            return (uint64_t)ret;
+    } else {
+        lookup_flags =
+            (flags & AT_SYMLINK_NOFOLLOW) ? LOOKUP_NOFOLLOW : LOOKUP_FOLLOW;
+        ret = vfs_filename_lookup(dfd, pathname_k, lookup_flags, &path);
+        if (ret < 0)
+            return (uint64_t)ret;
+    }
+
+    if (flags & OPEN_TREE_CLONE) {
+        mnt = vfs_create_bind_mount(&path, (flags & AT_RECURSIVE) != 0);
+        if (!mnt) {
+            vfs_path_put(&path);
+            return (uint64_t)-ENOMEM;
+        }
+        ret = mountfd_create_file(mnt, true, flags, &file);
+    } else {
+        mnt = generic_open_tree_resolve_mount(&path);
+        if (!mnt) {
+            vfs_path_put(&path);
+            return (uint64_t)-EINVAL;
+        }
+        ret = mountfd_create_file(mnt, false, flags, &file);
+    }
+
+    vfs_path_put(&path);
+    if (ret < 0) {
+        if (mnt) {
+            if (flags & OPEN_TREE_CLONE)
+                vfs_put_mount_tree(mnt);
+            else
+                vfs_mntput(mnt);
+        }
+        return (uint64_t)ret;
+    }
+
+    if (flags & OPEN_TREE_CLOEXEC)
+        fd_flags |= FD_CLOEXEC;
+    ret = task_install_file(current_task, file, (unsigned int)fd_flags, 0);
+    vfs_close_file(file);
+    return (uint64_t)ret;
+}
+
 static struct vfs_mount *generic_namespace_root_mount(void) {
     struct vfs_mount *mnt = task_mount_namespace_root(current_task);
 

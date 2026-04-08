@@ -1033,7 +1033,7 @@ void x64_register_syscalls() {
     // (syscall_handle_t)sys_io_uring_enter);
     // regist_syscall_handler(SYS_IO_URING_REGISTER,
     // (syscall_handle_t)sys_io_uring_register);
-    // regist_syscall_handler(SYS_OPEN_TREE, (syscall_handle_t)sys_open_tree);
+    regist_syscall_handler(SYS_OPEN_TREE, (syscall_handle_t)sys_open_tree);
     regist_syscall_handler(SYS_MOVE_MOUNT, (syscall_handle_t)sys_move_mount);
     regist_syscall_handler(SYS_FSOPEN, (syscall_handle_t)sys_fsopen);
     regist_syscall_handler(SYS_FSCONFIG, (syscall_handle_t)sys_fsconfig);
@@ -1496,7 +1496,7 @@ void aarch64_register_syscalls() {
     // (syscall_handle_t)sys_io_uring_enter);
     // regist_syscall_handler(SYS_IO_URING_REGISTER,
     // (syscall_handle_t)sys_io_uring_register);
-    // regist_syscall_handler(SYS_OPEN_TREE, (syscall_handle_t)sys_open_tree);
+    regist_syscall_handler(SYS_OPEN_TREE, (syscall_handle_t)sys_open_tree);
     regist_syscall_handler(SYS_MOVE_MOUNT, (syscall_handle_t)sys_move_mount);
     regist_syscall_handler(SYS_FSOPEN, (syscall_handle_t)sys_fsopen);
     regist_syscall_handler(SYS_FSCONFIG, (syscall_handle_t)sys_fsconfig);

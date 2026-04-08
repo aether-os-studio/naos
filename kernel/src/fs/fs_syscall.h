@@ -369,6 +369,10 @@ enum fsconfig_command {
 /* FSMOUNT flags */
 #define FSMOUNT_CLOEXEC 0x00000001
 
+/* open_tree flags */
+#define OPEN_TREE_CLONE 0x00000001
+#define OPEN_TREE_CLOEXEC O_CLOEXEC
+
 /* Mount attributes for fsmount */
 #define MOUNT_ATTR_RDONLY 0x00000001
 #define MOUNT_ATTR_NOSUID 0x00000002
@@ -608,6 +612,7 @@ void timerfd_softirq(void);
 uint64_t sys_memfd_create(const char *name, unsigned int flags);
 
 uint64_t sys_fsopen(const char *fsname, unsigned int flags);
+uint64_t sys_open_tree(int dfd, const char *pathname, unsigned int flags);
 uint64_t sys_statfs(const char *fsname, struct statfs *buf);
 uint64_t sys_fstatfs(int fd, struct statfs *buf);
 uint64_t sys_fsconfig(int fd, uint32_t cmd, const char *key, const void *value,

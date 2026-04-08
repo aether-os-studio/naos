@@ -14,6 +14,7 @@ bool system_initialized = false;
 extern bool can_schedule;
 
 extern void pidfd_init();
+extern void mountfd_init();
 
 void init_thread(uint64_t arg) {
     printk("NAOS init thread is running...\n");
@@ -27,6 +28,7 @@ void init_thread(uint64_t arg) {
 #endif
 
     pidfd_init();
+    mountfd_init();
 
     system_abi->init_after_thread();
 
