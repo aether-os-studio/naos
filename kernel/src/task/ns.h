@@ -30,6 +30,7 @@ typedef struct task_uts_namespace {
 
 typedef struct task_mount_namespace {
     task_ns_common_t common;
+    struct vfs_mount *tree_root;
     struct vfs_mount *root;
     uint64_t seq;
     bool owns_tree;

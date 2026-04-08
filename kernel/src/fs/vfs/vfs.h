@@ -458,6 +458,7 @@ struct vfs_mount {
     unsigned int mnt_group_id;
     uint8_t mnt_propagation;
     unsigned int mnt_id;
+    unsigned int mnt_propagation_source_id;
     vfs_ref_t mnt_ref;
     spinlock_t mnt_lock;
     struct llist_header mnt_sb_link;
@@ -646,6 +647,13 @@ struct vfs_dentry *
 vfs_translate_dentry_between_mounts(const struct vfs_dentry *src_root,
                                     const struct vfs_dentry *src_dentry,
                                     struct vfs_dentry *dst_root);
+struct vfs_mount *vfs_translate_mount_between_roots(struct vfs_mount *old_root,
+                                                    struct vfs_mount *new_root,
+                                                    struct vfs_mount *old_mnt);
+int vfs_translate_path_between_roots(const struct vfs_path *old_root,
+                                     const struct vfs_path *old_path,
+                                     struct vfs_mount *new_root,
+                                     struct vfs_path *new_path);
 int vfs_reconfigure_mount(struct vfs_mount *mnt, const struct vfs_path *to_path,
                           bool detached);
 int vfs_mount_set_propagation(struct vfs_mount *mnt, unsigned long flags,

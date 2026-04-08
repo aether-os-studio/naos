@@ -1823,19 +1823,39 @@ uint64_t sys_chroot(const char *dname) {
         return (uint64_t)ret;
     }
 
-    if (!vfs_path_is_ancestor(&path, task_fs_pwd_path(current_task))) {
-        task_fs_chdir(current_task, &path);
-    }
-
     vfs_path_put(&path);
 
     return 0;
 }
 
 uint64_t sys_getcwd(char *cwd, uint64_t size) {
-    char *str = vfs_path_to_string(task_fs_pwd_path(current_task),
-                                   task_fs_root_path(current_task));
+    static const char unreachable_prefix[] = "(unreachable)";
+    const struct vfs_path *pwd = task_fs_pwd_path(current_task);
+    const struct vfs_path *root = task_fs_root_path(current_task);
+    struct vfs_path ns_root = {0};
+    char *path = NULL;
+    char *str = NULL;
     uint64_t to_copy;
+
+    if (vfs_path_is_ancestor(root, pwd)) {
+        str = vfs_path_to_string(pwd, root);
+    } else {
+        ns_root.mnt = task_mount_namespace_root(current_task);
+        ns_root.dentry = ns_root.mnt ? ns_root.mnt->mnt_root : NULL;
+        path = vfs_path_to_string(pwd, ns_root.mnt ? &ns_root : NULL);
+        if (!path)
+            return (uint64_t)-ENOMEM;
+
+        str = malloc(sizeof(unreachable_prefix) + strlen(path));
+        if (!str) {
+            free(path);
+            return (uint64_t)-ENOMEM;
+        }
+
+        memcpy(str, unreachable_prefix, sizeof(unreachable_prefix) - 1);
+        strcpy(str + sizeof(unreachable_prefix) - 1, path);
+        free(path);
+    }
 
     if (!str)
         return (uint64_t)-ENOMEM;

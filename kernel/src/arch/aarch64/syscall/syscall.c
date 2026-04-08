@@ -6,7 +6,7 @@
 #include <net/net_syscall.h>
 
 // Beware the 65 character limit!
-char sysname[] = "NeoAetherOS";
+char sysname[] = "aether-kernel";
 char nodename[] = "aether";
 char release[] = BUILD_VERSION;
 char version[] = BUILD_VERSION;

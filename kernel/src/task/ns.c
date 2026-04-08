@@ -132,7 +132,7 @@ task_uts_namespace_create(const task_uts_namespace_t *parent) {
         return uts_ns;
     }
 
-    strcpy(uts_ns->sysname, "NeoAetherOS");
+    strcpy(uts_ns->sysname, "aether-kernel");
     strcpy(uts_ns->nodename, "aether");
     strcpy(uts_ns->release, BUILD_VERSION);
     strcpy(uts_ns->version, BUILD_VERSION);
@@ -171,16 +171,22 @@ task_mount_namespace_create(struct vfs_mount *root,
             free(mnt_ns);
             return NULL;
         }
+        mnt_ns->tree_root = mnt_root;
+        mnt_ns->root = vfs_mntget(mnt_root);
+        if (!mnt_ns->root) {
+            vfs_put_mount_tree(mnt_root);
+            free(mnt_ns);
+            return NULL;
+        }
         mnt_ns->owns_tree = true;
     } else {
-        mnt_root = vfs_mntget(root);
-        if (!mnt_root) {
+        mnt_ns->root = vfs_mntget(root);
+        if (!mnt_ns->root) {
             free(mnt_ns);
             return NULL;
         }
     }
 
-    mnt_ns->root = mnt_root;
     mnt_ns->seq = parent ? parent->seq : 1;
     return mnt_ns;
 }
@@ -208,7 +214,13 @@ task_mount_namespace_create_for_task(task_t *task,
         return NULL;
     }
 
-    mnt_ns->root = mnt_root;
+    mnt_ns->tree_root = mnt_root;
+    mnt_ns->root = vfs_mntget(mnt_root);
+    if (!mnt_ns->root) {
+        vfs_put_mount_tree(mnt_root);
+        free(mnt_ns);
+        return NULL;
+    }
     mnt_ns->seq = parent->seq;
     mnt_ns->owns_tree = true;
     return mnt_ns;
@@ -272,12 +284,10 @@ static void task_mount_namespace_put(task_mount_namespace_t *mnt_ns) {
         return;
     if (!task_ns_common_put(&mnt_ns->common))
         return;
-    if (mnt_ns->root) {
-        if (mnt_ns->owns_tree)
-            vfs_put_mount_tree(mnt_ns->root);
-        else
-            vfs_mntput(mnt_ns->root);
-    }
+    if (mnt_ns->owns_tree && mnt_ns->tree_root)
+        vfs_put_mount_tree(mnt_ns->tree_root);
+    if (mnt_ns->root)
+        vfs_mntput(mnt_ns->root);
     free(mnt_ns);
 }
 

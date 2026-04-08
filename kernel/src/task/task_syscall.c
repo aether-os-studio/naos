@@ -1952,9 +1952,12 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
     if ((flags & CLONE_NEWNS) && child->nsproxy->mnt_ns &&
         task_namespace_clone_source_root(self) &&
         child->fs->vfs.root.mnt != child->nsproxy->mnt_ns->root) {
-        if (task_fs_rebind_mount_namespace(
-                child->fs, task_namespace_clone_source_root(self),
-                child->nsproxy->mnt_ns->root) < 0) {
+        int rebind_ret = task_fs_rebind_mount_namespace(
+            child->fs, task_namespace_clone_source_root(self),
+            child->nsproxy->mnt_ns->root);
+
+        if (rebind_ret < 0) {
+            ret = (uint64_t)rebind_ret;
             goto fail;
         }
     }
@@ -2119,9 +2122,6 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
     child->clone_flags = flags;
     child->is_clone = !!(flags & CLONE_THREAD);
 
-    child->state = TASK_READY;
-    child->current_state = TASK_READY;
-
     self->child_vfork_done = false;
 
     if (cgroup_fd >= 0) {
@@ -2129,6 +2129,9 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
         if ((int64_t)ret < 0)
             goto fail;
     }
+
+    child->state = TASK_READY;
+    child->current_state = TASK_READY;
 
     child->sched_info = calloc(1, sizeof(struct sched_entity));
     if (!child->sched_info) {
@@ -2192,118 +2195,35 @@ static fd_info_t *task_fd_info_clone(fd_info_t *old) {
     return new_info;
 }
 
-#define TASK_MNT_TRANSLATE_MAX_DEPTH 64
-
-static struct vfs_mount *
-task_mount_namespace_find_child(struct vfs_mount *parent,
-                                const struct vfs_mount *src_child) {
-    struct vfs_mount *child;
-    struct vfs_mount *tmp;
-    struct vfs_dentry *translated_mountpoint;
-
-    if (!parent || !src_child || !src_child->mnt_parent ||
-        !src_child->mnt_parent->mnt_root || !src_child->mnt_mountpoint)
-        return NULL;
-
-    translated_mountpoint = vfs_translate_dentry_between_mounts(
-        src_child->mnt_parent->mnt_root, src_child->mnt_mountpoint,
-        parent->mnt_root);
-    if (!translated_mountpoint)
-        return NULL;
-
-    llist_for_each(child, tmp, &parent->mnt_mounts, mnt_child) {
-        if (child->mnt_mountpoint == translated_mountpoint &&
-            child->mnt_sb == src_child->mnt_sb) {
-            vfs_dput(translated_mountpoint);
-            return vfs_mntget(child);
-        }
-    }
-
-    vfs_dput(translated_mountpoint);
-    return NULL;
-}
-
-static struct vfs_mount *
-task_mount_namespace_translate_mount(struct vfs_mount *old_root,
-                                     struct vfs_mount *new_root,
-                                     struct vfs_mount *old_mnt) {
-    struct vfs_mount *chain[TASK_MNT_TRANSLATE_MAX_DEPTH];
-    struct vfs_mount *cursor;
-    struct vfs_mount *translated;
-    size_t depth = 0;
-
-    if (!old_root || !new_root || !old_mnt)
-        return NULL;
-    if (old_mnt == old_root)
-        return vfs_mntget(new_root);
-
-    for (cursor = old_mnt; cursor && cursor != old_root;
-         cursor = cursor->mnt_parent) {
-        if (depth >= TASK_MNT_TRANSLATE_MAX_DEPTH)
-            return NULL;
-        if (!cursor->mnt_parent || cursor->mnt_parent == cursor ||
-            !cursor->mnt_mountpoint) {
-            return NULL;
-        }
-        chain[depth++] = cursor;
-    }
-
-    if (cursor != old_root)
-        return NULL;
-
-    translated = vfs_mntget(new_root);
-    if (!translated)
-        return NULL;
-
-    while (depth > 0) {
-        struct vfs_mount *next =
-            task_mount_namespace_find_child(translated, chain[--depth]);
-        vfs_mntput(translated);
-        if (!next)
-            return NULL;
-        translated = next;
-    }
-
-    return translated;
-}
-
 static int task_fs_rebind_mount_namespace(task_fs_t *fs,
                                           struct vfs_mount *old_root,
                                           struct vfs_mount *new_root) {
-    struct vfs_mount *translated_root;
-    struct vfs_mount *translated_pwd;
-    struct vfs_dentry *root_dentry;
-    struct vfs_dentry *pwd_dentry;
+    struct vfs_path old_root_path = {0};
+    struct vfs_path old_pwd_path = {0};
+    struct vfs_path translated_root = {0};
+    struct vfs_path translated_pwd = {0};
 
     if (!fs || !old_root || !new_root || !new_root->mnt_root)
         return -EINVAL;
 
-    translated_root = task_mount_namespace_translate_mount(old_root, new_root,
-                                                           fs->vfs.root.mnt);
-    translated_pwd = task_mount_namespace_translate_mount(old_root, new_root,
-                                                          fs->vfs.pwd.mnt);
-    if (!translated_root || !translated_pwd) {
-        if (translated_root)
-            vfs_mntput(translated_root);
-        if (translated_pwd)
-            vfs_mntput(translated_pwd);
+    old_root_path.mnt = old_root;
+    old_root_path.dentry = old_root->mnt_root;
+    old_pwd_path = fs->vfs.pwd;
+    if (vfs_translate_path_between_roots(&old_root_path, &fs->vfs.root,
+                                         new_root, &translated_root) < 0 ||
+        vfs_translate_path_between_roots(&old_root_path, &old_pwd_path,
+                                         new_root, &translated_pwd) < 0) {
+        vfs_path_put(&translated_root);
+        vfs_path_put(&translated_pwd);
         return -ENOENT;
     }
 
-    root_dentry = fs->vfs.root.dentry == old_root->mnt_root
-                      ? new_root->mnt_root
-                      : fs->vfs.root.dentry;
-    pwd_dentry = fs->vfs.pwd.dentry == old_root->mnt_root ? new_root->mnt_root
-                                                          : fs->vfs.pwd.dentry;
-
     spin_lock(&fs->vfs.lock);
     vfs_path_put(&fs->vfs.root);
-    fs->vfs.root.mnt = translated_root;
-    fs->vfs.root.dentry = vfs_dget(root_dentry);
+    fs->vfs.root = translated_root;
 
     vfs_path_put(&fs->vfs.pwd);
-    fs->vfs.pwd.mnt = translated_pwd;
-    fs->vfs.pwd.dentry = vfs_dget(pwd_dentry);
+    fs->vfs.pwd = translated_pwd;
     fs->vfs.seq++;
     spin_unlock(&fs->vfs.lock);
     return 0;
@@ -2340,6 +2260,7 @@ uint64_t sys_unshare(uint64_t unshare_flags) {
     fd_info_t *new_fd_info = NULL;
     fd_info_t *old_fd_info = NULL;
     uint64_t ns_flags;
+    uint64_t ret = (uint64_t)-ENOMEM;
     bool need_unshare_fs;
     bool need_unshare_files;
 
@@ -2381,10 +2302,14 @@ uint64_t sys_unshare(uint64_t unshare_flags) {
         if ((ns_flags & CLONE_NEWNS) && new_nsproxy && new_nsproxy->mnt_ns &&
             task_namespace_clone_source_root(self) &&
             new_fs->vfs.root.mnt != new_nsproxy->mnt_ns->root) {
-            if (task_fs_rebind_mount_namespace(
-                    new_fs, task_namespace_clone_source_root(self),
-                    new_nsproxy->mnt_ns->root) < 0)
+            int rebind_ret = task_fs_rebind_mount_namespace(
+                new_fs, task_namespace_clone_source_root(self),
+                new_nsproxy->mnt_ns->root);
+
+            if (rebind_ret < 0) {
+                ret = (uint64_t)rebind_ret;
                 goto fail;
+            }
         }
     }
 
@@ -2436,7 +2361,7 @@ fail:
         task_fs_put(new_fs);
     if (new_nsproxy)
         task_ns_proxy_put(new_nsproxy);
-    return (uint64_t)-ENOMEM;
+    return ret;
 }
 
 uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem) {
