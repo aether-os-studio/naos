@@ -25,12 +25,17 @@ if [ $root_mounted -eq 0 ]; then
     exec /bin/sh
 fi
 
-/bin/umount /dev
+/bin/mkdir -p /proc/
+/bin/mkdir -p /sys/
+/bin/mkdir -p /run/
+/bin/mkdir -p /tmp/
 
-/bin/mkdir -p /proc
 /bin/mount -t proc proc /proc
+/bin/mount -t sysfs sysfs /sys
+/bin/mount -t tmpfs tmpfs /run
+/bin/mount -t tmpfs tmpfs /tmp
+
 init_path=$(sed -n 's/.*init=\([^ ]*\).*/\1/p' /proc/cmdline)
-/bin/umount /proc
 
 /bin/mkdir -p /mnt/dev/
 /bin/mkdir -p /mnt/proc/
@@ -38,11 +43,11 @@ init_path=$(sed -n 's/.*init=\([^ ]*\).*/\1/p' /proc/cmdline)
 /bin/mkdir -p /mnt/run/
 /bin/mkdir -p /mnt/tmp/
 
-/bin/mount -t devtmpfs devtmpfs /mnt/dev
-/bin/mount -t proc proc /mnt/proc
-/bin/mount -t sysfs sysfs /mnt/sys
-/bin/mount -t tmpfs tmpfs /mnt/run
-/bin/mount -t tmpfs tmpfs /mnt/tmp
+/bin/mount --move /dev /mnt/dev
+/bin/mount --move /proc /mnt/proc
+/bin/mount --move /sys /mnt/sys
+/bin/mount --move /run /mnt/run
+/bin/mount --move /tmp /mnt/tmp
 
 /bin/echo "Ready to switch root..."
 
