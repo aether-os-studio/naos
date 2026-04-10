@@ -720,10 +720,6 @@ static int ext_lookup_name_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
                 free(buf);
                 return -EIO;
             }
-            if (!memcmp(entry->name, ".", MIN(1, entry->name_len)) ||
-                !memcmp(entry->name, "..", MIN(2, entry->name_len))) {
-                goto next;
-            }
             if (entry->inode && entry->name_len == strlen(name) &&
                 !memcmp(entry->name, name, entry->name_len)) {
                 result->found = true;
@@ -743,7 +739,6 @@ static int ext_lookup_name_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
                 prev_off = off;
                 prev_rec = entry->rec_len;
             }
-        next:
             off += entry->rec_len;
         }
     }
