@@ -207,6 +207,7 @@ static int pidfd_release(struct vfs_inode *inode, struct vfs_file *file) {
     spin_unlock(&pidfd_watch_lock);
 
     free(ctx);
+
     file->private_data = NULL;
     if (file->f_inode)
         file->f_inode->i_private = NULL;

@@ -1149,6 +1149,4 @@ char *cgroupfs_task_path(task_t *task) {
 void cgroupfs_init(void) {
     mutex_init(&cgroupfs_lock);
     vfs_register_filesystem(&cgroupfs_fs_type);
-    vfs_mkdirat(AT_FDCWD, "/sys/fs/cgroup", 0755);
-    vfs_do_mount(AT_FDCWD, "/sys/fs/cgroup", "cgroup2", 0, NULL, NULL);
 }

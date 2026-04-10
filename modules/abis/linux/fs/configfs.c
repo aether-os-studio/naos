@@ -202,8 +202,4 @@ static struct vfs_file_system_type configfs_fs_type = {
     .get_tree = configfs_get_tree,
 };
 
-void configfs_init() {
-    vfs_register_filesystem(&configfs_fs_type);
-    vfs_mkdirat(AT_FDCWD, "/sys/kernel/config", 0755);
-    vfs_do_mount(AT_FDCWD, "/sys/kernel/config", "configfs", 0, NULL, NULL);
-}
+void configfs_init() { vfs_register_filesystem(&configfs_fs_type); }

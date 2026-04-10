@@ -220,24 +220,6 @@ void vfs_follow_mount(struct vfs_path *path) {
     }
 }
 
-static void vfs_follow_dotdot(struct vfs_path *path,
-                              const struct vfs_path *root) {
-    if (!path || !path->dentry || !path->mnt)
-        return;
-
-    while (path->dentry == path->mnt->mnt_root && path->mnt != root->mnt &&
-           path->mnt->mnt_parent && path->mnt->mnt_mountpoint) {
-        struct vfs_mount *parent_mnt = path->mnt->mnt_parent;
-        struct vfs_dentry *mountpoint = path->mnt->mnt_mountpoint;
-        vfs_path_replace(path, parent_mnt, mountpoint);
-    }
-
-    if (vfs_path_equal(path, root))
-        return;
-    if (path->dentry->d_parent)
-        vfs_path_replace(path, path->mnt, path->dentry->d_parent);
-}
-
 static int __vfs_filename_lookup(struct vfs_path *start,
                                  const struct vfs_path *root, const char *name,
                                  unsigned int lookup_flags, unsigned int depth,
@@ -253,6 +235,7 @@ static int vfs_follow_symlink(struct vfs_path *parent,
     size_t target_len, rest_len;
     int ret;
     struct vfs_path next;
+    struct vfs_nameidata nd = {0};
 
     if (depth >= VFS_MAX_SYMLINKS)
         return -ELOOP;
@@ -262,9 +245,21 @@ static int vfs_follow_symlink(struct vfs_path *parent,
     }
 
     target = link_dentry->d_inode->i_op->get_link(link_dentry,
-                                                  link_dentry->d_inode, NULL);
+                                                  link_dentry->d_inode, &nd);
     if (IS_ERR_OR_NULL(target))
         return target ? (int)PTR_ERR(target) : -ENOENT;
+
+    if (nd.path.mnt && nd.path.dentry) {
+        if (!remaining || !remaining[0]) {
+            *out = nd.path;
+            return 0;
+        }
+
+        ret = __vfs_filename_lookup(&nd.path, &nd.path, remaining, lookup_flags,
+                                    depth + 1, out);
+        vfs_path_put(&nd.path);
+        return ret;
+    }
 
     target_len = strlen(target);
     rest_len = remaining ? strlen(remaining) : 0;
@@ -344,14 +339,6 @@ static int __vfs_filename_lookup(struct vfs_path *start,
         bool has_remaining;
 
         vfs_follow_mount(&path);
-
-        if (streq(component, "."))
-            continue;
-
-        if (streq(component, "..")) {
-            vfs_follow_dotdot(&path, root);
-            continue;
-        }
 
         if (!path.dentry || !path.dentry->d_inode) {
             ret = -ENOENT;

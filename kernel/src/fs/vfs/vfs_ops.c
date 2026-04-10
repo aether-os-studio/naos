@@ -18,6 +18,11 @@ int vfs_mkdirat(int dfd, const char *pathname, umode_t mode) {
     if (ret < 0)
         return ret;
 
+    if (vfs_qstr_is_dot(&last) || vfs_qstr_is_dotdot(&last)) {
+        ret = -EEXIST;
+        goto out;
+    }
+
     dir = parent.dentry ? parent.dentry->d_inode : NULL;
     if (!dir || !dir->i_op || !dir->i_op->mkdir) {
         ret = -EOPNOTSUPP;
@@ -65,6 +70,11 @@ int vfs_mknodat(int dfd, const char *pathname, umode_t mode, dev64_t dev) {
                                  NULL);
     if (ret < 0)
         return ret;
+
+    if (vfs_qstr_is_dot(&last) || vfs_qstr_is_dotdot(&last)) {
+        ret = -EEXIST;
+        goto out;
+    }
 
     dir = parent.dentry ? parent.dentry->d_inode : NULL;
     if (!dir || !dir->i_op || !dir->i_op->mknod) {
@@ -180,6 +190,11 @@ int vfs_linkat(int olddfd, const char *oldname, int newdfd, const char *newname,
     if (ret < 0)
         goto out_old;
 
+    if (vfs_qstr_is_dot(&last) || vfs_qstr_is_dotdot(&last)) {
+        ret = -EEXIST;
+        goto out;
+    }
+
     new_dir = new_parent.dentry ? new_parent.dentry->d_inode : NULL;
     if (!new_dir || !new_dir->i_op || !new_dir->i_op->link) {
         ret = -EOPNOTSUPP;
@@ -233,6 +248,11 @@ int vfs_symlinkat(const char *target, int newdfd, const char *newname) {
                                  NULL);
     if (ret < 0)
         return ret;
+
+    if (vfs_qstr_is_dot(&last) || vfs_qstr_is_dotdot(&last)) {
+        ret = -EEXIST;
+        goto out;
+    }
 
     dir = parent.dentry ? parent.dentry->d_inode : NULL;
     if (!dir || !dir->i_op || !dir->i_op->symlink) {

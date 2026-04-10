@@ -580,8 +580,6 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
     if (flags & MS_MOVE) {
         if (!dev_name)
             return (uint64_t)-EINVAL;
-        if (flags & ~MS_MOVE)
-            return (uint64_t)-EOPNOTSUPP;
         if (copy_from_user_str(devname, dev_name, sizeof(devname)))
             return (uint64_t)-EFAULT;
         return (uint64_t)vfs_do_move_mount(AT_FDCWD, devname, AT_FDCWD,

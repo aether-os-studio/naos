@@ -39,7 +39,6 @@ static const struct vfs_file_operations procfs_dir_file_ops;
 static const struct vfs_file_operations procfs_file_ops;
 
 mutex_t procfs_oplock;
-vfs_node_t *procfs_root = NULL;
 
 static inline procfs_inode_info_t *procfs_i(vfs_node_t *inode) {
     return inode ? container_of(inode, procfs_inode_info_t, vfs_inode) : NULL;
@@ -462,13 +461,45 @@ static const char *procfs_get_link(struct vfs_dentry *dentry,
                                    struct vfs_inode *inode,
                                    struct vfs_nameidata *nd) {
     procfs_inode_info_t *info = procfs_i(inode);
+    task_t *task;
+    fd_t *fd;
     char buf[512];
     ssize_t len;
 
     (void)dentry;
-    (void)nd;
     if (!info)
         return ERR_PTR(-EINVAL);
+
+    if (nd) {
+        memset(&nd->path, 0, sizeof(nd->path));
+        task = info->task ? info->task : current_task;
+
+        if (!task)
+            return ERR_PTR(-ENOENT);
+
+        if (info->kind == PROCFS_INO_SYMLINK && info->dispatch_name) {
+            if (!strcmp(info->dispatch_name, "proc_root")) {
+                const struct vfs_path *root = task_fs_root_path(task);
+
+                if (!root || !root->mnt || !root->dentry)
+                    return ERR_PTR(-ENOENT);
+                nd->path.mnt = vfs_mntget(root->mnt);
+                nd->path.dentry = vfs_dget(root->dentry);
+            } else if (!strcmp(info->dispatch_name, "proc_exe")) {
+                if (!task->exec_file)
+                    return ERR_PTR(-ENOENT);
+                nd->path.mnt = vfs_mntget(task->exec_file->f_path.mnt);
+                nd->path.dentry = vfs_dget(task->exec_file->f_path.dentry);
+            } else if (!strcmp(info->dispatch_name, "proc_fd")) {
+                fd = procfs_dup_task_fd(task, info->fd_num);
+                if (!fd)
+                    return ERR_PTR(-ENOENT);
+                nd->path.mnt = vfs_mntget(fd->f_path.mnt);
+                nd->path.dentry = vfs_dget(fd->f_path.dentry);
+                vfs_close_file(fd);
+            }
+        }
+    }
 
     len = procfs_dynamic_readlink(info, buf, 0, sizeof(buf) - 1);
     if (len < 0)
@@ -1195,15 +1226,6 @@ size_t proc_fdinfo_read(proc_handle_t *handle, void *addr, size_t offset,
 void proc_init() {
     mutex_init(&procfs_oplock);
     vfs_register_filesystem(&procfs_fs_type);
-    vfs_mkdirat(AT_FDCWD, "/proc", 0555);
-    vfs_do_mount(AT_FDCWD, "/proc", "proc", 0, NULL, NULL);
-
-    mutex_lock(&procfs_oplock);
-    if (procfs_root)
-        vfs_iput(procfs_root);
-    procfs_root = procfs_lookup_path("/proc");
-    mutex_unlock(&procfs_oplock);
-
     procfs_nodes_init();
 }
 

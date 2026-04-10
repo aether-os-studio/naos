@@ -20,16 +20,36 @@ static int vfs_open_last_lookups(int dfd, const char *name,
         return -ENOTDIR;
 
     dentry = vfs_d_lookup(parent->dentry, last);
+    if (dentry) {
+        if (dentry->d_op && dentry->d_op->d_revalidate) {
+            ret = dentry->d_op->d_revalidate(dentry, LOOKUP_CREATE);
+            if (ret < 0) {
+                vfs_dput(dentry);
+                return ret;
+            }
+            if (ret == 0) {
+                vfs_dentry_unhash(dentry);
+                vfs_dput(dentry);
+                dentry = NULL;
+            }
+        }
+        if (dentry && !dentry->d_inode) {
+            vfs_dentry_unhash(dentry);
+            vfs_dput(dentry);
+            dentry = NULL;
+        }
+    }
+
     if (!dentry) {
-        if (parent->dentry->d_inode->i_op &&
-            parent->dentry->d_inode->i_op->lookup) {
+        struct vfs_inode *dir = parent->dentry->d_inode;
+
+        if (dir->i_op && dir->i_op->lookup) {
             dentry = vfs_d_alloc(parent->dentry->d_sb, parent->dentry, last);
             if (!dentry)
                 return -ENOMEM;
             {
                 struct vfs_dentry *lookup =
-                    parent->dentry->d_inode->i_op->lookup(
-                        parent->dentry->d_inode, dentry, LOOKUP_CREATE);
+                    dir->i_op->lookup(dir, dentry, LOOKUP_CREATE);
                 if (IS_ERR(lookup)) {
                     vfs_dput(dentry);
                     return (int)PTR_ERR(lookup);
@@ -297,7 +317,6 @@ int vfs_openat(int dfd, const char *name, const struct vfs_open_how *how,
             vfs_path_put(&mounted);
         }
     }
-
     if (!created && S_ISLNK(dentry->d_inode->i_mode)) {
         if (local_how.flags & O_NOFOLLOW) {
             if (!(local_how.flags & O_PATH)) {

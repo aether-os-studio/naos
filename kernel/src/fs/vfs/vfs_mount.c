@@ -1463,6 +1463,10 @@ int vfs_reconfigure_mount(struct vfs_mount *mnt, const struct vfs_path *to_path,
 
     if (vfs_mount_is_same_or_descendant(mnt, to_path->mnt))
         return -ELOOP;
+    if (!detached && mnt->mnt_parent && mnt->mnt_parent != mnt &&
+        vfs_mount_is_shared(mnt->mnt_parent)) {
+        return -EINVAL;
+    }
     if (vfs_mount_is_shared(to_path->mnt) &&
         vfs_mount_tree_contains_unbindable(mnt)) {
         return -EINVAL;
@@ -1486,19 +1490,25 @@ int vfs_reconfigure_mount(struct vfs_mount *mnt, const struct vfs_path *to_path,
     old_root = *to_path;
     vfs_path_get(&old_root);
 
+    mutex_lock(&vfs_mount_lock);
+
     if (!detached) {
         old_parent = mnt->mnt_parent != mnt ? mnt->mnt_parent : NULL;
         old_mountpoint =
             mnt->mnt_mountpoint ? vfs_dget(mnt->mnt_mountpoint) : NULL;
-        vfs_mount_detach(mnt);
+        vfs_mount_detach_locked(mnt, false);
     }
 
-    ret = vfs_mount_attach(to_path->mnt, to_path->dentry, mnt);
+    ret = vfs_mount_attach_locked(to_path->mnt, to_path->dentry, mnt, detached);
     if (ret < 0) {
         if (!detached && old_mountpoint)
-            (void)vfs_mount_attach(old_parent, old_mountpoint, mnt);
+            (void)vfs_mount_attach_locked(old_parent, old_mountpoint, mnt,
+                                          false);
+        mutex_unlock(&vfs_mount_lock);
         goto out;
     }
+
+    mutex_unlock(&vfs_mount_lock);
 
     vfs_rebind_task_root_paths(&old_root, mnt);
     if (replacing_namespace_root)

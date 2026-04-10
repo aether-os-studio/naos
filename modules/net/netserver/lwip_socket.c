@@ -543,11 +543,9 @@ static int lwip_socket_install_fd(lwip_socket_state_t *sock, int open_type,
     }
 
     sock->node = file->f_inode;
-    ret = task_install_file(current_task, file,
-                            ((open_type | accept_flags) & O_CLOEXEC)
-                                ? FD_CLOEXEC
-                                : 0,
-                            0);
+    ret = task_install_file(
+        current_task, file,
+        ((open_type | accept_flags) & O_CLOEXEC) ? FD_CLOEXEC : 0, 0);
     vfs_file_put(file);
     if (ret < 0) {
         return ret;

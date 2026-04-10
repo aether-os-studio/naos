@@ -88,15 +88,16 @@ typedef struct task_index_bucket {
 #define CLONE_CHILD_SETTID 0x01000000 /* set the TID in the child */
 #define CLONE_CLEAR_SIGHAND                                                    \
     0x100000000ULL /* reset signal handlers to SIG_DFL in the child */
-#define CLONE_INTO_CGROUP 0x200000000ULL /* place child into specified cgroup  \
-                                          */
-#define CLONE_NEWCGROUP 0x02000000       /* New cgroup namespace */
-#define CLONE_NEWUTS 0x04000000          /* New utsname namespace */
-#define CLONE_NEWIPC 0x08000000          /* New ipc namespace */
-#define CLONE_NEWUSER 0x10000000         /* New user namespace */
-#define CLONE_NEWPID 0x20000000          /* New pid namespace */
-#define CLONE_NEWNET 0x40000000          /* New network namespace */
-#define CLONE_IO 0x80000000              /* Clone io context */
+#define CLONE_INTO_CGROUP                                                      \
+    0x200000000ULL                 /* place child into specified cgroup        \
+                                    */
+#define CLONE_NEWCGROUP 0x02000000 /* New cgroup namespace */
+#define CLONE_NEWUTS 0x04000000    /* New utsname namespace */
+#define CLONE_NEWIPC 0x08000000    /* New ipc namespace */
+#define CLONE_NEWUSER 0x10000000   /* New user namespace */
+#define CLONE_NEWPID 0x20000000    /* New pid namespace */
+#define CLONE_NEWNET 0x40000000    /* New network namespace */
+#define CLONE_IO 0x80000000        /* Clone io context */
 
 extern task_t *arch_get_current();
 

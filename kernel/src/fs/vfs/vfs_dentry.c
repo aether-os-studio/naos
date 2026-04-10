@@ -193,6 +193,21 @@ struct vfs_dentry *vfs_d_lookup(struct vfs_dentry *parent,
     if (!parent || !name)
         return NULL;
 
+    struct vfs_qstr dot_name;
+    vfs_qstr_make(&dot_name, ".");
+    struct vfs_qstr dotdot_name;
+    vfs_qstr_make(&dotdot_name, "..");
+    if (vfs_qstr_equal(name, &dot_name)) {
+        vfs_dget(parent);
+        return parent;
+    } else if (vfs_qstr_equal(name, &dotdot_name)) {
+        struct vfs_dentry *parent_parent = parent->d_parent;
+        if (!parent_parent)
+            return NULL;
+        vfs_dget(parent_parent);
+        return parent_parent;
+    }
+
     bucket = vfs_dcache_bucket_for(parent->d_sb, parent, name);
     spin_lock(&bucket->lock);
     for (node = bucket->head; node; node = node->next) {

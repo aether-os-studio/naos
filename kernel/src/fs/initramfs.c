@@ -81,7 +81,6 @@ void initramfs_init() {
         vfs_root_path.mnt = vfs_mntget(root_mnt);
         vfs_root_path.dentry = vfs_dget(root_mnt->mnt_root);
         vfs_init_mnt_ns.root = vfs_mntget(root_mnt);
-        (void)vfs_mount_set_propagation(root_mnt, MS_SHARED, true);
     }
 
     struct header {

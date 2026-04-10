@@ -22,3 +22,12 @@ struct vfs_dentry *vfs_lookup_component(struct vfs_path *parent,
                                         const char *component,
                                         unsigned int flags);
 void vfs_follow_mount(struct vfs_path *path);
+
+static inline bool vfs_qstr_is_dot(const struct vfs_qstr *qstr) {
+    return qstr && qstr->name && qstr->len == 1 && qstr->name[0] == '.';
+}
+
+static inline bool vfs_qstr_is_dotdot(const struct vfs_qstr *qstr) {
+    return qstr && qstr->name && qstr->len == 2 && qstr->name[0] == '.' &&
+           qstr->name[1] == '.';
+}

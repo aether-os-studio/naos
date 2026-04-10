@@ -994,6 +994,7 @@ static void devtmpfs_populate_nodes(void) {
     (void)vfs_mkdirat(AT_FDCWD, "/dev/bus", 0755);
     (void)vfs_mkdirat(AT_FDCWD, "/dev/bus/usb", 0755);
 
+    devfs_initialized = true;
     devfs_register_existing_devices();
     setup_console_symlinks();
     ptmx_init();
@@ -1001,7 +1002,6 @@ static void devtmpfs_populate_nodes(void) {
     pts_repopulate_nodes();
 
     devtmpfs_refresh_root();
-    devfs_initialized = true;
 }
 
 static void devtmpfs_ensure_populated(struct vfs_super_block *sb) {
@@ -1269,7 +1269,7 @@ ssize_t inputdev_poll(void *data, size_t event) {
 void devfs_register_device(device_t *device) {
     char path[128];
 
-    if (!device || !device->name)
+    if (!devfs_initialized || !device || !device->name)
         return;
 
     snprintf(path, sizeof(path), "/dev/%s", device->name);
@@ -1291,7 +1291,7 @@ void devfs_register_device(device_t *device) {
 void devfs_unregister_device(device_t *device) {
     char path[128];
 
-    if (!device || !device->name || !device->name[0])
+    if (!devfs_initialized || !device || !device->name || !device->name[0])
         return;
 
     snprintf(path, sizeof(path), "/dev/%s", device->name);

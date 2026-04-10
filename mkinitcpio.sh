@@ -2,7 +2,6 @@ sudo rm -rf ${PROJECT_ROOT}/initramfs-${ARCH}/
 
 mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/bin/
 mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/dev/
-mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/mnt/
 mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/sbin/
 mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/lib/modules/
 
