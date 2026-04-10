@@ -2,7 +2,7 @@
 #include <task/task.h>
 
 size_t proc_mounts_stat(proc_handle_t *handle) {
-    task_t *task = handle && handle->task ? handle->task : current_task;
+    task_t *task = procfs_handle_task_or_current(handle);
     size_t content_len = 0;
     char *content = procfs_generate_mount_table(task, false, &content_len);
     free(content);
@@ -11,7 +11,7 @@ size_t proc_mounts_stat(proc_handle_t *handle) {
 
 size_t proc_mounts_read(proc_handle_t *handle, void *addr, size_t offset,
                         size_t size) {
-    task_t *task = handle && handle->task ? handle->task : current_task;
+    task_t *task = procfs_handle_task_or_current(handle);
     size_t content_len = 0;
     char *content = procfs_generate_mount_table(task, false, &content_len);
 

@@ -474,6 +474,7 @@ void task_cleanup_partial(task_t *task, bool kernel_mm) {
         return;
 
     spin_lock(&task_queue_lock);
+    task_detach_children_from_parent_locked(task);
     task_pid_index_remove_locked(task);
     task_parent_index_detach_locked(task, true);
     task_pgid_index_detach_locked(task);
@@ -586,6 +587,7 @@ void free_task(task_t *ptr) {
     spin_unlock(&should_free_lock);
 
     spin_lock(&task_queue_lock);
+    task_detach_children_from_parent_locked(ptr);
     task_pid_index_remove_locked(ptr);
     task_parent_index_detach_locked(ptr, true);
     task_pgid_index_detach_locked(ptr);
@@ -1539,8 +1541,6 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
             if (!ptr)
                 continue;
 
-            if (!task_has_parent(ptr))
-                continue;
             if (task_parent_wait_key(ptr) != wait_parent_pid)
                 continue;
 
@@ -1671,8 +1671,6 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
             if (!ptr)
                 continue;
 
-            if (!task_has_parent(ptr))
-                continue;
             if (task_parent_wait_key(ptr) != wait_parent_pid)
                 continue;
 
@@ -2018,6 +2016,7 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
     child->is_kernel = false;
     child->parent =
         (flags & (CLONE_THREAD | CLONE_PARENT)) ? self->parent : self;
+    child->parent_pid = task_effective_tgid(child->parent);
     child->uid = self->uid;
     child->gid = self->gid;
     child->euid = self->euid;

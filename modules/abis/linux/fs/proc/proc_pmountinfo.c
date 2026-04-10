@@ -139,7 +139,7 @@ char *procfs_generate_mount_table(task_t *task, bool mountinfo,
 }
 
 size_t proc_pmountinfo_stat(proc_handle_t *handle) {
-    task_t *task = handle && handle->task ? handle->task : current_task;
+    task_t *task = procfs_handle_task_or_current(handle);
     size_t content_len = 0;
     char *content = procfs_generate_mount_table(task, true, &content_len);
     free(content);
@@ -153,7 +153,7 @@ int proc_pmountinfo_poll(proc_handle_t *handle, int events) {
 
 size_t proc_pmountinfo_read(proc_handle_t *handle, void *addr, size_t offset,
                             size_t size) {
-    task_t *task = handle && handle->task ? handle->task : current_task;
+    task_t *task = procfs_handle_task_or_current(handle);
     size_t content_len = 0;
     char *content = procfs_generate_mount_table(task, true, &content_len);
 

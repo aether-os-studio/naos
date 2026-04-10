@@ -382,7 +382,7 @@ int cgroupfs_set_task_cgroup_by_fd(task_t *task, int fd) {
 void cgroupfs_on_new_task(task_t *task) {
     cgroupfs_cgroup_t *parent_cgroup;
 
-    if (!task || !task_has_parent(task))
+    if (!task || !task_has_parent(task) || !task->parent)
         return;
 
     mutex_lock(&cgroupfs_lock);

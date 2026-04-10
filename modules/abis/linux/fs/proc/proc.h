@@ -1,6 +1,7 @@
 #pragma once
 
 #include <fs/vfs/vfs.h>
+#include <task/task.h>
 
 #define MAX_PID_NAME_LEN 8
 
@@ -22,9 +23,21 @@ struct proc_handle {
     char name[64];
     char content[256];
     vfs_node_t *node;
-    task_t *task;
+    uint64_t task_pid;
     int fd_num;
 };
+
+static inline task_t *procfs_handle_task(proc_handle_t *handle) {
+    if (!handle || handle->task_pid == 0)
+        return NULL;
+
+    return task_find_by_pid(handle->task_pid);
+}
+
+static inline task_t *procfs_handle_task_or_current(proc_handle_t *handle) {
+    task_t *task = procfs_handle_task(handle);
+    return task ? task : current_task;
+}
 
 typedef struct proc_handle_node {
     char *name;

@@ -172,11 +172,7 @@ char *proc_gen_stat_file(task_t *task, size_t *content_len) {
 
 size_t proc_pstat_stat(proc_handle_t *handle) {
     task_t *task;
-    if (handle->task == NULL) {
-        task = current_task;
-    } else {
-        task = handle->task;
-    }
+    task = procfs_handle_task_or_current(handle);
     size_t content_len = 0;
     char *content = proc_gen_stat_file(task, &content_len);
     free(content);
@@ -186,11 +182,7 @@ size_t proc_pstat_stat(proc_handle_t *handle) {
 size_t proc_pstat_read(proc_handle_t *handle, void *addr, size_t offset,
                        size_t size) {
     task_t *task;
-    if (handle->task == NULL) {
-        task = current_task;
-    } else {
-        task = handle->task;
-    }
+    task = procfs_handle_task_or_current(handle);
     size_t content_len = 0;
     char *content = proc_gen_stat_file(task, &content_len);
     if (offset >= content_len) {

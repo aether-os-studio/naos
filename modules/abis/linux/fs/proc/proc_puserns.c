@@ -109,7 +109,7 @@ static int proc_userns_parse_u32(char **cursor, uint32_t *value) {
 
 static ssize_t proc_userns_write_map(proc_handle_t *handle, const void *addr,
                                      size_t offset, size_t size, bool gid) {
-    task_t *task = handle && handle->task ? handle->task : current_task;
+    task_t *task = procfs_handle_task_or_current(handle);
     task_user_namespace_t *user_ns = task_user_namespace_of_task(task);
     task_id_map_range_t ranges[TASK_USERNS_MAX_ID_MAPS];
     char *buf;
@@ -122,7 +122,8 @@ static ssize_t proc_userns_write_map(proc_handle_t *handle, const void *addr,
         return -EINVAL;
     if (offset != 0)
         return -EINVAL;
-    from_helper = handle && handle->task && handle->task != current_task;
+    from_helper = handle && handle->task_pid != 0 &&
+                  handle->task_pid != current_task->pid;
 
     buf = proc_userns_copy_from_user(addr, size);
     if (!buf)
@@ -173,7 +174,7 @@ static ssize_t proc_userns_write_map(proc_handle_t *handle, const void *addr,
 static ssize_t proc_userns_write_setgroups(proc_handle_t *handle,
                                            const void *addr, size_t offset,
                                            size_t size) {
-    task_t *task = handle && handle->task ? handle->task : current_task;
+    task_t *task = procfs_handle_task_or_current(handle);
     task_user_namespace_t *user_ns = task_user_namespace_of_task(task);
     char *buf;
     char *cursor;
@@ -213,7 +214,7 @@ static ssize_t proc_userns_write_setgroups(proc_handle_t *handle,
 }
 
 size_t proc_puid_map_stat(proc_handle_t *handle) {
-    task_t *task = handle && handle->task ? handle->task : current_task;
+    task_t *task = procfs_handle_task_or_current(handle);
     task_user_namespace_t *user_ns = task_user_namespace_of_task(task);
     size_t content_len = 0;
     char *content = proc_userns_render_map(user_ns, false, &content_len);
@@ -223,7 +224,7 @@ size_t proc_puid_map_stat(proc_handle_t *handle) {
 
 size_t proc_puid_map_read(proc_handle_t *handle, void *addr, size_t offset,
                           size_t size) {
-    task_t *task = handle && handle->task ? handle->task : current_task;
+    task_t *task = procfs_handle_task_or_current(handle);
     task_user_namespace_t *user_ns = task_user_namespace_of_task(task);
     size_t content_len = 0;
     char *content = proc_userns_render_map(user_ns, false, &content_len);
@@ -247,7 +248,7 @@ ssize_t proc_puid_map_write(proc_handle_t *handle, const void *addr,
 }
 
 size_t proc_pgid_map_stat(proc_handle_t *handle) {
-    task_t *task = handle && handle->task ? handle->task : current_task;
+    task_t *task = procfs_handle_task_or_current(handle);
     task_user_namespace_t *user_ns = task_user_namespace_of_task(task);
     size_t content_len = 0;
     char *content = proc_userns_render_map(user_ns, true, &content_len);
@@ -257,7 +258,7 @@ size_t proc_pgid_map_stat(proc_handle_t *handle) {
 
 size_t proc_pgid_map_read(proc_handle_t *handle, void *addr, size_t offset,
                           size_t size) {
-    task_t *task = handle && handle->task ? handle->task : current_task;
+    task_t *task = procfs_handle_task_or_current(handle);
     task_user_namespace_t *user_ns = task_user_namespace_of_task(task);
     size_t content_len = 0;
     char *content = proc_userns_render_map(user_ns, true, &content_len);
@@ -281,7 +282,7 @@ ssize_t proc_pgid_map_write(proc_handle_t *handle, const void *addr,
 }
 
 size_t proc_psetgroups_stat(proc_handle_t *handle) {
-    task_t *task = handle && handle->task ? handle->task : current_task;
+    task_t *task = procfs_handle_task_or_current(handle);
     task_user_namespace_t *user_ns = task_user_namespace_of_task(task);
     size_t len = strlen("allow\n");
 
@@ -297,7 +298,7 @@ size_t proc_psetgroups_stat(proc_handle_t *handle) {
 
 size_t proc_psetgroups_read(proc_handle_t *handle, void *addr, size_t offset,
                             size_t size) {
-    task_t *task = handle && handle->task ? handle->task : current_task;
+    task_t *task = procfs_handle_task_or_current(handle);
     task_user_namespace_t *user_ns = task_user_namespace_of_task(task);
     const char *content = "allow\n";
     size_t content_len;

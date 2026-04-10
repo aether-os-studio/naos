@@ -1426,9 +1426,24 @@ void setup_console_symlinks() {
     vfs_mknodat(AT_FDCWD, "/dev/stdin", 0600 | S_IFCHR, tty_node->i_rdev);
     vfs_mknodat(AT_FDCWD, "/dev/stdout", 0600 | S_IFCHR, tty_node->i_rdev);
     vfs_mknodat(AT_FDCWD, "/dev/stderr", 0600 | S_IFCHR, tty_node->i_rdev);
-    vfs_mknodat(AT_FDCWD, "/dev/kmsg", 0600 | S_IFCHR, tty_node->i_rdev);
 
     vfs_iput(tty_node);
+}
+
+ssize_t kmsg_read(void *data, void *buf, uint64_t offset, uint64_t len,
+                  uint64_t flags) {
+    return 0;
+}
+
+ssize_t kmsg_poll(void *dev, int events) { return tty_poll(dev, events); }
+
+ssize_t kmsg_write(void *data, const void *buf, uint64_t offset, uint64_t len,
+                   uint64_t flags) {
+    return tty_write(data, buf, offset, len, flags);
+}
+
+ssize_t kmsg_ioctl(void *data, ssize_t request, ssize_t arg, fd_t *fd) {
+    return tty_ioctl(data, request, (void *)arg);
 }
 
 void devfs_nodes_init() {
@@ -1436,12 +1451,14 @@ void devfs_nodes_init() {
     vfs_mkdirat(AT_FDCWD, "/dev/bus", 0755);
     vfs_mkdirat(AT_FDCWD, "/dev/bus/usb", 0755);
 
-    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "null", 0, NULL, NULL,
-                   nulldev_ioctl, NULL, nulldev_read, nulldev_write, NULL);
-    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "zero", 0, NULL, NULL, NULL,
-                   zerodev_ioctl, zerodev_read, zerodev_write, NULL);
-    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "urandom", 0, NULL, NULL, NULL,
-                   urandom_ioctl, urandom_read, urandom_write, NULL);
+    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "null", 0, NULL, nulldev_ioctl,
+                   NULL, NULL, nulldev_read, nulldev_write, NULL);
+    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "zero", 0, NULL, NULL,
+                   zerodev_ioctl, NULL, zerodev_read, zerodev_write, NULL);
+    device_install(DEV_CHAR, DEV_SYSDEV, NULL, "urandom", 0, NULL, NULL,
+                   urandom_ioctl, NULL, urandom_read, urandom_write, NULL);
+    device_install(DEV_CHAR, DEV_SYSDEV, kernel_session, "kmsg", 0, NULL, NULL,
+                   kmsg_ioctl, kmsg_poll, kmsg_read, kmsg_write, NULL);
 
     setup_console_symlinks();
 
@@ -1453,7 +1470,11 @@ void devfs_nodes_init() {
 void input_generate_event(void *data, uint16_t type, uint16_t code,
                           int32_t value, uint64_t sec, uint64_t usecs) {
     dev_input_event_t *item = data;
-    if (!item || item->timesOpened == 0)
+    if (!item)
+        return;
+
+    tty_input_event(item, type, code, value);
+    if (item->timesOpened == 0)
         return;
 
     struct input_event event;

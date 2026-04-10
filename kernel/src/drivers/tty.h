@@ -61,11 +61,28 @@ typedef struct tty_session { // 一个 TTY 会话
     int tty_kbmode;
     int tty_mode;
     uint64_t at_process_group_id;
+    char input_buf[1024];
+    uint16_t input_head;
+    uint16_t input_tail;
+    uint16_t input_count;
+    char canon_buf[1024];
+    uint16_t canon_count;
+    bool key_shift;
+    bool key_ctrl;
+    bool key_alt;
+    bool key_capslock;
     tty_session_ops_t ops;
     tty_device_t *device; // 会话所属的TTY设备
 } tty_t;
 
 extern tty_t *kernel_session;
+
+int tty_ioctl(void *dev, int cmd, void *args);
+int tty_poll(void *dev, int events);
+int tty_read(void *dev, void *buf, uint64_t offset, size_t size,
+             uint64_t flags);
+int tty_write(void *dev, const void *buf, uint64_t offset, size_t size,
+              uint64_t flags);
 
 tty_device_t *get_tty_device(const char *name);
 tty_device_t *alloc_tty_device(enum tty_device_type type);
@@ -74,3 +91,8 @@ uint64_t delete_tty_device(tty_device_t *device);
 void tty_init();
 void tty_init_session();
 void tty_init_session_serial();
+size_t tty_input_read(tty_t *tty, char *buf, size_t count);
+int tty_input_poll(tty_t *tty, int events);
+void tty_input_flush(tty_t *tty);
+void tty_input_event(dev_input_event_t *event, uint16_t type, uint16_t code,
+                     int32_t value);

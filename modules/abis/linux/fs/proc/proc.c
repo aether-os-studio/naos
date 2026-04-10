@@ -25,7 +25,7 @@ typedef enum procfs_inode_kind {
 typedef struct procfs_inode_info {
     struct vfs_inode vfs_inode;
     procfs_inode_kind_t kind;
-    task_t *task;
+    uint64_t task_pid;
     int fd_num;
     char *dispatch_name;
     char *link_target;
@@ -46,6 +46,13 @@ static inline procfs_inode_info_t *procfs_i(vfs_node_t *inode) {
 
 static inline bool procfs_task_is_alive(task_t *task) {
     return task && task->state != TASK_DIED;
+}
+
+static inline task_t *procfs_info_task(procfs_inode_info_t *info) {
+    if (!info || info->task_pid == 0)
+        return NULL;
+
+    return task_find_by_pid(info->task_pid);
 }
 
 static uint64_t procfs_task_mnt_ns_inum(task_t *task) {
@@ -185,7 +192,7 @@ static vfs_node_t *procfs_new_inode(struct vfs_super_block *sb, umode_t mode,
         inode->i_mtime.sec = (int64_t)(nano_time() / 1000000000ULL);
 
     info->kind = kind;
-    info->task = task;
+    info->task_pid = task ? task->pid : 0;
     info->fd_num = fd_num;
     if (dispatch_name) {
         info->dispatch_name = strdup(dispatch_name);
@@ -335,8 +342,8 @@ static char *procfs_fd_target_path(task_t *task, fd_t *fd) {
 
 static size_t procfs_fdinfo_render(proc_handle_t *handle, char *buf,
                                    size_t buflen) {
-    fd_t *fd = procfs_dup_task_fd(handle ? handle->task : NULL,
-                                  handle ? handle->fd_num : -1);
+    task_t *task = procfs_handle_task(handle);
+    fd_t *fd = procfs_dup_task_fd(task, handle ? handle->fd_num : -1);
     size_t len = 0;
 
     if (!buf || !buflen)
@@ -379,7 +386,7 @@ static void procfs_fill_handle(proc_handle_t *handle, vfs_node_t *inode) {
 
     memset(handle, 0, sizeof(*handle));
     handle->node = inode;
-    handle->task = info ? info->task : NULL;
+    handle->task_pid = info ? info->task_pid : 0;
     handle->fd_num = info ? info->fd_num : -1;
     if (info && info->dispatch_name) {
         snprintf(handle->name, sizeof(handle->name), "%s", info->dispatch_name);
@@ -414,7 +421,7 @@ static ssize_t procfs_dynamic_readlink(procfs_inode_info_t *info, void *addr,
         if (!strcmp(info->dispatch_name, "proc_root"))
             return procfs_copy_string("/", addr, offset, size);
         if (!strcmp(info->dispatch_name, "proc_exe")) {
-            task_t *task = handle.task ? handle.task : current_task;
+            task_t *task = procfs_handle_task_or_current(&handle);
             if (!task || !task->exec_file)
                 return -ENOENT;
             target = vfs_path_to_string(&task->exec_file->f_path,
@@ -424,10 +431,11 @@ static ssize_t procfs_dynamic_readlink(procfs_inode_info_t *info, void *addr,
             return len;
         }
         if (!strcmp(info->dispatch_name, "proc_fd")) {
-            fd = procfs_dup_task_fd(handle.task, handle.fd_num);
+            task_t *task = procfs_handle_task(&handle);
+            fd = procfs_dup_task_fd(task, handle.fd_num);
             if (!fd)
                 return -ENOENT;
-            target = procfs_fd_target_path(handle.task, fd);
+            target = procfs_fd_target_path(task, fd);
             vfs_close_file(fd);
             len = procfs_copy_string(target, addr, offset, size);
             free(target);
@@ -437,14 +445,16 @@ static ssize_t procfs_dynamic_readlink(procfs_inode_info_t *info, void *addr,
             char nslink[64];
 
             snprintf(nslink, sizeof(nslink), "mnt:[%llu]",
-                     (unsigned long long)procfs_task_mnt_ns_inum(handle.task));
+                     (unsigned long long)procfs_task_mnt_ns_inum(
+                         procfs_handle_task(&handle)));
             return procfs_copy_string(nslink, addr, offset, size);
         }
         if (!strcmp(info->dispatch_name, "proc_ns_user")) {
             char nslink[64];
 
             snprintf(nslink, sizeof(nslink), "user:[%llu]",
-                     (unsigned long long)procfs_task_user_ns_inum(handle.task));
+                     (unsigned long long)procfs_task_user_ns_inum(
+                         procfs_handle_task(&handle)));
             return procfs_copy_string(nslink, addr, offset, size);
         }
         return -EINVAL;
@@ -472,7 +482,9 @@ static const char *procfs_get_link(struct vfs_dentry *dentry,
 
     if (nd) {
         memset(&nd->path, 0, sizeof(nd->path));
-        task = info->task ? info->task : current_task;
+        task = procfs_info_task(info);
+        if (!task)
+            task = current_task;
 
         if (!task)
             return ERR_PTR(-ENOENT);
@@ -763,12 +775,13 @@ static int procfs_iterate_shared(struct vfs_file *file,
             procfs_ino_for(PROCFS_INO_FILE, NULL, -1, "proc_pressure_memory"));
         break;
     case PROCFS_INO_TASK_DIR:
-        procfs_iterate_task_entries(ctx, &index, info->task);
+        procfs_iterate_task_entries(ctx, &index, procfs_info_task(info));
         break;
     case PROCFS_INO_TASK_THREADS_DIR:
         spin_lock(&task_queue_lock);
         if (task_pid_map.buckets) {
-            uint64_t tgid = task_effective_tgid(info->task);
+            task_t *owner = procfs_info_task(info);
+            uint64_t tgid = task_effective_tgid(owner);
             for (size_t i = 0; i < task_pid_map.bucket_count; ++i) {
                 hashmap_entry_t *entry = &task_pid_map.buckets[i];
                 task_t *task;
@@ -793,23 +806,25 @@ static int procfs_iterate_shared(struct vfs_file *file,
         spin_unlock(&task_queue_lock);
         break;
     case PROCFS_INO_NS_DIR:
+        task_t *task = procfs_info_task(info);
         if (procfs_emit_entry(ctx, &index, "mnt", DT_LNK,
-                              procfs_ino_for(PROCFS_INO_SYMLINK, info->task, -1,
+                              procfs_ino_for(PROCFS_INO_SYMLINK, task, -1,
                                              "proc_ns_mnt")) != 0 ||
             procfs_emit_entry(ctx, &index, "user", DT_LNK,
-                              procfs_ino_for(PROCFS_INO_SYMLINK, info->task, -1,
+                              procfs_ino_for(PROCFS_INO_SYMLINK, task, -1,
                                              "proc_ns_user")) != 0) {
             break;
         }
         break;
     case PROCFS_INO_FD_DIR:
     case PROCFS_INO_FDINFO_DIR:
-        if (info->task && info->task->fd_info) {
-            with_fd_info_lock(info->task->fd_info, {
+        task = procfs_info_task(info);
+        if (task && task->fd_info) {
+            with_fd_info_lock(task->fd_info, {
                 for (int fd_num = 0; fd_num < MAX_FD_NUM; ++fd_num) {
                     char name[16];
 
-                    if (!info->task->fd_info->fds[fd_num])
+                    if (!task->fd_info->fds[fd_num])
                         continue;
                     snprintf(name, sizeof(name), "%d", fd_num);
                     if (procfs_emit_entry(
@@ -818,7 +833,7 @@ static int procfs_iterate_shared(struct vfs_file *file,
                             procfs_ino_for(info->kind == PROCFS_INO_FD_DIR
                                                ? PROCFS_INO_SYMLINK
                                                : PROCFS_INO_FILE,
-                                           info->task, fd_num,
+                                           task, fd_num,
                                            info->kind == PROCFS_INO_FD_DIR
                                                ? "proc_fd"
                                                : "proc_fdinfo")) != 0) {
@@ -1009,13 +1024,15 @@ static struct vfs_dentry *procfs_lookup(struct vfs_inode *dir,
         }
         break;
     case PROCFS_INO_TASK_DIR:
-        if (procfs_task_is_alive(info->task))
-            inode = procfs_make_task_child(dir->i_sb, dentry->d_name.name,
-                                           info->task);
+        task = procfs_info_task(info);
+        if (procfs_task_is_alive(task))
+            inode =
+                procfs_make_task_child(dir->i_sb, dentry->d_name.name, task);
         break;
     case PROCFS_INO_TASK_THREADS_DIR: {
         uint64_t pid = 0;
         const char *name = dentry->d_name.name;
+        task_t *owner = procfs_info_task(info);
         if (name[0] >= '0' && name[0] <= '9') {
             while (*name >= '0' && *name <= '9') {
                 pid = pid * 10 + (uint64_t)(*name - '0');
@@ -1024,7 +1041,7 @@ static struct vfs_dentry *procfs_lookup(struct vfs_inode *dir,
             if (!*name)
                 task = task_find_by_pid(pid);
             if (procfs_task_is_alive(task) &&
-                task_effective_tgid(task) == task_effective_tgid(info->task)) {
+                task_effective_tgid(task) == task_effective_tgid(owner)) {
                 inode = procfs_new_inode(dir->i_sb, S_IFDIR | 0555,
                                          PROCFS_INO_TASK_DIR, task, -1, NULL);
             }
@@ -1032,22 +1049,24 @@ static struct vfs_dentry *procfs_lookup(struct vfs_inode *dir,
         break;
     }
     case PROCFS_INO_NS_DIR:
+        task = procfs_info_task(info);
         if (!strcmp(dentry->d_name.name, "mnt")) {
-            inode = procfs_new_ns_inode(dir->i_sb, info->task,
-                                        dentry->d_name.name, flags);
+            inode = procfs_new_ns_inode(dir->i_sb, task, dentry->d_name.name,
+                                        flags);
         } else if (!strcmp(dentry->d_name.name, "user")) {
-            inode = procfs_new_ns_inode(dir->i_sb, info->task,
-                                        dentry->d_name.name, flags);
+            inode = procfs_new_ns_inode(dir->i_sb, task, dentry->d_name.name,
+                                        flags);
         }
         break;
     case PROCFS_INO_FD_DIR:
     case PROCFS_INO_FDINFO_DIR:
-        if (procfs_parse_decimal(dentry->d_name.name, &fd_num) == 0 &&
-            info->task && info->task->fd_info) {
+        task = procfs_info_task(info);
+        if (procfs_parse_decimal(dentry->d_name.name, &fd_num) == 0 && task &&
+            task->fd_info) {
             bool exists = false;
-            with_fd_info_lock(info->task->fd_info, {
-                exists = fd_num < MAX_FD_NUM &&
-                         info->task->fd_info->fds[fd_num] != NULL;
+            with_fd_info_lock(task->fd_info, {
+                exists =
+                    fd_num < MAX_FD_NUM && task->fd_info->fds[fd_num] != NULL;
             });
             if (exists) {
                 inode = procfs_new_inode(
@@ -1056,7 +1075,7 @@ static struct vfs_dentry *procfs_lookup(struct vfs_inode *dir,
                         0444,
                     (info->kind == PROCFS_INO_FD_DIR ? PROCFS_INO_SYMLINK
                                                      : PROCFS_INO_FILE),
-                    info->task, fd_num,
+                    task, fd_num,
                     info->kind == PROCFS_INO_FD_DIR ? "proc_fd"
                                                     : "proc_fdinfo");
             }
@@ -1157,7 +1176,7 @@ ssize_t proc_root_readlink(proc_handle_t *handle, void *addr, size_t offset,
     char *fullpath;
     ssize_t ret;
 
-    task = handle && handle->task ? handle->task : current_task;
+    task = procfs_handle_task_or_current(handle);
     if (!task)
         return -ENOENT;
 
@@ -1179,7 +1198,7 @@ ssize_t proc_exe_readlink(proc_handle_t *handle, void *addr, size_t offset,
     if (!handle)
         return -EINVAL;
 
-    task = handle->task ? handle->task : current_task;
+    task = procfs_handle_task_or_current(handle);
     if (!task || !task->exec_file)
         return -ENOENT;
 
@@ -1199,11 +1218,12 @@ ssize_t proc_fd_readlink(proc_handle_t *handle, void *addr, size_t offset,
     if (!handle)
         return -EINVAL;
 
-    fd = procfs_dup_task_fd(handle->task, handle->fd_num);
+    task_t *task = procfs_handle_task(handle);
+    fd = procfs_dup_task_fd(task, handle->fd_num);
     if (!fd)
         return -ENOENT;
 
-    target = procfs_fd_target_path(handle->task, fd);
+    target = procfs_fd_target_path(task, fd);
     vfs_close_file(fd);
 
     ret = procfs_copy_string(target, addr, offset, size);

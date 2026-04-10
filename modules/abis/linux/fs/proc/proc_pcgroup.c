@@ -3,7 +3,7 @@
 #include <task/task.h>
 
 size_t proc_pcgroup_stat(proc_handle_t *handle) {
-    task_t *task = handle && handle->task ? handle->task : current_task;
+    task_t *task = procfs_handle_task_or_current(handle);
     char *path = cgroupfs_task_path(task);
     size_t len = path ? strlen(path) + strlen("0::\n") : strlen("0::/\n");
     free(path);
@@ -12,7 +12,7 @@ size_t proc_pcgroup_stat(proc_handle_t *handle) {
 
 size_t proc_pcgroup_read(proc_handle_t *handle, void *addr, size_t offset,
                          size_t size) {
-    task_t *task = handle && handle->task ? handle->task : current_task;
+    task_t *task = procfs_handle_task_or_current(handle);
     char *path = cgroupfs_task_path(task);
     char buf[VFS_PATH_MAX];
     const char *cgroup_path = path ? path : "/";

@@ -3,11 +3,7 @@
 
 size_t proc_pcmdline_stat(proc_handle_t *handle) {
     task_t *task;
-    if (handle->task == NULL) {
-        task = current_task;
-    } else {
-        task = handle->task;
-    }
+    task = procfs_handle_task_or_current(handle);
 
     if (!task || task->arg_end <= task->arg_start)
         return 0;
@@ -18,11 +14,7 @@ size_t proc_pcmdline_stat(proc_handle_t *handle) {
 size_t proc_pcmdline_read(proc_handle_t *handle, void *addr, size_t offset,
                           size_t size) {
     task_t *task;
-    if (handle->task == NULL) {
-        task = current_task;
-    } else {
-        task = handle->task;
-    }
+    task = procfs_handle_task_or_current(handle);
 
     if (!task || task->arg_end <= task->arg_start)
         return 0;

@@ -201,23 +201,15 @@ static inline uint64_t task_effective_tgid(task_t *task) {
 }
 
 static inline bool task_has_parent(task_t *task) {
-    return task && task->parent && task->parent != task;
+    return task && task->parent_pid != 0;
 }
 
 static inline uint64_t task_parent_pid(task_t *task) {
-    if (!task_has_parent(task)) {
-        return 0;
-    }
-
-    return task_effective_tgid(task->parent);
+    return task_has_parent(task) ? task->parent_pid : 0;
 }
 
 static inline uint64_t task_parent_wait_key(task_t *task) {
-    if (!task_has_parent(task)) {
-        return 0;
-    }
-
-    return task_effective_wait_parent_pid(task->parent);
+    return task_parent_pid(task);
 }
 
 static inline struct vfs_process_fs *task_vfs_fs(task_t *task) {
@@ -249,6 +241,8 @@ int task_replace_file(task_t *task, int fd, struct vfs_file *file,
 int task_close_file_descriptor(task_t *task, int fd);
 void task_refresh_tick_work_state(task_t *task);
 void task_schedule_reap(void);
+void task_detach_children_from_parent_locked(task_t *owner);
+void task_detach_children_from_parent(task_t *owner);
 
 task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
                     int priority);

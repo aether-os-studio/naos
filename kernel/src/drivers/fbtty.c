@@ -3,7 +3,6 @@
 #include <task/signal.h>
 #include <drivers/fbtty.h>
 #include <libs/keys.h>
-#include <libs/kbqueue.h>
 #include <task/task.h>
 #include <libs/termios.h>
 #include <fs/vfs/fcntl.h>
@@ -18,70 +17,7 @@ void terminal_flush(tty_t *session) { flanterm_flush(session->terminal); }
 extern void send_process_group_signal(int pgid, int sig);
 
 size_t terminal_read(tty_t *device, char *buf, size_t count) {
-    size_t read = 0;
-    bool canonical = (device->termios.c_lflag & ICANON) != 0;
-    char eofc = device->termios.c_cc[VEOF];
-    int vmin = device->termios.c_cc[VMIN];
-
-    while (read < count) {
-        arch_enable_interrupt();
-
-        if (task_signal_has_deliverable(current_task)) {
-            arch_disable_interrupt();
-            return read ? read : (size_t)-EINTR;
-        }
-
-        char c;
-        bool got = false;
-
-        if (kb_available() > 0) {
-            int n = kb_read(&c, 1);
-            if (n > 0) {
-                got = true;
-            }
-        }
-
-        if (got) {
-            if (device->termios.c_lflag & ISIG) {
-                uint64_t pgid = device->at_process_group_id;
-                if (pgid) {
-                    if (c == device->termios.c_cc[VINTR]) {
-                        send_process_group_signal(pgid, SIGINT);
-                        continue;
-                    }
-                    if (c == device->termios.c_cc[VQUIT]) {
-                        send_process_group_signal(pgid, SIGQUIT);
-                        continue;
-                    }
-                    if (c == device->termios.c_cc[VSUSP]) {
-                        send_process_group_signal(pgid, SIGTSTP);
-                        continue;
-                    }
-                }
-            }
-            if ((device->termios.c_iflag & ICRNL) && c == '\r')
-                c = '\n';
-
-            if (canonical) {
-                if (c == eofc) {
-                    break;
-                }
-                buf[read++] = c;
-                if (c == '\n')
-                    break;
-            } else {
-                buf[read++] = c;
-                if (vmin == 0 || read >= (size_t)vmin)
-                    break;
-            }
-        }
-
-        schedule(SCHED_FLAG_YIELD);
-    }
-
-    arch_disable_interrupt();
-
-    return read;
+    return tty_input_read(device, buf, count);
 }
 
 int terminal_ioctl(tty_t *device, uint32_t cmd, uint64_t arg) {
@@ -217,6 +153,7 @@ int terminal_ioctl(tty_t *device, uint32_t cmd, uint64_t arg) {
             return -EFAULT;
         return 0;
     case TCFLSH:
+        tty_input_flush(device);
         return 0;
     case TIOCNXCL:
         return 0;
@@ -226,16 +163,7 @@ int terminal_ioctl(tty_t *device, uint32_t cmd, uint64_t arg) {
 }
 
 int terminal_poll(tty_t *device, int events) {
-    ssize_t revents = 0;
-    if ((events & EPOLLERR) || (events & EPOLLPRI))
-        return 0;
-
-    if ((events & EPOLLIN) && kb_available() > 0)
-        revents |= EPOLLIN;
-    if (events & EPOLLOUT)
-        revents |= EPOLLOUT;
-
-    return revents;
+    return tty_input_poll(device, events);
 }
 
 spinlock_t terminal_write_lock = SPIN_INIT;
