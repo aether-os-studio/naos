@@ -1,6 +1,6 @@
 #include "dlinker.h"
 #include <boot/boot.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <fs/vfs/vfs.h>
 #include <mm/mm.h>
 

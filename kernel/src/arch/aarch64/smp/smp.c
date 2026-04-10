@@ -1,5 +1,5 @@
 #include <arch/arch.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <task/task.h>
 #include <boot/boot.h>
 

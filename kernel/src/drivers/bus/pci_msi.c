@@ -1,7 +1,7 @@
 #include <drivers/bus/pci_msi.h>
 #include <mm/mm.h>
 #include <arch/arch.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 
 struct msi_msg_t *msi_arch_get_msg(struct msi_desc_t *msi_desc) {
 #if defined(__x86_64__)

@@ -1,7 +1,7 @@
 #include <fs/initramfs.h>
 #include <fs/fs_syscall.h>
 #include <boot/boot.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <mm/mm.h>
 
 static char *initramfs_make_abspath(const char *name) {

@@ -3,7 +3,7 @@
 #include <acpi/uacpi/acpi.h>
 #include <acpi/uacpi/tables.h>
 #include <boot/boot.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <drivers/fdt/fdt.h>
 #include <irq/irq_manager.h>
 

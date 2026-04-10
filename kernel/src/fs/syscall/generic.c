@@ -3,7 +3,7 @@
 #include <fs/fs_syscall.h>
 #include <boot/boot.h>
 #include <net/socket.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <mm/cache.h>
 #include <fs/vfs/notify.h>
 #include <task/ns.h>

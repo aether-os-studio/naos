@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stdint.h>
+#include <libs/klibc.h>
 
 #define SEEK_SET 0  /* Seek from beginning of file.  */
 #define SEEK_CUR 1  /* Seek from current position.  */

@@ -1,5 +1,5 @@
 #include <fs/sys.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <mm/mm.h>
 #include <net/netlink.h>
 

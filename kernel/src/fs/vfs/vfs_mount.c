@@ -985,6 +985,9 @@ struct vfs_mount *vfs_path_mount(const struct vfs_path *path) {
     if (mnt)
         return mnt;
 
+    if (path->mnt && path->dentry == path->mnt->mnt_root)
+        return vfs_mntget(path->mnt);
+
     if (path->mnt && path->mnt != root_mnt)
         return vfs_mntget(path->mnt);
     return NULL;
@@ -1168,6 +1171,40 @@ static bool vfs_dentry_is_descendant(struct vfs_dentry *root,
             return true;
         if (!cursor->d_parent || cursor == cursor->d_parent)
             break;
+    }
+
+    return false;
+}
+
+static bool vfs_mount_is_same_or_descendant(const struct vfs_mount *root,
+                                            const struct vfs_mount *mnt) {
+    const struct vfs_mount *cursor;
+
+    if (!root || !mnt)
+        return false;
+
+    for (cursor = mnt; cursor; cursor = cursor->mnt_parent) {
+        if (cursor == root)
+            return true;
+        if (!cursor->mnt_parent || cursor == cursor->mnt_parent)
+            break;
+    }
+
+    return false;
+}
+
+static bool vfs_mount_tree_contains_unbindable(const struct vfs_mount *root) {
+    const struct vfs_mount *child;
+    const struct vfs_mount *tmp;
+
+    if (!root)
+        return false;
+    if (root->mnt_propagation == VFS_MNT_PROP_UNBINDABLE)
+        return true;
+
+    llist_for_each(child, tmp, &root->mnt_mounts, mnt_child) {
+        if (vfs_mount_tree_contains_unbindable(child))
+            return true;
     }
 
     return false;
@@ -1423,6 +1460,13 @@ int vfs_reconfigure_mount(struct vfs_mount *mnt, const struct vfs_path *to_path,
 
     if (!mnt->mnt_root || !mnt->mnt_root->d_inode)
         return -EINVAL;
+
+    if (vfs_mount_is_same_or_descendant(mnt, to_path->mnt))
+        return -ELOOP;
+    if (vfs_mount_is_shared(to_path->mnt) &&
+        vfs_mount_tree_contains_unbindable(mnt)) {
+        return -EINVAL;
+    }
 
     src_is_dir = S_ISDIR(mnt->mnt_root->d_inode->i_mode);
     dst_is_dir = S_ISDIR(to_path->dentry->d_inode->i_mode);

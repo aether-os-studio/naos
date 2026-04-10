@@ -3,7 +3,7 @@
 #include <fs/sys.h>
 #include <block/partition.h>
 #include <dev/device.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <drivers/tty.h>
 #include <dev/pty.h>
 #include <net/netlink.h>

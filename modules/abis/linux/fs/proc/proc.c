@@ -242,20 +242,62 @@ static fd_t *procfs_dup_task_fd(task_t *task, int fd_num) {
     return task_get_file(task, fd_num);
 }
 
+static bool procfs_get_namespace_root(task_t *task, struct vfs_path *path) {
+    struct vfs_mount *root_mnt;
+
+    if (!path)
+        return false;
+
+    memset(path, 0, sizeof(*path));
+    if (!task)
+        return false;
+
+    root_mnt = task_mount_namespace_root(task);
+    if (!root_mnt || !root_mnt->mnt_root)
+        return false;
+
+    path->mnt = root_mnt;
+    path->dentry = root_mnt->mnt_root;
+    vfs_path_get(path);
+    return true;
+}
+
+static char *procfs_path_to_task_view(task_t *task,
+                                      const struct vfs_path *path) {
+    const struct vfs_path *task_root;
+    struct vfs_path ns_root = {0};
+    char *resolved;
+
+    if (!task || !path || !path->mnt || !path->dentry)
+        return NULL;
+
+    task_root = task_fs_root_path(task);
+    if (task_root && task_root->mnt && task_root->dentry &&
+        vfs_path_is_ancestor(task_root, path)) {
+        resolved = vfs_path_to_string(path, task_root);
+        if (resolved)
+            return resolved;
+    }
+
+    if (!procfs_get_namespace_root(task, &ns_root))
+        return NULL;
+
+    resolved = vfs_path_to_string(path, &ns_root);
+    vfs_path_put(&ns_root);
+    return resolved;
+}
+
 static char *procfs_fd_target_path(task_t *task, fd_t *fd) {
     const char *fs_name = NULL;
     char buf[256];
+    char *fullpath;
 
     if (!task || !fd || !fd->f_inode)
         return NULL;
 
-    if (fd->f_path.mnt && fd->f_path.dentry &&
-        vfs_path_is_ancestor(task_fs_root_path(task), &fd->f_path)) {
-        char *fullpath =
-            vfs_path_to_string(&fd->f_path, task_fs_root_path(task));
-        if (fullpath)
-            return fullpath;
-    }
+    fullpath = procfs_path_to_task_view(task, &fd->f_path);
+    if (fullpath)
+        return fullpath;
 
     if (fd->f_inode->i_sb && fd->f_inode->i_sb->s_type)
         fs_name = fd->f_inode->i_sb->s_type->name;
@@ -1080,8 +1122,21 @@ static struct vfs_file_system_type procfs_fs_type = {
 
 ssize_t proc_root_readlink(proc_handle_t *handle, void *addr, size_t offset,
                            size_t size) {
-    (void)handle;
-    return procfs_copy_string("/", addr, offset, size);
+    task_t *task;
+    char *fullpath;
+    ssize_t ret;
+
+    task = handle && handle->task ? handle->task : current_task;
+    if (!task)
+        return -ENOENT;
+
+    fullpath = procfs_path_to_task_view(task, task_fs_root_path(task));
+    if (!fullpath)
+        return -ENOMEM;
+
+    ret = procfs_copy_string(fullpath, addr, offset, size);
+    free(fullpath);
+    return ret;
 }
 
 ssize_t proc_exe_readlink(proc_handle_t *handle, void *addr, size_t offset,

@@ -1,3 +1,3 @@
 #pragma once
 
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>

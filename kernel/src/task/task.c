@@ -4,7 +4,7 @@
 #include <task/task.h>
 #include <task/futex.h>
 #include <task/sched.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <fs/vfs/vfs.h>
 #include <fs/fs_syscall.h>
 #include <arch/arch.h>

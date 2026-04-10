@@ -1,4 +1,5 @@
 #include <boot/boot.h>
+#include <limine.h>
 #include <acpi/uacpi/acpi.h>
 #include <mm/hhdm.h>
 

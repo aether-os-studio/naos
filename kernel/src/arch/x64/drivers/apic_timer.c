@@ -1,4 +1,4 @@
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <arch/x64/drivers/apic_timer.h>
 #include <irq/irq_manager.h>
 #include <arch/arch.h>

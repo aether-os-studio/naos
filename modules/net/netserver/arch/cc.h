@@ -1,7 +1,7 @@
 #pragma once
 
 #include <arch/arch.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <libs/klibc.h>
 
 typedef uint8_t u8_t;

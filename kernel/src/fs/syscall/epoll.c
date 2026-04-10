@@ -512,7 +512,9 @@ static uint64_t do_epoll_wait(struct vfs_file *epoll_file,
         if (block_reason == ETIMEDOUT) {
             if (infinite_timeout)
                 continue;
-            break;
+            if ((nano_time() - start) >= (uint64_t)timeout_ns)
+                break;
+            continue;
         }
         if (block_reason != EOK) {
             ready = -EINTR;

@@ -18,7 +18,7 @@ enum device_subtype_t {
     DEV_PART = 8,    // 磁盘分区
     DEV_SOUND = 116, // 声卡 / ALSA
     DEV_INPUT = 13,  // 输入设备
-    DEV_FB,          // 帧缓冲
+    DEV_FB = 29,     // 帧缓冲
     DEV_DISK,        // 磁盘
     DEV_NETIF,       // 网卡
     DEV_SYSDEV,      // 系统设备

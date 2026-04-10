@@ -1,5 +1,5 @@
 #include <mm/mm.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <drivers/bus/pci.h>
 #include <uacpi/acpi.h>
 #include <uacpi/tables.h>

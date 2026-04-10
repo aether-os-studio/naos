@@ -5,7 +5,7 @@
 #include <task/task.h>
 #include <fs/fs_syscall.h>
 #include <fs/vfs/vfs.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <net/netlink.h>
 
 #define SOCKET_MMSG_VLEN_MAX 1024U

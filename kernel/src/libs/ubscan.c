@@ -1,6 +1,6 @@
 #include <libs/klibc.h>
 #include <arch/arch.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 
 #define CRGB(r, g, b) "\033[38;2;" #r ";" #g ";" #b "m"
 #define CBRGB(r, g, b) "\033[48;2;" #r ";" #g ";" #b "m"

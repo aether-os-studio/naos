@@ -1,6 +1,6 @@
 #include <arch/x64/time/time.h>
 #include <arch/x64/io.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 
 #define CMOS_ADDR 0x70 // CMOS 地址寄存器
 #define CMOS_DATA 0x71 // CMOS 数据寄存器

@@ -1,7 +1,7 @@
 #include <dev/input.h>
 #include <fs/dev.h>
 #include <fs/sys.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <mm/mm.h>
 
 static int eventn = 0;

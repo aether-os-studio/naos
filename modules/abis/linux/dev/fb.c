@@ -1,5 +1,5 @@
 #include <dev/fb.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <mod/dlinker.h>
 #include <fs/dev.h>
 #include <arch/arch.h>

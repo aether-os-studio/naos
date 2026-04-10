@@ -1,4 +1,4 @@
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <mm/mm.h>
 #include <arch/arch.h>
 #include <uacpi/acpi.h>

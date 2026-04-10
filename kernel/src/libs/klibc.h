@@ -6,9 +6,8 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <limits.h>
-#include <limine.h>
 
-#include "errno.h"
+#include <libs/errno.h>
 
 #include "endian.h"
 

@@ -1,6 +1,6 @@
 #include <libs/klibc.h>
 #include <task/task.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <arch/arch.h>
 #include <mm/vma.h>
 #include <mm/fault.h>

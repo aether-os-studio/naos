@@ -7,7 +7,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 
 spinlock_t frame_op_lock = SPIN_INIT;
 

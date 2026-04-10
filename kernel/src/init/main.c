@@ -1,6 +1,6 @@
 #include <libs/klibc.h>
 #include <boot/boot.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <mm/mm.h>
 #include <mm/heap.h>
 #include <arch/arch.h>

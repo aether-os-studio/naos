@@ -1,7 +1,7 @@
 #include <drivers/smbios.h>
 
 #include <boot/boot.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <mm/mm.h>
 
 #define SMBIOS_MAX_TABLE_BYTES (16u * 1024u * 1024u)

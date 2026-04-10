@@ -2,7 +2,7 @@
 #include <boot/boot.h>
 #include <net/net_syscall.h>
 #include <arch/arch.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <fs/fs_syscall.h>
 #include <fs/vfs/vfs.h>
 #include <fs/proc.h>
@@ -418,6 +418,8 @@ static socket_t *unix_socket_lookup_bound_locked(const char *name, size_t len,
         if (sock != skip && sock->bindHash == hash && sock->bindAddr &&
             sock->bindAddrLen == len &&
             memcmp(sock->bindAddr, name, len) == 0) {
+            if (take_node_ref && sock->node && !vfs_igrab(sock->node))
+                return NULL;
             return sock;
         }
         sock = sock->bind_next;
@@ -438,7 +440,8 @@ static socket_t *unix_socket_lookup_bound(const char *name, size_t len,
 }
 
 static inline void unix_socket_release_lookup_ref(socket_t *sock) {
-    (void)sock;
+    if (sock && sock->node)
+        vfs_iput(sock->node);
 }
 
 static int unix_socket_missing_peer_error(const char *safe, bool is_dgram) {

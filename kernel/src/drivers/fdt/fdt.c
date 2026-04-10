@@ -1,5 +1,5 @@
 #include <boot/boot.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <drivers/fdt/fdt.h>
 #include <mm/mm.h>
 #include <drivers/fdt/fdt.h>

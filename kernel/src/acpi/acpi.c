@@ -1,5 +1,5 @@
 #include <libs/klibc.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <uacpi/uacpi.h>
 #include <uacpi/utilities.h>
 #include <arch/arch.h>

@@ -16,6 +16,23 @@ static inline bool vfs_has_remaining_components(const char *rest) {
     return false;
 }
 
+static bool vfs_mount_is_same_or_descendant(const struct vfs_mount *root,
+                                            const struct vfs_mount *mnt) {
+    const struct vfs_mount *cursor;
+
+    if (!root || !mnt)
+        return false;
+
+    for (cursor = mnt; cursor; cursor = cursor->mnt_parent) {
+        if (cursor == root)
+            return true;
+        if (!cursor->mnt_parent || cursor->mnt_parent == cursor)
+            break;
+    }
+
+    return false;
+}
+
 static void vfs_path_replace(struct vfs_path *dst, struct vfs_mount *mnt,
                              struct vfs_dentry *dentry) {
     if (!dst)
@@ -29,6 +46,9 @@ static int vfs_get_fs_start(int dfd, const char *name, struct vfs_path *start,
                             struct vfs_path *root) {
     struct vfs_process_fs *fs;
     struct vfs_file *file;
+    struct vfs_mount *ns_root_mnt;
+    bool root_valid;
+    bool pwd_valid;
 
     if (!start || !root)
         return -EINVAL;
@@ -36,6 +56,7 @@ static int vfs_get_fs_start(int dfd, const char *name, struct vfs_path *start,
     memset(root, 0, sizeof(*root));
 
     fs = task_current_vfs_fs();
+    ns_root_mnt = current_task ? task_mount_namespace_root(current_task) : NULL;
     if (!fs) {
         if (!vfs_root_path.mnt || !vfs_root_path.dentry)
             return -ENOENT;
@@ -62,8 +83,22 @@ static int vfs_get_fs_start(int dfd, const char *name, struct vfs_path *start,
         return -EBADF;
     }
 
-    vfs_path_get(&fs->root);
-    *root = fs->root;
+    root_valid = fs->root.mnt && fs->root.dentry &&
+                 (!ns_root_mnt || !ns_root_mnt->mnt_root ||
+                  vfs_mount_is_same_or_descendant(ns_root_mnt, fs->root.mnt));
+    if (root_valid) {
+        vfs_path_get(&fs->root);
+        *root = fs->root;
+    } else if (ns_root_mnt && ns_root_mnt->mnt_root) {
+        root->mnt = vfs_mntget(ns_root_mnt);
+        root->dentry = vfs_dget(ns_root_mnt->mnt_root);
+    } else if (vfs_root_path.mnt && vfs_root_path.dentry) {
+        vfs_path_get(&vfs_root_path);
+        *root = vfs_root_path;
+    } else {
+        return -ENOENT;
+    }
+
     while (root->dentry) {
         struct vfs_mount *mounted = vfs_child_mount_at(root->mnt, root->dentry);
         if (!mounted)
@@ -83,8 +118,16 @@ static int vfs_get_fs_start(int dfd, const char *name, struct vfs_path *start,
     }
 
     if (dfd == AT_FDCWD) {
-        vfs_path_get(&fs->pwd);
-        *start = fs->pwd;
+        pwd_valid = fs->pwd.mnt && fs->pwd.dentry &&
+                    (!ns_root_mnt || !ns_root_mnt->mnt_root ||
+                     vfs_mount_is_same_or_descendant(ns_root_mnt, fs->pwd.mnt));
+        if (pwd_valid) {
+            vfs_path_get(&fs->pwd);
+            *start = fs->pwd;
+        } else {
+            vfs_path_get(root);
+            *start = *root;
+        }
         return 0;
     }
 

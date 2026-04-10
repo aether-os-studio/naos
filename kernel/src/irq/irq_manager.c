@@ -1,5 +1,5 @@
 #include <irq/irq_manager.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <arch/arch.h>
 #include <task/task.h>
 #include <mm/bitmap.h>

@@ -2,7 +2,7 @@
 
 #include <arch/x64/syscall/nr.h>
 #include <arch/x64/irq/gate.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <libs/klibc.h>
 
 struct timespec {

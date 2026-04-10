@@ -1,6 +1,6 @@
 #pragma once
 
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <libs/klibc.h>
 #include <arch/aarch64/syscall/nr.h>
 

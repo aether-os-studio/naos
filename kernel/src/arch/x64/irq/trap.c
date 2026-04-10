@@ -1,7 +1,7 @@
 #include <arch/arch.h>
 #include <stdarg.h>
 #include <mm/mm.h>
-#include <drivers/kernel_logger.h>
+#include <drivers/logger.h>
 #include <drivers/tty.h>
 #include <task/task.h>
 #include <mod/dlinker.h>

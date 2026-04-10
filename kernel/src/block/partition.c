@@ -2,7 +2,7 @@
 #include "dev/device.h"
 #include "block/partition.h"
 #include "block/block.h"
-#include "drivers/kernel_logger.h"
+#include "drivers/logger.h"
 #include "arch/arch.h"
 
 partition_t partitions[MAX_PARTITIONS_NUM] = {0};
