@@ -366,6 +366,78 @@ uint64_t sys_uname(uint64_t arg1) {
 
 uint64_t sys_eventfd(uint64_t arg1) { return sys_eventfd2(arg1, 0); }
 
+#define LINUX_KCMP_FILE 0
+#define LINUX_KCMP_VM 1
+#define LINUX_KCMP_FILES 2
+#define LINUX_KCMP_FS 3
+#define LINUX_KCMP_SIGHAND 4
+#define LINUX_KCMP_IO 5
+#define LINUX_KCMP_SYSVSEM 6
+#define LINUX_KCMP_EPOLL_TFD 7
+
+static int linux_kcmp_ptrs(const void *left, const void *right) {
+    uintptr_t lhs = (uintptr_t)left;
+    uintptr_t rhs = (uintptr_t)right;
+
+    if (lhs == rhs)
+        return 0;
+    return lhs < rhs ? -1 : 1;
+}
+
+static uint64_t sys_kcmp(uint64_t pid1, uint64_t pid2, int type, uint64_t idx1,
+                         uint64_t idx2) {
+    task_t *task1;
+    task_t *task2;
+
+    task1 = task_find_by_pid(pid1);
+    task2 = task_find_by_pid(pid2);
+    if (!task1 || !task2)
+        return (uint64_t)-ESRCH;
+
+    switch (type) {
+    case LINUX_KCMP_FILE: {
+        fd_t *file1 = task_get_file(task1, (int)idx1);
+        fd_t *file2 = task_get_file(task2, (int)idx2);
+        int ret;
+
+        if (!file1 || !file2) {
+            if (file1)
+                vfs_file_put(file1);
+            if (file2)
+                vfs_file_put(file2);
+            return (uint64_t)-EBADF;
+        }
+
+        ret = linux_kcmp_ptrs(file1, file2);
+        vfs_file_put(file1);
+        vfs_file_put(file2);
+        return (uint64_t)ret;
+    }
+    case LINUX_KCMP_VM:
+        return (uint64_t)linux_kcmp_ptrs(task1->mm, task2->mm);
+    case LINUX_KCMP_FILES:
+        return (uint64_t)linux_kcmp_ptrs(task1->fd_info, task2->fd_info);
+    case LINUX_KCMP_FS:
+        return (uint64_t)linux_kcmp_ptrs(task1->fs, task2->fs);
+    case LINUX_KCMP_SIGHAND:
+        return (uint64_t)linux_kcmp_ptrs(
+            task1->signal ? task1->signal->sighand : NULL,
+            task2->signal ? task2->signal->sighand : NULL);
+    case LINUX_KCMP_IO:
+    case LINUX_KCMP_SYSVSEM:
+    case LINUX_KCMP_EPOLL_TFD:
+        printk("sys_kcmp: unsupported type=%d pid1=%lu pid2=%lu idx1=%lu "
+               "idx2=%lu\n",
+               type, pid1, pid2, idx1, idx2);
+        return (uint64_t)-EOPNOTSUPP;
+    default:
+        printk(
+            "sys_kcmp: unknown type=%d pid1=%lu pid2=%lu idx1=%lu idx2=%lu\n",
+            type, pid1, pid2, idx1, idx2);
+        return (uint64_t)-EINVAL;
+    }
+}
+
 extern void sysfs_init();
 extern void fsfdfs_init();
 extern void cgroupfs_init();
@@ -756,7 +828,7 @@ void x64_register_syscalls() {
     regist_syscall_handler(SYS_PRCTL, (syscall_handle_t)sys_prctl);
     regist_syscall_handler(SYS_ARCH_PRCTL, (syscall_handle_t)sys_arch_prctl);
     // regist_syscall_handler(SYS_ADJTIMEX, (syscall_handle_t)sys_adjtimex);
-    // regist_syscall_handler(SYS_SETRLIMIT, (syscall_handle_t)sys_setrlimit);
+    regist_syscall_handler(SYS_SETRLIMIT, (syscall_handle_t)sys_set_rlimit);
     regist_syscall_handler(SYS_CHROOT, (syscall_handle_t)sys_chroot);
     regist_syscall_handler(SYS_SYNC, (syscall_handle_t)dummy_syscall_handler);
     // regist_syscall_handler(SYS_ACCT, (syscall_handle_t)sys_acct);
@@ -990,7 +1062,7 @@ void x64_register_syscalls() {
     // (syscall_handle_t)sys_process_vm_readv);
     // regist_syscall_handler(SYS_PROCESS_VM_WRITEV,
     // (syscall_handle_t)sys_process_vm_writev);
-    // regist_syscall_handler(SYS_KCMP, (syscall_handle_t)sys_kcmp);
+    regist_syscall_handler(SYS_KCMP, (syscall_handle_t)sys_kcmp);
     // regist_syscall_handler(SYS_FINIT_MODULE,
     // (syscall_handle_t)sys_finit_module);
     // regist_syscall_handler(SYS_SCHED_SETATTR,
@@ -1229,7 +1301,7 @@ void aarch64_register_syscalls() {
     // (syscall_handle_t)sys__sysctl);
     regist_syscall_handler(SYS_PRCTL, (syscall_handle_t)sys_prctl);
     // regist_syscall_handler(SYS_ADJTIMEX, (syscall_handle_t)sys_adjtimex);
-    // regist_syscall_handler(SYS_SETRLIMIT, (syscall_handle_t)sys_setrlimit);
+    regist_syscall_handler(SYS_SETRLIMIT, (syscall_handle_t)sys_set_rlimit);
     regist_syscall_handler(SYS_CHROOT, (syscall_handle_t)sys_chroot);
     regist_syscall_handler(SYS_SYNC, (syscall_handle_t)dummy_syscall_handler);
     // regist_syscall_handler(SYS_ACCT, (syscall_handle_t)sys_acct);
@@ -1453,7 +1525,7 @@ void aarch64_register_syscalls() {
     // (syscall_handle_t)sys_process_vm_readv);
     // regist_syscall_handler(SYS_PROCESS_VM_WRITEV,
     // (syscall_handle_t)sys_process_vm_writev);
-    // regist_syscall_handler(SYS_KCMP, (syscall_handle_t)sys_kcmp);
+    regist_syscall_handler(SYS_KCMP, (syscall_handle_t)sys_kcmp);
     // regist_syscall_handler(SYS_FINIT_MODULE,
     // (syscall_handle_t)sys_finit_module);
     // regist_syscall_handler(SYS_SCHED_SETATTR,

@@ -521,6 +521,7 @@ uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname, struct stat *buf,
 uint64_t sys_statx(uint64_t dirfd, const char *pathname, uint64_t flags,
                    uint64_t mask, struct statx *buf);
 
+uint64_t sys_set_rlimit(uint64_t resource, const struct rlimit *lim);
 uint64_t sys_get_rlimit(uint64_t resource, struct rlimit *lim);
 uint64_t sys_prlimit64(uint64_t pid, int resource,
                        const struct rlimit *new_rlim, struct rlimit *old_rlim);
