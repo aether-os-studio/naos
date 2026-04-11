@@ -24,11 +24,12 @@ void arch_early_init() {
     smp_init();
 
     fsgsbase_init();
-
-    syscall_handler_init();
 }
 
-void arch_init() { syscall_init(); }
+void arch_init() {
+    syscall_init();
+    syscall_handler_init();
+}
 
 void arch_init_after_thread() {}
 

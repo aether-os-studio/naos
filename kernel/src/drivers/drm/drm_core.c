@@ -1,6 +1,6 @@
-#include <dev/drm/drm.h>
-#include <dev/drm/drm_core.h>
-#include <dev/drm/drm_ioctl.h>
+#include <drivers/drm/drm.h>
+#include <drivers/drm/drm_core.h>
+#include <drivers/drm/drm_ioctl.h>
 #include <mm/mm.h>
 
 // Utility function to find a free slot in an array

@@ -22,6 +22,8 @@ void cpu_init() {
                      : "x0");
 }
 
+extern void syscall_handler_init();
+
 void arch_init() {
     gic_init();
     gic_ipi_init();
@@ -31,6 +33,8 @@ void arch_init() {
     cpu_init();
 
     timer_init_percpu();
+
+    syscall_handler_init();
 }
 
 void arch_init_after_thread() { pci_brcmstb_init(); }

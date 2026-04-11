@@ -1,4 +1,4 @@
-#include <dev/pty.h>
+#include <drivers/pty.h>
 #include <task/task.h>
 #include <fs/vfs/vfs.h>
 #include <init/callbacks.h>

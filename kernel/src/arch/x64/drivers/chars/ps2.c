@@ -1,10 +1,10 @@
 #include <arch/arch.h>
 #include <irq/irq_manager.h>
 #include <libs/keys.h>
-#include <init/abis.h>
 #include <boot/boot.h>
 #include <fs/vfs/vfs.h>
-#include <linuxabi.h>
+#include <fs/dev.h>
+#include <drivers/input.h>
 
 static struct {
     ps2_keyboard_callback_t keyboard_callback;
@@ -259,7 +259,7 @@ dev_input_event_t *ps2_kb_input_event = NULL;
 dev_input_event_t *ps2_mouse_input_event = NULL;
 
 void ps2_keyboard_callback(ps2_keyboard_event_t event) {
-    if (!system_abi || !system_abi->input_generate_event || !ps2_kb_input_event)
+    if (!ps2_kb_input_event)
         return;
 
     struct timespec now;
@@ -271,16 +271,14 @@ void ps2_keyboard_callback(ps2_keyboard_event_t event) {
     if (!code)
         return;
 
-    system_abi->input_generate_event(ps2_kb_input_event, EV_KEY, code,
-                                     event.pressed ? 1 : 0, now.tv_sec,
-                                     now.tv_nsec / 1000);
-    system_abi->input_generate_event(ps2_kb_input_event, EV_SYN, SYN_REPORT, 0,
-                                     now.tv_sec, now.tv_nsec / 1000);
+    input_generate_event(ps2_kb_input_event, EV_KEY, code,
+                         event.pressed ? 1 : 0, now.tv_sec, now.tv_nsec / 1000);
+    input_generate_event(ps2_kb_input_event, EV_SYN, SYN_REPORT, 0, now.tv_sec,
+                         now.tv_nsec / 1000);
 }
 
 void ps2_mouse_callback(ps2_mouse_event_t event) {
-    if (!system_abi || !system_abi->input_generate_event ||
-        !ps2_mouse_input_event)
+    if (!ps2_mouse_input_event)
         return;
 
     struct timespec now;
@@ -290,50 +288,46 @@ void ps2_mouse_callback(ps2_mouse_event_t event) {
     bool emitted = false;
 
     if (event.x) {
-        system_abi->input_generate_event(ps2_mouse_input_event, EV_REL, REL_X,
-                                         event.x, now.tv_sec,
-                                         now.tv_nsec / 1000);
+        input_generate_event(ps2_mouse_input_event, EV_REL, REL_X, event.x,
+                             now.tv_sec, now.tv_nsec / 1000);
         emitted = true;
     }
     if (event.y) {
-        system_abi->input_generate_event(ps2_mouse_input_event, EV_REL, REL_Y,
-                                         event.y, now.tv_sec,
-                                         now.tv_nsec / 1000);
+        input_generate_event(ps2_mouse_input_event, EV_REL, REL_Y, event.y,
+                             now.tv_sec, now.tv_nsec / 1000);
         emitted = true;
     }
     if (event.z) {
-        system_abi->input_generate_event(ps2_mouse_input_event, EV_REL,
-                                         REL_WHEEL, -event.z, now.tv_sec,
-                                         now.tv_nsec / 1000);
+        input_generate_event(ps2_mouse_input_event, EV_REL, REL_WHEEL, -event.z,
+                             now.tv_sec, now.tv_nsec / 1000);
         emitted = true;
     }
 
     if (ps2_state.mouse_left_pressed != event.left_button) {
         ps2_state.mouse_left_pressed = event.left_button;
-        system_abi->input_generate_event(ps2_mouse_input_event, EV_KEY,
-                                         BTN_LEFT, event.left_button ? 1 : 0,
-                                         now.tv_sec, now.tv_nsec / 1000);
+        input_generate_event(ps2_mouse_input_event, EV_KEY, BTN_LEFT,
+                             event.left_button ? 1 : 0, now.tv_sec,
+                             now.tv_nsec / 1000);
         emitted = true;
     }
     if (ps2_state.mouse_right_pressed != event.right_button) {
         ps2_state.mouse_right_pressed = event.right_button;
-        system_abi->input_generate_event(ps2_mouse_input_event, EV_KEY,
-                                         BTN_RIGHT, event.right_button ? 1 : 0,
-                                         now.tv_sec, now.tv_nsec / 1000);
+        input_generate_event(ps2_mouse_input_event, EV_KEY, BTN_RIGHT,
+                             event.right_button ? 1 : 0, now.tv_sec,
+                             now.tv_nsec / 1000);
         emitted = true;
     }
     if (ps2_state.mouse_middle_pressed != event.middle_button) {
         ps2_state.mouse_middle_pressed = event.middle_button;
-        system_abi->input_generate_event(
-            ps2_mouse_input_event, EV_KEY, BTN_MIDDLE,
-            event.middle_button ? 1 : 0, now.tv_sec, now.tv_nsec / 1000);
+        input_generate_event(ps2_mouse_input_event, EV_KEY, BTN_MIDDLE,
+                             event.middle_button ? 1 : 0, now.tv_sec,
+                             now.tv_nsec / 1000);
         emitted = true;
     }
 
     if (emitted) {
-        system_abi->input_generate_event(ps2_mouse_input_event, EV_SYN,
-                                         SYN_REPORT, 0, now.tv_sec,
-                                         now.tv_nsec / 1000);
+        input_generate_event(ps2_mouse_input_event, EV_SYN, SYN_REPORT, 0,
+                             now.tv_sec, now.tv_nsec / 1000);
     }
 }
 
@@ -434,13 +428,13 @@ bool ps2_keyboard_init(void) {
 
     ps2_keyboard_set_callback(ps2_keyboard_callback);
 
-    regist_input_dev_arg_t arg = {0};
+    input_dev_desc_t arg = {0};
     arg.uevent_append = "ID_INPUT_KEYBOARD=1";
     arg.from = INPUT_FROM_PS2;
     input_dev_desc_set_event(&arg, EV_REP);
     for (int i = KEY_ESC; i <= KEY_MENU; i++)
         input_dev_desc_set_key(&arg, i);
-    ps2_kb_input_event = system_abi->regist_input_dev("ps2kbd", &arg);
+    ps2_kb_input_event = regist_input_dev("ps2kbd", &arg);
 
     irq_regist_irq(
         PS2_KBD_INTERRUPT_VECTOR,
@@ -496,7 +490,7 @@ bool ps2_mouse_init(void) {
 
     ps2_mouse_set_callback(ps2_mouse_callback);
 
-    regist_input_dev_arg_t arg = {0};
+    input_dev_desc_t arg = {0};
     arg.uevent_append = "ID_INPUT_MOUSE=1";
     arg.from = INPUT_FROM_PS2;
     input_dev_desc_set_property(&arg, INPUT_PROP_POINTER);
@@ -506,7 +500,7 @@ bool ps2_mouse_init(void) {
     input_dev_desc_set_rel(&arg, REL_X);
     input_dev_desc_set_rel(&arg, REL_Y);
     input_dev_desc_set_rel(&arg, REL_WHEEL);
-    ps2_mouse_input_event = system_abi->regist_input_dev("ps2mouse", &arg);
+    ps2_mouse_input_event = regist_input_dev("ps2mouse", &arg);
 
     irq_regist_irq(
         PS2_MOUSE_INTERRUPT_VECTOR,

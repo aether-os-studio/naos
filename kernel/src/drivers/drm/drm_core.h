@@ -1,7 +1,7 @@
 #pragma once
 
 #include <libs/klibc.h>
-#include <dev/drm/drm_mode.h>
+#include <drivers/drm/drm_mode.h>
 
 struct drm_device;
 typedef struct drm_device drm_device_t;

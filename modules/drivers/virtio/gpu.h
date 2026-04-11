@@ -2,10 +2,10 @@
 
 #include "virtio.h"
 #include "queue.h"
-#include <dev/drm/drm.h>
+#include <drivers/drm/drm.h>
 #include <mm/mm.h>
-#include <dev/drm/drm_core.h>
-#include <dev/drm/drm_mode.h>
+#include <drivers/drm/drm_core.h>
+#include <drivers/drm/drm_mode.h>
 #include <libs/mutex.h>
 
 // Virtio GPU features

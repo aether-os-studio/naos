@@ -27,6 +27,9 @@ typedef struct procfs_inode_info {
     procfs_inode_kind_t kind;
     uint64_t task_pid;
     int fd_num;
+    uint64_t ns_type;
+    task_mount_namespace_t *mnt_ns;
+    task_user_namespace_t *user_ns;
     char *dispatch_name;
     char *link_target;
 } procfs_inode_info_t;
@@ -141,6 +144,10 @@ static void procfs_evict_inode(struct vfs_inode *inode) {
         return;
     free(info->dispatch_name);
     free(info->link_target);
+    task_mount_namespace_put(info->mnt_ns);
+    task_user_namespace_put(info->user_ns);
+    info->mnt_ns = NULL;
+    info->user_ns = NULL;
     info->dispatch_name = NULL;
     info->link_target = NULL;
 }
@@ -225,11 +232,45 @@ static vfs_node_t *procfs_new_ns_inode(struct vfs_super_block *sb, task_t *task,
     if (!inode)
         return NULL;
 
+    procfs_i(inode)->ns_type = is_user_ns ? CLONE_NEWUSER : CLONE_NEWNS;
+    if (is_user_ns) {
+        procfs_i(inode)->user_ns =
+            task && task->nsproxy ? task->nsproxy->user_ns : NULL;
+        task_user_namespace_get(procfs_i(inode)->user_ns);
+    } else {
+        procfs_i(inode)->mnt_ns =
+            task && task->nsproxy ? task->nsproxy->mnt_ns : NULL;
+        task_mount_namespace_get(procfs_i(inode)->mnt_ns);
+    }
+
     if (ns_inum) {
         inode->i_ino = ns_inum;
         inode->inode = ns_inum;
     }
     return inode;
+}
+
+int procfs_nsfd_identify(struct vfs_file *file, uint64_t *nstype_out,
+                         task_mount_namespace_t **mnt_ns_out,
+                         task_user_namespace_t **user_ns_out) {
+    procfs_inode_info_t *info;
+
+    if (!file || !file->f_inode || !file->f_inode->i_sb ||
+        file->f_inode->i_sb->s_magic != PROCFS_MAGIC) {
+        return -EINVAL;
+    }
+
+    info = procfs_i(file->f_inode);
+    if (!info || info->kind != PROCFS_INO_NS_HANDLE || info->ns_type == 0)
+        return -EINVAL;
+
+    if (nstype_out)
+        *nstype_out = info->ns_type;
+    if (mnt_ns_out)
+        *mnt_ns_out = info->mnt_ns;
+    if (user_ns_out)
+        *user_ns_out = info->user_ns;
+    return 0;
 }
 
 static vfs_node_t *procfs_lookup_path(const char *path) {

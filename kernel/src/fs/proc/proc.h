@@ -2,6 +2,7 @@
 
 #include <fs/vfs/vfs.h>
 #include <task/task.h>
+#include <task/ns.h>
 
 #define MAX_PID_NAME_LEN 8
 
@@ -166,3 +167,6 @@ void procfs_on_open_file(task_t *task, int fd);
 void procfs_on_close_file(task_t *task, int fd);
 void procfs_on_exit_task(task_t *task);
 void proc_init();
+int procfs_nsfd_identify(struct vfs_file *file, uint64_t *nstype_out,
+                         task_mount_namespace_t **mnt_ns_out,
+                         task_user_namespace_t **user_ns_out);

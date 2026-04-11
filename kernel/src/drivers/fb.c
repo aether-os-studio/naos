@@ -1,4 +1,4 @@
-#include <dev/fb.h>
+#include <drivers/fb.h>
 #include <drivers/logger.h>
 #include <mod/dlinker.h>
 #include <fs/dev.h>

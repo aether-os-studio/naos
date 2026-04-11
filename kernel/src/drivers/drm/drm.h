@@ -1,7 +1,7 @@
 #pragma once
 
-#include <dev/drm/drm_core.h>
-#include <dev/drm/drm_mode.h>
+#include <drivers/drm/drm_core.h>
+#include <drivers/drm/drm_mode.h>
 #include <drivers/bus/pci.h>
 
 #define HZ 60
@@ -1490,8 +1490,8 @@ static inline bool drm_data_is_render_node(void *data) {
     return node && node->type == DRM_MINOR_RENDER;
 }
 
-#include <dev/drm/drm_core.h>
-#include <dev/drm/drm_ioctl.h>
+#include <drivers/drm/drm_core.h>
+#include <drivers/drm/drm_ioctl.h>
 
 /* Core driver functions */
 drm_device_t *drm_regist_pci_dev(void *data, drm_device_op_t *op,

@@ -1442,6 +1442,48 @@ void vfs_put_mount_tree(struct vfs_mount *root) {
     vfs_mntput(root);
 }
 
+int vfs_pivot_root_mounts(struct vfs_mount *old_root,
+                          struct vfs_mount *new_root,
+                          const struct vfs_path *put_old) {
+    struct vfs_mount *new_root_parent;
+    struct vfs_dentry *new_root_mountpoint;
+    int ret;
+
+    if (!old_root || !new_root || !put_old || !put_old->mnt ||
+        !put_old->dentry) {
+        return -EINVAL;
+    }
+
+    if (old_root == new_root)
+        return -EBUSY;
+    if (!vfs_mount_is_same_or_descendant(new_root, put_old->mnt))
+        return -EINVAL;
+    if (new_root->mnt_parent == new_root || !new_root->mnt_mountpoint)
+        return -EINVAL;
+
+    new_root_parent = new_root->mnt_parent;
+    new_root_mountpoint = vfs_dget(new_root->mnt_mountpoint);
+    if (!new_root_mountpoint)
+        return -ENOMEM;
+
+    mutex_lock(&vfs_mount_lock);
+
+    vfs_mount_detach_locked(new_root, false);
+    ret =
+        vfs_mount_attach_locked(put_old->mnt, put_old->dentry, old_root, false);
+    if (ret < 0) {
+        (void)vfs_mount_attach_locked(new_root_parent, new_root_mountpoint,
+                                      new_root, false);
+        mutex_unlock(&vfs_mount_lock);
+        vfs_dput(new_root_mountpoint);
+        return ret;
+    }
+
+    mutex_unlock(&vfs_mount_lock);
+    vfs_dput(new_root_mountpoint);
+    return 0;
+}
+
 int vfs_reconfigure_mount(struct vfs_mount *mnt, const struct vfs_path *to_path,
                           bool detached) {
     struct vfs_mount *old_parent = NULL;

@@ -1,4 +1,3 @@
-#include <init/abis.h>
 #include <init/callbacks.h>
 #include <fs/fs_syscall.h>
 #include <boot/boot.h>
@@ -1882,6 +1881,95 @@ uint64_t sys_chdir(const char *dname) {
     ret = task_fs_chdir(current_task, &path);
     vfs_path_put(&path);
     return ret;
+}
+
+uint64_t sys_pivot_root(const char *new_root_user, const char *put_old_user) {
+    char new_root_name[VFS_PATH_MAX];
+    char put_old_name[VFS_PATH_MAX];
+    struct vfs_path old_root = {0};
+    struct vfs_path new_root = {0};
+    struct vfs_path put_old = {0};
+    int ret;
+
+    if (!new_root_user || !put_old_user || !current_task)
+        return (uint64_t)-EINVAL;
+    if (copy_from_user_str(new_root_name, new_root_user, sizeof(new_root_name)))
+        return (uint64_t)-EFAULT;
+    if (copy_from_user_str(put_old_name, put_old_user, sizeof(put_old_name)))
+        return (uint64_t)-EFAULT;
+
+    old_root = *task_fs_root_path(current_task);
+    if (!old_root.mnt || !old_root.dentry)
+        return (uint64_t)-EINVAL;
+    vfs_path_get(&old_root);
+
+    ret =
+        vfs_filename_lookup(AT_FDCWD, new_root_name, LOOKUP_FOLLOW, &new_root);
+    if (ret < 0)
+        goto out;
+
+    ret = vfs_filename_lookup(AT_FDCWD, put_old_name,
+                              LOOKUP_FOLLOW | LOOKUP_NO_LAST_MOUNT, &put_old);
+    if (ret < 0)
+        goto out;
+
+    if (!old_root.dentry->d_inode || !new_root.dentry ||
+        !new_root.dentry->d_inode || !put_old.dentry ||
+        !put_old.dentry->d_inode) {
+        ret = -ENOENT;
+        goto out;
+    }
+    if (!S_ISDIR(new_root.dentry->d_inode->i_mode) ||
+        !S_ISDIR(put_old.dentry->d_inode->i_mode)) {
+        ret = -ENOTDIR;
+        goto out;
+    }
+
+    if (old_root.dentry != old_root.mnt->mnt_root) {
+        ret = -EINVAL;
+        goto out;
+    }
+    if (task_mount_namespace_root(current_task) != old_root.mnt ||
+        old_root.mnt->mnt_parent != old_root.mnt) {
+        ret = -EINVAL;
+        goto out;
+    }
+    if (new_root.dentry != new_root.mnt->mnt_root) {
+        ret = -EINVAL;
+        goto out;
+    }
+    if (!vfs_path_is_ancestor(&old_root, &new_root) ||
+        !vfs_path_is_ancestor(&old_root, &put_old) ||
+        !vfs_path_is_ancestor(&new_root, &put_old)) {
+        ret = -EINVAL;
+        goto out;
+    }
+    if (new_root.mnt == old_root.mnt || put_old.mnt == old_root.mnt) {
+        ret = -EBUSY;
+        goto out;
+    }
+    if (new_root.mnt->mnt_parent && new_root.mnt->mnt_parent != new_root.mnt &&
+        vfs_mount_is_shared(new_root.mnt->mnt_parent)) {
+        ret = -EINVAL;
+        goto out;
+    }
+    if (old_root.mnt->mnt_parent && old_root.mnt->mnt_parent != old_root.mnt &&
+        vfs_mount_is_shared(old_root.mnt->mnt_parent)) {
+        ret = -EINVAL;
+        goto out;
+    }
+
+    ret = vfs_pivot_root_mounts(old_root.mnt, new_root.mnt, &put_old);
+    if (ret < 0)
+        goto out;
+
+    ret = task_mount_namespace_pivot_root(current_task, &old_root, &new_root);
+
+out:
+    vfs_path_put(&put_old);
+    vfs_path_put(&new_root);
+    vfs_path_put(&old_root);
+    return ret < 0 ? (uint64_t)ret : 0;
 }
 
 uint64_t sys_chroot(const char *dname) {

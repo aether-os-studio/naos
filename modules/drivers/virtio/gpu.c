@@ -2,8 +2,8 @@
 #include "gpu.h"
 #include "pci.h"
 #include <fs/fs_syscall.h>
-#include <dev/drm/drm.h>
-#include <dev/drm/drm_ioctl.h>
+#include <drivers/drm/drm.h>
+#include <drivers/drm/drm_ioctl.h>
 #include <mm/mm.h>
 #include <libs/klibc.h>
 #include <task/task.h>

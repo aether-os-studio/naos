@@ -1,7 +1,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <task/signal.h>
-#include <fs/vfs/pipe.h>
+#include <fs/pipe.h>
 #include <fs/vfs/vfs.h>
 #include <init/callbacks.h>
 

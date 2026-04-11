@@ -2,8 +2,7 @@ GLOBAL_CFLAGS := -fno-stack-protector -Wno-address-of-packed-member -fPIC -fno-b
                     -I$(CURDIR)/ \
                     -I$(CURDIR)/../kernel/src \
                     -I$(CURDIR)/../kernel/src/libs/fdt \
-                    -I$(CURDIR)/../kernel/freestnd-c-hdrs \
-                    -I$(CURDIR)/abis/$(SYSTEM_ABI)
+                    -I$(CURDIR)/../kernel/freestnd-c-hdrs
 
 ifeq ($(BUILD_MODE), debug)
 CFLAGS := -g3 -O0 $(GLOBAL_CFLAGS)
@@ -84,7 +83,6 @@ endif
 all:
 	mkdir -p $(PROJECT_ROOT)/modules-$(ARCH)
 
-	$(MAKE) -C abis
 	$(MAKE) -C drivers
 	$(MAKE) -C fs
 	$(MAKE) -C net

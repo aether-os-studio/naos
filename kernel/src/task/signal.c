@@ -4,7 +4,6 @@
 #include <fs/vfs/vfs.h>
 #include <task/task.h>
 
-#include <init/abis.h>
 #include <init/callbacks.h>
 
 #if defined(__x86_64__)

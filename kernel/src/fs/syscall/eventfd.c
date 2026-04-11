@@ -429,6 +429,8 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags) {
     return (uint64_t)ret;
 }
 
+uint64_t sys_eventfd(uint64_t arg1) { return sys_eventfd2(arg1, 0); }
+
 void eventfd_init() {
     mutex_init(&eventfdfs_mount_lock);
     vfs_register_filesystem(&eventfdfs_fs_type);

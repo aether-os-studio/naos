@@ -415,6 +415,7 @@ struct sysinfo {
 uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
                    void *data);
 uint64_t sys_umount2(const char *target, uint64_t flags);
+uint64_t sys_pivot_root(const char *new_root, const char *put_old);
 uint64_t sys_quotactl(uint32_t cmd, const char *special, uint32_t id,
                       struct dqblk *addr);
 
@@ -560,6 +561,7 @@ uint64_t sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
 uint64_t sys_epoll_create1(int flags);
 
 uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags);
+uint64_t sys_eventfd(uint64_t arg1);
 
 uint64_t sys_signalfd4(int ufd, const sigset_t *mask, size_t sizemask,
                        int flags);

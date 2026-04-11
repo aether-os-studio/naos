@@ -1,7 +1,6 @@
 #include <boot/boot.h>
 #include <fs/vfs/vfs.h>
 #include <fs/vfs/cgroup/cgroupfs.h>
-#include <init/abis.h>
 #include <init/callbacks.h>
 #include <libs/string_builder.h>
 #include <mm/mm.h>
@@ -2363,6 +2362,47 @@ fail:
     return ret;
 }
 
+uint64_t sys_setns(int fd, uint64_t nstype) {
+    static const uint64_t supported_types = CLONE_NEWNS | CLONE_NEWUSER;
+    struct vfs_file *file = NULL;
+    task_mount_namespace_t *target_mnt_ns = NULL;
+    task_user_namespace_t *target_user_ns = NULL;
+    uint64_t fd_nstype = 0;
+    int ret;
+
+    if (nstype & ~supported_types)
+        return (uint64_t)-EINVAL;
+    if (nstype != 0 && (nstype & (nstype - 1)) != 0)
+        return (uint64_t)-EINVAL;
+
+    file = task_get_file(current_task, fd);
+    if (!file)
+        return (uint64_t)-EBADF;
+
+    ret =
+        procfs_nsfd_identify(file, &fd_nstype, &target_mnt_ns, &target_user_ns);
+    vfs_file_put(file);
+    if (ret < 0)
+        return (uint64_t)ret;
+
+    if (nstype != 0 && nstype != fd_nstype)
+        return (uint64_t)-EINVAL;
+
+    switch (fd_nstype) {
+    case CLONE_NEWNS:
+        ret = task_setns_mount(current_task, target_mnt_ns);
+        break;
+    case CLONE_NEWUSER:
+        ret = task_setns_user(current_task, target_user_ns);
+        break;
+    default:
+        ret = -EINVAL;
+        break;
+    }
+
+    return ret < 0 ? (uint64_t)ret : 0;
+}
+
 uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem) {
     if (req->tv_sec < 0)
         return (uint64_t)-EINVAL;
@@ -3074,6 +3114,78 @@ uint64_t sys_setpriority(int which, int who, int niceval) {
 
     default:
         printk("sys_setpriority: Unsupported which: %d\n", which);
+        return (uint64_t)-EINVAL;
+    }
+}
+
+#define LINUX_KCMP_FILE 0
+#define LINUX_KCMP_VM 1
+#define LINUX_KCMP_FILES 2
+#define LINUX_KCMP_FS 3
+#define LINUX_KCMP_SIGHAND 4
+#define LINUX_KCMP_IO 5
+#define LINUX_KCMP_SYSVSEM 6
+#define LINUX_KCMP_EPOLL_TFD 7
+
+static int linux_kcmp_ptrs(const void *left, const void *right) {
+    uintptr_t lhs = (uintptr_t)left;
+    uintptr_t rhs = (uintptr_t)right;
+
+    if (lhs == rhs)
+        return 0;
+    return lhs < rhs ? -1 : 1;
+}
+
+uint64_t sys_kcmp(uint64_t pid1, uint64_t pid2, int type, uint64_t idx1,
+                  uint64_t idx2) {
+    task_t *task1;
+    task_t *task2;
+
+    task1 = task_find_by_pid(pid1);
+    task2 = task_find_by_pid(pid2);
+    if (!task1 || !task2)
+        return (uint64_t)-ESRCH;
+
+    switch (type) {
+    case LINUX_KCMP_FILE: {
+        fd_t *file1 = task_get_file(task1, (int)idx1);
+        fd_t *file2 = task_get_file(task2, (int)idx2);
+        int ret;
+
+        if (!file1 || !file2) {
+            if (file1)
+                vfs_file_put(file1);
+            if (file2)
+                vfs_file_put(file2);
+            return (uint64_t)-EBADF;
+        }
+
+        ret = linux_kcmp_ptrs(file1, file2);
+        vfs_file_put(file1);
+        vfs_file_put(file2);
+        return (uint64_t)ret;
+    }
+    case LINUX_KCMP_VM:
+        return (uint64_t)linux_kcmp_ptrs(task1->mm, task2->mm);
+    case LINUX_KCMP_FILES:
+        return (uint64_t)linux_kcmp_ptrs(task1->fd_info, task2->fd_info);
+    case LINUX_KCMP_FS:
+        return (uint64_t)linux_kcmp_ptrs(task1->fs, task2->fs);
+    case LINUX_KCMP_SIGHAND:
+        return (uint64_t)linux_kcmp_ptrs(
+            task1->signal ? task1->signal->sighand : NULL,
+            task2->signal ? task2->signal->sighand : NULL);
+    case LINUX_KCMP_IO:
+    case LINUX_KCMP_SYSVSEM:
+    case LINUX_KCMP_EPOLL_TFD:
+        printk("sys_kcmp: unsupported type=%d pid1=%lu pid2=%lu idx1=%lu "
+               "idx2=%lu\n",
+               type, pid1, pid2, idx1, idx2);
+        return (uint64_t)-EOPNOTSUPP;
+    default:
+        printk(
+            "sys_kcmp: unknown type=%d pid1=%lu pid2=%lu idx1=%lu idx2=%lu\n",
+            type, pid1, pid2, idx1, idx2);
         return (uint64_t)-EINVAL;
     }
 }

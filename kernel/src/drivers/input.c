@@ -1,4 +1,4 @@
-#include <dev/input.h>
+#include <drivers/input.h>
 #include <fs/dev.h>
 #include <fs/sys.h>
 #include <drivers/logger.h>

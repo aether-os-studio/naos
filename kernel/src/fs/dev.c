@@ -5,7 +5,7 @@
 #include <dev/device.h>
 #include <drivers/logger.h>
 #include <drivers/tty.h>
-#include <dev/pty.h>
+#include <drivers/pty.h>
 #include <net/netlink.h>
 #include <boot/boot.h>
 #include <arch/arch.h>

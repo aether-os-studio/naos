@@ -13,7 +13,6 @@
 #include <net/socket.h>
 #include <irq/irq_manager.h>
 #include <irq/softirq.h>
-#include <init/abis.h>
 #include <init/callbacks.h>
 #include <task/keyring.h>
 #include <task/ns.h>

@@ -33,6 +33,7 @@ uint64_t sys_getrusage(int who, struct rusage *ru);
 uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                    int *parent_tid, int *child_tid, uint64_t tls);
 uint64_t sys_unshare(uint64_t unshare_flags);
+uint64_t sys_setns(int fd, uint64_t nstype);
 
 typedef struct clone_args {
     uint64_t flags;
@@ -212,6 +213,9 @@ uint64_t sys_getpgid(uint64_t pid);
 uint64_t sys_setpgid(uint64_t pid, uint64_t pgid);
 uint64_t sys_getsid(uint64_t pid);
 uint64_t sys_setsid(void);
+
+uint64_t sys_kcmp(uint64_t pid1, uint64_t pid2, int type, uint64_t idx1,
+                  uint64_t idx2);
 
 static inline uint64_t sys_getuid() { return current_task->uid; }
 

@@ -1,7 +1,7 @@
-#include <dev/drm/plainfb.h>
-#include <dev/drm/drm_ioctl.h>
-#include <dev/drm/drm_core.h>
-#include <dev/drm/drm.h>
+#include <drivers/drm/plainfb.h>
+#include <drivers/drm/drm_ioctl.h>
+#include <drivers/drm/drm_core.h>
+#include <drivers/drm/drm.h>
 #include <fs/vfs/vfs.h>
 #include <fs/sys.h>
 

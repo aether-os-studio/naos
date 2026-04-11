@@ -1,5 +1,4 @@
 #include <fs/vfs/vfs.h>
-#include <init/abis.h>
 #include <task/ns.h>
 #include <task/task.h>
 
@@ -26,6 +25,40 @@ static bool task_ns_common_put(task_ns_common_t *common) {
     if (!common)
         return false;
     return __atomic_sub_fetch(&common->ref_count, 1, __ATOMIC_ACQ_REL) == 0;
+}
+
+static int task_fs_rebind_mount_namespace(task_fs_t *fs,
+                                          struct vfs_mount *old_root,
+                                          struct vfs_mount *new_root) {
+    struct vfs_path old_root_path = {0};
+    struct vfs_path old_pwd_path = {0};
+    struct vfs_path translated_root = {0};
+    struct vfs_path translated_pwd = {0};
+
+    if (!fs || !old_root || !new_root || !new_root->mnt_root)
+        return -EINVAL;
+
+    old_root_path.mnt = old_root;
+    old_root_path.dentry = old_root->mnt_root;
+    old_pwd_path = fs->vfs.pwd;
+    if (vfs_translate_path_between_roots(&old_root_path, &fs->vfs.root,
+                                         new_root, &translated_root) < 0 ||
+        vfs_translate_path_between_roots(&old_root_path, &old_pwd_path,
+                                         new_root, &translated_pwd) < 0) {
+        vfs_path_put(&translated_root);
+        vfs_path_put(&translated_pwd);
+        return -ENOENT;
+    }
+
+    spin_lock(&fs->vfs.lock);
+    vfs_path_put(&fs->vfs.root);
+    fs->vfs.root = translated_root;
+
+    vfs_path_put(&fs->vfs.pwd);
+    fs->vfs.pwd = translated_pwd;
+    fs->vfs.seq++;
+    spin_unlock(&fs->vfs.lock);
+    return 0;
 }
 
 task_fs_t *task_fs_create(const struct vfs_path *root,
@@ -117,6 +150,33 @@ int task_fs_chroot(task_t *task, const struct vfs_path *root) {
     task->fs->vfs.seq++;
     spin_unlock(&task->fs->vfs.lock);
     return 0;
+}
+
+static void task_fs_replace_root_refs(task_fs_t *fs,
+                                      const struct vfs_path *old_root,
+                                      const struct vfs_path *new_root) {
+    bool replace_root;
+    bool replace_pwd;
+
+    if (!fs || !old_root || !new_root)
+        return;
+
+    spin_lock(&fs->vfs.lock);
+    replace_root = vfs_path_equal(&fs->vfs.root, old_root);
+    replace_pwd = vfs_path_equal(&fs->vfs.pwd, old_root);
+    if (replace_root) {
+        vfs_path_put(&fs->vfs.root);
+        fs->vfs.root.mnt = vfs_mntget(new_root->mnt);
+        fs->vfs.root.dentry = vfs_dget(new_root->dentry);
+    }
+    if (replace_pwd) {
+        vfs_path_put(&fs->vfs.pwd);
+        fs->vfs.pwd.mnt = vfs_mntget(new_root->mnt);
+        fs->vfs.pwd.dentry = vfs_dget(new_root->dentry);
+    }
+    if (replace_root || replace_pwd)
+        fs->vfs.seq++;
+    spin_unlock(&fs->vfs.lock);
 }
 
 static task_uts_namespace_t *
@@ -279,7 +339,11 @@ static void task_uts_namespace_put(task_uts_namespace_t *uts_ns) {
         free(uts_ns);
 }
 
-static void task_mount_namespace_put(task_mount_namespace_t *mnt_ns) {
+void task_mount_namespace_get(task_mount_namespace_t *mnt_ns) {
+    task_ns_common_get(mnt_ns ? &mnt_ns->common : NULL);
+}
+
+void task_mount_namespace_put(task_mount_namespace_t *mnt_ns) {
     if (!mnt_ns)
         return;
     if (!task_ns_common_put(&mnt_ns->common))
@@ -291,7 +355,11 @@ static void task_mount_namespace_put(task_mount_namespace_t *mnt_ns) {
     free(mnt_ns);
 }
 
-static void task_user_namespace_put(task_user_namespace_t *user_ns) {
+void task_user_namespace_get(task_user_namespace_t *user_ns) {
+    task_ns_common_get(user_ns ? &user_ns->common : NULL);
+}
+
+void task_user_namespace_put(task_user_namespace_t *user_ns) {
     if (user_ns && task_ns_common_put(&user_ns->common))
         free(user_ns);
 }
@@ -382,10 +450,138 @@ int task_mount_namespace_set_root(task_t *task, struct vfs_mount *root) {
     return 0;
 }
 
+int task_mount_namespace_pivot_root(task_t *task,
+                                    const struct vfs_path *old_root,
+                                    const struct vfs_path *new_root) {
+    task_mount_namespace_t *mnt_ns;
+
+    if (!task || !task->nsproxy || !task->nsproxy->mnt_ns || !old_root ||
+        !old_root->mnt || !old_root->dentry || !new_root || !new_root->mnt ||
+        !new_root->dentry) {
+        return -EINVAL;
+    }
+
+    mnt_ns = task->nsproxy->mnt_ns;
+    if (mnt_ns->root != new_root->mnt) {
+        if (mnt_ns->root)
+            vfs_mntput(mnt_ns->root);
+        mnt_ns->root = vfs_mntget(new_root->mnt);
+        mnt_ns->seq++;
+    }
+
+    if (vfs_root_path.mnt == old_root->mnt &&
+        vfs_root_path.dentry == old_root->dentry) {
+        vfs_path_put(&vfs_root_path);
+        vfs_root_path.mnt = vfs_mntget(new_root->mnt);
+        vfs_root_path.dentry = vfs_dget(new_root->dentry);
+    }
+
+    if (vfs_init_mnt_ns.root == old_root->mnt) {
+        vfs_mntput(vfs_init_mnt_ns.root);
+        vfs_init_mnt_ns.root = vfs_mntget(new_root->mnt);
+        vfs_init_mnt_ns.seq++;
+    }
+
+    spin_lock(&task_queue_lock);
+    if (task_pid_map.buckets) {
+        for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+            hashmap_entry_t *entry = &task_pid_map.buckets[i];
+            task_t *iter;
+
+            if (!hashmap_entry_is_occupied(entry))
+                continue;
+
+            iter = (task_t *)entry->value;
+            if (!iter || !iter->fs || !iter->nsproxy ||
+                iter->nsproxy->mnt_ns != mnt_ns) {
+                continue;
+            }
+
+            task_fs_replace_root_refs(iter->fs, old_root, new_root);
+        }
+    }
+    spin_unlock(&task_queue_lock);
+
+    return 0;
+}
+
 task_user_namespace_t *task_user_namespace_of_task(task_t *task) {
     if (!task || !task->nsproxy)
         return NULL;
     return task->nsproxy->user_ns;
+}
+
+int task_setns_mount(task_t *task, task_mount_namespace_t *target_mnt_ns) {
+    task_ns_proxy_t *old_nsproxy;
+    task_ns_proxy_t *new_nsproxy;
+    struct vfs_mount *old_root;
+    struct vfs_mount *new_root;
+    int ret = 0;
+
+    if (!task || !task->nsproxy || !target_mnt_ns || !target_mnt_ns->root)
+        return -EINVAL;
+    if (task->fs && task->fs->ref_count > 1)
+        return -EINVAL;
+    if (task->nsproxy->mnt_ns == target_mnt_ns)
+        return 0;
+
+    old_root = task_mount_namespace_root(task);
+    new_root = target_mnt_ns->root;
+    if (!old_root || !new_root || !new_root->mnt_root)
+        return -EINVAL;
+
+    new_nsproxy = task_ns_proxy_clone(task, 0);
+    if (!new_nsproxy)
+        return -ENOMEM;
+
+    if (task->fs) {
+        ret = task_fs_rebind_mount_namespace(task->fs, old_root, new_root);
+        if (ret < 0) {
+            task_ns_proxy_put(new_nsproxy);
+            return ret;
+        }
+    }
+
+    task_mount_namespace_put(new_nsproxy->mnt_ns);
+    new_nsproxy->mnt_ns = target_mnt_ns;
+    task_mount_namespace_get(new_nsproxy->mnt_ns);
+
+    old_nsproxy = task->nsproxy;
+    task->nsproxy = new_nsproxy;
+    task_ns_proxy_put(old_nsproxy);
+    return 0;
+}
+
+int task_setns_user(task_t *task, task_user_namespace_t *target_user_ns) {
+    task_ns_proxy_t *old_nsproxy;
+    task_ns_proxy_t *new_nsproxy;
+    task_user_namespace_t *current_user_ns;
+
+    if (!task || !task->nsproxy || !target_user_ns)
+        return -EINVAL;
+    if (task->fs && task->fs->ref_count > 1)
+        return -EINVAL;
+    if (task_thread_group_count(task_effective_tgid(task)) > 1)
+        return -EINVAL;
+
+    current_user_ns = task->nsproxy->user_ns;
+    if (current_user_ns == target_user_ns)
+        return -EINVAL;
+    if (current_user_ns && target_user_ns->level < current_user_ns->level)
+        return -EPERM;
+
+    new_nsproxy = task_ns_proxy_clone(task, 0);
+    if (!new_nsproxy)
+        return -ENOMEM;
+
+    task_user_namespace_put(new_nsproxy->user_ns);
+    new_nsproxy->user_ns = target_user_ns;
+    task_user_namespace_get(new_nsproxy->user_ns);
+
+    old_nsproxy = task->nsproxy;
+    task->nsproxy = new_nsproxy;
+    task_ns_proxy_put(old_nsproxy);
+    return 0;
 }
 
 task_ns_proxy_t *task_ns_proxy_clone(task_t *task, uint64_t clone_flags) {

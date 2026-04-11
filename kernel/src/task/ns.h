@@ -86,6 +86,15 @@ void task_fs_get(task_fs_t *fs);
 void task_fs_put(task_fs_t *fs);
 int task_fs_chdir(task_t *task, const struct vfs_path *pwd);
 int task_fs_chroot(task_t *task, const struct vfs_path *root);
+void task_mount_namespace_get(task_mount_namespace_t *mnt_ns);
+void task_mount_namespace_put(task_mount_namespace_t *mnt_ns);
+void task_user_namespace_get(task_user_namespace_t *user_ns);
+void task_user_namespace_put(task_user_namespace_t *user_ns);
+int task_setns_mount(task_t *task, task_mount_namespace_t *target_mnt_ns);
+int task_setns_user(task_t *task, task_user_namespace_t *target_user_ns);
+int task_mount_namespace_pivot_root(task_t *task,
+                                    const struct vfs_path *old_root,
+                                    const struct vfs_path *new_root);
 
 task_ns_proxy_t *task_ns_proxy_create_initial(void);
 task_ns_proxy_t *task_ns_proxy_clone(task_t *task, uint64_t clone_flags);

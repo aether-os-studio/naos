@@ -1,5 +1,5 @@
-#include <fs/vfs/tmp.h>
-#include <fs/vfs/pipe.h>
+#include <fs/tmp.h>
+#include <fs/pipe.h>
 #include <fs/vfs/tmpfs_limit.h>
 #include <mm/mm.h>
 #include <mm/mm_syscall.h>

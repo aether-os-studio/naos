@@ -1,6 +1,6 @@
 #pragma once
 
-#include <dev/drm/drm_core.h>
+#include <drivers/drm/drm_core.h>
 #include <boot/boot.h>
 
 typedef struct plainfb_device {

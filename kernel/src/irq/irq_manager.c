@@ -4,7 +4,6 @@
 #include <task/task.h>
 #include <mm/bitmap.h>
 #include <irq/softirq.h>
-#include <init/abis.h>
 #include <init/callbacks.h>
 
 irq_action_t actions[ARCH_MAX_IRQ_NUM] = {0};

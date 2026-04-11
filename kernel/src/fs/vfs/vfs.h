@@ -656,6 +656,9 @@ int vfs_translate_path_between_roots(const struct vfs_path *old_root,
                                      const struct vfs_path *old_path,
                                      struct vfs_mount *new_root,
                                      struct vfs_path *new_path);
+int vfs_pivot_root_mounts(struct vfs_mount *old_root,
+                          struct vfs_mount *new_root,
+                          const struct vfs_path *put_old);
 int vfs_reconfigure_mount(struct vfs_mount *mnt, const struct vfs_path *to_path,
                           bool detached);
 int vfs_mount_set_propagation(struct vfs_mount *mnt, unsigned long flags,

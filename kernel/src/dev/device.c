@@ -1,6 +1,5 @@
 #include <dev/device.h>
 #include <mod/dlinker.h>
-#include <init/abis.h>
 #include <init/callbacks.h>
 
 DEFINE_LLIST(device_list);
