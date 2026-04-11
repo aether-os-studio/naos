@@ -3,6 +3,7 @@
 #include <fs/vfs/tmpfs_limit.h>
 #include <mm/mm.h>
 #include <mm/mm_syscall.h>
+#include <fs/fs_syscall.h>
 
 #define MAX_TMPFS_FILE_SIZE (64 * 1024 * 1024)
 
@@ -823,8 +824,45 @@ static void tmpfs_put_super(struct vfs_super_block *sb) {
 }
 
 static int tmpfs_statfs(struct vfs_path *path, void *buf) {
-    (void)path;
-    (void)buf;
+    struct statfs *st = (struct statfs *)buf;
+    struct vfs_super_block *sb;
+    uint64_t mem_limit;
+    uint64_t mem_used;
+    uint64_t inode_count = 0;
+    struct llist_header *node;
+
+    if (!path || !path->dentry || !path->dentry->d_inode || !st)
+        return -EINVAL;
+
+    sb = path->dentry->d_inode->i_sb;
+    if (!sb)
+        return -EINVAL;
+
+    memset(st, 0, sizeof(*st));
+
+    mem_limit = tmpfs_mem_limit();
+
+    spin_lock(&tmpfs_mem_limit_lock);
+    mem_used = tmpfs_mem_used;
+    spin_unlock(&tmpfs_mem_limit_lock);
+
+    spin_lock(&sb->s_inode_lock);
+    for (node = sb->s_inodes.next; node != &sb->s_inodes; node = node->next)
+        inode_count++;
+    spin_unlock(&sb->s_inode_lock);
+
+    st->f_type = sb->s_magic;
+    st->f_bsize = PAGE_SIZE;
+    st->f_frsize = PAGE_SIZE;
+    st->f_blocks = mem_limit / PAGE_SIZE;
+    st->f_bfree =
+        (mem_limit > mem_used) ? ((mem_limit - mem_used) / PAGE_SIZE) : 0;
+    st->f_bavail = st->f_bfree;
+    st->f_files = inode_count;
+    st->f_namelen = VFS_NAME_MAX;
+    st->f_flags = sb->s_flags;
+    st->f_fsid.val[0] = (int)(sb->s_dev & 0xffffffffU);
+    st->f_fsid.val[1] = (int)((sb->s_dev >> 32) & 0xffffffffU);
     return 0;
 }
 
