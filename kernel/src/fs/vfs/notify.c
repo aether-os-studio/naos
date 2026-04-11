@@ -603,11 +603,6 @@ bool notifyfs_queue_inode_event(struct vfs_inode *watch_inode,
     return queued;
 }
 
-static loff_t notifyfs_llseek(struct vfs_file *file, loff_t offset,
-                              int whence) {
-    return vfs_llseek_file(file, offset, whence);
-}
-
 static ssize_t notifyfs_read(struct vfs_file *file, void *addr, size_t size,
                              loff_t *ppos) {
     notifyfs_handle_t *handle;
@@ -842,7 +837,6 @@ static const struct vfs_file_operations notifyfs_dir_file_ops = {
 };
 
 static const struct vfs_file_operations notifyfs_file_ops = {
-    .llseek = notifyfs_llseek,
     .read = notifyfs_read,
     .unlocked_ioctl = notifyfs_ioctl,
     .poll = notifyfs_poll,

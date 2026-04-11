@@ -477,10 +477,6 @@ static int sysfs_iterate_shared(struct vfs_file *file,
     return 0;
 }
 
-static loff_t sysfs_llseek(struct vfs_file *file, loff_t offset, int whence) {
-    return vfs_llseek_file(file, offset, whence);
-}
-
 static int sysfs_open_file(struct vfs_inode *inode, struct vfs_file *file) {
     if (!inode || !file)
         return -EINVAL;
@@ -591,7 +587,6 @@ static const struct vfs_inode_operations sysfs_inode_ops = {
 };
 
 static const struct vfs_file_operations sysfs_dir_fops = {
-    .llseek = sysfs_llseek,
     .iterate_shared = sysfs_iterate_shared,
     .open = sysfs_open_file,
     .release = sysfs_release_file,
@@ -599,7 +594,6 @@ static const struct vfs_file_operations sysfs_dir_fops = {
 };
 
 static const struct vfs_file_operations sysfs_file_fops = {
-    .llseek = sysfs_llseek,
     .read = sysfs_read,
     .write = sysfs_write,
     .open = sysfs_open_file,
