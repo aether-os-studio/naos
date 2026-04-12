@@ -573,8 +573,8 @@ void syscall_handler_init() {
     // regist_syscall_handler(SYS_VHANGUP, (syscall_handle_t)sys_vhangup);
     // regist_syscall_handler(SYS_MODIFY_LDT,
     // (syscall_handle_t)sys_modify_ldt);
-    // regist_syscall_handler(SYS_PIVOT_ROOT,
-    // (syscall_handle_t)sys_pivot_root); regist_syscall_handler(SYS__SYSCTL,
+    regist_syscall_handler(SYS_PIVOT_ROOT, (syscall_handle_t)sys_pivot_root);
+    //  regist_syscall_handler(SYS__SYSCTL,
     // (syscall_handle_t)sys__sysctl);
     regist_syscall_handler(SYS_PRCTL, (syscall_handle_t)sys_prctl);
     regist_syscall_handler(SYS_ARCH_PRCTL, (syscall_handle_t)sys_arch_prctl);
