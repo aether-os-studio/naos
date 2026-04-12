@@ -3,6 +3,7 @@
 #include <arch/arch.h>
 #include <task/task.h>
 #include <task/futex.h>
+#include <task/ptrace.h>
 #include <task/sched.h>
 #include <drivers/logger.h>
 #include <fs/vfs/vfs.h>
@@ -1317,6 +1318,11 @@ void task_exit_inner(task_t *task, int64_t code) {
     task_t *waiting_task = task_lookup_by_pid_nolock(task->waitpid);
     if (waiting_task) {
         task_unblock(waiting_task, EOK);
+    }
+    if (ptrace_is_traced(task) && task->ptrace_tracer_pid != task->waitpid) {
+        task_t *tracer = task_lookup_by_pid_nolock(task->ptrace_tracer_pid);
+        if (tracer)
+            task_unblock(tracer, EOK);
     }
 
     if (!task->is_clone && task_has_parent(task)) {

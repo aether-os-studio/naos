@@ -29,6 +29,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
                      struct rusage *rusage);
 uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
                     struct rusage *rusage);
+uint64_t sys_ptrace(uint64_t request, uint64_t pid, void *addr, void *data);
 uint64_t sys_getrusage(int who, struct rusage *ru);
 uint64_t sys_clone(struct pt_regs *regs, uint64_t flags, uint64_t newsp,
                    int *parent_tid, int *child_tid, uint64_t tls);
@@ -54,6 +55,12 @@ uint64_t sys_clone3(struct pt_regs *regs, clone_args_t *args,
 int read_task_user_memory(task_t *task, uint64_t uaddr, void *dst, size_t size);
 int write_task_user_memory(task_t *task, uint64_t uaddr, const void *src,
                            size_t size);
+uint64_t sys_process_vm_readv(uint64_t pid, const struct iovec *lvec,
+                              uint64_t liovcnt, const struct iovec *rvec,
+                              uint64_t riovcnt, uint64_t flags);
+uint64_t sys_process_vm_writev(uint64_t pid, const struct iovec *lvec,
+                               uint64_t liovcnt, const struct iovec *rvec,
+                               uint64_t riovcnt, uint64_t flags);
 
 struct timespec;
 uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem);

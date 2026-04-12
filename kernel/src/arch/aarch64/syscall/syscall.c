@@ -5,6 +5,7 @@
 #include <mm/mm_syscall.h>
 #include <task/futex.h>
 #include <task/keyring.h>
+#include <task/ptrace.h>
 #include <task/task_syscall.h>
 #include <net/net_syscall.h>
 
@@ -450,7 +451,7 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_GETRUSAGE, (syscall_handle_t)sys_getrusage);
     regist_syscall_handler(SYS_SYSINFO, (syscall_handle_t)sys_sysinfo);
     // regist_syscall_handler(SYS_TIMES, (syscall_handle_t)sys_times);
-    // regist_syscall_handler(SYS_PTRACE, (syscall_handle_t)sys_ptrace);
+    regist_syscall_handler(SYS_PTRACE, (syscall_handle_t)sys_ptrace);
     regist_syscall_handler(SYS_GETUID, (syscall_handle_t)sys_getuid);
     regist_syscall_handler(SYS_SYSLOG, (syscall_handle_t)sys_syslog);
     regist_syscall_handler(SYS_GETGID, (syscall_handle_t)sys_getgid);
@@ -743,10 +744,10 @@ void syscall_handler_init() {
 #endif
     regist_syscall_handler(SYS_SETNS, (syscall_handle_t)sys_setns);
     regist_syscall_handler(SYS_GETCPU, (syscall_handle_t)sys_getcpu);
-    // regist_syscall_handler(SYS_PROCESS_VM_READV,
-    // (syscall_handle_t)sys_process_vm_readv);
-    // regist_syscall_handler(SYS_PROCESS_VM_WRITEV,
-    // (syscall_handle_t)sys_process_vm_writev);
+    regist_syscall_handler(SYS_PROCESS_VM_READV,
+                           (syscall_handle_t)sys_process_vm_readv);
+    regist_syscall_handler(SYS_PROCESS_VM_WRITEV,
+                           (syscall_handle_t)sys_process_vm_writev);
     regist_syscall_handler(SYS_KCMP, (syscall_handle_t)sys_kcmp);
     // regist_syscall_handler(SYS_FINIT_MODULE,
     // (syscall_handle_t)sys_finit_module);
@@ -838,6 +839,8 @@ void aarch64_do_syscall(struct pt_regs *frame) {
     uint64_t arg5 = frame->x4;
     uint64_t arg6 = frame->x5;
 
+    ptrace_on_syscall_enter(frame);
+
     if (idx > MAX_SYSCALL_NUM) {
         frame->x0 = (uint64_t)-ENOSYS;
         goto done;
@@ -867,6 +870,8 @@ void aarch64_do_syscall(struct pt_regs *frame) {
         frame->x0 = 0;
 
 done:
+    ptrace_on_syscall_exit(frame);
+
     if (idx != SYS_BRK && idx != SYS_RSEQ && frame->x0 == (uint64_t)-ENOSYS) {
         serial_fprintk("syscall %d not implemented\n", idx);
     }

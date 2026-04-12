@@ -366,15 +366,3 @@
 #define SYS_SET_MEMPOLICY_HOME_NODE 450
 #define SYS_CACHESTAT 451
 #define SYS_FCHMODAT2 452
-
-typedef struct linux_syscall {
-    const char *name;
-    const char *arg1;
-    const char *arg2;
-    const char *arg3;
-    const char *arg4;
-    const char *arg5;
-    const char *arg6;
-} LINUX_SYSCALL;
-
-extern const LINUX_SYSCALL linux_syscalls[336];

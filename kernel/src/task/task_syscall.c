@@ -6,6 +6,7 @@
 #include <mm/mm.h>
 #include <task/sched.h>
 #include <task/keyring.h>
+#include <task/ptrace.h>
 #include <task/task_syscall.h>
 
 extern hashmap_t task_parent_map;
@@ -16,6 +17,88 @@ extern spinlock_t should_free_lock;
 static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
                                    uint64_t newsp, int *parent_tid,
                                    int *child_tid, uint64_t tls, int cgroup_fd);
+
+static bool waitpid_task_matches(const task_t *task, int64_t wait_pid,
+                                 uint64_t caller_pgid) {
+    if (!task)
+        return false;
+
+    if (wait_pid > 0)
+        return task->pid == (uint64_t)wait_pid;
+    if (wait_pid == 0)
+        return task->pgid == (int64_t)caller_pgid;
+    if (wait_pid < -1)
+        return task->pgid == -wait_pid;
+    return wait_pid == -1;
+}
+
+static bool waitid_task_matches(const task_t *task, int idtype,
+                                uint64_t match_id) {
+    if (!task)
+        return false;
+
+    switch (idtype) {
+    case P_PID:
+        return task->pid == match_id;
+    case P_PGID:
+        return task->pgid == (int64_t)match_id;
+    case P_ALL:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool wait_has_ptraced_target_waitpid(task_t *waiter, int64_t wait_pid) {
+    if (!waiter)
+        return false;
+
+    spin_lock(&task_queue_lock);
+    for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+        hashmap_entry_t *entry = &task_pid_map.buckets[i];
+        task_t *task;
+
+        if (!hashmap_entry_is_occupied(entry))
+            continue;
+
+        task = (task_t *)entry->value;
+        if (!ptrace_matches_waiter(task, waiter))
+            continue;
+        if (waitpid_task_matches(task, wait_pid, waiter->pgid)) {
+            spin_unlock(&task_queue_lock);
+            return true;
+        }
+    }
+    spin_unlock(&task_queue_lock);
+
+    return false;
+}
+
+static bool wait_has_ptraced_target_waitid(task_t *waiter, int idtype,
+                                           uint64_t match_id) {
+    if (!waiter)
+        return false;
+
+    spin_lock(&task_queue_lock);
+    for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+        hashmap_entry_t *entry = &task_pid_map.buckets[i];
+        task_t *task;
+
+        if (!hashmap_entry_is_occupied(entry))
+            continue;
+
+        task = (task_t *)entry->value;
+        if (!ptrace_matches_waiter(task, waiter))
+            continue;
+        if (waitid_task_matches(task, idtype, match_id)) {
+            spin_unlock(&task_queue_lock);
+            return true;
+        }
+    }
+    spin_unlock(&task_queue_lock);
+
+    return false;
+}
 
 static inline bool timer_clockid_supported(clockid_t clockid) {
     return clockid == CLOCK_REALTIME || clockid == CLOCK_MONOTONIC;
@@ -231,6 +314,117 @@ int read_task_user_memory(task_t *task, uint64_t uaddr, void *dst,
     }
 
     return 0;
+}
+
+static uint64_t process_vm_rw(uint64_t pid, const struct iovec *lvec,
+                              uint64_t liovcnt, const struct iovec *rvec,
+                              uint64_t riovcnt, uint64_t flags, bool write) {
+    task_t *target;
+    struct iovec *local_iov = NULL;
+    struct iovec *remote_iov = NULL;
+    uint8_t bounce[256];
+    uint64_t copied = 0;
+    uint64_t li = 0;
+    uint64_t ri = 0;
+    size_t loff = 0;
+    size_t roff = 0;
+
+    if (flags != 0)
+        return (uint64_t)-EINVAL;
+    if (!lvec || !rvec || liovcnt == 0 || riovcnt == 0)
+        return (uint64_t)-EINVAL;
+    if (liovcnt > 1024 || riovcnt > 1024)
+        return (uint64_t)-EINVAL;
+    if (check_user_overflow((uint64_t)lvec, liovcnt * sizeof(*lvec)) ||
+        check_user_overflow((uint64_t)rvec, riovcnt * sizeof(*rvec))) {
+        return (uint64_t)-EFAULT;
+    }
+
+    target = task_find_by_pid(pid);
+    if (!target || !target->mm)
+        return (uint64_t)-ESRCH;
+
+    local_iov = malloc(liovcnt * sizeof(*local_iov));
+    remote_iov = malloc(riovcnt * sizeof(*remote_iov));
+    if (!local_iov || !remote_iov) {
+        free(local_iov);
+        free(remote_iov);
+        return (uint64_t)-ENOMEM;
+    }
+
+    if (copy_from_user(local_iov, lvec, liovcnt * sizeof(*local_iov)) ||
+        copy_from_user(remote_iov, rvec, riovcnt * sizeof(*remote_iov))) {
+        free(local_iov);
+        free(remote_iov);
+        return (uint64_t)-EFAULT;
+    }
+
+    while (li < liovcnt && ri < riovcnt) {
+        uint8_t *lbase = local_iov[li].iov_base;
+        uint8_t *rbase = remote_iov[ri].iov_base;
+        size_t llen = (size_t)local_iov[li].len;
+        size_t rlen = (size_t)remote_iov[ri].len;
+        size_t lremain = llen > loff ? llen - loff : 0;
+        size_t rremain = rlen > roff ? rlen - roff : 0;
+        size_t chunk = MIN(sizeof(bounce), MIN(lremain, rremain));
+
+        if (lremain == 0) {
+            li++;
+            loff = 0;
+            continue;
+        }
+        if (rremain == 0) {
+            ri++;
+            roff = 0;
+            continue;
+        }
+
+        if (write) {
+            if (copy_from_user(bounce, lbase + loff, chunk)) {
+                free(local_iov);
+                free(remote_iov);
+                return copied ? copied : (uint64_t)-EFAULT;
+            }
+            if (write_task_user_memory(target, (uint64_t)(rbase + roff), bounce,
+                                       chunk) < 0) {
+                free(local_iov);
+                free(remote_iov);
+                return copied ? copied : (uint64_t)-EFAULT;
+            }
+        } else {
+            if (read_task_user_memory(target, (uint64_t)(rbase + roff), bounce,
+                                      chunk) < 0) {
+                free(local_iov);
+                free(remote_iov);
+                return copied ? copied : (uint64_t)-EFAULT;
+            }
+            if (copy_to_user(lbase + loff, bounce, chunk)) {
+                free(local_iov);
+                free(remote_iov);
+                return copied ? copied : (uint64_t)-EFAULT;
+            }
+        }
+
+        copied += chunk;
+        loff += chunk;
+        roff += chunk;
+    }
+
+    free(local_iov);
+    free(remote_iov);
+    return copied;
+}
+
+uint64_t sys_process_vm_readv(uint64_t pid, const struct iovec *lvec,
+                              uint64_t liovcnt, const struct iovec *rvec,
+                              uint64_t riovcnt, uint64_t flags) {
+    return process_vm_rw(pid, lvec, liovcnt, rvec, riovcnt, flags, false);
+}
+
+uint64_t sys_process_vm_writev(uint64_t pid, const struct iovec *lvec,
+                               uint64_t liovcnt, const struct iovec *rvec,
+                               uint64_t riovcnt, uint64_t flags) {
+    return process_vm_rw(pid, lvec, liovcnt, rvec, riovcnt, flags, true);
 }
 
 static uint64_t elf_segment_vma_flags(uint32_t p_flags) {
@@ -1467,6 +1661,7 @@ uint64_t task_execve(const char *path_user, const char **argv,
     self->is_kernel = false;
 
     self->exec_file = exec_file;
+    ptrace_stop_for_exec(self);
 
     arch_to_user_mode(self->arch_context,
                       interpreter_entry ? interpreter_entry : e_entry, stack);
@@ -1514,19 +1709,23 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
     }
 
     bool has_children = false;
+    bool has_ptraced = false;
     spin_lock(&task_queue_lock);
     task_index_bucket_t *children =
         task_index_bucket_lookup(&task_parent_map, wait_parent_pid);
     has_children = children && children->count > 0;
     spin_unlock(&task_queue_lock);
+    has_ptraced = wait_has_ptraced_target_waitpid(current_task, wait_pid);
 
-    if (!has_children) {
+    if (!has_children && !has_ptraced) {
         return -ECHILD;
     }
 
     while (1) {
         task_t *found_alive = NULL;
         task_t *found_dead = NULL;
+        task_t *found_ptrace_alive = NULL;
+        task_t *found_ptrace_stop = NULL;
 
         arch_disable_interrupt();
 
@@ -1543,16 +1742,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
             if (task_parent_wait_key(ptr) != wait_parent_pid)
                 continue;
 
-            if (wait_pid > 0) {
-                if (ptr->pid != (uint64_t)wait_pid)
-                    continue;
-            } else if (wait_pid == 0) {
-                if (ptr->pgid != current_task->pgid)
-                    continue;
-            } else if (wait_pid < -1) {
-                if (ptr->pgid != -wait_pid)
-                    continue;
-            } else if (wait_pid != -1) {
+            if (!waitpid_task_matches(ptr, wait_pid, current_task->pgid)) {
                 continue;
             }
 
@@ -1569,9 +1759,44 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
                 found_alive = ptr;
             }
         }
+
+        if (!found_dead) {
+            for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+                hashmap_entry_t *entry = &task_pid_map.buckets[i];
+                task_t *ptr;
+
+                if (!hashmap_entry_is_occupied(entry))
+                    continue;
+
+                ptr = (task_t *)entry->value;
+                if (!ptrace_matches_waiter(ptr, current_task))
+                    continue;
+                if (!waitpid_task_matches(ptr, wait_pid, current_task->pgid))
+                    continue;
+
+                if (ptrace_has_wait_event(ptr)) {
+                    found_ptrace_stop = ptr;
+                    break;
+                }
+
+                found_ptrace_alive = ptr;
+            }
+        }
         spin_unlock(&task_queue_lock);
 
         arch_enable_interrupt();
+
+        if (found_ptrace_stop) {
+            if (status) {
+                int stop_status = 0;
+                ptrace_consume_wait_event(found_ptrace_stop, &stop_status, NULL,
+                                          false);
+                *status = stop_status;
+            } else {
+                ptrace_consume_wait_event(found_ptrace_stop, NULL, NULL, false);
+            }
+            return found_ptrace_stop->pid;
+        }
 
         if (found_dead) {
             target = found_dead;
@@ -1579,7 +1804,7 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
             break;
         }
 
-        if (found_alive && (options & WNOHANG)) {
+        if ((found_alive || found_ptrace_alive) && (options & WNOHANG)) {
             arch_disable_interrupt();
             return 0;
         }
@@ -1588,6 +1813,12 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
             found_alive->waitpid = current_task->pid;
             if (found_alive->state != TASK_DIED)
                 task_block(current_task, TASK_BLOCKING, -1, "waitpid");
+            continue;
+        }
+
+        if (found_ptrace_alive) {
+            found_ptrace_alive->waitpid = current_task->pid;
+            task_block(current_task, TASK_BLOCKING, -1, "waitpid-ptrace");
             continue;
         }
 
@@ -1645,18 +1876,23 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
     }
 
     bool has_children = false;
+    bool has_ptraced = false;
     spin_lock(&task_queue_lock);
     task_index_bucket_t *children =
         task_index_bucket_lookup(&task_parent_map, wait_parent_pid);
     has_children = children && children->count > 0;
     spin_unlock(&task_queue_lock);
+    has_ptraced =
+        wait_has_ptraced_target_waitid(current_task, match_idtype, match_id);
 
-    if (!has_children)
+    if (!has_children && !has_ptraced)
         return -ECHILD;
 
     while (1) {
         task_t *found_alive = NULL;
         task_t *found_dead = NULL;
+        task_t *found_ptrace_alive = NULL;
+        task_t *found_ptrace_stop = NULL;
 
         arch_disable_interrupt();
 
@@ -1673,18 +1909,7 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
             if (task_parent_wait_key(ptr) != wait_parent_pid)
                 continue;
 
-            switch (match_idtype) {
-            case P_PID:
-                if (ptr->pid != match_id)
-                    continue;
-                break;
-            case P_PGID:
-                if (ptr->pgid != match_id)
-                    continue;
-                break;
-            case P_ALL:
-                break;
-            default:
+            if (!waitid_task_matches(ptr, match_idtype, match_id)) {
                 continue;
             }
 
@@ -1703,16 +1928,60 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
 
             found_alive = ptr;
         }
+
+        if (!found_dead) {
+            for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+                hashmap_entry_t *entry = &task_pid_map.buckets[i];
+                task_t *ptr;
+
+                if (!hashmap_entry_is_occupied(entry))
+                    continue;
+
+                ptr = (task_t *)entry->value;
+                if (!ptrace_matches_waiter(ptr, current_task))
+                    continue;
+                if (!waitid_task_matches(ptr, match_idtype, match_id))
+                    continue;
+
+                if (ptrace_has_wait_event(ptr)) {
+                    found_ptrace_stop = ptr;
+                    break;
+                }
+
+                found_ptrace_alive = ptr;
+            }
+        }
         spin_unlock(&task_queue_lock);
 
         arch_enable_interrupt();
+
+        if (found_ptrace_stop) {
+            siginfo_t ptrace_info;
+
+            if (infop) {
+                if (!ptrace_consume_wait_event(found_ptrace_stop, NULL,
+                                               &ptrace_info,
+                                               (options & WNOWAIT) != 0)) {
+                    return 0;
+                }
+                if (copy_to_user(infop, &ptrace_info, sizeof(ptrace_info))) {
+                    return (uint64_t)-EFAULT;
+                }
+            } else {
+                ptrace_consume_wait_event(found_ptrace_stop, NULL, NULL,
+                                          (options & WNOWAIT) != 0);
+            }
+            if (rusage)
+                task_fill_rusage(found_ptrace_stop, false, rusage);
+            return 0;
+        }
 
         if (found_dead) {
             target = found_dead;
             break;
         }
 
-        if (found_alive && (options & WNOHANG)) {
+        if ((found_alive || found_ptrace_alive) && (options & WNOHANG)) {
             if (infop) {
                 siginfo_t empty_info;
                 memset(&empty_info, 0, sizeof(empty_info));
@@ -1727,6 +1996,12 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
             found_alive->waitpid = current_task->pid;
             if (found_alive->state != TASK_DIED)
                 task_block(current_task, TASK_BLOCKING, -1, "waitid");
+            continue;
+        }
+
+        if (found_ptrace_alive) {
+            found_ptrace_alive->waitpid = current_task->pid;
+            task_block(current_task, TASK_BLOCKING, -1, "waitid-ptrace");
             continue;
         }
 
@@ -2492,7 +2767,7 @@ uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
         return 0;
 
     case PR_GET_SECCOMP: // 查询seccomp状态
-        return current_task->seccomp_mode;
+        return 0;
 
     case PR_SET_TIMERSLACK:
         return 0;

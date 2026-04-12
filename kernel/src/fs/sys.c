@@ -731,8 +731,8 @@ vfs_node_t *sysfs_regist_dev(char t, int major, int minor,
     char buf[256];
     vfs_node_t *device_root;
 
-    snprintf(dev_root_path, sizeof(dev_root_path), "/sys/dev/%s/%d:%d",
-             root, major, minor);
+    snprintf(dev_root_path, sizeof(dev_root_path), "/sys/dev/%s/%d:%d", root,
+             major, minor);
     if (real_device_path && real_device_path[0]) {
         sysfs_ensure_dir(real_device_path);
         sysfs_ensure_symlink(dev_root_path, real_device_path);

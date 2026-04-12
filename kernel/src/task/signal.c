@@ -1,4 +1,5 @@
 #include <arch/arch.h>
+#include <task/ptrace.h>
 #include <task/signal.h>
 
 #include <fs/vfs/vfs.h>
@@ -1727,6 +1728,14 @@ __attribute__((used)) void task_signal(struct pt_regs *regs) {
                                     ? self->signal->sigsuspend_old_mask
                                     : self->signal->blocked;
         self->signal->sigsuspend_active = 0;
+
+        if (ptrace_is_traced(self) && ptrace_signal_should_stop(sig)) {
+            spin_unlock(&self->signal->sighand->siglock);
+            ptrace_stop_for_signal(self, sig, &info);
+            ptrace_resume_from_signal(self);
+            spin_lock(&self->signal->sighand->siglock);
+            continue;
+        }
 
         if (signal_action_ignored(sig, &action)) {
             continue;

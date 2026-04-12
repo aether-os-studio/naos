@@ -983,7 +983,7 @@ size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
 
     // Read the complete message directly into the user buffer
     size_t bytes_read = netlink_buffer_read_packet(
-        nl_sk, out, limit, &sender_pid, &sender_groups, peek);
+        nl_sk, (char *)out, limit, &sender_pid, &sender_groups, peek);
     if (bytes_read == 0) {
         return -EAGAIN;
     }

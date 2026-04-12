@@ -7,6 +7,7 @@
 #include <mm/mm_syscall.h>
 #include <task/futex.h>
 #include <task/keyring.h>
+#include <task/ptrace.h>
 #include <task/task_syscall.h>
 #include <net/net_syscall.h>
 
@@ -502,7 +503,7 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_GETRUSAGE, (syscall_handle_t)sys_getrusage);
     regist_syscall_handler(SYS_SYSINFO, (syscall_handle_t)sys_sysinfo);
     // regist_syscall_handler(SYS_TIMES, (syscall_handle_t)sys_times);
-    // regist_syscall_handler(SYS_PTRACE, (syscall_handle_t)sys_ptrace);
+    regist_syscall_handler(SYS_PTRACE, (syscall_handle_t)sys_ptrace);
     regist_syscall_handler(SYS_GETUID, (syscall_handle_t)sys_getuid);
     regist_syscall_handler(SYS_SYSLOG, (syscall_handle_t)sys_syslog);
     regist_syscall_handler(SYS_GETGID, (syscall_handle_t)sys_getgid);
@@ -808,10 +809,10 @@ void syscall_handler_init() {
 #endif
     regist_syscall_handler(SYS_SETNS, (syscall_handle_t)sys_setns);
     regist_syscall_handler(SYS_GETCPU, (syscall_handle_t)sys_getcpu);
-    // regist_syscall_handler(SYS_PROCESS_VM_READV,
-    // (syscall_handle_t)sys_process_vm_readv);
-    // regist_syscall_handler(SYS_PROCESS_VM_WRITEV,
-    // (syscall_handle_t)sys_process_vm_writev);
+    regist_syscall_handler(SYS_PROCESS_VM_READV,
+                           (syscall_handle_t)sys_process_vm_readv);
+    regist_syscall_handler(SYS_PROCESS_VM_WRITEV,
+                           (syscall_handle_t)sys_process_vm_writev);
     regist_syscall_handler(SYS_KCMP, (syscall_handle_t)sys_kcmp);
     // regist_syscall_handler(SYS_FINIT_MODULE,
     // (syscall_handle_t)sys_finit_module);
@@ -892,8 +893,6 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_FCHMODAT2, (syscall_handle_t)sys_fchmodat2);
 }
 
-spinlock_t syscall_debug_lock = SPIN_INIT;
-
 static inline uint64_t syscall_account_running_ns(task_t *task,
                                                   uint64_t now_ns) {
     if (!task || !task->last_sched_in_ns || now_ns <= task->last_sched_in_ns)
@@ -930,6 +929,8 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
     uint64_t arg5 = regs->r8;
     uint64_t arg6 = regs->r9;
 
+    ptrace_on_syscall_enter(regs);
+
     if (self)
         syscall_account_running_ns(self, nano_time());
     uint64_t syscall_user_base = self ? self->user_time_ns : 0;
@@ -959,59 +960,9 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
         !((int64_t)regs->rax < 0))
         regs->rax |= 0xffffffff00000000;
 
-#define SYSCALL_DEBUG 0
-#if SYSCALL_DEBUG
-    if (idx == SYS_PAUSE || idx == SYS_SCHED_YIELD)
-        goto done;
-
-    bool usable = idx < (sizeof(linux_syscalls) / sizeof(linux_syscalls[0]));
-    const LINUX_SYSCALL *info = usable ? &linux_syscalls[idx] : NULL;
-
-    char buf[256];
-    int len;
-
-    spin_lock(&syscall_debug_lock);
-
-    len = sprintf(buf, "%d [syscall %d] %s(", self->pid, idx,
-                  usable ? info->name : "???");
-    serial_printk(buf, len);
-    if (usable) {
-        if (info->arg1[0]) {
-            len = sprintf(buf, "%s:0x%lx,", info->arg1, arg1);
-            serial_printk(buf, len);
-        }
-        if (info->arg2[0]) {
-            len = sprintf(buf, "%s:0x%lx,", info->arg2, arg2);
-            serial_printk(buf, len);
-        }
-        if (info->arg3[0]) {
-            len = sprintf(buf, "%s:0x%lx,", info->arg3, arg3);
-            serial_printk(buf, len);
-        }
-        if (info->arg4[0]) {
-            len = sprintf(buf, "%s:0x%lx,", info->arg4, arg4);
-            serial_printk(buf, len);
-        }
-        if (info->arg5[0]) {
-            len = sprintf(buf, "%s:0x%lx,", info->arg5, arg5);
-            serial_printk(buf, len);
-        }
-        if (info->arg6[0]) {
-            len = sprintf(buf, "%s:0x%lx,", info->arg6, arg6);
-            serial_printk(buf, len);
-        }
-    }
-    if ((int64_t)regs->rax < 0) {
-        len = sprintf(buf, ") = %s%s%s\n", "ERR(", strerror(-regs->rax), ")");
-    } else {
-        len = sprintf(buf, ") = %#018lx\n", regs->rax);
-    }
-    serial_printk(buf, len);
-
-    spin_unlock(&syscall_debug_lock);
-#endif
-
 done:
+    ptrace_on_syscall_exit(regs);
+
     if (self) {
         syscall_account_running_ns(self, nano_time());
         if (self->user_time_ns > syscall_user_base)
