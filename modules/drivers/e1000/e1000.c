@@ -3,7 +3,6 @@
 #include <mm/mm.h>
 #include <drivers/bus/pci.h>
 #include <libs/klibc.h>
-#include <net/rtnl.h>
 
 // Global device array
 e1000_device_t *e1000_devices[MAX_E1000_DEVICES];
@@ -247,19 +246,6 @@ int e1000_init(void *mmio_base) {
     // Store device and register with network framework
     e1000_devices[e1000_device_count++] = dev;
     regist_netdev(dev, dev->mac, dev->mtu, e1000_send, e1000_receive);
-
-    struct net_device *rtnl_dev = rtnl_dev_alloc("e1000", ARPHRD_ETHER);
-
-    memcpy(rtnl_dev->addr, dev->mac, 6);
-    rtnl_dev->addr_len = 6;
-
-    memset(rtnl_dev->broadcast, 0xFF, 6);
-
-    rtnl_dev->mtu = dev->mtu;
-
-    rtnl_dev_register(rtnl_dev);
-
-    rtnl_notify_link(rtnl_dev, RTM_NEWLINK);
 
     return 0;
 }

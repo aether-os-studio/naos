@@ -7,7 +7,6 @@
 #include <fs/vfs/notify.h>
 #include <block/partition.h>
 #include <net/real_socket.h>
-#include <net/rtnl.h>
 #include <drivers/fb.h>
 #include <drivers/drm/drm.h>
 
@@ -45,8 +44,6 @@ void init_thread(uint64_t arg) {
 #if !defined(__x86_64__)
     fdt_init();
 #endif
-
-    rtnl_init();
 
     pidfd_init();
     mountfd_init();

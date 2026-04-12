@@ -60,6 +60,7 @@ struct netlink_sock {
     int protocol;
     uint32_t portid;
     uint32_t groups;
+    bool passcred;
     vfs_node_t *node;
     struct sockaddr_nl *bind_addr;
     struct netlink_buffer *buffer; // skb-backed receive queue

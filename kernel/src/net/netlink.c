@@ -1,5 +1,4 @@
 #include <net/netlink.h>
-#include <net/rtnl.h>
 #include <task/task.h>
 #include <mm/mm.h>
 #include <arch/arch.h>
@@ -41,6 +40,110 @@ static ssize_t netlink_write_op(fd_t *fd, const void *buf, size_t offset,
                                 size_t count);
 int netlink_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg);
 int netlink_poll(vfs_node_t *node, size_t events);
+static int netlink_wait_sock(struct netlink_sock *sock, uint32_t events,
+                             const char *reason);
+static bool netlink_buffer_has_msg(struct netlink_sock *sock);
+static size_t netlink_buffer_peek_msg_len(struct netlink_sock *sock);
+static size_t netlink_buffer_read_packet(struct netlink_sock *sock, char *out,
+                                         size_t out_len, uint32_t *nl_pid,
+                                         uint32_t *nl_groups, bool peek);
+
+static inline void netlink_fill_sockaddr(struct sockaddr_nl *addr,
+                                         uint32_t nl_pid, uint32_t nl_groups) {
+    if (!addr)
+        return;
+
+    addr->nl_family = AF_NETLINK;
+    addr->nl_pad = 0;
+    addr->nl_pid = nl_pid;
+    addr->nl_groups = nl_groups;
+}
+
+static bool netlink_addr_is_kernel(const struct sockaddr_nl *addr) {
+    return addr && addr->nl_pid == 0 && addr->nl_groups == 0;
+}
+
+static struct netlink_sock *
+netlink_lookup_sock_by_portid_locked(int protocol, uint32_t portid) {
+    for (int i = 0; i < MAX_NETLINK_SOCKETS; i++) {
+        struct netlink_sock *sock = netlink_sockets[i];
+        if (!sock)
+            continue;
+        if (sock->protocol != protocol)
+            continue;
+        if (sock->portid == portid)
+            return sock;
+    }
+
+    return NULL;
+}
+
+static int netlink_send_to_kernel(struct netlink_sock *sender_sock,
+                                  const char *data, size_t len,
+                                  uint32_t sender_pid) {
+    (void)sender_sock;
+    (void)data;
+    (void)len;
+    (void)sender_pid;
+
+    return -EOPNOTSUPP;
+}
+
+static int netlink_wait_for_message(struct netlink_sock *sock, fd_t *file,
+                                    int flags, const char *reason) {
+    bool nonblock;
+    bool has_msg;
+
+    if (!sock || !file)
+        return -EINVAL;
+
+    nonblock = !!(flags & MSG_DONTWAIT) || !!(fd_get_flags(file) & O_NONBLOCK);
+    has_msg = netlink_buffer_has_msg(sock);
+    if (!has_msg && nonblock)
+        return -EAGAIN;
+
+    while (!has_msg) {
+        int ret = netlink_wait_sock(sock, EPOLLIN, reason);
+        if (ret != EOK)
+            return ret < 0 ? ret : -EINTR;
+        has_msg = netlink_buffer_has_msg(sock);
+    }
+
+    return 0;
+}
+
+static size_t netlink_iov_total_len(const struct iovec *iov, size_t iovlen) {
+    size_t total = 0;
+
+    if (!iov)
+        return 0;
+
+    for (size_t i = 0; i < iovlen; i++) {
+        if (iov[i].len > SIZE_MAX - total)
+            return SIZE_MAX;
+        total += iov[i].len;
+    }
+
+    return total;
+}
+
+static size_t netlink_copy_to_iov(struct iovec *iov, size_t iovlen,
+                                  const char *src, size_t len) {
+    size_t copied = 0;
+
+    if (!iov || !src)
+        return 0;
+
+    for (size_t i = 0; i < iovlen && copied < len; i++) {
+        size_t to_copy = MIN(iov[i].len, len - copied);
+        if (!to_copy)
+            continue;
+        memcpy(iov[i].iov_base, src + copied, to_copy);
+        copied += to_copy;
+    }
+
+    return copied;
+}
 
 // Function to add message to persistent pool
 static void netlink_msg_pool_add(const char *message, size_t length,
@@ -254,7 +357,6 @@ size_t netlink_buffer_write_packet(struct netlink_sock *sock, const char *data,
                                    uint32_t nl_groups) {
     struct netlink_buffer *buf = sock->buffer;
     skb_buff_t *skb = NULL;
-    size_t total_needed = 0;
 
     if (buf == NULL || data == NULL || len == 0) {
         return 0;
@@ -268,8 +370,7 @@ size_t netlink_buffer_write_packet(struct netlink_sock *sock, const char *data,
         len = MIN(len, accept_bytes);
     }
 
-    total_needed = sizeof(struct netlink_packet_hdr) + len;
-    if (total_needed > buf->size - 1)
+    if (len > buf->size)
         return 0;
 
     skb = netlink_packet_build_skb(data, len, nl_pid, nl_groups);
@@ -277,14 +378,13 @@ size_t netlink_buffer_write_packet(struct netlink_sock *sock, const char *data,
         return 0;
 
     spin_lock(&buf->lock);
-    if (buf->used_bytes + total_needed > buf->size - 1 ||
-        !skb_queue_push(&buf->queue, skb)) {
+    if (!skb_queue_push(&buf->queue, skb)) {
         spin_unlock(&buf->lock);
         skb_free(skb, netlink_packet_meta_destroy);
         return 0;
     }
 
-    buf->used_bytes += total_needed;
+    buf->used_bytes = skb_queue_bytes(&buf->queue);
     spin_unlock(&buf->lock);
     netlink_notify_sock(sock, EPOLLIN);
     return len;
@@ -329,8 +429,8 @@ static size_t netlink_buffer_read_packet(struct netlink_sock *sock, char *out,
     if (!peek) {
         skb_buff_t *done = skb_queue_pop(&buf->queue);
         if (done) {
-            buf->used_bytes -= sizeof(struct netlink_packet_hdr) + done->len;
             skb_free(done, netlink_packet_meta_destroy);
+            buf->used_bytes = skb_queue_bytes(&buf->queue);
         }
     }
 
@@ -377,7 +477,7 @@ static size_t netlink_buffer_available(struct netlink_buffer *buf) {
     }
 
     spin_lock(&buf->lock);
-    size_t avail = buf->used_bytes;
+    size_t avail = skb_queue_bytes(&buf->queue);
     spin_unlock(&buf->lock);
     return avail;
 }
@@ -514,6 +614,8 @@ int netlink_bind(uint64_t fd, const struct sockaddr_un *addr,
     spin_lock(&sock->lock);
     sock->portid = portid;
     sock->groups = nl_addr->nl_groups;
+    if (nl_addr->nl_groups)
+        sock->groups = nl_addr->nl_groups;
 
     if (sock->bind_addr == NULL) {
         sock->bind_addr = malloc(sizeof(struct sockaddr_nl));
@@ -523,8 +625,7 @@ int netlink_bind(uint64_t fd, const struct sockaddr_un *addr,
             return -ENOMEM;
         }
     }
-    memcpy(sock->bind_addr, nl_addr, sizeof(struct sockaddr_nl));
-    sock->bind_addr->nl_pid = sock->portid;
+    netlink_fill_sockaddr(sock->bind_addr, sock->portid, sock->groups);
     spin_unlock(&sock->lock);
     spin_unlock(&netlink_sockets_lock);
 
@@ -556,11 +657,19 @@ size_t netlink_getsockopt(uint64_t fd, int level, int optname, void *optval,
         case SO_REUSEADDR:
             break;
         case SO_PASSCRED:
+            if (!optval || !optlen || *optlen < sizeof(int))
+                return -EINVAL;
+            *(int *)optval = nl_sk->passcred ? 1 : 0;
+            *optlen = sizeof(int);
             break;
         case SO_SNDBUF:
         case SO_SNDBUFFORCE:
         case SO_RCVBUF:
         case SO_RCVBUFFORCE:
+            if (!optval || !optlen || *optlen < sizeof(int))
+                return -EINVAL;
+            *(int *)optval = (int)NETLINK_BUFFER_SIZE;
+            *optlen = sizeof(int);
             break;
         default:
             printk("%s:%d Unsupported optlevel or optname %d %d\n", __FILE__,
@@ -619,6 +728,11 @@ size_t netlink_setsockopt(uint64_t fd, int level, int optname,
         case SO_REUSEADDR:
             break;
         case SO_PASSCRED:
+            if (!optval || optlen < sizeof(int))
+                return -EINVAL;
+            spin_lock(&nl_sk->lock);
+            nl_sk->passcred = (*(const int *)optval) != 0;
+            spin_unlock(&nl_sk->lock);
             break;
         case SO_SNDBUF:
         case SO_SNDBUFFORCE:
@@ -677,13 +791,8 @@ int netlink_getsockname(uint64_t fd, struct sockaddr_un *addr,
     struct netlink_sock *nl_sk = handle->sock;
 
     spin_lock(&nl_sk->lock);
-
-    struct sockaddr_nl *nl_addr = (struct sockaddr_nl *)addr;
-    nl_addr->nl_family = AF_NETLINK;
-    nl_addr->nl_pid = nl_sk->portid;
-    nl_addr->nl_groups = nl_sk->groups;
-    nl_addr->nl_pad = 0;
-
+    netlink_fill_sockaddr((struct sockaddr_nl *)addr, nl_sk->portid,
+                          nl_sk->groups);
     *addrlen = sizeof(struct sockaddr_nl);
 
     spin_unlock(&nl_sk->lock);
@@ -695,8 +804,8 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
         return -EBADF;
     }
 
-    socket_handle_t *handle =
-        sockfs_file_handle(current_task->fd_info->fds[fd]);
+    fd_t *file = current_task->fd_info->fds[fd];
+    socket_handle_t *handle = sockfs_file_handle(file);
     struct netlink_sock *nl_sk = handle->sock;
 
     if (nl_sk->buffer == NULL) {
@@ -704,65 +813,41 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
     }
 
     bool peek = !!(flags & MSG_PEEK);
-    bool noblock =
-        !!(flags & MSG_DONTWAIT) ||
-        !!(fd_get_flags(current_task->fd_info->fds[fd]) & O_NONBLOCK);
-
-    msg->msg_flags = 0;
-
-    // Check if there's a complete message available
-    bool has_msg = netlink_buffer_has_msg(nl_sk);
-    if (!has_msg && noblock) {
-        return -EAGAIN;
-    }
-
-    // Wait for a complete message if blocking
-    while (!has_msg) {
-        int reason = netlink_wait_sock(nl_sk, EPOLLIN, "netlink_recvmsg");
-        if (reason != EOK)
-            return -EINTR;
-        has_msg = netlink_buffer_has_msg(nl_sk);
-    }
-
-    // 计算用户缓冲区总大小
-    size_t total_user_len = 0;
-    for (int i = 0; i < msg->msg_iovlen; i++) {
-        total_user_len += msg->msg_iov[i].len;
-    }
-
     char temp_buf[NETLINK_BUFFER_SIZE];
     uint32_t sender_pid = 0;
     uint32_t sender_groups = 0;
+    size_t packet_len;
+    size_t bytes_read;
+    size_t bytes_copied;
+    size_t name_len = sizeof(struct sockaddr_nl);
 
-    // Read the complete message into a temporary buffer with sender info
-    size_t bytes_read = netlink_buffer_read_packet(
-        nl_sk, temp_buf, sizeof(temp_buf), &sender_pid, &sender_groups, peek);
-    if (bytes_read == 0) {
+    msg->msg_flags = 0;
+
+    int wait_ret =
+        netlink_wait_for_message(nl_sk, file, flags, "netlink_recvmsg");
+    if (wait_ret < 0)
+        return (size_t)wait_ret;
+
+    packet_len = netlink_buffer_peek_msg_len(nl_sk);
+    bytes_read = netlink_buffer_read_packet(nl_sk, temp_buf, sizeof(temp_buf),
+                                            &sender_pid, &sender_groups, peek);
+    if (bytes_read == 0)
         return -EAGAIN;
-    }
 
-    // Copy the message to user iovec(s)
-    size_t total_copied = 0;
-    size_t remaining = bytes_read;
-    char *src = temp_buf;
+    bytes_copied = netlink_copy_to_iov(msg->msg_iov, msg->msg_iovlen, temp_buf,
+                                       bytes_read);
 
-    for (int i = 0; i < msg->msg_iovlen && remaining > 0; i++) {
-        struct iovec *curr = &msg->msg_iov[i];
-        size_t to_copy = (remaining < curr->len) ? remaining : curr->len;
-
-        if (to_copy > 0) {
-            memcpy(curr->iov_base, src, to_copy);
-            src += to_copy;
-            remaining -= to_copy;
-            total_copied += to_copy;
+    if (msg->msg_name && msg->msg_namelen > 0) {
+        name_len = MIN((size_t)msg->msg_namelen, sizeof(struct sockaddr_nl));
+        if (name_len > 0) {
+            struct sockaddr_nl nl_addr;
+            netlink_fill_sockaddr(&nl_addr, sender_pid, sender_groups);
+            memcpy(msg->msg_name, &nl_addr, name_len);
         }
     }
+    msg->msg_namelen = sizeof(struct sockaddr_nl);
 
-    // 如果设置了 MSG_TRUNC，返回原始消息长度
-    size_t ret_len = (flags & MSG_TRUNC) ? bytes_read : total_copied;
-
-    // Fill in ancillary data if requested
-    if (msg->msg_control && msg->msg_controllen > 0) {
+    if (msg->msg_control && msg->msg_controllen > 0 && nl_sk->passcred) {
         struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg);
         if (cmsg && msg->msg_controllen >= CMSG_LEN(sizeof(struct ucred))) {
             cmsg->cmsg_len = CMSG_LEN(sizeof(struct ucred));
@@ -776,26 +861,17 @@ size_t netlink_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
 
             msg->msg_controllen = cmsg->cmsg_len;
         } else {
+            msg->msg_flags |= MSG_CTRUNC;
             msg->msg_controllen = 0;
         }
+    } else {
+        msg->msg_controllen = 0;
     }
 
-    // Fill in socket address if requested
-    if (msg->msg_name && msg->msg_namelen >= sizeof(struct sockaddr_nl)) {
-        struct sockaddr_nl *nl_addr = (struct sockaddr_nl *)msg->msg_name;
-        nl_addr->nl_family = AF_NETLINK;
-        nl_addr->nl_pid = sender_pid;
-        nl_addr->nl_groups = sender_groups;
-        nl_addr->nl_pad = 0;
-        msg->msg_namelen = sizeof(struct sockaddr_nl);
-    }
-
-    // 设置 MSG_TRUNC 标志如果消息被截断
-    if (remaining > 0) {
+    if (bytes_copied < bytes_read)
         msg->msg_flags |= MSG_TRUNC;
-    }
 
-    return ret_len;
+    return (flags & MSG_TRUNC) ? packet_len : bytes_copied;
 }
 
 size_t netlink_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
@@ -806,74 +882,60 @@ size_t netlink_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
     socket_handle_t *handle =
         sockfs_file_handle(current_task->fd_info->fds[fd]);
     struct netlink_sock *nl_sk = handle->sock;
+    struct sockaddr_nl *addr = (struct sockaddr_nl *)msg->msg_name;
 
-    // Calculate total message length
-    size_t total_len = 0;
-    for (int i = 0; i < msg->msg_iovlen; i++) {
-        total_len += msg->msg_iov[i].len;
-    }
+    if (!msg || !addr)
+        return -EDESTADDRREQ;
+    if (msg->msg_namelen < sizeof(struct sockaddr_nl))
+        return -EINVAL;
+    if (addr->nl_family != AF_NETLINK)
+        return -EAFNOSUPPORT;
 
+    size_t total_len = netlink_iov_total_len(msg->msg_iov, msg->msg_iovlen);
     if (total_len == 0) {
         return 0;
     }
 
-    if (total_len > NETLINK_BUFFER_SIZE - sizeof(struct netlink_packet_hdr)) {
+    if (total_len == SIZE_MAX ||
+        total_len > NETLINK_BUFFER_SIZE - sizeof(struct netlink_packet_hdr)) {
         return -EMSGSIZE;
     }
 
-    // Copy data into buffer
     char buffer[NETLINK_BUFFER_SIZE];
     size_t offset = 0;
-
-    for (int i = 0; i < msg->msg_iovlen; i++) {
-        struct iovec *curr = &msg->msg_iov[i];
-        if (curr->iov_base && curr->len > 0) {
-            memcpy(buffer + offset, curr->iov_base, curr->len);
-            offset += curr->len;
-        }
+    for (size_t i = 0; i < msg->msg_iovlen; i++) {
+        if (!msg->msg_iov[i].iov_base || !msg->msg_iov[i].len)
+            continue;
+        memcpy(buffer + offset, msg->msg_iov[i].iov_base, msg->msg_iov[i].len);
+        offset += msg->msg_iov[i].len;
     }
 
-    // Get sender's pid and groups
     uint32_t sender_pid = nl_sk->portid;
     uint32_t sender_groups = nl_sk->groups;
-
-    struct sockaddr_nl *addr = (struct sockaddr_nl *)msg->msg_name;
-    if (!addr)
-        return 0;
+    if (sender_pid == 0)
+        sender_pid = (uint32_t)current_task->pid;
 
     if (addr->nl_pid != 0) {
-        // Unicast to specific pid - 不保存到 pool
+        size_t delivered = 0;
         spin_lock(&netlink_sockets_lock);
-        for (int i = 0; i < MAX_NETLINK_SOCKETS; i++) {
-            if (netlink_sockets[i] == NULL)
-                continue;
-
-            struct netlink_sock *sock = netlink_sockets[i];
-            if (sock->portid == addr->nl_pid) {
-                spin_lock(&sock->lock);
-                netlink_deliver_to_socket(sock, buffer, total_len, sender_pid,
-                                          sender_groups);
-                spin_unlock(&sock->lock);
-                break;
-            }
+        struct netlink_sock *sock =
+            netlink_lookup_sock_by_portid_locked(nl_sk->protocol, addr->nl_pid);
+        if (sock) {
+            spin_lock(&sock->lock);
+            delivered = netlink_deliver_to_socket(sock, buffer, total_len,
+                                                  sender_pid, sender_groups);
+            spin_unlock(&sock->lock);
         }
         spin_unlock(&netlink_sockets_lock);
-
-        // Unicast 如果目标不存在，静默成功（类似 UDP 行为）
+        return delivered ? (size_t)total_len : (size_t)-ECONNREFUSED;
     } else if (addr->nl_groups != 0) {
-        // Multicast to groups - 保存到 pool 并广播
         netlink_broadcast_to_group(buffer, total_len, sender_pid,
                                    addr->nl_groups, nl_sk->protocol, 0, NULL);
-    } else {
-        // nl_pid == 0 && nl_groups == 0, sending to kernel
-        if (nl_sk->protocol == NETLINK_ROUTE) {
-            // Route to RTNL subsystem for processing
-            rtnl_process_msg(nl_sk, buffer, total_len, sender_pid);
-        }
         return total_len;
+    } else {
+        int ret = netlink_send_to_kernel(nl_sk, buffer, total_len, sender_pid);
+        return ret < 0 ? (size_t)ret : total_len;
     }
-
-    return total_len;
 }
 
 size_t netlink_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
@@ -903,41 +965,35 @@ size_t netlink_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
         return -EDESTADDRREQ;
     }
 
+    if (len < sizeof(struct sockaddr_nl))
+        return -EINVAL;
     if (nl_addr->nl_family != AF_NETLINK) {
         return -EAFNOSUPPORT;
     }
+    if (sender_pid == 0)
+        sender_pid = (uint32_t)current_task->pid;
 
-    if (nl_addr->nl_pid == 0 && nl_addr->nl_groups == 0) {
-        if (nl_sk->protocol == NETLINK_ROUTE) {
-            rtnl_process_msg(nl_sk, (char *)in, limit, sender_pid);
-        }
-        return limit;
-    }
     if (nl_addr->nl_pid != 0) {
-        // Unicast - 不保存到 pool
+        size_t delivered = 0;
         spin_lock(&netlink_sockets_lock);
-        for (int i = 0; i < MAX_NETLINK_SOCKETS; i++) {
-            if (netlink_sockets[i] == NULL)
-                continue;
-
-            struct netlink_sock *sock = netlink_sockets[i];
-            if (sock->portid == nl_addr->nl_pid) {
-                spin_lock(&sock->lock);
-                netlink_deliver_to_socket(sock, (char *)in, limit, sender_pid,
-                                          sender_groups);
-                spin_unlock(&sock->lock);
-                break;
-            }
+        struct netlink_sock *sock = netlink_lookup_sock_by_portid_locked(
+            nl_sk->protocol, nl_addr->nl_pid);
+        if (sock) {
+            spin_lock(&sock->lock);
+            delivered = netlink_deliver_to_socket(sock, (char *)in, limit,
+                                                  sender_pid, sender_groups);
+            spin_unlock(&sock->lock);
         }
         spin_unlock(&netlink_sockets_lock);
+        return delivered ? limit : (size_t)-ECONNREFUSED;
     } else if (nl_addr->nl_groups != 0) {
-        // Multicast to groups - 保存到 pool 并广播
         netlink_broadcast_to_group((char *)in, limit, sender_pid,
                                    nl_addr->nl_groups, nl_sk->protocol, 0,
                                    NULL);
+        return limit;
     }
 
-    return limit;
+    return (size_t)netlink_send_to_kernel(nl_sk, (char *)in, limit, sender_pid);
 }
 
 size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
@@ -946,57 +1002,38 @@ size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
         return -EBADF;
     }
 
-    socket_handle_t *handle =
-        sockfs_file_handle(current_task->fd_info->fds[fd]);
+    fd_t *file = current_task->fd_info->fds[fd];
+    socket_handle_t *handle = sockfs_file_handle(file);
     struct netlink_sock *nl_sk = handle->sock;
 
     if (nl_sk->buffer == NULL) {
         return -EINVAL;
     }
 
-    bool noblock =
-        !!(flags & MSG_DONTWAIT) ||
-        !!(fd_get_flags(current_task->fd_info->fds[fd]) & O_NONBLOCK);
-
     bool peek = !!(flags & MSG_PEEK);
-    size_t msg_len = netlink_buffer_peek_msg_len(nl_sk);
-
-    // Check if there's a complete message available
-    bool has_msg = netlink_buffer_has_msg(nl_sk);
-    if (!has_msg && noblock) {
-        return -EAGAIN;
-    }
-
-    // Wait for a complete message if blocking
-    while (!has_msg) {
-        int reason = netlink_wait_sock(nl_sk, EPOLLIN, "netlink_recvfrom");
-        if (reason != EOK)
-            return -EINTR;
-        has_msg = netlink_buffer_has_msg(nl_sk);
-    }
-
     uint32_t sender_pid = 0;
     uint32_t sender_groups = 0;
+    int wait_ret =
+        netlink_wait_for_message(nl_sk, file, flags, "netlink_recvfrom");
+    size_t msg_len;
+    size_t bytes_read;
 
-    // 重新获取消息长度（用于 MSG_TRUNC）
+    if (wait_ret < 0)
+        return (size_t)wait_ret;
+
     msg_len = netlink_buffer_peek_msg_len(nl_sk);
-
-    // Read the complete message directly into the user buffer
-    size_t bytes_read = netlink_buffer_read_packet(
-        nl_sk, (char *)out, limit, &sender_pid, &sender_groups, peek);
+    bytes_read = netlink_buffer_read_packet(nl_sk, (char *)out, limit,
+                                            &sender_pid, &sender_groups, peek);
     if (bytes_read == 0) {
         return -EAGAIN;
     }
 
-    // Fill in socket address if requested
     if (addr) {
         struct sockaddr_nl nl_addr_out;
-        nl_addr_out.nl_family = AF_NETLINK;
-        nl_addr_out.nl_pid = sender_pid;
-        nl_addr_out.nl_groups = sender_groups;
-        nl_addr_out.nl_pad = 0;
-
-        memcpy(addr, &nl_addr_out, sizeof(struct sockaddr_nl));
+        netlink_fill_sockaddr(&nl_addr_out, sender_pid, sender_groups);
+        memcpy(addr, &nl_addr_out,
+               MIN((size_t)(len ? *len : sizeof(struct sockaddr_nl)),
+                   sizeof(struct sockaddr_nl)));
     }
 
     if (len) {
@@ -1004,7 +1041,6 @@ size_t netlink_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
         memcpy(len, &addr_len, sizeof(uint32_t));
     }
 
-    // 如果设置了 MSG_TRUNC，返回原始消息长度
     return (flags & MSG_TRUNC) ? msg_len : bytes_read;
 }
 
@@ -1023,6 +1059,9 @@ int netlink_socket(int domain, int type, int protocol) {
     if (domain != AF_NETLINK) {
         return -EAFNOSUPPORT;
     }
+    if ((type & 0xF) != SOCK_RAW && (type & 0xF) != SOCK_DGRAM) {
+        return -ESOCKTNOSUPPORT;
+    }
 
     struct netlink_sock *nl_sk = malloc(sizeof(struct netlink_sock));
     if (nl_sk == NULL) {
@@ -1035,6 +1074,7 @@ int netlink_socket(int domain, int type, int protocol) {
     nl_sk->protocol = protocol;
     nl_sk->portid = (uint32_t)current_task->pid;
     nl_sk->groups = 0;
+    nl_sk->passcred = false;
     nl_sk->node = NULL;
     nl_sk->bind_addr = NULL;
     nl_sk->lock = SPIN_INIT;
@@ -1174,17 +1214,9 @@ static ssize_t netlink_read_op(fd_t *fd, void *buf, size_t offset,
     if (!nl_sk || !nl_sk->buffer)
         return -EINVAL;
 
-    bool noblock = !!(fd_get_flags(fd) & O_NONBLOCK);
-    bool has_msg = netlink_buffer_has_msg(nl_sk);
-    if (!has_msg && noblock)
-        return -EAGAIN;
-
-    while (!has_msg) {
-        int reason = netlink_wait_sock(nl_sk, EPOLLIN, "netlink_read");
-        if (reason != EOK)
-            return -EINTR;
-        has_msg = netlink_buffer_has_msg(nl_sk);
-    }
+    int wait_ret = netlink_wait_for_message(nl_sk, fd, 0, "netlink_read");
+    if (wait_ret < 0)
+        return wait_ret;
 
     uint32_t sender_pid = 0;
     uint32_t sender_groups = 0;

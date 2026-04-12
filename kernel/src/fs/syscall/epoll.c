@@ -447,7 +447,7 @@ static uint64_t do_epoll_wait(struct vfs_file *epoll_file,
     start = nano_time();
     infinite_timeout = timeout_ns < 0;
 
-    while (true) {
+    do {
         arch_disable_interrupt();
 
         mutex_lock(&epoll->lock);
@@ -507,21 +507,17 @@ static uint64_t do_epoll_wait(struct vfs_file *epoll_file,
             task_block(current_task, TASK_BLOCKING, block_ns, "epoll_wait");
         arch_disable_interrupt();
         epoll_disarm_waiters(waits, waits_count);
-
         if (block_reason == ETIMEDOUT) {
-            if (infinite_timeout)
+            if (infinite_timeout) {
                 continue;
-            if ((nano_time() - start) >= (uint64_t)timeout_ns)
-                break;
-            continue;
+            }
+            break;
         }
         if (block_reason != EOK) {
             ready = -EINTR;
             break;
         }
-        if (!infinite_timeout && (nano_time() - start) >= (uint64_t)timeout_ns)
-            break;
-    }
+    } while (infinite_timeout || (nano_time() - start) < timeout_ns);
 
     if (irq_state)
         arch_enable_interrupt();

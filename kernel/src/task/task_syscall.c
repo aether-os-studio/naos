@@ -1110,20 +1110,143 @@ static int task_execve_dethread(task_t *self) {
     }
 }
 
-uint64_t task_execve(const char *path_user, const char **argv,
-                     const char **envp) {
+static int task_execve_copy_path(const char *path_src, char *path_dst,
+                                 size_t path_len) {
+    if (!path_src || !path_dst || path_len == 0)
+        return -EFAULT;
+
+    if (!check_user_overflow((uint64_t)path_src, 1)) {
+        if (copy_from_user_str(path_dst, path_src, path_len))
+            return -EFAULT;
+    } else {
+        strncpy(path_dst, path_src, path_len);
+        path_dst[path_len - 1] = '\0';
+    }
+
+    return 0;
+}
+
+static int task_execve_build_display_path(int dirfd, const char *pathname,
+                                          uint64_t flags, char *display_path,
+                                          size_t display_len) {
+    int written;
+
+    if (!pathname || !display_path || display_len == 0)
+        return -EINVAL;
+
+    if ((flags & AT_EMPTY_PATH) && pathname[0] == '\0') {
+        written = snprintf(display_path, display_len, "/dev/fd/%d", dirfd);
+    } else if (pathname[0] == '/' || dirfd == AT_FDCWD) {
+        written = snprintf(display_path, display_len, "%s", pathname);
+    } else {
+        written = snprintf(display_path, display_len, "/dev/fd/%d/%s", dirfd,
+                           pathname);
+    }
+
+    if (written < 0 || (size_t)written >= display_len)
+        return -ENAMETOOLONG;
+
+    return 0;
+}
+
+static int task_execve_open_file_from_path(const struct vfs_path *path,
+                                           unsigned int open_flags,
+                                           struct vfs_file **out) {
+    struct vfs_file *file;
+    int ret = 0;
+
+    if (!path || !out)
+        return -EINVAL;
+
+    file = vfs_alloc_file(path, open_flags);
+    if (!file)
+        return -ENOMEM;
+
+    if (!(open_flags & O_PATH) && file->f_op && file->f_op->open) {
+        ret = file->f_op->open(file->f_inode, file);
+        if (ret < 0) {
+            vfs_file_put(file);
+            return ret;
+        }
+    }
+
+    *out = file;
+    return 0;
+}
+
+static int task_execve_open_exec_file(int dirfd, const char *pathname,
+                                      uint64_t flags, char *display_path,
+                                      size_t display_len,
+                                      struct vfs_file **out_exec_file) {
+    static const uint64_t allowed_flags = AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW;
+    struct vfs_open_how exec_how = {.flags = O_RDONLY};
+    struct vfs_file *fd_file = NULL;
+    int ret;
+
+    if (!pathname || !display_path || !out_exec_file)
+        return -EINVAL;
+    if (flags & ~allowed_flags)
+        return -EINVAL;
+
+    if ((flags & AT_EMPTY_PATH) && pathname[0] == '\0') {
+        fd_file = task_get_file(current_task, dirfd);
+        if (!fd_file)
+            return -EBADF;
+
+        ret = task_execve_build_display_path(dirfd, pathname, flags,
+                                             display_path, display_len);
+        if (ret < 0) {
+            vfs_file_put(fd_file);
+            return ret;
+        }
+
+        ret = task_execve_open_file_from_path(&fd_file->f_path, exec_how.flags,
+                                              out_exec_file);
+        vfs_file_put(fd_file);
+        return ret;
+    }
+
+    if (flags & AT_SYMLINK_NOFOLLOW)
+        exec_how.flags |= O_NOFOLLOW;
+
+    ret = vfs_openat(dirfd, pathname, &exec_how, out_exec_file);
+    if (ret < 0)
+        return ret;
+
+    ret = task_execve_build_display_path(dirfd, pathname, flags, display_path,
+                                         display_len);
+    if (ret < 0) {
+        vfs_close_file(*out_exec_file);
+        *out_exec_file = NULL;
+        return ret;
+    }
+
+    return 0;
+}
+
+static uint64_t task_do_execve(int dirfd, const char *path_user,
+                               const char **argv, const char **envp,
+                               uint64_t flags) {
     task_t *self = current_task;
     uint64_t exec_fail_ret = (uint64_t)-ENOEXEC;
     char *cmdline = NULL;
+    int open_ret;
 
-    char path[128];
-    strncpy(path, path_user, sizeof(path));
+    char lookup_path[VFS_PATH_MAX];
+    char path[VFS_PATH_MAX];
+    open_ret =
+        task_execve_copy_path(path_user, lookup_path, sizeof(lookup_path));
+    if (open_ret < 0) {
+        return (uint64_t)open_ret;
+    }
 
     struct vfs_file *exec_file = NULL;
-    struct vfs_open_how exec_how = {.flags = O_RDONLY};
-    if (vfs_openat(AT_FDCWD, path, &exec_how, &exec_file) < 0 || !exec_file) {
-        return (uint64_t)-ENOENT;
+    open_ret = task_execve_open_exec_file(dirfd, lookup_path, flags, path,
+                                          sizeof(path), &exec_file);
+    if (open_ret < 0 || !exec_file) {
+        return (uint64_t)open_ret;
     }
+    struct vfs_open_how exec_how = {.flags = O_RDONLY};
     vfs_node_t *node = exec_file->f_inode;
 
     int argv_count = 0;
@@ -1660,6 +1783,8 @@ uint64_t task_execve(const char *path_user, const char **argv,
     self->is_clone = false;
     self->is_kernel = false;
 
+    if (self->exec_file)
+        vfs_close_file(self->exec_file);
     self->exec_file = exec_file;
     ptrace_stop_for_exec(self);
 
@@ -1691,6 +1816,16 @@ exec_fail_restore_mm:
     vfs_close_file(exec_file);
 
     return exec_fail_ret;
+}
+
+uint64_t task_execve(const char *path_user, const char **argv,
+                     const char **envp) {
+    return task_do_execve(AT_FDCWD, path_user, argv, envp, 0);
+}
+
+uint64_t sys_execveat(uint64_t dirfd, const char *path_user, const char **argv,
+                      const char **envp, uint64_t flags) {
+    return task_do_execve((int)dirfd, path_user, argv, envp, flags);
 }
 
 uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,

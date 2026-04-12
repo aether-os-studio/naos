@@ -214,15 +214,21 @@ static int file_lock_normalize(fd_t *fd, const flock_t *lock,
     return 0;
 }
 
+static bool file_lock_same_owner(const vfs_file_lock_t *lock, uintptr_t owner,
+                                 bool ofd) {
+    return lock && lock->ofd == ofd && lock->owner == owner;
+}
+
 static vfs_file_lock_t *file_lock_find_conflict(vfs_node_t *node,
                                                 uint64_t start, uint64_t end,
-                                                int16_t type, int32_t pid) {
+                                                int16_t type, uintptr_t owner,
+                                                bool ofd) {
     if (!node)
         return NULL;
 
     vfs_file_lock_t *lock = NULL, *tmp = NULL;
     llist_for_each(lock, tmp, &node->file_locks, node) {
-        if (lock->pid == pid)
+        if (file_lock_same_owner(lock, owner, ofd))
             continue;
         if (!file_lock_ranges_overlap(lock->start, lock->end, start, end))
             continue;
@@ -233,14 +239,15 @@ static vfs_file_lock_t *file_lock_find_conflict(vfs_node_t *node,
     return NULL;
 }
 
-static int file_lock_unlock_pid_range(vfs_node_t *node, int32_t pid,
-                                      uint64_t start, uint64_t end) {
+static int file_lock_unlock_owner_range(vfs_node_t *node, uintptr_t owner,
+                                        bool ofd, uint64_t start,
+                                        uint64_t end) {
     if (!node)
         return -EINVAL;
 
     vfs_file_lock_t *lock = NULL, *tmp = NULL;
     llist_for_each(lock, tmp, &node->file_locks, node) {
-        if (lock->pid != pid)
+        if (!file_lock_same_owner(lock, owner, ofd))
             continue;
         if (!file_lock_ranges_overlap(lock->start, lock->end, start, end))
             continue;
@@ -267,8 +274,10 @@ static int file_lock_unlock_pid_range(vfs_node_t *node, int32_t pid,
         llist_init_head(&split->node);
         split->start = end;
         split->end = lock->end;
+        split->owner = lock->owner;
         split->pid = lock->pid;
         split->type = lock->type;
+        split->ofd = lock->ofd;
         lock->end = start;
         llist_append(&node->file_locks, &split->node);
     }
@@ -281,12 +290,15 @@ static void file_lock_release_pid(vfs_node_t *node, int32_t pid) {
         return;
 
     spin_lock(&node->file_locks_lock);
-    (void)file_lock_unlock_pid_range(node, pid, 0, UINT64_MAX);
+    (void)file_lock_unlock_owner_range(node, (uintptr_t)(uint32_t)pid, false, 0,
+                                       UINT64_MAX);
     spin_unlock(&node->file_locks_lock);
 }
 
-static int file_lock_getlk(fd_t *fd, flock_t *lock) {
+static int file_lock_getlk(fd_t *fd, flock_t *lock, bool ofd) {
     if (lock->l_type != F_RDLCK && lock->l_type != F_WRLCK)
+        return -EINVAL;
+    if (ofd && lock->l_pid != 0)
         return -EINVAL;
 
     uint64_t start = 0, end = 0;
@@ -295,9 +307,11 @@ static int file_lock_getlk(fd_t *fd, flock_t *lock) {
         return ret;
 
     vfs_node_t *node = fd->f_inode;
+    uintptr_t owner =
+        ofd ? (uintptr_t)fd : (uintptr_t)(uint32_t)current_task->pid;
     spin_lock(&node->file_locks_lock);
-    vfs_file_lock_t *conflict = file_lock_find_conflict(
-        node, start, end, lock->l_type, current_task->pid);
+    vfs_file_lock_t *conflict =
+        file_lock_find_conflict(node, start, end, lock->l_type, owner, ofd);
     if (!conflict) {
         lock->l_type = F_UNLCK;
         lock->l_pid = 0;
@@ -311,33 +325,36 @@ static int file_lock_getlk(fd_t *fd, flock_t *lock) {
     lock->l_len = conflict->end == UINT64_MAX
                       ? 0
                       : (int64_t)(conflict->end - conflict->start);
-    lock->l_pid = conflict->pid;
+    lock->l_pid = conflict->ofd ? -1 : conflict->pid;
     spin_unlock(&node->file_locks_lock);
     return 0;
 }
 
-static int file_lock_setlk(fd_t *fd, const flock_t *req, bool wait) {
+static int file_lock_setlk(fd_t *fd, const flock_t *req, bool wait, bool ofd) {
     uint64_t start = 0, end = 0;
     int ret = file_lock_normalize(fd, req, &start, &end);
     if (ret < 0)
         return ret;
+    if (ofd && req->l_pid != 0)
+        return -EINVAL;
 
     vfs_node_t *node = fd->f_inode;
     int32_t pid = current_task->pid;
+    uintptr_t owner = ofd ? (uintptr_t)fd : (uintptr_t)(uint32_t)pid;
 
     for (;;) {
         spin_lock(&node->file_locks_lock);
 
         if (req->l_type == F_UNLCK) {
-            ret = file_lock_unlock_pid_range(node, pid, start, end);
+            ret = file_lock_unlock_owner_range(node, owner, ofd, start, end);
             spin_unlock(&node->file_locks_lock);
             return ret;
         }
 
         vfs_file_lock_t *conflict =
-            file_lock_find_conflict(node, start, end, req->l_type, pid);
+            file_lock_find_conflict(node, start, end, req->l_type, owner, ofd);
         if (!conflict) {
-            ret = file_lock_unlock_pid_range(node, pid, start, end);
+            ret = file_lock_unlock_owner_range(node, owner, ofd, start, end);
             if (ret < 0) {
                 spin_unlock(&node->file_locks_lock);
                 return ret;
@@ -347,7 +364,8 @@ static int file_lock_setlk(fd_t *fd, const flock_t *req, bool wait) {
             uint64_t merged_end = end;
             vfs_file_lock_t *lock = NULL, *tmp = NULL;
             llist_for_each(lock, tmp, &node->file_locks, node) {
-                if (lock->pid != pid || lock->type != req->l_type)
+                if (!file_lock_same_owner(lock, owner, ofd) ||
+                    lock->type != req->l_type)
                     continue;
                 if (!file_lock_ranges_touch_or_overlap(
                         lock->start, lock->end, merged_start, merged_end))
@@ -369,8 +387,10 @@ static int file_lock_setlk(fd_t *fd, const flock_t *req, bool wait) {
             llist_init_head(&new_lock->node);
             new_lock->start = merged_start;
             new_lock->end = merged_end;
+            new_lock->owner = owner;
             new_lock->pid = pid;
             new_lock->type = req->l_type;
+            new_lock->ofd = ofd;
             llist_append(&node->file_locks, &new_lock->node);
             spin_unlock(&node->file_locks_lock);
             return 0;
@@ -896,6 +916,86 @@ uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags,
     if (!name || copy_from_user_str(name_k, name, sizeof(name_k))) {
         return (uint64_t)-EFAULT;
     }
+    return (uint64_t)vfs_sys_openat((int)dirfd, name_k, &how);
+}
+
+static int openat2_copy_how_from_user(struct vfs_open_how *how,
+                                      const struct vfs_open_how *user_how,
+                                      uint64_t size) {
+    uint8_t extra[32];
+    uint64_t offset;
+
+    if (!how || !user_how)
+        return -EFAULT;
+    if (size < sizeof(*how))
+        return -EINVAL;
+    if (check_user_overflow((uint64_t)user_how, size))
+        return -EFAULT;
+
+    memset(how, 0, sizeof(*how));
+    if (copy_from_user(how, user_how, sizeof(*how)))
+        return -EFAULT;
+
+    for (offset = sizeof(*how); offset < size; offset += sizeof(extra)) {
+        uint64_t chunk = MIN((uint64_t)sizeof(extra), size - offset);
+        if (copy_from_user(extra, (const uint8_t *)user_how + offset, chunk))
+            return -EFAULT;
+        for (uint64_t i = 0; i < chunk; i++) {
+            if (extra[i] != 0)
+                return -E2BIG;
+        }
+    }
+
+    return 0;
+}
+
+static int openat2_validate_how(const struct vfs_open_how *how) {
+    static const uint64_t allowed_flags =
+        O_ACCMODE_FLAGS | O_CREAT | O_EXCL | O_NOCTTY | O_TRUNC | O_APPEND |
+        O_NONBLOCK | O_DSYNC | O_SYNC | O_RSYNC | O_DIRECTORY | O_NOFOLLOW |
+        O_ASYNC | O_DIRECT | O_LARGEFILE | O_NOATIME | O_CLOEXEC | O_PATH |
+        O_TMPFILE;
+    static const uint64_t allowed_resolve =
+        RESOLVE_NO_XDEV | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS |
+        RESOLVE_BENEATH | RESOLVE_IN_ROOT | RESOLVE_CACHED;
+
+    if (!how)
+        return -EINVAL;
+    if (how->flags & ~allowed_flags)
+        return -EINVAL;
+    if (how->mode & ~07777ULL)
+        return -EINVAL;
+    if (how->resolve & ~allowed_resolve)
+        return -EINVAL;
+    if (how->mode != 0 && !(how->flags & (O_CREAT | O_TMPFILE)))
+        return -EINVAL;
+    if ((how->flags & O_TMPFILE) == O_TMPFILE)
+        return -EINVAL;
+    if (how->resolve & RESOLVE_CACHED)
+        return -EAGAIN;
+
+    return 0;
+}
+
+uint64_t sys_openat2(uint64_t dirfd, const char *name,
+                     const struct vfs_open_how *how_user, uint64_t size) {
+    struct vfs_open_how how = {0};
+    char name_k[VFS_PATH_MAX];
+    int ret;
+
+    if (!name)
+        return (uint64_t)-EFAULT;
+    if (copy_from_user_str(name_k, name, sizeof(name_k)))
+        return (uint64_t)-EFAULT;
+
+    ret = openat2_copy_how_from_user(&how, how_user, size);
+    if (ret < 0)
+        return (uint64_t)ret;
+
+    ret = openat2_validate_how(&how);
+    if (ret < 0)
+        return (uint64_t)ret;
+
     return (uint64_t)vfs_sys_openat((int)dirfd, name_k, &how);
 }
 
@@ -2215,7 +2315,20 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
             return -EFAULT;
         }
         memcpy(&lock, (void *)arg, sizeof(lock));
-        int getlk_ret = file_lock_getlk(file, &lock);
+        int getlk_ret = file_lock_getlk(file, &lock, false);
+        if (getlk_ret < 0)
+            return getlk_ret;
+        if (copy_to_user((void *)arg, &lock, sizeof(lock)))
+            return -EFAULT;
+        return 0;
+    }
+    case F_OFD_GETLK: {
+        flock_t lock;
+        if (check_user_overflow(arg, sizeof(lock))) {
+            return -EFAULT;
+        }
+        memcpy(&lock, (void *)arg, sizeof(lock));
+        int getlk_ret = file_lock_getlk(file, &lock, true);
         if (getlk_ret < 0)
             return getlk_ret;
         if (copy_to_user((void *)arg, &lock, sizeof(lock)))
@@ -2235,7 +2348,22 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
             return -EINVAL;
         }
 
-        return file_lock_setlk(file, &lock, command == F_SETLKW);
+        return file_lock_setlk(file, &lock, command == F_SETLKW, false);
+    }
+    case F_OFD_SETLKW:
+    case F_OFD_SETLK: {
+        flock_t lock;
+        if (check_user_overflow(arg, sizeof(lock))) {
+            return -EFAULT;
+        }
+        memcpy(&lock, (void *)arg, sizeof(lock));
+
+        if (lock.l_type != F_RDLCK && lock.l_type != F_WRLCK &&
+            lock.l_type != F_UNLCK) {
+            return -EINVAL;
+        }
+
+        return file_lock_setlk(file, &lock, command == F_OFD_SETLKW, true);
     }
     case F_GETPIPE_SZ:
         return 512 * 1024;

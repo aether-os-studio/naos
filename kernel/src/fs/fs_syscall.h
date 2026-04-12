@@ -423,6 +423,8 @@ uint64_t sys_creat(const char *path, uint64_t mode);
 uint64_t sys_open(const char *name, uint64_t flags, uint64_t mode);
 uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags,
                     uint64_t mode);
+uint64_t sys_openat2(uint64_t dirfd, const char *name,
+                     const struct vfs_open_how *how, uint64_t size);
 uint64_t sys_name_to_handle_at(int dfd, const char *name,
                                struct file_handle *handle, int *mnt_id,
                                int flag);

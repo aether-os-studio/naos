@@ -765,8 +765,9 @@ void syscall_handler_init() {
                            (syscall_handle_t)sys_memfd_create);
     // regist_syscall_handler(SYS_KEXEC_FILE_LOAD,
     // (syscall_handle_t)sys_kexec_file_load); regist_syscall_handler(SYS_BPF,
-    // (syscall_handle_t)sys_bpf); regist_syscall_handler(SYS_EXECVEAT,
-    // (syscall_handle_t)sys_execveat); regist_syscall_handler(SYS_USERFAULTFD,
+    // (syscall_handle_t)sys_bpf);
+    regist_syscall_handler(SYS_EXECVEAT, (syscall_handle_t)sys_execveat);
+    // regist_syscall_handler(SYS_USERFAULTFD,
     // (syscall_handle_t)sys_userfaultfd);
     regist_syscall_handler(SYS_MEMBARRIER, (syscall_handle_t)sys_membarrier);
     // regist_syscall_handler(SYS_MLOCK2, (syscall_handle_t)sys_mlock2);
@@ -800,7 +801,7 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_PIDFD_OPEN, (syscall_handle_t)sys_pidfd_open);
     regist_syscall_handler(SYS_CLONE3, (syscall_handle_t)sys_clone3);
     regist_syscall_handler(SYS_CLOSE_RANGE, (syscall_handle_t)sys_close_range);
-    // regist_syscall_handler(SYS_OPENAT2, (syscall_handle_t)sys_openat2);
+    regist_syscall_handler(SYS_OPENAT2, (syscall_handle_t)sys_openat2);
     // regist_syscall_handler(SYS_PIDFD_GETFD,
     // (syscall_handle_t)sys_pidfd_getfd);
     regist_syscall_handler(SYS_FACCESSAT2, (syscall_handle_t)sys_faccessat2);

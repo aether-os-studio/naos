@@ -218,6 +218,8 @@ uint64_t sys_reboot(int magic1, int magic2, uint32_t cmd, void *arg);
 
 uint64_t sys_getpgid(uint64_t pid);
 uint64_t sys_setpgid(uint64_t pid, uint64_t pgid);
+uint64_t sys_execveat(uint64_t dirfd, const char *path, const char **argv,
+                      const char **envp, uint64_t flags);
 uint64_t sys_getsid(uint64_t pid);
 uint64_t sys_setsid(void);
 

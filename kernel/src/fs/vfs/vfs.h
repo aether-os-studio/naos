@@ -111,8 +111,10 @@ typedef struct vfs_file_lock {
     struct llist_header node;
     uint64_t start;
     uint64_t end;
+    uintptr_t owner;
     int32_t pid;
     int16_t type;
+    bool ofd;
 } vfs_file_lock_t;
 
 struct vfs_qstr {
@@ -200,6 +202,7 @@ enum vfs_lookup_flags {
     LOOKUP_RCU = 1U << 12,
     LOOKUP_CACHED = 1U << 13,
     LOOKUP_NO_LAST_MOUNT = 1U << 14,
+    LOOKUP_NO_XDEV = 1U << 15,
 };
 
 enum vfs_resolve_flags {

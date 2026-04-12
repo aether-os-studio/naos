@@ -830,8 +830,9 @@ void syscall_handler_init() {
                            (syscall_handle_t)sys_memfd_create);
     // regist_syscall_handler(SYS_KEXEC_FILE_LOAD,
     // (syscall_handle_t)sys_kexec_file_load); regist_syscall_handler(SYS_BPF,
-    // (syscall_handle_t)sys_bpf); regist_syscall_handler(SYS_EXECVEAT,
-    // (syscall_handle_t)sys_execveat); regist_syscall_handler(SYS_USERFAULTFD,
+    // (syscall_handle_t)sys_bpf);
+    regist_syscall_handler(SYS_EXECVEAT, (syscall_handle_t)sys_execveat);
+    // regist_syscall_handler(SYS_USERFAULTFD,
     // (syscall_handle_t)sys_userfaultfd);
     regist_syscall_handler(SYS_MEMBARRIER, (syscall_handle_t)sys_membarrier);
     // regist_syscall_handler(SYS_MLOCK2, (syscall_handle_t)sys_mlock2);
@@ -865,7 +866,7 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_PIDFD_OPEN, (syscall_handle_t)sys_pidfd_open);
     regist_syscall_handler(SYS_CLONE3, (syscall_handle_t)sys_clone3);
     regist_syscall_handler(SYS_CLOSE_RANGE, (syscall_handle_t)sys_close_range);
-    // regist_syscall_handler(SYS_OPENAT2, (syscall_handle_t)sys_openat2);
+    regist_syscall_handler(SYS_OPENAT2, (syscall_handle_t)sys_openat2);
     // regist_syscall_handler(SYS_PIDFD_GETFD,
     // (syscall_handle_t)sys_pidfd_getfd);
     regist_syscall_handler(SYS_FACCESSAT2, (syscall_handle_t)sys_faccessat2);
@@ -961,13 +962,13 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
         regs->rax |= 0xffffffff00000000;
 
 done:
-    ptrace_on_syscall_exit(regs);
-
     if (self) {
         syscall_account_running_ns(self, nano_time());
         if (self->user_time_ns > syscall_user_base)
             self->system_time_ns += self->user_time_ns - syscall_user_base;
     }
+
+    ptrace_on_syscall_exit(regs);
 
     if (idx != SYS_BRK && idx != SYS_RSEQ && regs->rax == (uint64_t)-ENOSYS) {
         serial_fprintk("syscall %d not implemented\n", idx);

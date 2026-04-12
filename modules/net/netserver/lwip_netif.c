@@ -1,5 +1,4 @@
 #include "netserver_internal.h"
-#include <net/rtnl.h>
 #include <lwip/dns.h>
 
 typedef struct naos_lwip_link {
@@ -311,23 +310,9 @@ int lwip_module_init() {
     memset(&naos_lwip_netif, 0, sizeof(naos_lwip_netif));
     naos_link.netdev = netdev;
 
-    if (rtnl_get_primary_ipv4_config(&ifindex, &ipv4_addr, &prefixlen,
-                                     &gateway) == 0) {
-        ip4_addr_set_u32(&ipaddr, ipv4_addr);
-        ip4_addr_set_u32(&netmask, naos_prefixlen_to_mask_u32(prefixlen));
-        ip4_addr_set_u32(&gw, gateway);
-        use_static_ipv4 = true;
-        naos_link.use_static_ipv4 = true;
-        naos_link.static_ipaddr = ipaddr;
-        naos_link.static_netmask = netmask;
-        naos_link.static_gw = gw;
-        printk("netserver: adopting rtnl ipv4=%s/%u gw=%s ifindex=%d\n",
-               ip4addr_ntoa(&ipaddr), prefixlen, ip4addr_ntoa(&gw), ifindex);
-    } else {
-        ip4_addr_set_zero(&ipaddr);
-        ip4_addr_set_zero(&netmask);
-        ip4_addr_set_zero(&gw);
-    }
+    ip4_addr_set_zero(&ipaddr);
+    ip4_addr_set_zero(&netmask);
+    ip4_addr_set_zero(&gw);
 
     if (netifapi_netif_add(&naos_lwip_netif, &ipaddr, &netmask, &gw, &naos_link,
                            naos_lwip_netif_init, tcpip_input) != ERR_OK) {

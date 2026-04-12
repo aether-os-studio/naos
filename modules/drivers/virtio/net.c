@@ -1,7 +1,6 @@
 // Copyright (C) 2025-2026  lihanrui2913
 #include "net.h"
 #include <mm/mm.h>
-#include <net/rtnl.h>
 
 virtio_net_device_t *virtio_net_devices[MAX_NETDEV_NUM];
 int virtio_net_idx = 0;
@@ -114,19 +113,6 @@ int virtio_net_init(virtio_driver_t *driver) {
     regist_netdev(net_device, net_device->mac, net_device->mtu,
                   (netdev_send_t)virtio_net_send,
                   (netdev_recv_t)virtio_net_receive);
-
-    struct net_device *rtnl_dev = rtnl_dev_alloc("virtio_net", ARPHRD_ETHER);
-
-    memcpy(rtnl_dev->addr, net_device->mac, 6);
-    rtnl_dev->addr_len = 6;
-
-    memset(rtnl_dev->broadcast, 0xFF, 6);
-
-    rtnl_dev->mtu = net_device->mtu;
-
-    rtnl_dev_register(rtnl_dev);
-
-    rtnl_notify_link(rtnl_dev, RTM_NEWLINK);
 
     return 0;
 }

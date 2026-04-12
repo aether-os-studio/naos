@@ -2,15 +2,37 @@
 #include "fs/vfs/notify.h"
 #include "task/task.h"
 
+static unsigned int vfs_open_lookup_flags(const struct vfs_open_how *how) {
+    unsigned int flags = 0;
+
+    if (!how)
+        return 0;
+
+    if (how->resolve & RESOLVE_NO_SYMLINKS)
+        flags |= LOOKUP_NO_SYMLINKS;
+    if (how->resolve & RESOLVE_BENEATH)
+        flags |= LOOKUP_BENEATH;
+    if (how->resolve & RESOLVE_IN_ROOT)
+        flags |= LOOKUP_IN_ROOT;
+    if (how->resolve & RESOLVE_CACHED)
+        flags |= LOOKUP_CACHED;
+    if (how->resolve & RESOLVE_NO_XDEV)
+        flags |= LOOKUP_NO_XDEV;
+
+    return flags;
+}
+
 static int vfs_open_last_lookups(int dfd, const char *name,
                                  const struct vfs_open_how *how,
                                  struct vfs_path *parent, struct vfs_qstr *last,
                                  struct vfs_dentry **res_dentry) {
     struct vfs_dentry *dentry;
     unsigned int parent_type = 0;
+    unsigned int lookup_flags = LOOKUP_PARENT | vfs_open_lookup_flags(how);
+    unsigned int component_flags = LOOKUP_CREATE | vfs_open_lookup_flags(how);
     int ret;
 
-    ret = vfs_path_parent_lookup(dfd, name, LOOKUP_PARENT, parent, last,
+    ret = vfs_path_parent_lookup(dfd, name, lookup_flags, parent, last,
                                  &parent_type);
     if (ret < 0)
         return ret;
@@ -22,7 +44,7 @@ static int vfs_open_last_lookups(int dfd, const char *name,
     dentry = vfs_d_lookup(parent->dentry, last);
     if (dentry) {
         if (dentry->d_op && dentry->d_op->d_revalidate) {
-            ret = dentry->d_op->d_revalidate(dentry, LOOKUP_CREATE);
+            ret = dentry->d_op->d_revalidate(dentry, component_flags);
             if (ret < 0) {
                 vfs_dput(dentry);
                 return ret;
@@ -49,7 +71,7 @@ static int vfs_open_last_lookups(int dfd, const char *name,
                 return -ENOMEM;
             {
                 struct vfs_dentry *lookup =
-                    dir->i_op->lookup(dir, dentry, LOOKUP_CREATE);
+                    dir->i_op->lookup(dir, dentry, component_flags);
                 if (IS_ERR(lookup)) {
                     vfs_dput(dentry);
                     return (int)PTR_ERR(lookup);
@@ -119,6 +141,16 @@ void vfs_file_put(struct vfs_file *file) {
             flock->owner = 0;
         }
         spin_unlock(&flock->spin);
+
+        spin_lock(&file->f_inode->file_locks_lock);
+        vfs_file_lock_t *lock = NULL, *tmp = NULL;
+        llist_for_each(lock, tmp, &file->f_inode->file_locks, node) {
+            if (!lock->ofd || lock->owner != (uintptr_t)file)
+                continue;
+            llist_delete(&lock->node);
+            free(lock);
+        }
+        spin_unlock(&file->f_inode->file_locks_lock);
     }
 
     if (file->f_op && file->f_op->release)
@@ -318,13 +350,21 @@ int vfs_openat(int dfd, const char *name, const struct vfs_open_how *how,
         }
     }
     if (!created && S_ISLNK(dentry->d_inode->i_mode)) {
-        if (local_how.flags & O_NOFOLLOW) {
+        if (local_how.resolve & RESOLVE_NO_SYMLINKS) {
+            if (!((local_how.flags & O_NOFOLLOW) &&
+                  (local_how.flags & O_PATH))) {
+                ret = -ELOOP;
+                goto out;
+            }
+        } else if (local_how.flags & O_NOFOLLOW) {
             if (!(local_how.flags & O_PATH)) {
                 ret = -ELOOP;
                 goto out;
             }
         } else {
-            ret = vfs_filename_lookup(dfd, name, LOOKUP_FOLLOW, &target);
+            ret = vfs_filename_lookup(
+                dfd, name, LOOKUP_FOLLOW | vfs_open_lookup_flags(&local_how),
+                &target);
             if (ret < 0)
                 goto out;
             if (!target.dentry || !target.dentry->d_inode) {
