@@ -278,6 +278,70 @@ static loff_t pipefs_llseek(struct vfs_file *file, loff_t offset, int whence) {
     return pos;
 }
 
+static __poll_t pipefs_poll_mask_locked(pipe_specific_t *spec,
+                                        pipe_info_t *pipe) {
+    __poll_t out = 0;
+
+    if (!spec || !pipe)
+        return EPOLLNVAL;
+
+    if (spec->read) {
+        if (pipe->ptr > 0)
+            out |= EPOLLIN | EPOLLRDNORM;
+        if (pipe->write_fds == 0)
+            out |= EPOLLHUP;
+    }
+
+    if (spec->write) {
+        if (pipe->read_fds == 0) {
+            out |= EPOLLERR;
+        } else if (pipe->ptr < PIPE_BUFF) {
+            out |= EPOLLOUT | EPOLLWRNORM;
+        }
+    }
+
+    return out;
+}
+
+static int pipefs_wait(struct vfs_file *file, pipe_specific_t *spec,
+                       uint32_t events, const char *reason) {
+    pipe_info_t *pipe;
+    vfs_poll_wait_t wait;
+    uint32_t want = events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
+    int ret;
+
+    if (!file || !spec || !spec->info)
+        return -EINVAL;
+
+    pipe = spec->info;
+    vfs_poll_wait_init(&wait, current_task, want);
+    ret = vfs_poll_wait_arm(file->f_inode, &wait);
+    if (ret < 0)
+        return ret;
+
+    spin_lock(&pipe->lock);
+    if (pipefs_poll_mask_locked(spec, pipe) & want) {
+        spin_unlock(&pipe->lock);
+        vfs_poll_wait_disarm(&wait);
+        return EOK;
+    }
+    spin_unlock(&pipe->lock);
+
+    ret = vfs_poll_wait_sleep(file->f_inode, &wait, -1, reason);
+    vfs_poll_wait_disarm(&wait);
+    return ret;
+}
+
+static void pipefs_account_open_locked(pipe_specific_t *spec) {
+    if (!spec || !spec->info)
+        return;
+
+    if (spec->write)
+        spec->info->write_fds++;
+    if (spec->read)
+        spec->info->read_fds++;
+}
+
 static ssize_t pipe_read_inner(struct vfs_file *file, void *addr, size_t size,
                                bool allow_wait) {
     pipe_specific_t *spec = pipefs_spec_from_file(file);
@@ -322,11 +386,7 @@ static ssize_t pipe_read_inner(struct vfs_file *file, void *addr, size_t size,
         if (file->f_flags & O_NONBLOCK)
             return -EWOULDBLOCK;
 
-        vfs_poll_wait_t wait;
-        vfs_poll_wait_init(&wait, current_task, EPOLLIN | EPOLLHUP | EPOLLERR);
-        vfs_poll_wait_arm(file->f_inode, &wait);
-        int reason = vfs_poll_wait_sleep(file->f_inode, &wait, -1, "pipe_read");
-        vfs_poll_wait_disarm(&wait);
+        int reason = pipefs_wait(file, spec, EPOLLIN, "pipe_read");
         if (reason != EOK)
             return -EINTR;
     }
@@ -399,12 +459,7 @@ static ssize_t pipe_write_inner(struct vfs_file *file, const void *addr,
         if (file->f_flags & O_NONBLOCK)
             return -EWOULDBLOCK;
 
-        vfs_poll_wait_t wait;
-        vfs_poll_wait_init(&wait, current_task, EPOLLOUT | EPOLLHUP | EPOLLERR);
-        vfs_poll_wait_arm(file->f_inode, &wait);
-        int reason =
-            vfs_poll_wait_sleep(file->f_inode, &wait, -1, "pipe_write");
-        vfs_poll_wait_disarm(&wait);
+        int reason = pipefs_wait(file, spec, EPOLLOUT, "pipe_write");
         if (reason != EOK)
             return -EINTR;
     }
@@ -414,7 +469,7 @@ static ssize_t pipefs_write(struct vfs_file *file, const void *buf,
                             size_t count, loff_t *ppos) {
     const char *data = (const char *)buf;
     size_t written = 0;
-    bool atomic = (file->f_flags & O_NONBLOCK) && count <= PIPE_ATOMIC_MAX;
+    bool atomic = count <= PIPE_ATOMIC_MAX;
 
     (void)ppos;
     while (written < count) {
@@ -438,10 +493,17 @@ static long pipefs_ioctl(struct vfs_file *file, unsigned long cmd,
         return -EINVAL;
 
     switch (cmd) {
-    case FIONREAD:
-        if (copy_to_user((void *)arg, &spec->info->ptr, sizeof(int)))
+    case FIONREAD: {
+        int available;
+
+        spin_lock(&spec->info->lock);
+        available = (int)spec->info->ptr;
+        spin_unlock(&spec->info->lock);
+
+        if (copy_to_user((void *)arg, &available, sizeof(available)))
             return -EFAULT;
         return 0;
+    }
     default:
         return -EINVAL;
     }
@@ -458,15 +520,7 @@ static __poll_t pipefs_poll(struct vfs_file *file, struct vfs_poll_table *pt) {
     pipe = spec->info;
 
     spin_lock(&pipe->lock);
-    if (spec->read && pipe->write_fds == 0)
-        out |= EPOLLHUP;
-    if (spec->read && pipe->ptr > 0)
-        out |= EPOLLIN | EPOLLRDNORM;
-
-    if (spec->write && pipe->read_fds == 0)
-        out |= EPOLLERR | EPOLLHUP;
-    if (spec->write && pipe->read_fds > 0 && pipe->ptr < PIPE_BUFF)
-        out |= EPOLLOUT | EPOLLWRNORM;
+    out = pipefs_poll_mask_locked(spec, pipe);
     spin_unlock(&pipe->lock);
 
     return out;
@@ -481,10 +535,7 @@ static int pipefs_open(struct vfs_inode *inode, struct vfs_file *file) {
 
     pipe = spec->info;
     spin_lock(&pipe->lock);
-    if (spec->write)
-        pipe->write_fds++;
-    if (spec->read)
-        pipe->read_fds++;
+    pipefs_account_open_locked(spec);
     spin_unlock(&pipe->lock);
 
     file->f_op = inode->i_fop;
@@ -495,7 +546,8 @@ static int pipefs_open(struct vfs_inode *inode, struct vfs_file *file) {
 static int pipefs_release(struct vfs_inode *inode, struct vfs_file *file) {
     pipe_specific_t *spec = pipefs_spec_from_file(file);
     pipe_info_t *pipe;
-    uint32_t write_events = EPOLLHUP;
+    uint32_t read_events = 0;
+    uint32_t write_events = 0;
     bool free_spec = false;
 
     (void)inode;
@@ -505,21 +557,25 @@ static int pipefs_release(struct vfs_inode *inode, struct vfs_file *file) {
     pipe = spec->info;
     spin_lock(&pipe->lock);
     if (spec->write) {
-        if (pipe->write_fds > 0)
+        if (pipe->write_fds > 0) {
             pipe->write_fds--;
+            if (pipe->write_fds == 0)
+                read_events |= EPOLLHUP;
+        }
     }
     if (spec->read) {
-        if (pipe->read_fds > 0)
+        if (pipe->read_fds > 0) {
             pipe->read_fds--;
+            if (pipe->read_fds == 0)
+                write_events |= EPOLLERR;
+        }
     }
-
-    if (pipe->read_node)
-        vfs_poll_notify(pipe->read_node, EPOLLHUP);
-    if (pipe->read_fds == 0)
-        write_events |= EPOLLERR;
-    if (pipe->write_node)
-        vfs_poll_notify(pipe->write_node, write_events);
     spin_unlock(&pipe->lock);
+
+    if (read_events && pipe->read_node)
+        vfs_poll_notify(pipe->read_node, read_events);
+    if (write_events && pipe->write_node)
+        vfs_poll_notify(pipe->write_node, write_events);
 
     free_spec = file->private_data && file->private_data != inode->i_private;
     file->private_data = NULL;
@@ -666,10 +722,7 @@ int pipefs_named_open(struct vfs_inode *inode, struct vfs_file *file) {
     spec->info = pipe;
 
     spin_lock(&pipe->lock);
-    if (spec->read)
-        pipe->read_fds++;
-    if (spec->write)
-        pipe->write_fds++;
+    pipefs_account_open_locked(spec);
     pipe->read_node = inode;
     pipe->write_node = inode;
     spin_unlock(&pipe->lock);
@@ -708,6 +761,8 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
 
     if (!pipefd)
         return -EFAULT;
+    if (flags & ~(O_CLOEXEC | O_NONBLOCK))
+        return -EINVAL;
 
     info = pipefs_alloc_info();
     if (!info)
@@ -729,6 +784,11 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
         ret = i1;
         goto out_close_both;
     }
+    spin_lock(&info->lock);
+    info->read_fds++;
+    spin_unlock(&info->lock);
+    vfs_file_put(read_file);
+    read_file = NULL;
 
     i2 = task_install_file(current_task, write_file,
                            (flags & O_CLOEXEC) ? FD_CLOEXEC : 0, i1 + 1);
@@ -737,9 +797,11 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
         ret = i2;
         goto out_close_both;
     }
-
-    vfs_close_file(read_file);
-    vfs_close_file(write_file);
+    spin_lock(&info->lock);
+    info->write_fds++;
+    spin_unlock(&info->lock);
+    vfs_file_put(write_file);
+    write_file = NULL;
 
     int kpipefd[2] = {i1, i2};
     if (copy_to_user(pipefd, kpipefd, sizeof(kpipefd))) {
@@ -747,9 +809,6 @@ uint64_t sys_pipe(int pipefd[2], uint64_t flags) {
         task_close_file_descriptor(current_task, i2);
         return -EFAULT;
     }
-
-    info->read_fds++;
-    info->write_fds++;
 
     return 0;
 

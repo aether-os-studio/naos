@@ -3,7 +3,7 @@
 #include <libs/klibc.h>
 #include <fs/vfs/vfs.h>
 
-#define PIPE_BUFF (2 * 1024 * 1024)
+#define PIPE_BUFF (64 * 1024)
 #define PIPE_ATOMIC_MAX MIN(PIPE_BUFF, PAGE_SIZE)
 
 #define MAX_PIPES 32
