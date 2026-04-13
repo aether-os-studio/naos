@@ -1200,10 +1200,14 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
         irq_trigger_sched_ipi(target_cpu);
     }
 
-    if (lock_irq_state)
-        arch_enable_interrupt();
+    arch_enable_interrupt();
 
-    schedule(SCHED_FLAG_YIELD);
+    while (task->state == state) {
+        schedule(SCHED_FLAG_YIELD);
+    }
+
+    if (!lock_irq_state)
+        arch_disable_interrupt();
 
     result = task->status;
 

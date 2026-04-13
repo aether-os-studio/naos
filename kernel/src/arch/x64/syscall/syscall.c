@@ -921,6 +921,9 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
         goto done;
     }
 
+    regs->rax = self->last_syscall_ret;
+    ptrace_on_syscall_enter(regs);
+
     task_membarrier_checkpoint(self);
 
     uint64_t arg1 = regs->rdi;
@@ -929,8 +932,6 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
     uint64_t arg4 = regs->r10;
     uint64_t arg5 = regs->r8;
     uint64_t arg6 = regs->r9;
-
-    ptrace_on_syscall_enter(regs);
 
     if (self)
         syscall_account_running_ns(self, nano_time());
@@ -967,6 +968,8 @@ done:
         if (self->user_time_ns > syscall_user_base)
             self->system_time_ns += self->user_time_ns - syscall_user_base;
     }
+
+    self->last_syscall_ret = regs->rax;
 
     ptrace_on_syscall_exit(regs);
 

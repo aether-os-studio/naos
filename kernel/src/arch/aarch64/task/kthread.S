@@ -3,7 +3,7 @@
 kernel_thread_func:
     /* SP 指向 pt_regs 结构的起始地址 */
     
-    /* 跳过: pc, cpsr, origin_x0, reserved, sp_el0, x30 (6 个字段 = 0x30 bytes) */
+    /* 跳过: pc, cpsr, origin_x0, syscallno, sp_el0, x30 (6 个字段 = 0x30 bytes) */
     add sp, sp, #0x30
     
     ldp X28, X29, [SP], #0x10

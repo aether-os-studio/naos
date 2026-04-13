@@ -33,7 +33,6 @@ typedef struct signal_kernel_sigaction {
 
 #if defined(__x86_64__)
 #define SIGNAL_X64_SYSCALL_INS_LEN 2
-#define SIGNAL_X64_MAX_SYSCALL_NR 1024
 #define SIGNAL_X64_UC_SIGCONTEXT_SS 0x2
 #define SIGNAL_X64_UC_STRICT_RESTORE_SS 0x4
 #define SIGNAL_X64_TRAPNO_PAGE_FAULT 14
@@ -435,26 +434,7 @@ enum {
 
 static inline bool signal_x64_is_syscall_context(const struct pt_regs *regs) {
     return ((regs->cs & 0x3) == 0x3) && regs->rip == regs->rcx &&
-           regs->rflags == regs->r11 &&
-           regs->orig_rax <= SIGNAL_X64_MAX_SYSCALL_NR;
-}
-
-static inline bool signal_x64_restartable_syscall(uint64_t nr) {
-    switch (nr) {
-    case SYS_PAUSE:
-    case SYS_NANOSLEEP:
-    case SYS_CLOCK_NANOSLEEP:
-    case SYS_RT_SIGSUSPEND:
-    case SYS_RT_SIGTIMEDWAIT:
-    case SYS_PSELECT6:
-    case SYS_PPOLL:
-    case SYS_EPOLL_WAIT:
-    case SYS_EPOLL_PWAIT:
-    case SYS_EPOLL_PWAIT2:
-        return false;
-    default:
-        return true;
-    }
+           regs->rflags == regs->r11;
 }
 
 static inline void
@@ -469,49 +449,24 @@ signal_x64_prepare_syscall_result(struct pt_regs *saved,
         return;
     }
 
-    int64_t err = -retval;
-    bool want_restart = false;
-    bool force_eintr = false;
-
-    switch (err) {
-    case ERESTARTNOINTR:
-        want_restart = true;
-        break;
-    case ERESTARTSYS:
-    case ERESTART:
-        want_restart = (action->sa_flags & SA_RESTART) != 0;
-        force_eintr = !want_restart;
-        break;
+    switch (-retval) {
     case ERESTARTNOHAND:
     case ERESTART_RESTARTBLOCK:
-        force_eintr = true;
+        saved->rax = (uint64_t)-EINTR;
         break;
-    case EINTR:
-        if (action->sa_flags & SA_RESTART) {
-            want_restart = true;
-        } else {
-            force_eintr = true;
+    case ERESTARTSYS:
+        if ((action->sa_flags & SA_RESTART) == 0) {
+            saved->rax = (uint64_t)-EINTR;
+            break;
         }
+        __attribute__((fallthrough));
+    case ERESTARTNOINTR:
+        saved->rax = saved->orig_rax;
+        if (saved->rip >= SIGNAL_X64_SYSCALL_INS_LEN)
+            saved->rip -= SIGNAL_X64_SYSCALL_INS_LEN;
         break;
     default:
         return;
-    }
-
-    if (want_restart) {
-        uint64_t nr = saved->orig_rax;
-        if (nr <= SIGNAL_X64_MAX_SYSCALL_NR &&
-            signal_x64_restartable_syscall(nr)) {
-            saved->rax = nr;
-            if (saved->rip >= SIGNAL_X64_SYSCALL_INS_LEN) {
-                saved->rip -= SIGNAL_X64_SYSCALL_INS_LEN;
-            }
-            return;
-        }
-        force_eintr = true;
-    }
-
-    if (force_eintr) {
-        saved->rax = (uint64_t)-EINTR;
     }
 }
 
@@ -927,62 +882,33 @@ signal_aarch64_restore_fpsimd(const signal_aarch64_sigcontext_t *sigcontext,
 static inline void
 signal_aarch64_prepare_syscall_result(struct pt_regs *saved,
                                       const sigaction_t *action) {
-    if (!saved || !action || saved->x8 == SYS_RT_SIGRETURN)
+    if (!saved || !action || saved->syscallno == NO_SYSCALL ||
+        saved->syscallno == SYS_RT_SIGRETURN)
         return;
 
     int64_t retval = (int64_t)saved->x0;
     if (retval >= 0)
         return;
 
-    int64_t err = -retval;
-    bool want_restart = false;
-    bool force_eintr = false;
-
-    switch (err) {
-    case ERESTARTNOINTR:
-        want_restart = true;
-        break;
-    case ERESTARTSYS:
-    case ERESTART:
-        want_restart = (action->sa_flags & SA_RESTART) != 0;
-        force_eintr = !want_restart;
-        break;
+    switch (-retval) {
     case ERESTARTNOHAND:
     case ERESTART_RESTARTBLOCK:
-        force_eintr = true;
+        saved->x0 = (uint64_t)-EINTR;
         break;
-    case EINTR:
-        want_restart = (action->sa_flags & SA_RESTART) != 0;
-        force_eintr = !want_restart;
+    case ERESTARTSYS:
+        if ((action->sa_flags & SA_RESTART) == 0) {
+            saved->x0 = (uint64_t)-EINTR;
+            break;
+        }
+        __attribute__((fallthrough));
+    case ERESTARTNOINTR:
+        saved->x0 = saved->origin_x0;
+        if (saved->pc >= SIGNAL_AARCH64_SYSCALL_INS_LEN)
+            saved->pc -= SIGNAL_AARCH64_SYSCALL_INS_LEN;
         break;
     default:
         return;
     }
-
-    if (want_restart) {
-        uint64_t nr = saved->x8;
-
-        switch (nr) {
-        case SYS_NANOSLEEP:
-        case SYS_CLOCK_NANOSLEEP:
-        case SYS_RT_SIGSUSPEND:
-        case SYS_RT_SIGTIMEDWAIT:
-        case SYS_PSELECT6:
-        case SYS_PPOLL:
-        case SYS_EPOLL_PWAIT:
-        case SYS_EPOLL_PWAIT2:
-            force_eintr = true;
-            break;
-        default:
-            saved->x0 = saved->origin_x0;
-            if (saved->pc >= SIGNAL_AARCH64_SYSCALL_INS_LEN)
-                saved->pc -= SIGNAL_AARCH64_SYSCALL_INS_LEN;
-            return;
-        }
-    }
-
-    if (force_eintr)
-        saved->x0 = (uint64_t)-EINTR;
 }
 
 static inline void
@@ -1076,6 +1002,7 @@ signal_aarch64_restore_ptregs(struct pt_regs *regs,
     regs->pc = ucontext->uc_mcontext.pc;
     regs->cpsr = ucontext->uc_mcontext.pstate;
     regs->origin_x0 = regs->x0;
+    regs->syscallno = NO_SYSCALL;
 
     if ((regs->cpsr & 0xF) != 0)
         regs->cpsr &= ~0xFULL;
@@ -1162,6 +1089,7 @@ static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
     regs->pc = (uint64_t)action->sa_handler;
     regs->sp_el0 = frame_addr;
     regs->origin_x0 = saved.origin_x0;
+    regs->syscallno = NO_SYSCALL;
     regs->x0 = sig;
     if (action->sa_flags & SA_SIGINFO) {
         regs->x1 = frame_addr + offsetof(signal_aarch64_frame_t, info);

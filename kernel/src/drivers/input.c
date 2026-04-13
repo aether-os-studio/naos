@@ -176,7 +176,7 @@ static size_t input_event_bit(void *data, uint64_t request, void *arg) {
     if (!arg && size)
         return (size_t)-EFAULT;
 
-    size_t ret = (size_t)-ENOSYS;
+    size_t ret = (size_t)-ENOTTY;
     switch (number) {
     case 0x03: {
         struct {

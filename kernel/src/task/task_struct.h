@@ -8,6 +8,12 @@
 #include <mm/shm.h>
 #include <task/ns.h>
 
+#if defined(__x86_64__)
+#include <arch/x64/irq/ptrace.h>
+#elif defined(__aarch64__)
+#include <arch/aarch64/irq/ptrace.h>
+#endif
+
 typedef enum task_state {
     TASK_CREATING = 1,
     TASK_RUNNING,
@@ -264,8 +270,6 @@ typedef struct pending_signal {
     siginfo_t info[MAXSIG];
 } pending_signal_t;
 
-struct pt_regs;
-
 typedef struct task_sighand {
     spinlock_t siglock;
     int ref_count;
@@ -352,8 +356,9 @@ typedef struct task {
     uint64_t ptrace_tracer_pid;
     uint64_t ptrace_message;
     siginfo_t ptrace_siginfo;
+    struct pt_regs ptrace_regs;
+    uint64_t last_syscall_ret;
     uint8_t ptrace_resume_action;
-    uint8_t ptrace_stop_sig;
     uint8_t ptrace_last_stop;
     uint8_t ptrace_resume_sig;
     bool ptrace_stopped;

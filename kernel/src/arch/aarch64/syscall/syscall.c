@@ -840,6 +840,14 @@ void aarch64_do_syscall(struct pt_regs *frame) {
     uint64_t arg5 = frame->x4;
     uint64_t arg6 = frame->x5;
 
+    task_t *self = current_task;
+    if (!self) {
+        frame->x0 = (uint64_t)-ENOSYS;
+        goto done;
+    }
+
+    frame->x0 = self->last_syscall_ret;
+    frame->syscallno = idx;
     ptrace_on_syscall_enter(frame);
 
     if (idx > MAX_SYSCALL_NUM) {
@@ -871,6 +879,8 @@ void aarch64_do_syscall(struct pt_regs *frame) {
         frame->x0 = 0;
 
 done:
+    self->last_syscall_ret = frame->x0;
+
     ptrace_on_syscall_exit(frame);
 
     if (idx != SYS_BRK && idx != SYS_RSEQ && frame->x0 == (uint64_t)-ENOSYS) {
@@ -878,4 +888,5 @@ done:
     }
 
     task_signal(frame);
+    frame->syscallno = NO_SYSCALL;
 }

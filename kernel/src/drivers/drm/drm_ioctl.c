@@ -1036,7 +1036,7 @@ ssize_t drm_primefd_create(drm_device_t *dev, uint32_t handle, uint64_t phys,
 static ssize_t drm_prime_get_handle_phys(drm_device_t *dev, uint32_t handle,
                                          uint64_t *phys) {
     if (!dev || !dev->op || !dev->op->map_dumb || !phys) {
-        return -ENOSYS;
+        return -ENOTTY;
     }
 
     struct drm_mode_map_dumb map = {0};
@@ -1269,7 +1269,7 @@ static ssize_t drm_syncobj_handle_to_fd(drm_device_t *dev,
     }
 
     if (!(h->flags & DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_EXPORT_SYNC_FILE)) {
-        return -ENOSYS;
+        return -ENOTTY;
     }
 
     uint64_t owner_pid = drm_syncobj_owner_pid();
@@ -1310,7 +1310,7 @@ static ssize_t drm_syncobj_fd_to_handle(drm_device_t *dev,
     }
 
     if (!(h->flags & DRM_SYNCOBJ_FD_TO_HANDLE_FLAGS_IMPORT_SYNC_FILE)) {
-        return -ENOSYS;
+        return -ENOTTY;
     }
 
     if (h->fd < 0 || h->fd >= MAX_FD_NUM) {
@@ -2614,7 +2614,7 @@ ssize_t drm_ioctl_mode_getencoder(drm_device_t *dev, void *arg) {
  */
 ssize_t drm_ioctl_mode_create_dumb(drm_device_t *dev, void *arg, fd_t *fd) {
     if (!dev->op->create_dumb) {
-        return -ENOSYS;
+        return -ENOTTY;
     }
     struct drm_mode_create_dumb *create = (struct drm_mode_create_dumb *)arg;
     ssize_t ret = dev->op->create_dumb(dev, create, fd);
@@ -2629,7 +2629,7 @@ ssize_t drm_ioctl_mode_create_dumb(drm_device_t *dev, void *arg, fd_t *fd) {
  */
 ssize_t drm_ioctl_mode_map_dumb(drm_device_t *dev, void *arg, fd_t *fd) {
     if (!dev->op->map_dumb) {
-        return -ENOSYS;
+        return -ENOTTY;
     }
     return dev->op->map_dumb(dev, (struct drm_mode_map_dumb *)arg, fd);
 }
@@ -2639,7 +2639,7 @@ ssize_t drm_ioctl_mode_map_dumb(drm_device_t *dev, void *arg, fd_t *fd) {
  */
 ssize_t drm_ioctl_mode_destroy_dumb(drm_device_t *dev, void *arg, fd_t *fd) {
     if (!dev->op->destroy_dumb) {
-        return -ENOSYS;
+        return -ENOTTY;
     }
 
     struct drm_mode_destroy_dumb *destroy = (struct drm_mode_destroy_dumb *)arg;
@@ -2794,7 +2794,7 @@ ssize_t drm_ioctl_mode_getfb(drm_device_t *dev, void *arg) {
  */
 ssize_t drm_ioctl_mode_addfb(drm_device_t *dev, void *arg, fd_t *fd) {
     if (!dev->op->add_fb) {
-        return -ENOSYS;
+        return -ENOTTY;
     }
     return dev->op->add_fb(dev, (struct drm_mode_fb_cmd *)arg, fd);
 }
@@ -2804,7 +2804,7 @@ ssize_t drm_ioctl_mode_addfb(drm_device_t *dev, void *arg, fd_t *fd) {
  */
 ssize_t drm_ioctl_mode_addfb2(drm_device_t *dev, void *arg, fd_t *fd) {
     if (!dev->op->add_fb2) {
-        return -ENOSYS;
+        return -ENOTTY;
     }
     return dev->op->add_fb2(dev, (struct drm_mode_fb_cmd2 *)arg, fd);
 }
@@ -3973,7 +3973,7 @@ ssize_t drm_ioctl_get_unique(drm_device_t *dev, void *arg) {
  */
 ssize_t drm_ioctl_page_flip(drm_device_t *dev, void *arg, fd_t *fd) {
     if (!dev->op->page_flip) {
-        return -ENOSYS;
+        return -ENOTTY;
     }
     return dev->op->page_flip(dev, (struct drm_mode_crtc_page_flip *)arg, fd);
 }
@@ -4034,7 +4034,7 @@ ssize_t drm_ioctl_cursor2(drm_device_t *dev, void *arg) {
 ssize_t drm_ioctl_atomic(drm_device_t *dev, void *arg, fd_t *fd) {
     struct drm_mode_atomic *cmd = (struct drm_mode_atomic *)arg;
     if (!dev->op->atomic_commit) {
-        return -ENOSYS;
+        return -ENOTTY;
     }
 
     return dev->op->atomic_commit(dev, cmd, fd);

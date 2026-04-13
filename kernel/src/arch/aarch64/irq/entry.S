@@ -21,7 +21,7 @@
     STP     X28, X29, [SP, #-0x10]!
     MRS     X29, SP_EL0
     STP     X29, X30, [SP, #-0x10]!
-    MOV     X29, #0
+    MOVN    X29, #0
     STP     X0, X29, [SP, #-0x10]!
 
     MRS     X3, SPSR_EL1
@@ -40,7 +40,7 @@
     MSR     SPSR_EL1, X3
     MSR     ELR_EL1, X2
 
-    LDP     X0, X1, [SP], #0x10  /* origin_x0 and reserved */
+    LDP     X0, X1, [SP], #0x10  /* origin_x0 and syscallno */
 
     LDP     X29, X30, [SP], #0x10
     MSR     SP_EL0, X29

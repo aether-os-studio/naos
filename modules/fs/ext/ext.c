@@ -3049,7 +3049,7 @@ static long ext_unlocked_ioctl(struct vfs_file *file, unsigned long cmd,
         (file->f_inode->type & file_stream))
         return device_ioctl(file->f_inode->i_rdev, (ssize_t)cmd, (void *)arg,
                             file);
-    return -ENOSYS;
+    return -ENOTTY;
 }
 
 static __poll_t ext_poll(struct vfs_file *file, struct vfs_poll_table *pt) {

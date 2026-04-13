@@ -1,8 +1,6 @@
 #include <task/ptrace.h>
 #include <task/task_syscall.h>
 
-#include <drivers/logger.h>
-
 #if defined(__x86_64__)
 typedef struct x64_user_regs_struct {
     uint64_t r15;
@@ -74,6 +72,28 @@ static inline struct pt_regs *ptrace_task_regs(task_t *task) {
     return (struct pt_regs *)task->syscall_stack - 1;
 }
 
+static inline struct pt_regs *ptrace_task_stop_regs(task_t *task) {
+    if (!task)
+        return NULL;
+
+    return &task->ptrace_regs;
+}
+
+static inline void ptrace_snapshot_regs(task_t *task,
+                                        const struct pt_regs *regs) {
+    if (!task || !regs)
+        return;
+
+    memcpy(&task->ptrace_regs, regs, sizeof(*regs));
+}
+
+static inline uint8_t ptrace_stop_signal(const task_t *task) {
+    if (!task)
+        return 0;
+
+    return (uint8_t)((task->ptrace_wait_status >> 8) & 0xff);
+}
+
 static void ptrace_fill_default_siginfo(siginfo_t *info, int sig) {
     if (!info)
         return;
@@ -95,7 +115,8 @@ static void ptrace_wake_tracer(task_t *task) {
         task_unblock(tracer, EOK);
 }
 
-static void ptrace_stop_current(task_t *task, int sig, const siginfo_t *info,
+static void ptrace_stop_current(task_t *task, const struct pt_regs *regs,
+                                int sig, const siginfo_t *info,
                                 uint8_t stop_kind) {
     siginfo_t kinfo;
 
@@ -110,7 +131,7 @@ static void ptrace_stop_current(task_t *task, int sig, const siginfo_t *info,
 
     kinfo.si_signo = sig & 0x7f;
 
-    task->ptrace_stop_sig = (uint8_t)sig;
+    ptrace_snapshot_regs(task, regs);
     task->ptrace_last_stop = stop_kind;
     task->ptrace_wait_status = (uint32_t)(((sig & 0xff) << 8) | 0x7f);
     task->ptrace_stopped = true;
@@ -139,8 +160,8 @@ static void ptrace_stop_event(task_t *task, uint32_t event, uint64_t message) {
     info.si_errno = 0;
     info.si_code = SI_KERNEL;
 
+    ptrace_snapshot_regs(task, ptrace_task_regs(task));
     task->ptrace_message = message;
-    task->ptrace_stop_sig = SIGTRAP;
     task->ptrace_last_stop = PTRACE_STOP_SIGNAL;
     task->ptrace_wait_status =
         (uint32_t)((SIGTRAP << 8) | 0x7f | ((event & 0xff) << 16));
@@ -196,7 +217,7 @@ static void ptrace_fill_syscall_info(struct ptrace_syscall_info *info,
 
     if (last_stop == PTRACE_STOP_SYSCALL_ENTER) {
         info->op = PTRACE_SYSCALL_INFO_ENTRY;
-        info->entry.nr = regs->x8;
+        info->entry.nr = regs->syscallno;
         info->entry.args[0] = regs->x0;
         info->entry.args[1] = regs->x1;
         info->entry.args[2] = regs->x2;
@@ -212,7 +233,7 @@ static void ptrace_fill_syscall_info(struct ptrace_syscall_info *info,
 }
 
 static uint64_t ptrace_copy_regs(task_t *target, void *user_buf) {
-    struct pt_regs *regs = ptrace_task_regs(target);
+    struct pt_regs *regs = ptrace_task_stop_regs(target);
 
     if (!target || !user_buf || !regs)
         return (uint64_t)-EFAULT;
@@ -333,7 +354,7 @@ static uint64_t ptrace_copy_syscall_info(task_t *target, uint64_t size,
         return 0;
     }
 
-    regs = ptrace_task_regs(target);
+    regs = ptrace_task_stop_regs(target);
     if (!regs)
         return (uint64_t)-EFAULT;
 
@@ -402,7 +423,7 @@ bool ptrace_consume_wait_event(task_t *task, int *status, siginfo_t *info,
         info->si_code = CLD_TRAPPED;
         info->_sifields._sigchld._pid = task->pid;
         info->_sifields._sigchld._uid = task->uid;
-        info->_sifields._sigchld._status = task->ptrace_stop_sig;
+        info->_sifields._sigchld._status = ptrace_stop_signal(task);
     }
 
     if (!nowait)
@@ -440,7 +461,7 @@ void ptrace_on_syscall_enter(struct pt_regs *regs) {
         stop_sig |= 0x80;
 
     self->ptrace_syscall_exit_pending = true;
-    ptrace_stop_current(self, stop_sig, NULL, PTRACE_STOP_SYSCALL_ENTER);
+    ptrace_stop_current(self, regs, stop_sig, NULL, PTRACE_STOP_SYSCALL_ENTER);
 }
 
 void ptrace_on_syscall_exit(struct pt_regs *regs) {
@@ -459,14 +480,15 @@ void ptrace_on_syscall_exit(struct pt_regs *regs) {
         stop_sig |= 0x80;
 
     self->ptrace_syscall_exit_pending = false;
-    ptrace_stop_current(self, stop_sig, NULL, PTRACE_STOP_SYSCALL_EXIT);
+    ptrace_stop_current(self, regs, stop_sig, NULL, PTRACE_STOP_SYSCALL_EXIT);
 }
 
 void ptrace_stop_for_signal(task_t *task, int sig, const siginfo_t *info) {
     if (!task || !ptrace_is_traced(task))
         return;
 
-    ptrace_stop_current(task, sig, info, PTRACE_STOP_SIGNAL);
+    ptrace_stop_current(task, ptrace_task_regs(task), sig, info,
+                        PTRACE_STOP_SIGNAL);
 }
 
 void ptrace_stop_for_exec(task_t *task) {

@@ -2,11 +2,13 @@
 
 #include <libs/klibc.h>
 
+#define NO_SYSCALL ((uint64_t)-1)
+
 struct pt_regs {
     uint64_t pc;
     uint64_t cpsr;
     uint64_t origin_x0;
-    uint64_t reserved;
+    uint64_t syscallno;
     uint64_t sp_el0;
     uint64_t x30;
     uint64_t x28;
@@ -49,8 +51,8 @@ _Static_assert(offsetof(struct pt_regs, cpsr) == 0x08,
                "pt_regs.cpsr offset must match entry.S");
 _Static_assert(offsetof(struct pt_regs, origin_x0) == 0x10,
                "pt_regs.origin_x0 offset must match entry.S");
-_Static_assert(offsetof(struct pt_regs, reserved) == 0x18,
-               "pt_regs.reserved offset must match entry.S");
+_Static_assert(offsetof(struct pt_regs, syscallno) == 0x18,
+               "pt_regs.syscallno offset must match entry.S");
 _Static_assert(offsetof(struct pt_regs, sp_el0) == 0x20,
                "pt_regs.sp_el0 offset must match entry.S");
 _Static_assert(offsetof(struct pt_regs, x30) == 0x28,

@@ -132,7 +132,7 @@ ssize_t device_ioctl(uint64_t dev, int cmd, void *args, fd_t *fd) {
     if (device->ioctl) {
         return device->ioctl(device->ptr, cmd, args, fd);
     }
-    return -ENOSYS;
+    return -ENOTTY;
 }
 
 ssize_t device_poll(uint64_t dev, int events) {
