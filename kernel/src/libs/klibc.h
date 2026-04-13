@@ -93,6 +93,10 @@ typedef void *timer_t;
         uint64_t __mptr = ((uint64_t)(ptr));                                   \
         (type *)((char *)__mptr - offsetof(type, member)) ?: NULL;             \
     })
+#define container_of_const(ptr, type, member)                                  \
+    _Generic(ptr,                                                              \
+        const typeof(*(ptr)) *: (const type *)container_of(ptr, type, member), \
+        default: container_of(ptr, type, member))
 
 // 四舍五入成整数
 static inline uint64_t round(double x) { return (uint64_t)(x + 0.5); }

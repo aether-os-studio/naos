@@ -1,6 +1,8 @@
 # Nuke built-in rules and variables.
-MAKEFLAGS += -rR
+MAKEFLAGS += -rR --no-print-directory
 .SUFFIXES:
+
+include ../build/common-env.mk
 
 # This is the name that our final executable will have.
 # Change as needed.
@@ -213,29 +215,33 @@ endif
 .PHONY: bin-$(ARCH)/$(OUTPUT)
 # Link rules for the final executable.
 bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH)-$(BOOT_PROTOCOL).ld $(OBJ)
-	mkdir -p "$$(dirname $@)"
-
-	@$(LINKER) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a $(PROJECT_ROOT)/liballoc_$(ARCH).a -o $@
+	$(call PRINT_STEP,LD,$@)
+	$(Q)mkdir -p "$$(dirname $@)"
+	$(Q)$(LINKER) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a $(PROJECT_ROOT)/liballoc_$(ARCH).a -o $@
 
 # Compilation rules for *.c files.
 obj-$(ARCH)/src/%.c.o: src/%.c GNUmakefile
-	mkdir -p "$$(dirname $@)"
-	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+	$(call PRINT_STEP,CC,$<)
+	$(Q)mkdir -p "$$(dirname $@)"
+	$(Q)$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
 # Compilation rules for *.S files.
 obj-$(ARCH)/src/%.S.o: src/%.S GNUmakefile
-	mkdir -p "$$(dirname $@)"
-	$(CC) $(CFLAGS) $(CPPFLAGS) -DASM_FILE -c $< -o $@
+	$(call PRINT_STEP,AS,$<)
+	$(Q)mkdir -p "$$(dirname $@)"
+	$(Q)$(CC) $(CFLAGS) $(CPPFLAGS) -DASM_FILE -c $< -o $@
 
 # Remove object files and the final executable.
 .PHONY: clean
 clean:
-	rm -rf bin-$(ARCH) obj-$(ARCH)
+	$(call PRINT_STEP,CLEAN,kernel)
+	$(Q)rm -rf bin-$(ARCH) obj-$(ARCH)
 
 # Remove everything built and generated including downloaded dependencies.
 .PHONY: distclean
 distclean:
-	rm -rf bin-* obj-* freestnd-c-hdrs src/limine.h
+	$(call PRINT_STEP,DISTCLEAN,kernel)
+	$(Q)rm -rf bin-* obj-* freestnd-c-hdrs src/limine.h
 
 # Install the final built executable to its final on-root location.
 .PHONY: install

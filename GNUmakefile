@@ -1,60 +1,14 @@
 # Nuke built-in rules and variables.
-MAKEFLAGS += -rR
+MAKEFLAGS += -rR --no-print-directory
 .SUFFIXES:
 
-export PROJECT_ROOT := $(shell pwd)
-
-export BUILD_MODE ?= debug
-
-export BOOT_PROTOCOL ?= limine
-
-# mixed or monolithic
-export KERNEL_MODEL ?= mixed
-
-export BUILD_NVIDIA ?= 0
-
-# Target architecture to build for. Default to x86_64.
-export ARCH ?= x86_64
+include build/common-env.mk
 
 ifeq ($(ARCH), x86_64)
 ARCH_DIR := x64
 else
 ARCH_DIR := $(ARCH)
 endif
-
-# User controllable C compiler command.
-ifeq ($(ARCH), x86_64)
-export CC := $(ARCH)-linux-gnu-gcc
-export CXX := $(ARCH)-linux-gnu-g++
-export LD := $(ARCH)-linux-gnu-ld
-export NM := $(ARCH)-linux-gnu-nm
-export OBJCOPY := $(ARCH)-linux-gnu-objcopy
-endif
-ifeq ($(ARCH), aarch64)
-export CC := $(ARCH)-linux-gnu-gcc
-export CXX := $(ARCH)-linux-gnu-g++
-export LD := $(ARCH)-linux-gnu-ld
-export NM := $(ARCH)-linux-gnu-nm
-export OBJCOPY := $(ARCH)-linux-gnu-objcopy
-endif
-ifeq ($(ARCH), riscv64)
-export CC := $(ARCH)-linux-gnu-gcc
-export CXX := $(ARCH)-linux-gnu-g++
-export LD := $(ARCH)-linux-gnu-ld
-export NM := $(ARCH)-linux-gnu-nm
-export OBJCOPY := $(ARCH)-linux-gnu-objcopy
-endif
-ifeq ($(ARCH), loongarch64)
-export CC := $(ARCH)-linux-gnu-gcc
-export CXX := $(ARCH)-linux-gnu-g++
-export LD := $(ARCH)-linux-gnu-ld
-export NM := $(ARCH)-linux-gnu-nm
-export OBJCOPY := $(ARCH)-linux-gnu-objcopy
-endif
-
-export ROOT_DIR := "$(shell pwd)"
-
-export CC_IS_CLANG := $(shell ! $(CC) --version 2>/dev/null | grep 'clang' >/dev/null 2>&1; echo $$?)
 
 KVM ?= 0
 HVF ?= 0
@@ -112,23 +66,30 @@ all: $(IMAGE_NAME).img rootfs-$(ARCH).img
 all-single: single-$(IMAGE_NAME).img
 
 prepare: libgcc_$(ARCH).a liballoc_$(ARCH).a
-	./kernel/get-deps
+	$(call PRINT_STEP,PREPARE,kernel/get-deps)
+	$(Q)./kernel/get-deps
 
 liballoc_$(ARCH).a:
-	wget https://github.com/plos-clan/liballoc/releases/download/release/liballoc-$(ARCH).a -O liballoc_$(ARCH)_norenamed.a
-	$(OBJCOPY) --redefine-sym malloc=liballoc_malloc --redefine-sym realloc=liballoc_realloc --redefine-sym calloc=liballoc_calloc --redefine-sym aligned_alloc=liballoc_aligned_alloc --redefine-sym free=liballoc_free liballoc_$(ARCH)_norenamed.a liballoc_$(ARCH).a
+	$(call PRINT_STEP,GET,liballoc_$(ARCH).a)
+	$(Q)wget https://github.com/plos-clan/liballoc/releases/download/release/liballoc-$(ARCH).a -O liballoc_$(ARCH)_norenamed.a
+	$(call PRINT_STEP,OBJCOPY,liballoc_$(ARCH).a)
+	$(Q)$(OBJCOPY) --redefine-sym malloc=liballoc_malloc --redefine-sym realloc=liballoc_realloc --redefine-sym calloc=liballoc_calloc --redefine-sym aligned_alloc=liballoc_aligned_alloc --redefine-sym free=liballoc_free liballoc_$(ARCH)_norenamed.a liballoc_$(ARCH).a
 
 libgcc_$(ARCH).a:
-	wget https://github.com/osdev0/libgcc-binaries/releases/download/$(LIBGCC_VERSION)/libgcc-$(ARCH).a -O libgcc_$(ARCH).a
+	$(call PRINT_STEP,GET,libgcc_$(ARCH).a)
+	$(Q)wget https://github.com/osdev0/libgcc-binaries/releases/download/$(LIBGCC_VERSION)/libgcc-$(ARCH).a -O libgcc_$(ARCH).a
 
 .PHONY: kernel
 kernel:
-	$(MAKE) -C kernel -j$(shell nproc)
+	$(call PRINT_STEP,MAKE,kernel)
+	$(Q)$(MAKE) -C kernel -j$(shell nproc)
 
 user: user/.build-stamp-$(ARCH)
 user/.build-stamp-$(ARCH):
-	$(MAKE) -C user
-	touch $@
+	$(call PRINT_STEP,MAKE,user)
+	$(Q)$(MAKE) -C user
+	$(call PRINT_STEP,TOUCH,$@)
+	$(Q)touch $@
 
 .PHONY: clean
 clean:

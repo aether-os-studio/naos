@@ -5,10 +5,13 @@
 #include <drivers/logger.h>
 #include <libs/klibc.h>
 
+#ifndef __NAOS_STRUCT_TIMESPEC_DEFINED
+#define __NAOS_STRUCT_TIMESPEC_DEFINED
 struct timespec {
     long long tv_sec;
     long tv_nsec;
 };
+#endif
 
 struct stat {
     long st_dev;

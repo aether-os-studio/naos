@@ -4,10 +4,13 @@
 #include <libs/klibc.h>
 #include <arch/aarch64/syscall/nr.h>
 
+#ifndef __NAOS_STRUCT_TIMESPEC_DEFINED
+#define __NAOS_STRUCT_TIMESPEC_DEFINED
 struct timespec {
     long long tv_sec;
     long tv_nsec;
 };
+#endif
 
 struct stat {
     uint64_t st_dev;         // 设备 ID

@@ -20,22 +20,27 @@ all: $(MODULE_OUTPUT)
 
 ifeq ($(MODULE_KIND),staticlib)
 $(MODULE_OUTPUT): $(OBJ) $(MODULE_LINK_DEPS) GNUmakefile
-	mkdir -p "$$(dirname $@)"
-	$(MODULE_AR) rcs $@ $(OBJ)
+	$(call PRINT_STEP,AR,$@)
+	$(Q)mkdir -p "$$(dirname $@)"
+	$(Q)$(MODULE_AR) rcs $@ $(OBJ)
 else ifeq ($(MODULE_KIND),relocatable)
 $(MODULE_OUTPUT): $(OBJ) $(MODULE_LINK_DEPS) GNUmakefile
-	mkdir -p "$$(dirname $@)"
-	$(LD) -r $(OBJ) -o $@
+	$(call PRINT_STEP,LD,$@)
+	$(Q)mkdir -p "$$(dirname $@)"
+	$(Q)$(LD) -r $(OBJ) -o $@
 else
 $(MODULE_OUTPUT): $(OBJ) $(MODULE_LINK_DEPS) GNUmakefile
-	mkdir -p "$$(dirname $@)"
-	$(MODULE_LINKER) $(LDFLAGS) -shared $(OBJ) $(MODULE_LINK_LIBS) -o $@
+	$(call PRINT_STEP,LD,$@)
+	$(Q)mkdir -p "$$(dirname $@)"
+	$(Q)$(MODULE_LINKER) $(LDFLAGS) -shared $(OBJ) $(MODULE_LINK_LIBS) -o $@
 endif
 
 $(MODULE_OBJ_DIR)/%.c.o: %.c GNUmakefile $(MODULE_OBJ_DEPS)
-	mkdir -p "$$(dirname $@)"
-	$(CC) $(CFLAGS) $(MODULE_INCLUDE_FLAGS) -c $< -o $@
+	$(call PRINT_STEP,CC,$<)
+	$(Q)mkdir -p "$$(dirname $@)"
+	$(Q)$(CC) $(CFLAGS) $(MODULE_INCLUDE_FLAGS) -c $< -o $@
 
 $(MODULE_OBJ_DIR)/%.S.o: %.S GNUmakefile $(MODULE_OBJ_DEPS)
-	mkdir -p "$$(dirname $@)"
-	$(CC) $(CFLAGS) $(MODULE_INCLUDE_FLAGS) -DASM_FILE -c $< -o $@
+	$(call PRINT_STEP,AS,$<)
+	$(Q)mkdir -p "$$(dirname $@)"
+	$(Q)$(CC) $(CFLAGS) $(MODULE_INCLUDE_FLAGS) -DASM_FILE -c $< -o $@
