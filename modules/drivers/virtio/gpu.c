@@ -215,12 +215,16 @@ virtio_gpu_lookup_scanout_handle(virtio_gpu_device_t *gpu_dev, uint32_t handle,
     }
 
     struct virtio_gpu_bo *bo = virtio_gpu_bo_get(gpu_dev, handle);
-    if (!bo || !virtio_gpu_owner_matches(bo->owner_file, fd)) {
+    if (!bo) {
         return -ENOENT;
     }
 
     struct virtio_gpu_bo *shared = virtio_gpu_bo_resolve(gpu_dev, bo);
     if (!shared || shared->resource_id == 0) {
+        return -ENOENT;
+    }
+
+    if (bo == shared && !virtio_gpu_owner_matches(bo->owner_file, fd)) {
         return -ENOENT;
     }
 
@@ -2712,21 +2716,81 @@ static int virtio_gpu_atomic_commit(drm_device_t *drm_dev,
         return 0;
     }
 
-    uint32_t *obj_ids = (uint32_t *)(uintptr_t)atomic->objs_ptr;
-    uint32_t *obj_prop_counts = (uint32_t *)(uintptr_t)atomic->count_props_ptr;
-    uint32_t *prop_ids = (uint32_t *)(uintptr_t)atomic->props_ptr;
-    uint64_t *prop_values = (uint64_t *)(uintptr_t)atomic->prop_values_ptr;
-
-    if (!obj_ids || !obj_prop_counts || !prop_ids || !prop_values) {
+    if (!atomic->objs_ptr || !atomic->count_props_ptr || !atomic->props_ptr ||
+        !atomic->prop_values_ptr) {
         return -EINVAL;
+    }
+
+    if (atomic->count_objs > VIRTIO_GPU_MAX_BOS) {
+        return -E2BIG;
+    }
+
+    uint32_t *obj_ids = calloc(atomic->count_objs, sizeof(uint32_t));
+    uint32_t *obj_prop_counts = calloc(atomic->count_objs, sizeof(uint32_t));
+    if (!obj_ids || !obj_prop_counts) {
+        free(obj_ids);
+        free(obj_prop_counts);
+        return -ENOMEM;
+    }
+
+    if (copy_from_user(obj_ids, (void *)(uintptr_t)atomic->objs_ptr,
+                       atomic->count_objs * sizeof(uint32_t)) ||
+        copy_from_user(obj_prop_counts,
+                       (void *)(uintptr_t)atomic->count_props_ptr,
+                       atomic->count_objs * sizeof(uint32_t))) {
+        free(obj_ids);
+        free(obj_prop_counts);
+        return -EFAULT;
+    }
+
+    uint64_t total_props = 0;
+    for (uint32_t i = 0; i < atomic->count_objs; i++) {
+        if (obj_prop_counts[i] > 32 ||
+            total_props > UINT32_MAX - obj_prop_counts[i]) {
+            free(obj_ids);
+            free(obj_prop_counts);
+            return -E2BIG;
+        }
+        total_props += obj_prop_counts[i];
+    }
+
+    uint32_t *prop_ids = NULL;
+    uint64_t *prop_values = NULL;
+    if (total_props > 0) {
+        prop_ids = calloc(total_props, sizeof(uint32_t));
+        prop_values = calloc(total_props, sizeof(uint64_t));
+        if (!prop_ids || !prop_values) {
+            free(prop_ids);
+            free(prop_values);
+            free(obj_ids);
+            free(obj_prop_counts);
+            return -ENOMEM;
+        }
+
+        if (copy_from_user(prop_ids, (void *)(uintptr_t)atomic->props_ptr,
+                           total_props * sizeof(uint32_t)) ||
+            copy_from_user(prop_values,
+                           (void *)(uintptr_t)atomic->prop_values_ptr,
+                           total_props * sizeof(uint64_t))) {
+            free(prop_ids);
+            free(prop_values);
+            free(obj_ids);
+            free(obj_prop_counts);
+            return -EFAULT;
+        }
     }
 
     bool test_only = (atomic->flags & DRM_MODE_ATOMIC_TEST_ONLY) != 0;
     uint64_t prop_idx = 0;
+    int ret = 0;
 
     for (uint32_t i = 0; i < atomic->count_objs; i++) {
         uint32_t obj_id = obj_ids[i];
         uint32_t count = obj_prop_counts[i];
+        if (prop_idx + count > total_props) {
+            ret = -EINVAL;
+            goto out_atomic_arrays;
+        }
 
         enum {
             ATOMIC_OBJ_UNKNOWN = 0,
@@ -2774,17 +2838,20 @@ static int virtio_gpu_atomic_commit(drm_device_t *drm_dev,
         if (obj_type == ATOMIC_OBJ_PLANE) {
             plane = drm_plane_get(&gpu_dev->resource_mgr, obj_id);
             if (!plane) {
-                return -ENOENT;
+                ret = -ENOENT;
+                goto out_atomic_arrays;
             }
         } else if (obj_type == ATOMIC_OBJ_CRTC) {
             crtc = drm_crtc_get(&gpu_dev->resource_mgr, obj_id);
             if (!crtc) {
-                return -ENOENT;
+                ret = -ENOENT;
+                goto out_atomic_arrays;
             }
         } else if (obj_type == ATOMIC_OBJ_CONNECTOR) {
             connector = drm_connector_get(&gpu_dev->resource_mgr, obj_id);
             if (!connector) {
-                return -ENOENT;
+                ret = -ENOENT;
+                goto out_atomic_arrays;
             }
         }
 
@@ -2805,7 +2872,8 @@ static int virtio_gpu_atomic_commit(drm_device_t *drm_dev,
                     if (plane) {
                         drm_plane_free(&gpu_dev->resource_mgr, plane->id);
                     }
-                    return -EINVAL;
+                    ret = -EINVAL;
+                    goto out_atomic_arrays;
                 }
                 break;
 
@@ -2826,7 +2894,8 @@ static int virtio_gpu_atomic_commit(drm_device_t *drm_dev,
                             drm_crtc_free(&gpu_dev->resource_mgr, crtc->id);
                         }
                         drm_plane_free(&gpu_dev->resource_mgr, plane->id);
-                        return -ENOENT;
+                        ret = -ENOENT;
+                        goto out_atomic_arrays;
                     }
 
                     virtio_gpu_scanout_source_t scanout;
@@ -2844,7 +2913,8 @@ static int virtio_gpu_atomic_commit(drm_device_t *drm_dev,
                             drm_crtc_free(&gpu_dev->resource_mgr, crtc->id);
                         }
                         drm_plane_free(&gpu_dev->resource_mgr, plane->id);
-                        return -EINVAL;
+                        ret = -EINVAL;
+                        goto out_atomic_arrays;
                     }
 
                     drm_framebuffer_free(&gpu_dev->resource_mgr, drm_fb->id);
@@ -2880,7 +2950,8 @@ static int virtio_gpu_atomic_commit(drm_device_t *drm_dev,
                                 drm_crtc_free(&gpu_dev->resource_mgr, crtc->id);
                             }
                             drm_plane_free(&gpu_dev->resource_mgr, plane->id);
-                            return -ENOENT;
+                            ret = -ENOENT;
+                            goto out_atomic_arrays;
                         }
 
                         if (!test_only) {
@@ -2927,7 +2998,8 @@ static int virtio_gpu_atomic_commit(drm_device_t *drm_dev,
                     if (plane) {
                         drm_plane_free(&gpu_dev->resource_mgr, plane->id);
                     }
-                    return -EINVAL;
+                    ret = -EINVAL;
+                    goto out_atomic_arrays;
                 }
                 break;
 
@@ -2954,7 +3026,8 @@ static int virtio_gpu_atomic_commit(drm_device_t *drm_dev,
     }
 
     if (test_only) {
-        return 0;
+        ret = 0;
+        goto out_atomic_arrays;
     }
 
     for (uint32_t i = 0; i < gpu_dev->num_displays; i++) {
@@ -2965,10 +3038,11 @@ static int virtio_gpu_atomic_commit(drm_device_t *drm_dev,
         }
 
         if (plane->fb_id == 0 || crtc->mode_valid == 0) {
-            int ret = virtio_gpu_update_scanout(
-                gpu_dev, gpu_dev->scanout_ids[i], 0, NULL, false, 0, 0, 0, 0);
+            ret = virtio_gpu_update_scanout(gpu_dev, gpu_dev->scanout_ids[i], 0,
+                                            NULL, false, 0, 0, 0, 0);
             if (ret != 0) {
-                return -EIO;
+                ret = -EIO;
+                goto out_atomic_arrays;
             }
             crtc->fb_id = 0;
             continue;
@@ -2976,10 +3050,10 @@ static int virtio_gpu_atomic_commit(drm_device_t *drm_dev,
 
         drm_framebuffer_t *drm_fb = NULL;
         virtio_gpu_scanout_source_t scanout;
-        int ret = virtio_gpu_get_scanout_from_fb_id(gpu_dev, plane->fb_id,
-                                                    &drm_fb, &scanout, fd);
+        ret = virtio_gpu_get_scanout_from_fb_id(gpu_dev, plane->fb_id, &drm_fb,
+                                                &scanout, fd);
         if (ret != 0) {
-            return ret;
+            goto out_atomic_arrays;
         }
 
         uint32_t present_w = crtc->w ? crtc->w : scanout.width;
@@ -2990,7 +3064,8 @@ static int virtio_gpu_atomic_commit(drm_device_t *drm_dev,
                                         crtc->y, present_w, present_h, true);
         drm_framebuffer_free(&gpu_dev->resource_mgr, drm_fb->id);
         if (ret != 0) {
-            return -EIO;
+            ret = -EIO;
+            goto out_atomic_arrays;
         }
 
         crtc->fb_id = plane->fb_id;
@@ -3000,7 +3075,14 @@ static int virtio_gpu_atomic_commit(drm_device_t *drm_dev,
         drm_defer_event(drm_dev, DRM_EVENT_FLIP_COMPLETE, atomic->user_data);
     }
 
-    return 0;
+    ret = 0;
+
+out_atomic_arrays:
+    free(prop_ids);
+    free(prop_values);
+    free(obj_ids);
+    free(obj_prop_counts);
+    return ret;
 }
 
 static int virtio_gpu_dirty_fb(drm_device_t *drm_dev,
@@ -4300,6 +4382,7 @@ static ssize_t virtio_gpu_driver_ioctl(drm_device_t *drm_dev, uint32_t cmd,
         return 0;
     }
     default:
+        printk("Unsupported driver ioctl %#010x\n", cmd);
         return -ENOTTY;
     }
 }

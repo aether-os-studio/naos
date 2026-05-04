@@ -38,7 +38,7 @@ typedef struct device_t {
     void *ptr;       // 设备指针
 
     ssize_t (*open)(void *dev, void *arg);
-    ssize_t (*close)(void *dev);
+    ssize_t (*close)(void *dev, void *arg);
     // 设备控制
     ssize_t (*ioctl)(void *dev, int cmd, void *args, fd_t *fd);
     // 轮询
@@ -77,7 +77,7 @@ device_t *device_find(int type, uint64_t idx);
 device_t *device_get(uint64_t dev);
 
 ssize_t device_open(uint64_t dev, void *arg);
-ssize_t device_close(uint64_t dev);
+ssize_t device_close(uint64_t dev, void *arg);
 
 // 控制设备
 ssize_t device_ioctl(uint64_t dev, int cmd, void *args, fd_t *fd);

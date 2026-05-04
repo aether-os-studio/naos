@@ -724,8 +724,9 @@ static int sound_pcm_open(void *dev, void *arg) {
     return 0;
 }
 
-static int sound_pcm_close(void *dev) {
+static int sound_pcm_close(void *dev, void *arg) {
     sound_pcm_substream_t *substream = sound_dev_to_substream(dev);
+    (void)arg;
     mutex_lock(&substream->lock);
     if (substream->ops && substream->ops->free &&
         sound_pcm_backend_validate(substream) == 0) {

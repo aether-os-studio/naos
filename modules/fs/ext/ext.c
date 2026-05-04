@@ -3823,7 +3823,7 @@ static int ext_open(struct vfs_inode *inode, struct vfs_file *file) {
         return -EINVAL;
     file->f_op = inode->i_fop;
     if ((inode->type & file_block) || (inode->type & file_stream))
-        return device_open(inode->i_rdev, NULL);
+        return device_open(inode->i_rdev, file);
     return 0;
 }
 
@@ -3832,7 +3832,7 @@ static int ext_release(struct vfs_inode *inode, struct vfs_file *file) {
     if (!inode)
         return 0;
     if ((inode->type & file_block) || (inode->type & file_stream))
-        device_close(inode->i_rdev);
+        device_close(inode->i_rdev, file);
     return 0;
 }
 

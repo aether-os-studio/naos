@@ -26,7 +26,7 @@ Programs supported on aether-os include [Weston](https://gitlab.freedesktop.org/
 ## Supported Hardware
 
 **General** USB (XHCI)\
-**Graphics** virtio GPU, nvidia-open\
+**Graphics** virtio GPU\
 **Input** USB human interface devices, PS/2 keyboard and mouse\
 **Storage** USB mass storage devices, NVMe, AHCI, virtio block\
 **Network** E1000, virtio network

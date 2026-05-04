@@ -115,12 +115,12 @@ ssize_t device_open(uint64_t dev, void *arg) {
     return 0;
 }
 
-ssize_t device_close(uint64_t dev) {
+ssize_t device_close(uint64_t dev, void *arg) {
     device_t *device = device_get(dev);
     if (!device)
         return -ENODEV;
     if (device->close) {
-        return device->close(device->ptr);
+        return device->close(device->ptr, arg);
     }
     return 0;
 }

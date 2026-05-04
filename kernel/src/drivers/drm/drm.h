@@ -1386,6 +1386,9 @@ typedef enum drm_minor_type {
 } drm_minor_type_t;
 
 #define DRM_FILE_NODE_MAGIC 0x444e4f44U
+#define DRM_FILE_MAGIC 0x44464d52U
+#define DRM_MAX_LEASES_PER_DEVICE 32
+#define DRM_MAX_LEASE_OBJECTS 32
 
 typedef struct drm_file_node {
     uint32_t magic;
@@ -1393,6 +1396,25 @@ typedef struct drm_file_node {
     uint32_t minor;
     drm_device_t *dev;
 } drm_file_node_t;
+
+typedef struct drm_file {
+    uint32_t magic;
+    drm_device_t *dev;
+    drm_minor_type_t type;
+    bool lessee;
+    bool revoked;
+    uint32_t lease_id;
+    uint32_t lessor_id;
+    uint32_t object_count;
+    uint32_t object_ids[DRM_MAX_LEASE_OBJECTS];
+} drm_file_t;
+
+typedef struct drm_lease_entry {
+    bool active;
+    drm_file_t *file;
+    uint32_t lease_id;
+    uint32_t lessor_id;
+} drm_lease_entry_t;
 
 typedef struct drm_device_op {
     bool supports_render_node;
@@ -1461,6 +1483,9 @@ struct drm_device {
     uint64_t vblank_period_ns;
     uint64_t next_vblank_ns;
     drm_resource_manager_t resource_mgr;
+    spinlock_t lease_lock;
+    uint32_t next_lease_id;
+    drm_lease_entry_t leases[DRM_MAX_LEASES_PER_DEVICE];
 };
 
 static inline drm_file_node_t *drm_data_to_file_node(void *data) {
@@ -1482,12 +1507,30 @@ static inline drm_device_t *drm_data_to_device(void *data) {
         return node->dev;
     }
 
+    if (data) {
+        drm_file_t *file = (drm_file_t *)data;
+        if (file->magic == DRM_FILE_MAGIC && file->dev) {
+            return file->dev;
+        }
+    }
+
     return (drm_device_t *)data;
 }
 
 static inline bool drm_data_is_render_node(void *data) {
     drm_file_node_t *node = drm_data_to_file_node(data);
-    return node && node->type == DRM_MINOR_RENDER;
+    if (node) {
+        return node->type == DRM_MINOR_RENDER;
+    }
+
+    if (data) {
+        drm_file_t *file = (drm_file_t *)data;
+        if (file->magic == DRM_FILE_MAGIC) {
+            return file->type == DRM_MINOR_RENDER;
+        }
+    }
+
+    return false;
 }
 
 #include <drivers/drm/drm_core.h>
@@ -1508,6 +1551,8 @@ ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
                  uint64_t flags);
 ssize_t drm_poll(void *data, size_t event);
 void *drm_map(void *data, void *addr, uint64_t offset, uint64_t len);
+ssize_t drm_open(void *data, void *arg);
+ssize_t drm_close(void *data, void *arg);
 
 /* Event handling */
 int drm_post_event(drm_device_t *dev, uint32_t type, uint64_t user_data);

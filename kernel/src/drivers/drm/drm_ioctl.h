@@ -64,7 +64,7 @@ ssize_t drm_primefd_create(drm_device_t *dev, uint32_t handle, uint64_t phys,
  * @dev: DRM device
  * @arg: ioctl argument
  */
-ssize_t drm_ioctl_mode_getresources(drm_device_t *dev, void *arg);
+ssize_t drm_ioctl_mode_getresources(drm_device_t *dev, void *arg, fd_t *fd);
 
 /**
  * drm_ioctl_mode_getcrtc - Handle DRM_IOCTL_MODE_GETCRTC
@@ -141,7 +141,8 @@ ssize_t drm_ioctl_mode_setcrtc(drm_device_t *dev, void *arg, fd_t *fd);
  * @dev: DRM device
  * @arg: ioctl argument
  */
-ssize_t drm_ioctl_mode_getplaneresources(drm_device_t *dev, void *arg);
+ssize_t drm_ioctl_mode_getplaneresources(drm_device_t *dev, void *arg,
+                                         fd_t *fd);
 
 /**
  * drm_ioctl_mode_getplane - Handle DRM_IOCTL_MODE_GETPLANE
@@ -282,7 +283,10 @@ ssize_t drm_ioctl_dirtyfb(drm_device_t *dev, void *arg, fd_t *fd);
  * @dev: DRM device
  * @arg: ioctl argument
  */
-ssize_t drm_ioctl_mode_list_lessees(drm_device_t *dev, void *arg);
+ssize_t drm_ioctl_mode_list_lessees(drm_device_t *dev, void *arg, fd_t *fd);
+ssize_t drm_ioctl_mode_create_lease(drm_device_t *dev, void *arg, fd_t *fd);
+ssize_t drm_ioctl_mode_get_lease(drm_device_t *dev, void *arg, fd_t *fd);
+ssize_t drm_ioctl_mode_revoke_lease(drm_device_t *dev, void *arg);
 
 /**
  * drm_property_lookup_blob_data - Look up blob data by blob ID

@@ -125,6 +125,7 @@ static const struct vfs_super_operations drmfdfs_super_ops;
 static const struct vfs_file_operations drmfdfs_dir_file_ops;
 static const struct vfs_file_operations drmfdfs_prime_file_ops;
 static const struct vfs_file_operations drmfdfs_sync_file_ops;
+static const struct vfs_file_operations drmfdfs_drm_file_ops;
 static mutex_t drmfdfs_mount_lock;
 static struct vfs_mount *drmfdfs_internal_mnt;
 static spinlock_t drmfdfs_register_lock = SPIN_INIT;
@@ -151,6 +152,35 @@ typedef struct drm_prime_fd_ctx {
     uint64_t size;
     char name[DMA_BUF_NAME_LEN];
 } drm_prime_fd_ctx_t;
+
+static inline drm_file_t *drm_file_from_data(void *data) {
+    drm_file_t *file = (drm_file_t *)data;
+    if (file && file->magic == DRM_FILE_MAGIC && file->dev) {
+        return file;
+    }
+    return NULL;
+}
+
+static inline drm_file_t *drm_file_from_vfs_file(fd_t *fd) {
+    drm_file_t *file = fd ? (drm_file_t *)fd->private_data : NULL;
+    if (file && file->magic == DRM_FILE_MAGIC && file->dev) {
+        return file;
+    }
+    return NULL;
+}
+
+static inline drm_file_t *drm_current_file(void *data, fd_t *fd) {
+    drm_file_t *file = drm_file_from_vfs_file(fd);
+    if (file) {
+        return file;
+    }
+    return drm_file_from_data(data);
+}
+
+static inline void *drm_effective_ioctl_data(void *data, fd_t *fd) {
+    drm_file_t *file = drm_current_file(data, fd);
+    return file ? (void *)file : data;
+}
 
 static inline drmfdfs_info_t *drmfdfs_sb_info(struct vfs_super_block *sb) {
     return sb ? (drmfdfs_info_t *)sb->s_fs_info : NULL;
@@ -889,6 +919,259 @@ static const struct vfs_file_operations drmfdfs_sync_file_ops = {
     .open = drmfdfs_open,
     .release = drm_syncfdfs_release,
 };
+
+static int drm_leasefd_release(struct vfs_inode *inode, struct vfs_file *file) {
+    drm_file_t *drm_file = drm_file_from_vfs_file(file);
+    drm_device_t *dev = drm_file ? drm_file->dev : NULL;
+    (void)inode;
+
+    if (!drm_file) {
+        return 0;
+    }
+
+    if (dev) {
+        spin_lock(&dev->lease_lock);
+        for (uint32_t i = 0; i < DRM_MAX_LEASES_PER_DEVICE; i++) {
+            if (dev->leases[i].active && dev->leases[i].file == drm_file) {
+                dev->leases[i].active = false;
+                dev->leases[i].file = NULL;
+                break;
+            }
+        }
+        spin_unlock(&dev->lease_lock);
+    }
+
+    file->private_data = NULL;
+    memset(drm_file, 0, sizeof(*drm_file));
+    free(drm_file);
+    return 0;
+}
+
+static long drm_leasefd_ioctl(struct vfs_file *file, unsigned long cmd,
+                              unsigned long arg) {
+    drm_file_t *drm_file = drm_file_from_vfs_file(file);
+    if (!drm_file) {
+        return -EBADF;
+    }
+    return drm_ioctl(drm_file, (ssize_t)cmd, (ssize_t)arg, file);
+}
+
+static ssize_t drm_leasefd_read(struct vfs_file *file, void *buf, size_t count,
+                                loff_t *ppos) {
+    drm_file_t *drm_file = drm_file_from_vfs_file(file);
+    (void)ppos;
+    if (!drm_file) {
+        return -EBADF;
+    }
+    return drm_read(drm_file, buf, 0, count, file->f_flags);
+}
+
+static __poll_t drm_leasefd_poll(struct vfs_file *file,
+                                 struct vfs_poll_table *pt) {
+    drm_file_t *drm_file = drm_file_from_vfs_file(file);
+    (void)pt;
+    if (!drm_file) {
+        return EPOLLNVAL;
+    }
+    return (__poll_t)drm_poll(drm_file, EPOLLIN | EPOLLOUT | EPOLLPRI);
+}
+
+static void *drm_leasefd_mmap(struct vfs_file *file, void *addr, size_t offset,
+                              size_t size, size_t prot, uint64_t flags) {
+    drm_file_t *drm_file = drm_file_from_vfs_file(file);
+    (void)prot;
+    (void)flags;
+    if (!drm_file) {
+        return (void *)(int64_t)-EBADF;
+    }
+    return drm_map(drm_file, addr, offset, size);
+}
+
+static const struct vfs_file_operations drmfdfs_drm_file_ops = {
+    .llseek = drmfdfs_llseek,
+    .read = drm_leasefd_read,
+    .mmap = drm_leasefd_mmap,
+    .unlocked_ioctl = drm_leasefd_ioctl,
+    .poll = drm_leasefd_poll,
+    .open = drmfdfs_open,
+    .release = drm_leasefd_release,
+};
+
+static bool drm_mode_object_exists(drm_device_t *dev, uint32_t object_id) {
+    if (!dev || object_id == 0) {
+        return false;
+    }
+
+    for (uint32_t i = 0; i < DRM_MAX_CONNECTORS_PER_DEVICE; i++) {
+        if (dev->resource_mgr.connectors[i] &&
+            dev->resource_mgr.connectors[i]->id == object_id) {
+            return true;
+        }
+    }
+    for (uint32_t i = 0; i < DRM_MAX_CRTCS_PER_DEVICE; i++) {
+        if (dev->resource_mgr.crtcs[i] &&
+            dev->resource_mgr.crtcs[i]->id == object_id) {
+            return true;
+        }
+    }
+    for (uint32_t i = 0; i < DRM_MAX_ENCODERS_PER_DEVICE; i++) {
+        if (dev->resource_mgr.encoders[i] &&
+            dev->resource_mgr.encoders[i]->id == object_id) {
+            return true;
+        }
+    }
+    for (uint32_t i = 0; i < DRM_MAX_PLANES_PER_DEVICE; i++) {
+        if (dev->resource_mgr.planes[i] &&
+            dev->resource_mgr.planes[i]->id == object_id) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool drm_file_has_object(drm_file_t *file, uint32_t object_id) {
+    if (object_id == 0) {
+        return false;
+    }
+
+    if (!file) {
+        return true;
+    }
+
+    if (!file->lessee) {
+        return true;
+    }
+
+    if (file->revoked) {
+        return false;
+    }
+
+    for (uint32_t i = 0; i < file->object_count; i++) {
+        if (file->object_ids[i] == object_id) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool drm_file_has_encoder(drm_device_t *dev, drm_file_t *file,
+                                 drm_encoder_t *encoder) {
+    if (!encoder) {
+        return false;
+    }
+
+    if (drm_file_has_object(file, encoder->id)) {
+        return true;
+    }
+
+    if (!dev || !file || !file->lessee || file->revoked) {
+        return false;
+    }
+
+    for (uint32_t i = 0; i < DRM_MAX_CONNECTORS_PER_DEVICE; i++) {
+        drm_connector_t *connector = dev->resource_mgr.connectors[i];
+        if (connector && connector->encoder_id == encoder->id &&
+            drm_file_has_object(file, connector->id)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool drm_file_can_create_lease(drm_file_t *file) {
+    return file && file->magic == DRM_FILE_MAGIC && !file->lessee &&
+           file->type == DRM_MINOR_PRIMARY;
+}
+
+static uint32_t drm_file_lessor_id(drm_file_t *file) {
+    if (!file || !file->lessee) {
+        return 0;
+    }
+    return file->lessor_id;
+}
+
+static int drm_leasefd_create(drm_device_t *dev, drm_file_t *owner,
+                              uint32_t *object_ids, uint32_t object_count,
+                              uint32_t flags, uint32_t *out_lease_id) {
+    drm_file_t *lease_file;
+    struct vfs_file *file = NULL;
+    struct vfs_inode *inode = NULL;
+    uint32_t lease_id;
+    int ret;
+    int slot = -1;
+
+    if (!dev || !owner || !object_ids || object_count == 0 ||
+        object_count > DRM_MAX_LEASE_OBJECTS || !out_lease_id) {
+        return -EINVAL;
+    }
+
+    lease_file = calloc(1, sizeof(*lease_file));
+    if (!lease_file) {
+        return -ENOMEM;
+    }
+
+    lease_file->magic = DRM_FILE_MAGIC;
+    lease_file->dev = dev;
+    lease_file->type = DRM_MINOR_PRIMARY;
+    lease_file->lessee = true;
+    lease_file->lessor_id = owner->lessee ? owner->lease_id : 0;
+    lease_file->object_count = object_count;
+    memcpy(lease_file->object_ids, object_ids,
+           object_count * sizeof(object_ids[0]));
+
+    spin_lock(&dev->lease_lock);
+    for (uint32_t i = 0; i < DRM_MAX_LEASES_PER_DEVICE; i++) {
+        if (!dev->leases[i].active) {
+            slot = (int)i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        spin_unlock(&dev->lease_lock);
+        free(lease_file);
+        return -ENOSPC;
+    }
+    lease_id = dev->next_lease_id++;
+    if (dev->next_lease_id == 0) {
+        dev->next_lease_id = 1;
+    }
+    lease_file->lease_id = lease_id;
+    dev->leases[slot].active = true;
+    dev->leases[slot].file = lease_file;
+    dev->leases[slot].lease_id = lease_id;
+    dev->leases[slot].lessor_id = drm_file_lessor_id(owner);
+    spin_unlock(&dev->lease_lock);
+
+    ret = drmfdfs_create_file("drmlease", &drmfdfs_drm_file_ops, lease_file,
+                              S_IFCHR | 0600, O_RDWR | (flags & O_NONBLOCK),
+                              &file, &inode);
+    if (ret < 0) {
+        spin_lock(&dev->lease_lock);
+        if (slot >= 0) {
+            dev->leases[slot].active = false;
+            dev->leases[slot].file = NULL;
+        }
+        spin_unlock(&dev->lease_lock);
+        free(lease_file);
+        return ret;
+    }
+
+    lease_file->lease_id = lease_id;
+    (void)inode;
+
+    ret = task_install_file(current_task, file,
+                            (flags & DRM_CLOEXEC) ? FD_CLOEXEC : 0, 0);
+    vfs_file_put(file);
+    if (ret < 0) {
+        return ret;
+    }
+
+    *out_lease_id = lease_id;
+    return ret;
+}
 
 static ssize_t drm_syncfd_create_fd(drm_syncfd_ctx_t *ctx, uint32_t flags) {
     if (!ctx) {
@@ -2400,8 +2683,9 @@ ssize_t drm_ioctl_prime_fd_to_handle(drm_device_t *dev, void *arg, fd_t *fd) {
 /**
  * drm_ioctl_mode_getresources - Handle DRM_IOCTL_MODE_GETRESOURCES
  */
-ssize_t drm_ioctl_mode_getresources(drm_device_t *dev, void *arg) {
+ssize_t drm_ioctl_mode_getresources(drm_device_t *dev, void *arg, fd_t *fd) {
     struct drm_mode_card_res *res = (struct drm_mode_card_res *)arg;
+    drm_file_t *drm_file = drm_file_from_vfs_file(fd);
     uint32_t fbs_cap = res->count_fbs;
     uint32_t crtcs_cap = res->count_crtcs;
     uint32_t connectors_cap = res->count_connectors;
@@ -2422,21 +2706,26 @@ ssize_t drm_ioctl_mode_getresources(drm_device_t *dev, void *arg) {
 
     // Count CRTCs
     for (uint32_t i = 0; i < DRM_MAX_CRTCS_PER_DEVICE; i++) {
-        if (dev->resource_mgr.crtcs[i]) {
+        if (dev->resource_mgr.crtcs[i] &&
+            drm_file_has_object(drm_file, dev->resource_mgr.crtcs[i]->id)) {
             res->count_crtcs++;
         }
     }
 
     // Count connectors
     for (uint32_t i = 0; i < DRM_MAX_CONNECTORS_PER_DEVICE; i++) {
-        if (dev->resource_mgr.connectors[i]) {
+        if (dev->resource_mgr.connectors[i] &&
+            drm_file_has_object(drm_file,
+                                dev->resource_mgr.connectors[i]->id)) {
             res->count_connectors++;
         }
     }
 
     // Count encoders
     for (uint32_t i = 0; i < DRM_MAX_ENCODERS_PER_DEVICE; i++) {
-        if (dev->resource_mgr.encoders[i]) {
+        if (dev->resource_mgr.encoders[i] &&
+            drm_file_has_encoder(dev, drm_file,
+                                 dev->resource_mgr.encoders[i])) {
             res->count_encoders++;
         }
     }
@@ -2463,7 +2752,9 @@ ssize_t drm_ioctl_mode_getresources(drm_device_t *dev, void *arg) {
             if (idx >= copy_count) {
                 break;
             }
-            if (dev->resource_mgr.encoders[i]) {
+            if (dev->resource_mgr.encoders[i] &&
+                drm_file_has_encoder(dev, drm_file,
+                                     dev->resource_mgr.encoders[i])) {
                 uint32_t encoder_id = dev->resource_mgr.encoders[i]->id;
                 int ret = drm_copy_to_user_ptr(res->encoder_id_ptr +
                                                    idx * sizeof(uint32_t),
@@ -2484,7 +2775,8 @@ ssize_t drm_ioctl_mode_getresources(drm_device_t *dev, void *arg) {
             if (idx >= copy_count) {
                 break;
             }
-            if (dev->resource_mgr.crtcs[i]) {
+            if (dev->resource_mgr.crtcs[i] &&
+                drm_file_has_object(drm_file, dev->resource_mgr.crtcs[i]->id)) {
                 uint32_t crtc_id = dev->resource_mgr.crtcs[i]->id;
                 int ret = drm_copy_to_user_ptr(res->crtc_id_ptr +
                                                    idx * sizeof(uint32_t),
@@ -2506,7 +2798,9 @@ ssize_t drm_ioctl_mode_getresources(drm_device_t *dev, void *arg) {
             if (idx >= copy_count) {
                 break;
             }
-            if (dev->resource_mgr.connectors[i]) {
+            if (dev->resource_mgr.connectors[i] &&
+                drm_file_has_object(drm_file,
+                                    dev->resource_mgr.connectors[i]->id)) {
                 uint32_t connector_id = dev->resource_mgr.connectors[i]->id;
                 int ret = drm_copy_to_user_ptr(
                     res->connector_id_ptr + idx * sizeof(uint32_t),
@@ -2851,14 +3145,17 @@ ssize_t drm_ioctl_mode_setcrtc(drm_device_t *dev, void *arg, fd_t *fd) {
 /**
  * drm_ioctl_mode_getplaneresources - Handle DRM_IOCTL_MODE_GETPLANERESOURCES
  */
-ssize_t drm_ioctl_mode_getplaneresources(drm_device_t *dev, void *arg) {
+ssize_t drm_ioctl_mode_getplaneresources(drm_device_t *dev, void *arg,
+                                         fd_t *fd) {
     struct drm_mode_get_plane_res *res = (struct drm_mode_get_plane_res *)arg;
+    drm_file_t *drm_file = drm_file_from_vfs_file(fd);
     uint32_t planes_cap = res->count_planes;
 
     // Count available planes
     res->count_planes = 0;
     for (uint32_t i = 0; i < DRM_MAX_PLANES_PER_DEVICE; i++) {
-        if (dev->resource_mgr.planes[i]) {
+        if (dev->resource_mgr.planes[i] &&
+            drm_file_has_object(drm_file, dev->resource_mgr.planes[i]->id)) {
             res->count_planes++;
         }
     }
@@ -2871,7 +3168,9 @@ ssize_t drm_ioctl_mode_getplaneresources(drm_device_t *dev, void *arg) {
             if (idx >= copy_count) {
                 break;
             }
-            if (dev->resource_mgr.planes[i]) {
+            if (dev->resource_mgr.planes[i] &&
+                drm_file_has_object(drm_file,
+                                    dev->resource_mgr.planes[i]->id)) {
                 uint32_t plane_id = dev->resource_mgr.planes[i]->id;
                 int ret = drm_copy_to_user_ptr(res->plane_id_ptr +
                                                    idx * sizeof(uint32_t),
@@ -4086,14 +4385,168 @@ ssize_t drm_ioctl_dirtyfb(drm_device_t *dev, void *arg, fd_t *fd) {
 }
 
 /**
+ * drm_ioctl_mode_create_lease - Handle DRM_IOCTL_MODE_CREATE_LEASE
+ */
+ssize_t drm_ioctl_mode_create_lease(drm_device_t *dev, void *arg, fd_t *fd) {
+    struct drm_mode_create_lease *cl = (struct drm_mode_create_lease *)arg;
+    drm_file_t *owner = drm_file_from_vfs_file(fd);
+    uint32_t *object_ids;
+    int ret;
+
+    if (!dev || !cl || !drm_file_can_create_lease(owner)) {
+        return -EACCES;
+    }
+
+    if (cl->flags & ~(DRM_CLOEXEC | O_NONBLOCK)) {
+        return -EINVAL;
+    }
+
+    if (cl->object_count == 0 || cl->object_count > DRM_MAX_LEASE_OBJECTS ||
+        !cl->object_ids) {
+        return -EINVAL;
+    }
+
+    object_ids = calloc(cl->object_count, sizeof(uint32_t));
+    if (!object_ids) {
+        return -ENOMEM;
+    }
+
+    if (copy_from_user(object_ids, (void *)(uintptr_t)cl->object_ids,
+                       cl->object_count * sizeof(uint32_t))) {
+        free(object_ids);
+        return -EFAULT;
+    }
+
+    for (uint32_t i = 0; i < cl->object_count; i++) {
+        if (!drm_mode_object_exists(dev, object_ids[i])) {
+            free(object_ids);
+            return -ENOENT;
+        }
+        for (uint32_t j = i + 1; j < cl->object_count; j++) {
+            if (object_ids[i] == object_ids[j]) {
+                free(object_ids);
+                return -EINVAL;
+            }
+        }
+    }
+
+    ret = drm_leasefd_create(dev, owner, object_ids, cl->object_count,
+                             cl->flags, &cl->lessee_id);
+    free(object_ids);
+    if (ret < 0) {
+        return ret;
+    }
+
+    cl->fd = (uint32_t)ret;
+    return 0;
+}
+
+/**
  * drm_ioctl_mode_list_lessees - Handle DRM_IOCTL_MODE_LIST_LESSEES
  */
-ssize_t drm_ioctl_mode_list_lessees(drm_device_t *dev, void *arg) {
+ssize_t drm_ioctl_mode_list_lessees(drm_device_t *dev, void *arg, fd_t *fd) {
     struct drm_mode_list_lessees *l = (struct drm_mode_list_lessees *)arg;
+    drm_file_t *file = drm_file_from_vfs_file(fd);
+    uint64_t lessor_id = drm_file_lessor_id(file);
+    uint32_t cap;
+    uint32_t total = 0;
+    uint32_t copied = 0;
+
+    if (!dev || !l || !file || file->lessee) {
+        return -EACCES;
+    }
+
+    cap = l->count_lessees;
+
+    spin_lock(&dev->lease_lock);
+    for (uint32_t i = 0; i < DRM_MAX_LEASES_PER_DEVICE; i++) {
+        if (!dev->leases[i].active || dev->leases[i].lessor_id != lessor_id) {
+            continue;
+        }
+
+        uint64_t id = dev->leases[i].lease_id;
+        if (l->lessees_ptr && copied < cap) {
+            int ret = drm_copy_to_user_ptr(
+                l->lessees_ptr + copied * sizeof(uint64_t), &id, sizeof(id));
+            if (ret) {
+                spin_unlock(&dev->lease_lock);
+                return ret;
+            }
+            copied++;
+        }
+        total++;
+    }
+    spin_unlock(&dev->lease_lock);
+
+    l->count_lessees = total;
+    return 0;
+}
+
+/**
+ * drm_ioctl_mode_get_lease - Handle DRM_IOCTL_MODE_GET_LEASE
+ */
+ssize_t drm_ioctl_mode_get_lease(drm_device_t *dev, void *arg, fd_t *fd) {
+    struct drm_mode_get_lease *gl = (struct drm_mode_get_lease *)arg;
+    drm_file_t *file = drm_file_from_vfs_file(fd);
+    uint32_t cap;
+    uint32_t total;
+    uint32_t copy_count;
+
     (void)dev;
 
-    l->count_lessees = 0;
+    if (!gl || !file) {
+        return -EACCES;
+    }
+
+    if (!file->lessee || file->revoked) {
+        gl->count_objects = 0;
+        return 0;
+    }
+
+    cap = gl->count_objects;
+    total = file->object_count;
+    copy_count = MIN(cap, total);
+
+    if (gl->objects_ptr && copy_count > 0) {
+        int ret = drm_copy_to_user_ptr(gl->objects_ptr, file->object_ids,
+                                       copy_count * sizeof(uint32_t));
+        if (ret) {
+            return ret;
+        }
+    }
+
+    gl->count_objects = total;
     return 0;
+}
+
+/**
+ * drm_ioctl_mode_revoke_lease - Handle DRM_IOCTL_MODE_REVOKE_LEASE
+ */
+ssize_t drm_ioctl_mode_revoke_lease(drm_device_t *dev, void *arg) {
+    struct drm_mode_revoke_lease *rl = (struct drm_mode_revoke_lease *)arg;
+
+    if (!dev || !rl) {
+        return -EINVAL;
+    }
+
+    spin_lock(&dev->lease_lock);
+    for (uint32_t i = 0; i < DRM_MAX_LEASES_PER_DEVICE; i++) {
+        drm_file_t *file = dev->leases[i].file;
+        if (!dev->leases[i].active ||
+            dev->leases[i].lease_id != rl->lessee_id || !file) {
+            continue;
+        }
+
+        file->revoked = true;
+        file->object_count = 0;
+        dev->leases[i].active = false;
+        dev->leases[i].file = NULL;
+        spin_unlock(&dev->lease_lock);
+        return 0;
+    }
+    spin_unlock(&dev->lease_lock);
+
+    return -ENOENT;
 }
 
 static bool drm_ioctl_allow_on_render_node(drm_device_t *dev, uint32_t cmd) {
@@ -4133,17 +4586,162 @@ static bool drm_ioctl_allow_on_render_node(drm_device_t *dev, uint32_t cmd) {
     }
 }
 
+static int drm_ioctl_check_lease(drm_file_t *file, uint32_t cmd, void *arg) {
+    if (!file || !file->lessee) {
+        return 0;
+    }
+
+    switch (cmd) {
+    case DRM_IOCTL_MODE_GETRESOURCES:
+    case DRM_IOCTL_MODE_GETPLANERESOURCES:
+    case DRM_IOCTL_MODE_GET_LEASE:
+    case DRM_IOCTL_VERSION:
+    case DRM_IOCTL_GET_CAP:
+    case DRM_IOCTL_GET_UNIQUE:
+    case DRM_IOCTL_SET_CLIENT_CAP:
+    case DRM_IOCTL_SET_VERSION:
+    case DRM_IOCTL_GEM_CLOSE:
+    case DRM_IOCTL_PRIME_HANDLE_TO_FD:
+    case DRM_IOCTL_PRIME_FD_TO_HANDLE:
+    case DRM_IOCTL_MODE_CREATE_DUMB:
+    case DRM_IOCTL_MODE_MAP_DUMB:
+    case DRM_IOCTL_MODE_DESTROY_DUMB:
+    case DRM_IOCTL_MODE_ADDFB:
+    case DRM_IOCTL_MODE_ADDFB2:
+    case DRM_IOCTL_MODE_GETFB:
+    case DRM_IOCTL_MODE_CLOSEFB:
+    case DRM_IOCTL_MODE_RMFB:
+    case DRM_IOCTL_MODE_CREATEPROPBLOB:
+    case DRM_IOCTL_MODE_DESTROYPROPBLOB:
+    case DRM_IOCTL_MODE_GETPROPBLOB:
+    case DRM_IOCTL_MODE_GETPROPERTY:
+        return 0;
+    case DRM_IOCTL_MODE_SETPROPERTY:
+        return drm_file_has_object(
+                   file, ((struct drm_mode_connector_set_property *)arg)
+                             ->connector_id)
+                   ? 0
+                   : -ENOENT;
+    case DRM_IOCTL_MODE_OBJ_GETPROPERTIES:
+        return drm_file_has_object(
+                   file, ((struct drm_mode_obj_get_properties *)arg)->obj_id)
+                   ? 0
+                   : -ENOENT;
+    case DRM_IOCTL_MODE_OBJ_SETPROPERTY:
+        return drm_file_has_object(
+                   file, ((struct drm_mode_obj_set_property *)arg)->obj_id)
+                   ? 0
+                   : -ENOENT;
+    case DRM_IOCTL_MODE_GETCRTC:
+        return drm_file_has_object(file, ((struct drm_mode_crtc *)arg)->crtc_id)
+                   ? 0
+                   : -ENOENT;
+    case DRM_IOCTL_MODE_SETCRTC:
+        return drm_file_has_object(file, ((struct drm_mode_crtc *)arg)->crtc_id)
+                   ? 0
+                   : -ENOENT;
+    case DRM_IOCTL_MODE_GETENCODER:
+        if (!file->dev) {
+            return -ENOENT;
+        }
+        for (uint32_t i = 0; i < DRM_MAX_ENCODERS_PER_DEVICE; i++) {
+            drm_encoder_t *encoder = file->dev->resource_mgr.encoders[i];
+            if (encoder &&
+                encoder->id ==
+                    ((struct drm_mode_get_encoder *)arg)->encoder_id) {
+                return drm_file_has_encoder(file->dev, file, encoder) ? 0
+                                                                      : -ENOENT;
+            }
+        }
+        return -ENOENT;
+    case DRM_IOCTL_MODE_GETCONNECTOR:
+        return drm_file_has_object(
+                   file, ((struct drm_mode_get_connector *)arg)->connector_id)
+                   ? 0
+                   : -ENOENT;
+    case DRM_IOCTL_MODE_GETPLANE:
+        return drm_file_has_object(file,
+                                   ((struct drm_mode_get_plane *)arg)->plane_id)
+                   ? 0
+                   : -ENOENT;
+    case DRM_IOCTL_MODE_SETPLANE:
+        return drm_file_has_object(file,
+                                   ((struct drm_mode_set_plane *)arg)->plane_id)
+                   ? 0
+                   : -ENOENT;
+    case DRM_IOCTL_MODE_PAGE_FLIP:
+        return drm_file_has_object(
+                   file, ((struct drm_mode_crtc_page_flip *)arg)->crtc_id)
+                   ? 0
+                   : -ENOENT;
+    case DRM_IOCTL_MODE_CURSOR:
+        return drm_file_has_object(file,
+                                   ((struct drm_mode_cursor *)arg)->crtc_id)
+                   ? 0
+                   : -ENOENT;
+    case DRM_IOCTL_MODE_CURSOR2:
+        return drm_file_has_object(file,
+                                   ((struct drm_mode_cursor2 *)arg)->crtc_id)
+                   ? 0
+                   : -ENOENT;
+    case DRM_IOCTL_MODE_GETGAMMA:
+    case DRM_IOCTL_MODE_SETGAMMA:
+        return drm_file_has_object(file,
+                                   ((struct drm_mode_crtc_lut *)arg)->crtc_id)
+                   ? 0
+                   : -ENOENT;
+    case DRM_IOCTL_WAIT_VBLANK:
+        return file->revoked ? -EACCES : 0;
+    case DRM_IOCTL_MODE_ATOMIC: {
+        struct drm_mode_atomic *atomic = (struct drm_mode_atomic *)arg;
+        if (file->revoked) {
+            return -EACCES;
+        }
+        if (atomic->count_objs > DRM_MAX_LEASE_OBJECTS) {
+            return -EINVAL;
+        }
+        uint32_t *objects = calloc(atomic->count_objs, sizeof(uint32_t));
+        if (!objects) {
+            return -ENOMEM;
+        }
+        if (atomic->count_objs > 0 &&
+            (!atomic->objs_ptr ||
+             copy_from_user(objects, (void *)(uintptr_t)atomic->objs_ptr,
+                            atomic->count_objs * sizeof(uint32_t)))) {
+            free(objects);
+            return -EFAULT;
+        }
+        for (uint32_t i = 0; i < atomic->count_objs; i++) {
+            if (!drm_file_has_object(file, objects[i])) {
+                free(objects);
+                return -ENOENT;
+            }
+        }
+        free(objects);
+        return 0;
+    }
+    case DRM_IOCTL_MODE_CREATE_LEASE:
+    case DRM_IOCTL_MODE_LIST_LESSEES:
+    case DRM_IOCTL_MODE_REVOKE_LEASE:
+        return -EACCES;
+    default:
+        return file->revoked ? -EACCES : 0;
+    }
+}
+
 /**
  * drm_ioctl - Main DRM ioctl handler
  */
 ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg, fd_t *fd) {
-    drm_device_t *dev = drm_data_to_device(data);
+    void *effective_data = drm_effective_ioctl_data(data, fd);
+    drm_file_t *drm_file = drm_current_file(data, fd);
+    drm_device_t *dev = drm_data_to_device(effective_data);
     if (!dev) {
         return -ENODEV;
     }
 
     uint32_t ioctl_cmd = (uint32_t)(cmd & 0xffffffff);
-    if (drm_data_is_render_node(data) &&
+    if (drm_data_is_render_node(effective_data) &&
         !drm_ioctl_allow_on_render_node(dev, ioctl_cmd)) {
         return -EACCES;
     }
@@ -4171,6 +4769,14 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg, fd_t *fd) {
         ioarg = karg;
     }
 
+    ssize_t lease_ret = drm_ioctl_check_lease(drm_file, ioctl_cmd, ioarg);
+    if (lease_ret < 0) {
+        if (karg) {
+            free(karg);
+        }
+        return lease_ret;
+    }
+
     ssize_t ret = -EINVAL;
 
     switch (ioctl_cmd) {
@@ -4190,7 +4796,7 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg, fd_t *fd) {
         ret = drm_ioctl_prime_fd_to_handle(dev, ioarg, fd);
         break;
     case DRM_IOCTL_MODE_GETRESOURCES:
-        ret = drm_ioctl_mode_getresources(dev, ioarg);
+        ret = drm_ioctl_mode_getresources(dev, ioarg, fd);
         break;
     case DRM_IOCTL_MODE_GETCRTC:
         ret = drm_ioctl_mode_getcrtc(dev, ioarg);
@@ -4229,7 +4835,7 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg, fd_t *fd) {
         ret = drm_ioctl_mode_setcrtc(dev, ioarg, fd);
         break;
     case DRM_IOCTL_MODE_GETPLANERESOURCES:
-        ret = drm_ioctl_mode_getplaneresources(dev, ioarg);
+        ret = drm_ioctl_mode_getplaneresources(dev, ioarg, fd);
         break;
     case DRM_IOCTL_MODE_GETPLANE:
         ret = drm_ioctl_mode_getplane(dev, ioarg);
@@ -4334,7 +4940,16 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg, fd_t *fd) {
         ret = drm_ioctl_get_unique(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_LIST_LESSEES:
-        ret = drm_ioctl_mode_list_lessees(dev, ioarg);
+        ret = drm_ioctl_mode_list_lessees(dev, ioarg, fd);
+        break;
+    case DRM_IOCTL_MODE_CREATE_LEASE:
+        ret = drm_ioctl_mode_create_lease(dev, ioarg, fd);
+        break;
+    case DRM_IOCTL_MODE_GET_LEASE:
+        ret = drm_ioctl_mode_get_lease(dev, ioarg, fd);
+        break;
+    case DRM_IOCTL_MODE_REVOKE_LEASE:
+        ret = drm_ioctl_mode_revoke_lease(dev, ioarg);
         break;
     case DRM_IOCTL_SET_VERSION:
         ret = 0; // Not implemented
@@ -4348,7 +4963,8 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg, fd_t *fd) {
     default:
         if (dev->op && dev->op->driver_ioctl) {
             ret = dev->op->driver_ioctl(dev, ioctl_cmd, ioarg,
-                                        drm_data_is_render_node(data), fd);
+                                        drm_data_is_render_node(effective_data),
+                                        fd);
         } else {
             printk("drm: Unsupported ioctl: cmd = %#010lx\n", cmd);
             ret = -EINVAL;

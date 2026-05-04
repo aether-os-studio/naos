@@ -371,11 +371,61 @@ static void drm_device_init(drm_device_t *dev, void *data,
     dev->pci_dev = NULL;
     drm_device_set_driver_info(dev, DRM_NAME, "20060810", "NaOS DRM");
     spin_init(&dev->event_lock);
+    spin_init(&dev->lease_lock);
+    dev->next_lease_id = 1;
     dev->vblank_period_ns = 1000000000ULL / HZ;
     dev->next_vblank_ns = nano_time() + dev->vblank_period_ns;
 
     // Initialize resource manager
     drm_resource_manager_init(&dev->resource_mgr);
+}
+
+ssize_t drm_open(void *data, void *arg) {
+    drm_file_node_t *node = drm_data_to_file_node(data);
+    struct vfs_file *file = (struct vfs_file *)arg;
+    drm_file_t *drm_file;
+
+    if (!node || !file) {
+        return -EINVAL;
+    }
+
+    drm_file = calloc(1, sizeof(*drm_file));
+    if (!drm_file) {
+        return -ENOMEM;
+    }
+
+    drm_file->magic = DRM_FILE_MAGIC;
+    drm_file->dev = node->dev;
+    drm_file->type = node->type;
+    file->private_data = drm_file;
+    return 0;
+}
+
+ssize_t drm_close(void *data, void *arg) {
+    struct vfs_file *file = (struct vfs_file *)arg;
+    drm_file_t *drm_file = file ? (drm_file_t *)file->private_data : NULL;
+    drm_device_t *dev = drm_file ? drm_file->dev : drm_data_to_device(data);
+
+    if (!drm_file || drm_file->magic != DRM_FILE_MAGIC) {
+        return 0;
+    }
+
+    if (dev && drm_file->lessee) {
+        spin_lock(&dev->lease_lock);
+        for (uint32_t i = 0; i < DRM_MAX_LEASES_PER_DEVICE; i++) {
+            if (dev->leases[i].active && dev->leases[i].file == drm_file) {
+                dev->leases[i].active = false;
+                dev->leases[i].file = NULL;
+                break;
+            }
+        }
+        spin_unlock(&dev->lease_lock);
+    }
+
+    file->private_data = NULL;
+    memset(drm_file, 0, sizeof(*drm_file));
+    free(drm_file);
+    return 0;
 }
 
 void drm_device_set_driver_info(drm_device_t *dev, const char *name,
@@ -513,8 +563,8 @@ drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
     dev->primary_node.dev = dev;
 
     uint64_t card_dev_nr = device_install_with_minor(
-        DEV_CHAR, DEV_GPU, &dev->primary_node, card_dev_name, 0, NULL, NULL,
-        drm_ioctl, drm_poll, drm_read, NULL, drm_map, card_minor);
+        DEV_CHAR, DEV_GPU, &dev->primary_node, card_dev_name, 0, drm_open,
+        drm_close, drm_ioctl, drm_poll, drm_read, NULL, drm_map, card_minor);
     if (card_dev_nr == 0) {
         printk("drm: Failed to register primary node %s\n", card_dev_name);
         free(dev);
@@ -531,8 +581,9 @@ drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
     uint64_t render_dev_nr = 0;
     if (dev->op && dev->op->supports_render_node) {
         render_dev_nr = device_install_with_minor(
-            DEV_CHAR, DEV_GPU, &dev->render_node, render_dev_name, 0, NULL,
-            NULL, drm_ioctl, drm_poll, drm_read, NULL, drm_map, render_minor);
+            DEV_CHAR, DEV_GPU, &dev->render_node, render_dev_name, 0, drm_open,
+            drm_close, drm_ioctl, drm_poll, drm_read, NULL, drm_map,
+            render_minor);
     }
     if (render_dev_nr == 0) {
         if (dev->op && dev->op->supports_render_node) {

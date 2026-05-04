@@ -767,7 +767,7 @@ static int devtmpfs_open_file(struct vfs_inode *inode, struct vfs_file *file) {
         devtmpfs_ensure_populated(inode->i_sb);
     if ((file->f_flags & O_PATH) == 0 &&
         (S_ISCHR(inode->i_mode) || S_ISBLK(inode->i_mode))) {
-        ret = device_open(inode->i_rdev, NULL);
+        ret = device_open(inode->i_rdev, file);
         if (ret < 0)
             return (int)ret;
     }
@@ -779,7 +779,7 @@ static int devtmpfs_release_file(struct vfs_inode *inode,
                                  struct vfs_file *file) {
     (void)file;
     if (inode && (S_ISCHR(inode->i_mode) || S_ISBLK(inode->i_mode)))
-        device_close(inode->i_rdev);
+        device_close(inode->i_rdev, file);
     return 0;
 }
 
