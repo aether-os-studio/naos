@@ -12,7 +12,29 @@ extern void send_process_group_signal(int pgid, int sig);
 
 static const struct vfs_file_operations ptmx_file_ops;
 static const struct vfs_file_operations pts_file_ops;
+static const struct vfs_file_operations devpts_dir_file_ops;
+static const struct vfs_inode_operations devpts_inode_ops;
+static const struct vfs_dentry_operations devpts_dentry_ops;
+static const struct vfs_super_operations devpts_super_ops;
+static struct vfs_file_system_type devpts_fs_type;
 int pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg);
+
+typedef struct devpts_fs_info {
+    struct vfs_super_block *sb;
+    struct llist_header node;
+} devpts_fs_info_t;
+
+typedef struct devpts_inode_info {
+    struct vfs_inode vfs_inode;
+    pty_pair_t *pair;
+    struct llist_header pair_node;
+} devpts_inode_info_t;
+
+static DEFINE_LLIST(devpts_superblocks);
+
+static inline devpts_inode_info_t *devpts_i(vfs_node_t *inode) {
+    return inode ? container_of(inode, devpts_inode_info_t, vfs_inode) : NULL;
+}
 
 static inline pty_pair_t *pty_pair_from_file(fd_t *file) {
     if (!file)
@@ -49,8 +71,25 @@ static inline void pty_notify_pair_master(pty_pair_t *pair, uint32_t events) {
 }
 
 static inline void pty_notify_pair_slave(pty_pair_t *pair, uint32_t events) {
-    if (pair)
-        pty_notify_node(pair->pts_node, events);
+    devpts_inode_info_t *info, *tmp;
+    vfs_node_t *nodes[PTY_MAX];
+    size_t count = 0;
+
+    if (!pair || !events)
+        return;
+
+    spin_lock(&pty_global_lock);
+    llist_for_each(info, tmp, &pair->pts_nodes, pair_node) {
+        if (count >= PTY_MAX)
+            break;
+        nodes[count++] = vfs_igrab(&info->vfs_inode);
+    }
+    spin_unlock(&pty_global_lock);
+
+    for (size_t i = 0; i < count; i++) {
+        pty_notify_node(nodes[i], events);
+        vfs_iput(nodes[i]);
+    }
 }
 
 static int pty_wait_node(vfs_node_t *node, uint32_t events,
@@ -237,55 +276,122 @@ void pty_termios_default(struct termios *term) {
     term->c_cc[VSUSP] = 26;
 }
 
-static int pty_pair_install_slave_node(pty_pair_t *pair) {
-    char path[32];
-    vfs_node_t *inode;
+static struct vfs_inode *devpts_new_inode(struct vfs_super_block *sb,
+                                          umode_t mode, pty_pair_t *pair) {
+    struct vfs_inode *inode = vfs_alloc_inode(sb);
+    devpts_inode_info_t *info = devpts_i(inode);
 
-    if (!pair)
-        return -EINVAL;
+    if (!inode || !info)
+        return NULL;
 
-    snprintf(path, sizeof(path), "/dev/pts/%d", pair->id);
-    (void)vfs_mknodat(AT_FDCWD, path, S_IFCHR | 0620, (136U << 8) | pair->id,
-                      true);
-    inode = pty_lookup_inode_path(path);
-    if (!inode)
-        return -ENOENT;
-
-    inode->i_fop = &pts_file_ops;
-    inode->type = file_stream;
+    inode->i_mode = mode;
+    inode->i_uid = 0;
+    inode->i_gid = 0;
+    inode->i_nlink = S_ISDIR(mode) ? 2 : 1;
+    inode->i_blkbits = 12;
+    inode->i_ino = pair ? (ino64_t)pair->id + 3 : 1;
+    inode->inode = inode->i_ino;
+    inode->type = S_ISDIR(mode) ? file_dir : file_stream;
+    inode->i_fop = S_ISDIR(mode) ? &devpts_dir_file_ops : &pts_file_ops;
+    inode->i_op = &devpts_inode_ops;
+    inode->i_rdev = pair ? ((136U << 8) | (uint32_t)pair->id) : 0;
     inode->i_private = pair;
+    inode->i_atime.sec = inode->i_btime.sec = inode->i_ctime.sec =
+        inode->i_mtime.sec = (int64_t)(nano_time() / 1000000000ULL);
 
-    if (pair->pts_node)
-        vfs_iput(pair->pts_node);
-    pair->pts_node = inode;
+    info->pair = pair;
+    llist_init_head(&info->pair_node);
+    if (pair) {
+        spin_lock(&pty_global_lock);
+        llist_append(&pair->pts_nodes, &info->pair_node);
+        if (!pair->pts_node)
+            pair->pts_node = vfs_igrab(inode);
+        spin_unlock(&pty_global_lock);
+    }
+
+    return inode;
+}
+
+static struct vfs_inode *
+devpts_new_slave_inode_for_id(struct vfs_super_block *sb, int id) {
+    struct vfs_inode *inode = vfs_alloc_inode(sb);
+    devpts_inode_info_t *info = devpts_i(inode);
+    pty_pair_t *pair;
+
+    if (!inode || !info)
+        return NULL;
+
+    inode->i_mode = S_IFCHR | 0620;
+    inode->i_uid = 0;
+    inode->i_gid = 0;
+    inode->i_nlink = 1;
+    inode->i_blkbits = 12;
+    inode->i_ino = (ino64_t)id + 3;
+    inode->inode = inode->i_ino;
+    inode->type = file_stream;
+    inode->i_fop = &pts_file_ops;
+    inode->i_op = &devpts_inode_ops;
+    inode->i_rdev = (136U << 8) | (uint32_t)id;
+    inode->i_atime.sec = inode->i_btime.sec = inode->i_ctime.sec =
+        inode->i_mtime.sec = (int64_t)(nano_time() / 1000000000ULL);
+
+    llist_init_head(&info->pair_node);
+
+    spin_lock(&pty_global_lock);
+    for (pair = first_pair.next; pair; pair = pair->next) {
+        if (pair->id == id)
+            break;
+    }
+    if (!pair) {
+        spin_unlock(&pty_global_lock);
+        vfs_iput(inode);
+        return NULL;
+    }
+
+    inode->i_private = pair;
+    info->pair = pair;
+    llist_append(&pair->pts_nodes, &info->pair_node);
+    if (!pair->pts_node)
+        pair->pts_node = vfs_igrab(inode);
+    spin_unlock(&pty_global_lock);
+
+    return inode;
+}
+
+static int pty_pair_install_slave_node(pty_pair_t *pair) {
+    (void)pair;
     return 0;
 }
 
 static void pty_pair_cleanup(pty_pair_t *pair) {
-    char path[32];
+    devpts_inode_info_t *info;
+    vfs_node_t *pts_node;
 
     if (!pair)
         return;
 
-    free(pair->bufferMaster);
-    free(pair->bufferSlave);
-    if (pair->pts_node)
-        vfs_iput(pair->pts_node);
+    spin_lock(&pty_global_lock);
+    pts_node = pair->pts_node;
     pair->pts_node = NULL;
     pair->ptmx_node = NULL;
-
-    snprintf(path, sizeof(path), "/dev/pts/%d", pair->id);
-    (void)vfs_unlinkat(AT_FDCWD, path, 0, true);
-    pty_bitmap_remove(pair->id);
-
-    spin_lock(&pty_global_lock);
+    while (!llist_empty(&pair->pts_nodes)) {
+        info = list_entry(pair->pts_nodes.next, devpts_inode_info_t, pair_node);
+        llist_delete(&info->pair_node);
+        info->pair = NULL;
+        info->vfs_inode.i_private = NULL;
+    }
     pty_pair_t *n = &first_pair;
     while (n->next && n->next != pair)
         n = n->next;
     if (n->next)
         n->next = pair->next;
+    pty_bitmap[pair->id / 8] &= ~(1 << (pair->id % 8));
     spin_unlock(&pty_global_lock);
 
+    if (pts_node)
+        vfs_iput(pts_node);
+    free(pair->bufferMaster);
+    free(pair->bufferSlave);
     free(pair);
 }
 
@@ -294,12 +400,59 @@ static void pts_ctrl_assign(pty_pair_t *pair) {
     pair->ctrlPgid = current_task->pgid;
 }
 
+static struct vfs_inode *
+devpts_create_first_mounted_inode(pty_pair_t *pair,
+                                  struct vfs_mount **out_mnt) {
+    devpts_fs_info_t *fsi, *tmp;
+    struct vfs_super_block *sb = NULL;
+    struct vfs_mount *mnt = NULL;
+    struct vfs_inode *inode;
+
+    if (!pair || !out_mnt)
+        return NULL;
+
+    spin_lock(&pty_global_lock);
+    llist_for_each(fsi, tmp, &devpts_superblocks, node) {
+        if (!fsi->sb)
+            continue;
+        spin_lock(&fsi->sb->s_mount_lock);
+        if (!llist_empty(&fsi->sb->s_mounts)) {
+            mnt = list_entry(fsi->sb->s_mounts.next, struct vfs_mount,
+                             mnt_sb_link);
+            mnt = vfs_mntget(mnt);
+            sb = fsi->sb;
+            vfs_get_super(sb);
+            spin_unlock(&fsi->sb->s_mount_lock);
+            break;
+        }
+        spin_unlock(&fsi->sb->s_mount_lock);
+    }
+    spin_unlock(&pty_global_lock);
+
+    if (!sb || !mnt)
+        return NULL;
+
+    inode = devpts_new_inode(sb, S_IFCHR | 0620, pair);
+    vfs_put_super(sb);
+    if (!inode) {
+        vfs_mntput(mnt);
+        return NULL;
+    }
+
+    *out_mnt = mnt;
+    return inode;
+}
+
 static int pty_open_peer_fd(pty_pair_t *pair, uint64_t flags) {
     static const uint64_t allowed_flags =
         O_ACCMODE_FLAGS | O_NOCTTY | O_NONBLOCK | O_CLOEXEC;
-    char path[32];
     struct vfs_file *file = NULL;
-    struct vfs_open_how how = {0};
+    struct vfs_path path = {0};
+    struct vfs_inode *inode;
+    struct vfs_dentry *dentry;
+    struct vfs_mount *mnt = NULL;
+    struct vfs_qstr name;
+    char name_buf[16];
     int ret;
 
     if (!pair || !current_task)
@@ -314,15 +467,71 @@ static int pty_open_peer_fd(pty_pair_t *pair, uint64_t flags) {
     }
     mutex_unlock(&pair->lock);
 
-    snprintf(path, sizeof(path), "/dev/pts/%d", pair->id);
-    how.flags = O_RDWR | (flags & O_NONBLOCK);
-    ret = vfs_openat(AT_FDCWD, path, &how, &file, true);
-    if (ret < 0)
-        return ret;
+    spin_lock(&pty_global_lock);
+    inode = pair->pts_node ? vfs_igrab(pair->pts_node) : NULL;
+    spin_unlock(&pty_global_lock);
+    if (!inode)
+        inode = devpts_create_first_mounted_inode(pair, &mnt);
+
+    if (inode && !mnt && inode->i_sb) {
+        spin_lock(&inode->i_sb->s_mount_lock);
+        if (!llist_empty(&inode->i_sb->s_mounts)) {
+            mnt = list_entry(inode->i_sb->s_mounts.next, struct vfs_mount,
+                             mnt_sb_link);
+            mnt = vfs_mntget(mnt);
+        }
+        spin_unlock(&inode->i_sb->s_mount_lock);
+    }
+    if (!inode || !mnt) {
+        if (inode)
+            vfs_iput(inode);
+        if (mnt)
+            vfs_mntput(mnt);
+        return -ENODEV;
+    }
+
+    if (!inode->i_private) {
+        vfs_iput(inode);
+        vfs_mntput(mnt);
+        return -ENODEV;
+    }
+
+    snprintf(name_buf, sizeof(name_buf), "%d", pair->id);
+    vfs_qstr_make(&name, name_buf);
+    dentry = vfs_d_alloc(inode->i_sb, inode->i_sb->s_root, &name);
+    if (!dentry) {
+        vfs_mntput(mnt);
+        vfs_iput(inode);
+        return -ENOMEM;
+    }
+    vfs_d_instantiate(dentry, inode);
+    path.mnt = mnt;
+    path.dentry = dentry;
+    file = vfs_alloc_file(&path, O_RDWR | (unsigned int)(flags & O_NONBLOCK));
+    if (!file) {
+        vfs_dput(dentry);
+        vfs_mntput(mnt);
+        vfs_iput(inode);
+        return -ENOMEM;
+    }
+
+    if (file->f_op && file->f_op->open) {
+        ret = file->f_op->open(inode, file);
+        if (ret < 0) {
+            vfs_file_put(file);
+            vfs_dput(dentry);
+            vfs_mntput(mnt);
+            vfs_iput(inode);
+            return ret;
+        }
+    }
 
     ret = task_install_file(current_task, file,
                             (flags & O_CLOEXEC) ? FD_CLOEXEC : 0, 0);
     vfs_file_put(file);
+    vfs_dput(dentry);
+    vfs_mntput(mnt);
+    vfs_iput(inode);
     return ret;
 }
 
@@ -351,6 +560,7 @@ static int ptmx_open_file(struct vfs_inode *inode, struct vfs_file *file) {
     }
 
     mutex_init(&pair->lock);
+    llist_init_head(&pair->pts_nodes);
     pair->id = id;
     pair->bufferMaster = malloc(PTY_BUFF_SIZE);
     pair->bufferSlave = malloc(PTY_BUFF_SIZE);
@@ -1067,7 +1277,8 @@ void ptmx_init() {
 }
 
 void pts_init() {
-    (void)vfs_mkdirat(AT_FDCWD, "/dev/pts", 0755, true);
+    pty_init();
+    (void)vfs_register_filesystem(&devpts_fs_type);
     if (first_pair.id == 0) {
         first_pair.id = 0xffffffff;
     }
@@ -1089,3 +1300,273 @@ void pts_repopulate_nodes() {
     for (size_t i = 0; i < count; i++)
         (void)pty_pair_install_slave_node(pairs[i]);
 }
+
+static struct pty_pair *devpts_find_pair_by_id(int id) {
+    pty_pair_t *pair;
+
+    spin_lock(&pty_global_lock);
+    for (pair = first_pair.next; pair; pair = pair->next) {
+        if (pair->id == id)
+            break;
+    }
+    spin_unlock(&pty_global_lock);
+    return pair;
+}
+
+static int devpts_parse_id(const char *name, int *id_out) {
+    int id = 0;
+
+    if (!name || !name[0] || !id_out)
+        return -EINVAL;
+    for (const char *p = name; *p; p++) {
+        if (*p < '0' || *p > '9')
+            return -ENOENT;
+        if (id > (PTY_MAX - 1) / 10)
+            return -ENOENT;
+        id = id * 10 + (*p - '0');
+        if (id >= PTY_MAX)
+            return -ENOENT;
+    }
+    *id_out = id;
+    return 0;
+}
+
+static struct vfs_dentry *devpts_lookup(struct vfs_inode *dir,
+                                        struct vfs_dentry *dentry,
+                                        unsigned int flags) {
+    struct vfs_inode *inode;
+    int id;
+    int ret;
+
+    (void)flags;
+    if (!dir || !dentry)
+        return ERR_PTR(-EINVAL);
+
+    ret = devpts_parse_id(dentry->d_name.name, &id);
+    if (ret < 0) {
+        vfs_d_instantiate(dentry, NULL);
+        return dentry;
+    }
+
+    if (!devpts_find_pair_by_id(id)) {
+        vfs_d_instantiate(dentry, NULL);
+        return dentry;
+    }
+
+    inode = devpts_new_slave_inode_for_id(dir->i_sb, id);
+    if (!inode) {
+        if (devpts_find_pair_by_id(id))
+            return ERR_PTR(-ENOMEM);
+        vfs_d_instantiate(dentry, NULL);
+        return dentry;
+    }
+
+    vfs_d_instantiate(dentry, inode);
+    vfs_iput(inode);
+    return dentry;
+}
+
+static int devpts_permission(struct vfs_inode *inode, int mask) {
+    return vfs_inode_permission(inode, mask);
+}
+
+static int devpts_getattr(const struct vfs_path *path, struct vfs_kstat *stat,
+                          uint32_t request_mask, unsigned int flags) {
+    (void)request_mask;
+    (void)flags;
+    vfs_fill_generic_kstat(path, stat);
+    return 0;
+}
+
+static int devpts_iterate_shared(struct vfs_file *file,
+                                 struct vfs_dir_context *ctx) {
+    int ids[PTY_MAX];
+    size_t count = 0;
+    pty_pair_t *pair;
+    loff_t index = 0;
+
+    if (!file || !file->f_inode || !ctx || !S_ISDIR(file->f_inode->i_mode))
+        return -ENOTDIR;
+
+    spin_lock(&pty_global_lock);
+    for (pair = first_pair.next; pair && count < PTY_MAX; pair = pair->next)
+        ids[count++] = pair->id;
+    spin_unlock(&pty_global_lock);
+
+    for (size_t i = 0; i < count; i++) {
+        char name[16];
+
+        if (index++ < ctx->pos)
+            continue;
+        snprintf(name, sizeof(name), "%d", ids[i]);
+        if (ctx->actor(ctx, name, (int)strlen(name), index, (ino64_t)ids[i] + 3,
+                       DT_CHR)) {
+            break;
+        }
+        ctx->pos = index;
+    }
+
+    file->f_pos = ctx->pos;
+    return 0;
+}
+
+static int devpts_open_file(struct vfs_inode *inode, struct vfs_file *file) {
+    if (!inode || !file)
+        return -EINVAL;
+    file->f_op = inode->i_fop;
+    return 0;
+}
+
+static struct vfs_inode *devpts_alloc_inode(struct vfs_super_block *sb) {
+    devpts_inode_info_t *info = calloc(1, sizeof(*info));
+
+    (void)sb;
+    return info ? &info->vfs_inode : NULL;
+}
+
+static void devpts_destroy_inode(struct vfs_inode *inode) {
+    free(devpts_i(inode));
+}
+
+static void devpts_evict_inode(struct vfs_inode *inode) {
+    devpts_inode_info_t *info = devpts_i(inode);
+    pty_pair_t *pair;
+
+    if (!info)
+        return;
+
+    pair = info->pair;
+    if (pair) {
+        spin_lock(&pty_global_lock);
+        if (!llist_empty(&info->pair_node))
+            llist_delete(&info->pair_node);
+        if (pair->pts_node == inode) {
+            pair->pts_node = NULL;
+            if (!llist_empty(&pair->pts_nodes)) {
+                devpts_inode_info_t *next = list_entry(
+                    pair->pts_nodes.next, devpts_inode_info_t, pair_node);
+                pair->pts_node = vfs_igrab(&next->vfs_inode);
+            }
+        }
+        spin_unlock(&pty_global_lock);
+    }
+}
+
+static int devpts_d_revalidate(struct vfs_dentry *dentry, unsigned int flags) {
+    devpts_inode_info_t *info;
+    pty_pair_t *pair;
+    int id;
+
+    (void)flags;
+    if (!dentry)
+        return 0;
+    if (dentry->d_flags & VFS_DENTRY_ROOT)
+        return 1;
+    if (devpts_parse_id(dentry->d_name.name, &id) < 0)
+        return dentry->d_inode ? 0 : 1;
+
+    pair = devpts_find_pair_by_id(id);
+    if (!dentry->d_inode)
+        return pair ? 0 : 1;
+
+    info = devpts_i(dentry->d_inode);
+    return info && info->pair == pair;
+}
+
+static int devpts_get_tree(struct vfs_fs_context *fc) {
+    struct vfs_super_block *sb;
+    devpts_fs_info_t *fsi;
+    struct vfs_inode *root_inode;
+    struct vfs_dentry *root_dentry;
+    struct vfs_qstr root_name = {.name = "", .len = 0, .hash = 0};
+
+    if (!fc)
+        return -EINVAL;
+
+    sb = vfs_alloc_super(fc->fs_type, fc->sb_flags);
+    if (!sb)
+        return -ENOMEM;
+
+    fsi = calloc(1, sizeof(*fsi));
+    if (!fsi) {
+        vfs_put_super(sb);
+        return -ENOMEM;
+    }
+    fsi->sb = sb;
+    llist_init_head(&fsi->node);
+
+    sb->s_op = &devpts_super_ops;
+    sb->s_d_op = &devpts_dentry_ops;
+    sb->s_type = &devpts_fs_type;
+    sb->s_magic = 0x1cd1ULL;
+    sb->s_fs_info = fsi;
+
+    root_inode = devpts_new_inode(sb, S_IFDIR | 0755, NULL);
+    if (!root_inode) {
+        free(fsi);
+        sb->s_fs_info = NULL;
+        vfs_put_super(sb);
+        return -ENOMEM;
+    }
+
+    root_dentry = vfs_d_alloc(sb, NULL, &root_name);
+    if (!root_dentry) {
+        vfs_iput(root_inode);
+        free(fsi);
+        sb->s_fs_info = NULL;
+        vfs_put_super(sb);
+        return -ENOMEM;
+    }
+
+    vfs_d_instantiate(root_dentry, root_inode);
+    sb->s_root = root_dentry;
+    fc->sb = sb;
+    vfs_iput(root_inode);
+
+    spin_lock(&pty_global_lock);
+    llist_append(&devpts_superblocks, &fsi->node);
+    spin_unlock(&pty_global_lock);
+    return 0;
+}
+
+static void devpts_put_super(struct vfs_super_block *sb) {
+    devpts_fs_info_t *fsi = sb ? (devpts_fs_info_t *)sb->s_fs_info : NULL;
+
+    if (!fsi)
+        return;
+    spin_lock(&pty_global_lock);
+    if (!llist_empty(&fsi->node))
+        llist_delete(&fsi->node);
+    spin_unlock(&pty_global_lock);
+    free(fsi);
+    sb->s_fs_info = NULL;
+}
+
+static const struct vfs_super_operations devpts_super_ops = {
+    .alloc_inode = devpts_alloc_inode,
+    .destroy_inode = devpts_destroy_inode,
+    .evict_inode = devpts_evict_inode,
+    .put_super = devpts_put_super,
+};
+
+static const struct vfs_inode_operations devpts_inode_ops = {
+    .lookup = devpts_lookup,
+    .permission = devpts_permission,
+    .getattr = devpts_getattr,
+};
+
+static const struct vfs_dentry_operations devpts_dentry_ops = {
+    .d_revalidate = devpts_d_revalidate,
+};
+
+static const struct vfs_file_operations devpts_dir_file_ops = {
+    .llseek = pty_llseek,
+    .iterate_shared = devpts_iterate_shared,
+    .open = devpts_open_file,
+};
+
+static struct vfs_file_system_type devpts_fs_type = {
+    .name = "devpts",
+    .fs_flags = VFS_FS_VIRTUAL,
+    .get_tree = devpts_get_tree,
+};

@@ -3,12 +3,13 @@
 #include <fs/dev.h>
 #include <libs/termios.h>
 
-#define PTY_MAX 1024
+#define PTY_MAX 256
 #define PTY_BUFF_SIZE (256 * 1024)
 
 typedef struct pty_pair {
     vfs_node_t *ptmx_node;
     vfs_node_t *pts_node;
+    struct llist_header pts_nodes;
 
     struct pty_pair *next;
 

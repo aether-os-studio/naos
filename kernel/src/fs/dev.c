@@ -1059,6 +1059,7 @@ static void devtmpfs_populate_nodes(void) {
     pty_init();
 
     (void)vfs_mkdirat(AT_FDCWD, "/dev/shm", 0755, true);
+    (void)vfs_mkdirat(AT_FDCWD, "/dev/pts", 0755, true);
     (void)vfs_mkdirat(AT_FDCWD, "/dev/bus", 0755, true);
     (void)vfs_mkdirat(AT_FDCWD, "/dev/bus/usb", 0755, true);
 
@@ -1067,7 +1068,6 @@ static void devtmpfs_populate_nodes(void) {
     setup_console_symlinks();
     ptmx_init();
     pts_init();
-    pts_repopulate_nodes();
 
     devtmpfs_refresh_root();
 }

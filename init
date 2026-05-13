@@ -45,6 +45,7 @@ init_path=$(sed -n 's/.*init=\([^ ]*\).*/\1/p' /proc/cmdline)
 
 /bin/mount --move /dev /mnt/dev
 /bin/mount -t tmpfs tmpfs /mnt/dev/shm
+/bin/mount -t devpts devpts /mnt/dev/pts
 /bin/mount --move /proc /mnt/proc
 /bin/mount --move /sys /mnt/sys
 /bin/mount --move /run /mnt/run
