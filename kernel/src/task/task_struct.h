@@ -9,7 +9,7 @@
 #include <task/ns.h>
 
 #if defined(__x86_64__)
-#include <arch/x64/irq/ptrace.h>
+#include <arch/x86_64/irq/ptrace.h>
 #elif defined(__aarch64__)
 #include <arch/aarch64/irq/ptrace.h>
 #endif

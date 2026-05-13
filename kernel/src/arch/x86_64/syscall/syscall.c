@@ -2,8 +2,8 @@
 #include <boot/boot.h>
 #include <task/task.h>
 #include <libs/strerror.h>
-#include <arch/x64/syscall/nr.h>
-#include <arch/x64/task/arch_context.h>
+#include <arch/x86_64/syscall/nr.h>
+#include <arch/x86_64/task/arch_context.h>
 #include <mm/mm_syscall.h>
 #include <task/futex.h>
 #include <task/keyring.h>

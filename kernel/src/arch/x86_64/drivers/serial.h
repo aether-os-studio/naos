@@ -1,6 +1,6 @@
 #pragma once
 
-#include <arch/x64/io.h>
+#include <arch/x86_64/io.h>
 
 #define SERIAL_PORT 0x3f8
 

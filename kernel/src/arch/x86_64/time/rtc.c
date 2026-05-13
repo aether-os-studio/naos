@@ -1,5 +1,5 @@
-#include <arch/x64/time/time.h>
-#include <arch/x64/io.h>
+#include <arch/x86_64/time/time.h>
+#include <arch/x86_64/io.h>
 #include <drivers/logger.h>
 
 #define CMOS_ADDR 0x70 // CMOS 地址寄存器

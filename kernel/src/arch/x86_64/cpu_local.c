@@ -1,7 +1,7 @@
-#include <arch/x64/cpu_local.h>
-#include <arch/x64/core/normal.h>
-#include <arch/x64/io.h>
-#include <arch/x64/task/fsgsbase.h>
+#include <arch/x86_64/cpu_local.h>
+#include <arch/x86_64/core/normal.h>
+#include <arch/x86_64/io.h>
+#include <arch/x86_64/task/fsgsbase.h>
 #include <mm/mm.h>
 #include <task/task_struct.h>
 #include <mod/dlinker.h>

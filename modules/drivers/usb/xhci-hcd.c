@@ -9,7 +9,7 @@
 #include <task/task.h>
 
 #if defined(__x86_64__)
-#include <arch/x64/core/normal.h>
+#include <arch/x86_64/core/normal.h>
 extern uint32_t cpuid_to_lapicid[MAX_CPU_NUM];
 #endif
 

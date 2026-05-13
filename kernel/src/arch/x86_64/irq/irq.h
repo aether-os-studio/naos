@@ -1,6 +1,6 @@
 #pragma once
 
-#include <arch/x64/io.h>
+#include <arch/x86_64/io.h>
 
 #define APIC_TIMER_INTERRUPT_VECTOR 0x20
 #define ARCH_TIMER_IRQ APIC_TIMER_INTERRUPT_VECTOR

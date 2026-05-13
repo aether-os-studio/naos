@@ -8,18 +8,7 @@ include ../build/common-env.mk
 # Change as needed.
 override OUTPUT := kernel
 
-ifeq ($(ARCH), x86_64)
-ARCH_DIR := src/arch/x64
-endif
-ifeq ($(ARCH), aarch64)
-ARCH_DIR := src/arch/aarch64
-endif
-ifeq ($(ARCH), riscv64)
-ARCH_DIR := src/arch/riscv64
-endif
-ifeq ($(ARCH), loongarch64)
-ARCH_DIR := src/arch/loongarch64
-endif
+ARCH_DIR := src/arch/$(ARCH)
 
 # Install prefix; /usr/local is a good, standard default pick.
 PREFIX := /usr/local

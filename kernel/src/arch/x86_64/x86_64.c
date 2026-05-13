@@ -1,4 +1,4 @@
-#include <arch/x64/x64.h>
+#include <arch/x86_64/x86_64.h>
 
 extern void sse_init();
 

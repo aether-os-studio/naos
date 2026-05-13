@@ -8,7 +8,7 @@
 #include <init/callbacks.h>
 
 #if defined(__x86_64__)
-#include <arch/x64/syscall/nr.h>
+#include <arch/x86_64/syscall/nr.h>
 #elif defined(__aarch64__)
 #include <arch/aarch64/syscall/nr.h>
 #endif

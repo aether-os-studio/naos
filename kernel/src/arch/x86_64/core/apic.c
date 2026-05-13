@@ -7,7 +7,7 @@
 #include <uacpi/acpi.h>
 #include <uacpi/tables.h>
 #include <libs/klibc.h>
-#include <arch/x64/irq/irq.h>
+#include <arch/x86_64/irq/irq.h>
 #include <libs/llist_queue.h>
 
 bool x2apic_mode = false;

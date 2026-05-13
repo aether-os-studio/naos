@@ -1,7 +1,7 @@
 #pragma once
 
-#include <arch/x64/syscall/nr.h>
-#include <arch/x64/irq/gate.h>
+#include <arch/x86_64/syscall/nr.h>
+#include <arch/x86_64/irq/gate.h>
 #include <drivers/logger.h>
 #include <libs/klibc.h>
 

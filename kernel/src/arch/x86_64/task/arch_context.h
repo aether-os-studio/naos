@@ -1,6 +1,6 @@
 #pragma once
 
-#include <arch/x64/irq/ptrace.h>
+#include <arch/x86_64/irq/ptrace.h>
 #include <libs/elf.h>
 #include <mm/mm.h>
 #include <task/task_struct.h>

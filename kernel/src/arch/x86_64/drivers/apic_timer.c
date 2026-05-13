@@ -1,5 +1,5 @@
 #include <drivers/logger.h>
-#include <arch/x64/drivers/apic_timer.h>
+#include <arch/x86_64/drivers/apic_timer.h>
 #include <irq/irq_manager.h>
 #include <arch/arch.h>
 #include <task/task.h>
