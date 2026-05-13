@@ -487,12 +487,21 @@ static void generic_fill_stat_from_kstat(struct stat *buf,
     buf->st_blksize = (long)stat->blksize;
     buf->st_size = (long long)stat->size;
     buf->st_blocks = (unsigned long)stat->blocks;
+#if defined(__riscv__)
+    buf->st_atime = stat->atime.sec;
+    buf->st_atime_nsec = (unsigned long)stat->atime.nsec;
+    buf->st_mtime = stat->mtime.sec;
+    buf->st_mtime_nsec = (unsigned long)stat->mtime.nsec;
+    buf->st_ctime = stat->ctime.sec;
+    buf->st_ctime_nsec = (unsigned long)stat->ctime.nsec;
+#else
     buf->st_atim.tv_sec = stat->atime.sec;
     buf->st_atim.tv_nsec = (long)stat->atime.nsec;
     buf->st_mtim.tv_sec = stat->mtime.sec;
     buf->st_mtim.tv_nsec = (long)stat->mtime.nsec;
     buf->st_ctim.tv_sec = stat->ctime.sec;
     buf->st_ctim.tv_nsec = (long)stat->ctime.nsec;
+#endif
 }
 
 static void generic_fill_statx_from_kstat(struct statx *buf,

@@ -25,6 +25,7 @@
 #define ARCH_READ_PTE(pte) ((uint64_t)(pte) & ARCH_ADDR_MASK)
 #define ARCH_MAKE_PTE(paddr, flags)                                            \
     (((uint64_t)(paddr) & ARCH_ADDR_MASK) | (flags))
+#define ARCH_MAKE_PDE(paddr, flags) ARCH_MAKE_PTE((paddr), (flags))
 #define ARCH_READ_PTE_FLAG(pte) ((uint64_t)(pte) & ~ARCH_ADDR_MASK)
 
 #define ARCH_MAKE_HUGE_PTE(paddr, flags)                                       \
@@ -41,5 +42,6 @@
     (((x) & (ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_TABLE)) == ARCH_PT_FLAG_VALID)
 
 uint64_t get_arch_page_table_flags(uint64_t flags);
+uint64_t arch_page_table_levels();
 void arch_flush_tlb(uint64_t vaddr);
 void arch_flush_tlb_all();

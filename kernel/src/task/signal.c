@@ -11,13 +11,15 @@
 #include <arch/x86_64/syscall/nr.h>
 #elif defined(__aarch64__)
 #include <arch/aarch64/syscall/nr.h>
+#elif defined(__riscv__)
+#include <arch/riscv64/syscall/nr.h>
 #endif
 
 #define SIGNAL_MIN_SIGSET_SIZE sizeof(uint32_t)
 #define SIGNAL_MAX_SIGSET_SIZE sizeof(sigset_t)
 #define SIGNAL_MAX_MASKED_SIG ((int)(sizeof(sigset_t) * 8 - 1))
 
-#if defined(__x86_64__) || defined(__aarch64__)
+#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv__)
 typedef struct signal_kernel_sigaction {
     sighandler_t handler;
     unsigned long flags;
@@ -1257,7 +1259,7 @@ uint64_t sys_sigaction(int sig, const void *action, void *oldaction,
         new_action.sa_flags = (int)user_action.flags;
         new_action.sa_restorer = user_action.restorer;
         new_action.sa_mask = sigset_user_to_kernel(user_action.mask);
-#if defined(__x86_64__) || defined(__aarch64__)
+#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv__)
         if (new_action.sa_handler != SIG_DFL &&
             new_action.sa_handler != SIG_IGN &&
             (new_action.sa_flags & SA_RESTORER) != 0 &&

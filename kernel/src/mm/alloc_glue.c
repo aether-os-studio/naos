@@ -6,21 +6,38 @@
 int dlmalloc_errno;
 MLOCK_T malloc_global_mutex = SPIN_INIT;
 
-#define KERNEL_SBRK_HEAP_START ((uintptr_t)0xffffffffe0000000ULL)
 #define KERNEL_SBRK_HEAP_SIZE ((uintptr_t)(256 * 1024 * 1024))
-#define KERNEL_SBRK_HEAP_END (KERNEL_SBRK_HEAP_START + KERNEL_SBRK_HEAP_SIZE)
 
 static spinlock_t kernel_sbrk_lock = SPIN_INIT;
 static bool kernel_sbrk_ready;
+static uintptr_t kernel_sbrk_heap_start;
+static uintptr_t kernel_sbrk_heap_end;
 static uintptr_t kernel_sbrk_brk;
 static uintptr_t kernel_sbrk_mapped_end;
+
+extern char __kernel_image_end[];
+
+static uintptr_t kernel_sbrk_choose_heap_start(void) {
+    uintptr_t start = PADDING_UP((uintptr_t)&__kernel_image_end, 1UL << 30);
+    uintptr_t min_start = 0xffffffffc0000000ULL;
+    uintptr_t max_start = KERNEL_MODULES_SPACE_START - KERNEL_SBRK_HEAP_SIZE;
+
+    if (start < min_start)
+        start = min_start;
+    if (start > max_start)
+        start = max_start;
+
+    return start;
+}
 
 static bool kernel_sbrk_init_locked(void) {
     if (kernel_sbrk_ready)
         return true;
 
-    kernel_sbrk_brk = KERNEL_SBRK_HEAP_START;
-    kernel_sbrk_mapped_end = KERNEL_SBRK_HEAP_START;
+    kernel_sbrk_heap_start = kernel_sbrk_choose_heap_start();
+    kernel_sbrk_heap_end = kernel_sbrk_heap_start + KERNEL_SBRK_HEAP_SIZE;
+    kernel_sbrk_brk = kernel_sbrk_heap_start;
+    kernel_sbrk_mapped_end = kernel_sbrk_heap_start;
     kernel_sbrk_ready = true;
     return true;
 }
@@ -30,7 +47,7 @@ static bool kernel_sbrk_map_until_locked(uintptr_t target) {
 
     if (map_to <= kernel_sbrk_mapped_end)
         return true;
-    if (map_to > KERNEL_SBRK_HEAP_END)
+    if (map_to > kernel_sbrk_heap_end)
         return false;
 
     uint64_t ret = map_page_range(get_kernel_page_dir(), kernel_sbrk_mapped_end,
@@ -60,7 +77,7 @@ void *sbrk(ptrdiff_t increment) {
 
     if (increment >= 0) {
         uintptr_t grow = (uintptr_t)increment;
-        if (grow > KERNEL_SBRK_HEAP_END - old_brk) {
+        if (grow > kernel_sbrk_heap_end - old_brk) {
             dlmalloc_errno = ENOMEM;
             spin_unlock(&kernel_sbrk_lock);
             return (void *)-1;
@@ -72,7 +89,7 @@ void *sbrk(ptrdiff_t increment) {
         }
     } else {
         uintptr_t shrink = (uintptr_t)(-(increment + 1)) + 1;
-        if (shrink > old_brk - KERNEL_SBRK_HEAP_START) {
+        if (shrink > old_brk - kernel_sbrk_heap_start) {
             dlmalloc_errno = ENOMEM;
             spin_unlock(&kernel_sbrk_lock);
             return (void *)-1;

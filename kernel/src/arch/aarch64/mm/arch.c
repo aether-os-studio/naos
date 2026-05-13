@@ -2,6 +2,8 @@
 #include <mm/mm.h>
 #include <libs/klibc.h>
 
+uint64_t arch_page_table_levels() { return ARCH_MAX_PT_LEVEL; }
+
 // AArch64内存属性定义
 #define MAIR_ATTR_DEVICE_nGnRnE 0x00 // 设备内存，无聚集，无重排序，无早期确认
 #define MAIR_ATTR_DEVICE_nGnRE 0x04  // 设备内存，无聚集，无重排序

@@ -63,6 +63,7 @@
 
 #define AUDIT_ARCH_X86_64 0xc000003eU
 #define AUDIT_ARCH_AARCH64 0xc00000b7U
+#define AUDIT_ARCH_RISCV64 0xc00000f3U
 
 struct ptrace_syscall_info {
     uint8_t op;

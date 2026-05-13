@@ -3,14 +3,17 @@
 #include <libs/klibc.h>
 #include <mm/page_table_flags.h>
 
+uint64_t arch_page_table_levels();
+
 #define PAGE_CALC_PAGE_TABLE_SIZE(level)                                       \
-    ((uint64_t)1 << (ARCH_PT_OFFSET_BASE + (ARCH_MAX_PT_LEVEL - (level)) *     \
-                                               ARCH_PT_OFFSET_PER_LEVEL))
+    ((uint64_t)1 << (ARCH_PT_OFFSET_BASE +                                     \
+                     (arch_page_table_levels() - (level)) *                    \
+                         ARCH_PT_OFFSET_PER_LEVEL))
 #define PAGE_CALC_PAGE_TABLE_MASK(level)                                       \
     (PAGE_CALC_PAGE_TABLE_SIZE(level) - (uint64_t)1)
 #define PAGE_CALC_PAGE_TABLE_INDEX(vaddr, level)                               \
-    (((vaddr) >> (ARCH_PT_OFFSET_BASE +                                        \
-                  (ARCH_MAX_PT_LEVEL - (level)) * ARCH_PT_OFFSET_PER_LEVEL)) & \
+    (((vaddr) >> (ARCH_PT_OFFSET_BASE + (arch_page_table_levels() - (level)) * \
+                                            ARCH_PT_OFFSET_PER_LEVEL)) &       \
      (((uint64_t)1 << ARCH_PT_OFFSET_PER_LEVEL) - 1))
 
 uint64_t *get_kernel_page_dir();

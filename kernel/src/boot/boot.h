@@ -61,6 +61,13 @@ typedef struct boot_module {
 
 void boot_get_modules(boot_module_t **modules, size_t *count);
 
+uint64_t boot_get_firmware_type();
+
 #if !defined(__x86_64__)
 uint64_t boot_get_dtb();
+#endif
+
+#if defined(__riscv__)
+uint64_t boot_get_bsp_hartid();
+uint64_t boot_get_paging_mode();
 #endif

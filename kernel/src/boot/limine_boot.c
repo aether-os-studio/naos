@@ -42,6 +42,12 @@ LIMINE_REQUEST volatile struct limine_date_at_boot_request boot_time_request = {
 LIMINE_REQUEST volatile struct limine_framebuffer_request framebuffer_request =
     {.id = LIMINE_FRAMEBUFFER_REQUEST_ID, .revision = 0};
 
+LIMINE_REQUEST static volatile struct limine_firmware_type_request
+    firmware_type_request = {
+        .id = LIMINE_FIRMWARE_TYPE_REQUEST_ID,
+        .revision = 0,
+};
+
 __attribute__((used, section(".limine_requests_end"))) static volatile uint64_t
     requests_end_marker[4] = LIMINE_REQUESTS_END_MARKER;
 
@@ -109,7 +115,7 @@ __attribute__((
 
 __attribute__((used, section(".limine_requests"))) static volatile struct
     limine_riscv_bsp_hartid_request bsp_hartid_request = {
-        .id = LIMINE_RISCV_BSP_HARTID_REQUEST,
+        .id = LIMINE_RISCV_BSP_HARTID_REQUEST_ID,
         .revision = 0,
 };
 #endif
@@ -259,13 +265,25 @@ void boot_get_modules(boot_module_t **modules, size_t *count) {
 }
 
 #if defined(__riscv__)
+
 LIMINE_REQUEST static volatile struct limine_paging_mode_request
     paging_mode_request = {
         .id = LIMINE_PAGING_MODE_REQUEST_ID,
         .revision = 0,
-        .mode = LIMINE_PAGING_MODE_DEFAULT,
+        .mode = LIMINE_PAGING_MODE_RISCV_DEFAULT,
 };
+uint64_t boot_get_paging_mode() {
+    return paging_mode_request.response ? paging_mode_request.response->mode
+                                        : LIMINE_PAGING_MODE_RISCV_DEFAULT;
+}
+
 #endif
+
+uint64_t boot_get_firmware_type() {
+    return firmware_type_request.response
+               ? firmware_type_request.response->firmware_type
+               : 0;
+}
 
 #if !defined(__x86_64__)
 LIMINE_REQUEST static volatile struct limine_dtb_request dtb_request = {
@@ -278,4 +296,12 @@ uint64_t boot_get_dtb() {
     return dtb_request.response ? (uint64_t)dtb_request.response->dtb_ptr : 0;
 }
 
+#endif
+
+#if defined(__riscv__)
+
+uint64_t boot_get_bsp_hartid() {
+    return bsp_hartid_request.response ? bsp_hartid_request.response->bsp_hartid
+                                       : 0;
+}
 #endif

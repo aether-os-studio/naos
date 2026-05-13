@@ -1,4 +1,5 @@
 #include <bpf/socket_filter.h>
+#include <drivers/logger.h>
 
 int bpf_validate(const struct sock_filter *prog, int len) {
     if (len < 1) {

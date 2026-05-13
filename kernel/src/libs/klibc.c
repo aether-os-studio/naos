@@ -16,8 +16,6 @@ void raw_spin_lock(spinlock_t *sl) {
         arch_pause();
 #endif
     }
-
-    __sync_synchronize();
 }
 
 void raw_spin_unlock(spinlock_t *sl) {
@@ -133,12 +131,13 @@ static uint64_t user_translate_access(uint64_t *pgdir, uint64_t uaddr,
     if (!pgdir || !uaddr)
         return 0;
 
+    uint64_t levels = arch_page_table_levels();
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
-    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++) {
+    for (uint64_t i = 0; i < levels; i++) {
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(uaddr, i + 1);
     }
 
-    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL - 1; i++) {
+    for (uint64_t i = 0; i < levels - 1; i++) {
         uint64_t entry = pgdir[indexs[i]];
         if (ARCH_PT_IS_LARGE(entry)) {
             uint64_t flags = ARCH_READ_PTE_FLAG(entry);
@@ -156,7 +155,7 @@ static uint64_t user_translate_access(uint64_t *pgdir, uint64_t uaddr,
         pgdir = (uint64_t *)phys_to_virt(ARCH_READ_PTE(entry));
     }
 
-    uint64_t pte = pgdir[indexs[ARCH_MAX_PT_LEVEL - 1]];
+    uint64_t pte = pgdir[indexs[levels - 1]];
     if (!(pte & ARCH_PT_FLAG_VALID))
         return 0;
 
@@ -168,8 +167,7 @@ static uint64_t user_translate_access(uint64_t *pgdir, uint64_t uaddr,
         return 0;
 #endif
 
-    return ARCH_READ_PTE(pte) +
-           (uaddr & PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL));
+    return ARCH_READ_PTE(pte) + (uaddr & PAGE_CALC_PAGE_TABLE_MASK(levels));
 }
 
 uint64_t user_translate_or_fault(uint64_t *pgdir, uint64_t uaddr, bool write) {

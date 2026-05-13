@@ -262,11 +262,12 @@ static uint64_t task_user_translate_access(task_t *task, uint64_t uaddr,
         return 0;
 
     uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
+    uint64_t levels = arch_page_table_levels();
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
-    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++)
+    for (uint64_t i = 0; i < levels; i++)
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(uaddr, i + 1);
 
-    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL - 1; i++) {
+    for (uint64_t i = 0; i < levels - 1; i++) {
         uint64_t entry = pgdir[indexs[i]];
         if (ARCH_PT_IS_LARGE(entry)) {
             uint64_t flags = ARCH_READ_PTE_FLAG(entry);
@@ -284,7 +285,7 @@ static uint64_t task_user_translate_access(task_t *task, uint64_t uaddr,
         pgdir = (uint64_t *)phys_to_virt(ARCH_READ_PTE(entry));
     }
 
-    uint64_t pte = pgdir[indexs[ARCH_MAX_PT_LEVEL - 1]];
+    uint64_t pte = pgdir[indexs[levels - 1]];
     if (!(pte & ARCH_PT_FLAG_VALID))
         return 0;
 
@@ -296,8 +297,7 @@ static uint64_t task_user_translate_access(task_t *task, uint64_t uaddr,
         return 0;
 #endif
 
-    return ARCH_READ_PTE(pte) +
-           (uaddr & PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL));
+    return ARCH_READ_PTE(pte) + (uaddr & PAGE_CALC_PAGE_TABLE_MASK(levels));
 }
 
 static uint64_t task_user_translate_or_fault(task_t *task, uint64_t uaddr,
@@ -2662,6 +2662,8 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
     uint64_t user_sp = regs->rsp;
 #elif defined(__aarch64__)
     uint64_t user_sp = regs->sp_el0;
+#elif defined(__riscv__)
+    uint64_t user_sp = regs->sp;
 #endif
 
     if (newsp) {
@@ -2672,6 +2674,8 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
     child->arch_context->ctx->rsp = user_sp;
 #elif defined(__aarch64__)
     child->arch_context->ctx->sp_el0 = user_sp;
+#elif defined(__riscv__)
+    child->arch_context->ctx->sp = user_sp;
 #endif
 
     child->is_kernel = false;
@@ -3269,8 +3273,6 @@ size_t sys_setitimer(int which, struct itimerval *value,
     uint64_t rt_at = current_task->itimer_real.at;
     uint64_t rt_reset = current_task->itimer_real.reset;
 
-    tm time_now;
-    time_read(&time_now);
     uint64_t now = nano_time() / 1000000;
 
     if (old) {

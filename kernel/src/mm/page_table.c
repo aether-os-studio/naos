@@ -7,12 +7,13 @@ uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr) {
     if (!vaddr)
         return 0;
 
+    uint64_t levels = arch_page_table_levels();
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
-    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++) {
+    for (uint64_t i = 0; i < levels; i++) {
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(vaddr, i + 1);
     }
 
-    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL - 1; i++) {
+    for (uint64_t i = 0; i < levels - 1; i++) {
         uint64_t index = indexs[i];
         uint64_t addr = pgdir[index];
         if (ARCH_PT_IS_LARGE(addr)) {
@@ -26,13 +27,12 @@ uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr) {
         pgdir = (uint64_t *)phys_to_virt(ARCH_READ_PTE(addr));
     }
 
-    uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
+    uint64_t index = indexs[levels - 1];
     uint64_t pte = pgdir[index];
     if (!(pte & ARCH_PT_FLAG_VALID))
         return 0;
 
-    return ARCH_READ_PTE(pte) +
-           (vaddr & PAGE_CALC_PAGE_TABLE_MASK(ARCH_MAX_PT_LEVEL));
+    return ARCH_READ_PTE(pte) + (vaddr & PAGE_CALC_PAGE_TABLE_MASK(levels));
 }
 
 uint64_t *kernel_page_dir = NULL;
@@ -72,16 +72,17 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
     ASSERT((vaddr & 0xfff) == 0);
     ASSERT(paddr == (uint64_t)-1 || (paddr & 0xfff) == 0);
 
+    uint64_t levels = arch_page_table_levels();
     uint64_t indexs[ARCH_MAX_PT_LEVEL] = {0};
     uint64_t *created_parent_tables[ARCH_MAX_PT_LEVEL - 1] = {0};
     uint64_t created_parent_indices[ARCH_MAX_PT_LEVEL - 1] = {0};
     uint64_t created_table_addrs[ARCH_MAX_PT_LEVEL - 1] = {0};
     size_t created_tables = 0;
-    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++) {
+    for (uint64_t i = 0; i < levels; i++) {
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(vaddr, i + 1);
     }
 
-    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL - 1; i++) {
+    for (uint64_t i = 0; i < levels - 1; i++) {
         uint64_t index = indexs[i];
         uint64_t addr = pgdir[index];
         if (ARCH_PT_IS_LARGE(addr)) {
@@ -94,7 +95,7 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
                 return a;
             }
             memset((uint64_t *)phys_to_virt(a), 0, PAGE_SIZE);
-            pgdir[index] = ARCH_MAKE_PTE(a, ARCH_PT_TABLE_FLAGS
+            pgdir[index] = ARCH_MAKE_PDE(a, ARCH_PT_TABLE_FLAGS
 #if !defined(__riscv__) && !defined(__loongarch64__)
                                                 | (flags & ARCH_PT_FLAG_USER)
 #endif
@@ -109,7 +110,7 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
             if ((flags & ARCH_PT_FLAG_USER) && !(addr & ARCH_PT_FLAG_USER)) {
                 uint64_t pa = ARCH_READ_PTE(addr);
                 uint64_t old_flags = ARCH_READ_PTE_FLAG(addr);
-                pgdir[index] = ARCH_MAKE_PTE(pa, old_flags | ARCH_PT_FLAG_USER);
+                pgdir[index] = ARCH_MAKE_PDE(pa, old_flags | ARCH_PT_FLAG_USER);
                 arch_flush_tlb(vaddr);
             }
         }
@@ -118,7 +119,7 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
         pgdir = (uint64_t *)phys_to_virt(ARCH_READ_PTE(pgdir[index]));
     }
 
-    uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
+    uint64_t index = indexs[levels - 1];
     bool had_old_mapping = (pgdir[index] & ARCH_PT_FLAG_VALID) != 0;
     uint64_t old_paddr = 0;
     if (had_old_mapping) {
@@ -162,11 +163,12 @@ rollback_created_tables:
 
 uint64_t unmap_page_defer_release(uint64_t *pgdir, uint64_t vaddr,
                                   unmap_release_batch_t *batch) {
+    uint64_t levels = arch_page_table_levels();
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
     uint64_t *table_ptrs[ARCH_MAX_PT_LEVEL];
     uint64_t table_indices[ARCH_MAX_PT_LEVEL];
 
-    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++) {
+    for (uint64_t i = 0; i < levels; i++) {
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(vaddr, i + 1);
     }
 
@@ -175,7 +177,7 @@ uint64_t unmap_page_defer_release(uint64_t *pgdir, uint64_t vaddr,
     table_indices[0] = indexs[0];
 
     // 遍历页表层级
-    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL - 1; i++) {
+    for (uint64_t i = 0; i < levels - 1; i++) {
         uint64_t index = table_indices[i];
         uint64_t addr = table_ptrs[i][index];
         if (ARCH_PT_IS_LARGE(addr)) {
@@ -189,12 +191,12 @@ uint64_t unmap_page_defer_release(uint64_t *pgdir, uint64_t vaddr,
     }
 
     // 处理最底层页表
-    uint64_t index = table_indices[ARCH_MAX_PT_LEVEL - 1];
-    uint64_t pte = table_ptrs[ARCH_MAX_PT_LEVEL - 1][index];
+    uint64_t index = table_indices[levels - 1];
+    uint64_t pte = table_ptrs[levels - 1][index];
     uint64_t paddr = ARCH_READ_PTE(pte);
 
     if (paddr != 0) {
-        table_ptrs[ARCH_MAX_PT_LEVEL - 1][index] = 0;
+        table_ptrs[levels - 1][index] = 0;
         arch_flush_tlb(vaddr);
         if (batch) {
             unmap_batch_queue_page(batch, paddr);
@@ -203,7 +205,7 @@ uint64_t unmap_page_defer_release(uint64_t *pgdir, uint64_t vaddr,
         }
 
         // 从最底层页表开始向上检查并释放空页表
-        for (int level = ARCH_MAX_PT_LEVEL - 1; level > 0; level--) {
+        for (int level = (int)levels - 1; level > 0; level--) {
             uint64_t *current_table = table_ptrs[level];
             bool table_empty = true;
 
@@ -242,12 +244,13 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr) {
 }
 
 uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
+    uint64_t levels = arch_page_table_levels();
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
-    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++) {
+    for (uint64_t i = 0; i < levels; i++) {
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(vaddr, i + 1);
     }
 
-    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL - 1; i++) {
+    for (uint64_t i = 0; i < levels - 1; i++) {
         uint64_t index = indexs[i];
         uint64_t addr = pgdir[index];
         if (ARCH_PT_IS_LARGE(addr)) {
@@ -265,7 +268,7 @@ uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
         pgdir = (uint64_t *)phys_to_virt(ARCH_READ_PTE(addr));
     }
 
-    uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
+    uint64_t index = indexs[levels - 1];
     if (!(pgdir[index] & ARCH_PT_FLAG_VALID)) {
         return 0;
     }
@@ -284,7 +287,8 @@ uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
 static void free_page_table_recursive(uint64_t *table, int level);
 
 static uint64_t page_table_entry_span(int level) {
-    return PAGE_CALC_PAGE_TABLE_SIZE(ARCH_MAX_PT_LEVEL - level + 1);
+    uint64_t levels = arch_page_table_levels();
+    return PAGE_CALC_PAGE_TABLE_SIZE(levels - level + 1);
 }
 
 static bool pte_is_writable(uint64_t flags) {
@@ -314,7 +318,7 @@ static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level,
 
     uint64_t entries = (1UL << ARCH_PT_OFFSET_PER_LEVEL);
 #if defined(__x86_64__) || defined(__riscv__)
-    if (level == ARCH_MAX_PT_LEVEL)
+    if ((uint64_t)level == arch_page_table_levels())
         entries >>= 1;
 #endif
 
@@ -365,7 +369,7 @@ static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level,
                 return NULL;
             }
 
-            new_table[i] = ARCH_MAKE_PTE(virt_to_phys(child_new),
+            new_table[i] = ARCH_MAKE_PDE(virt_to_phys(child_new),
                                          ARCH_READ_PTE_FLAG(entry));
             continue;
         }
@@ -386,7 +390,7 @@ static void free_page_table_recursive(uint64_t *table, int level) {
 
     uint64_t entries = (1UL << ARCH_PT_OFFSET_PER_LEVEL);
 #if defined(__x86_64__) || defined(__riscv__)
-    if (level == ARCH_MAX_PT_LEVEL)
+    if ((uint64_t)level == arch_page_table_levels())
         entries >>= 1;
 #endif
 
@@ -445,7 +449,7 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
 
     uint64_t *old_root = phys_to_virt(old->page_table_addr);
     uint64_t *new_root =
-        copy_page_table_recursive(old_root, ARCH_MAX_PT_LEVEL, 0, mgr);
+        copy_page_table_recursive(old_root, arch_page_table_levels(), 0, mgr);
     if (!new_root) {
         free(new_mm);
         spin_unlock(&old->lock);
@@ -462,7 +466,7 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
     new_mm->ref_count = 1;
 
     if (vma_manager_copy(&new_mm->task_vma_mgr, mgr) != 0) {
-        free_page_table_recursive(new_root, ARCH_MAX_PT_LEVEL);
+        free_page_table_recursive(new_root, arch_page_table_levels());
         free(new_mm);
         spin_unlock(&old->lock);
         spin_unlock(&mgr->lock);
@@ -508,7 +512,7 @@ void free_page_table(task_mm_info_t *directory) {
 
     free_page_table_recursive(
         (uint64_t *)phys_to_virt(directory->page_table_addr),
-        ARCH_MAX_PT_LEVEL);
+        arch_page_table_levels());
 
     free(directory);
 }

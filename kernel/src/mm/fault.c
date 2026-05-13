@@ -256,12 +256,13 @@ map_cow_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
 
     uint64_t aligned_vaddr = PADDING_DOWN(vaddr, PAGE_SIZE);
     uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
+    uint64_t levels = arch_page_table_levels();
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
-    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++) {
+    for (uint64_t i = 0; i < levels; i++) {
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(aligned_vaddr, i + 1);
     }
 
-    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL - 1; i++) {
+    for (uint64_t i = 0; i < levels - 1; i++) {
         uint64_t entry = pgdir[indexs[i]];
         if (!ARCH_PT_IS_TABLE(entry)) {
             spin_unlock(&task->mm->lock);
@@ -270,7 +271,7 @@ map_cow_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
         pgdir = (uint64_t *)phys_to_virt(ARCH_READ_PTE(entry));
     }
 
-    uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
+    uint64_t index = indexs[levels - 1];
     uint64_t current_entry = pgdir[index];
     if (!(current_entry & ARCH_PT_FLAG_COW)) {
         bool already_resolved = (current_entry & ARCH_PT_FLAG_VALID) != 0;
@@ -342,13 +343,14 @@ page_fault_result_t handle_page_fault_flags(task_t *task, uint64_t vaddr,
 
     uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
 
+    uint64_t levels = arch_page_table_levels();
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
-    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL; i++) {
+    for (uint64_t i = 0; i < levels; i++) {
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(aligned_vaddr, i + 1);
     }
 
     bool has_leaf = true;
-    for (uint64_t i = 0; i < ARCH_MAX_PT_LEVEL - 1; i++) {
+    for (uint64_t i = 0; i < levels - 1; i++) {
         uint64_t index = indexs[i];
         uint64_t addr = pgdir[index];
         if (ARCH_PT_IS_LARGE(addr)) {
@@ -363,7 +365,7 @@ page_fault_result_t handle_page_fault_flags(task_t *task, uint64_t vaddr,
         pgdir = (uint64_t *)phys_to_virt(ARCH_READ_PTE(addr));
     }
 
-    uint64_t index = indexs[ARCH_MAX_PT_LEVEL - 1];
+    uint64_t index = indexs[levels - 1];
     uint64_t paddr = 0;
     uint64_t flags = 0;
     if (has_leaf) {

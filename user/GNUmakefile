@@ -13,7 +13,7 @@ clean:
 
 .PHONY: distclean
 distclean:
-	rm -rf xbps-bin xbps
+	rm -rf cache
 	rm -rf .build-stamp-*
 	sudo rm -rf $(CWD)/initramfs-$(ARCH) $(CWD)/rootfs-$(ARCH)
 	rm -rf $(CWD)/ports/cache

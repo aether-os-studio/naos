@@ -35,12 +35,15 @@ struct vfs_inode *vfs_alloc_inode(struct vfs_super_block *sb) {
 
     if (!sb)
         return NULL;
+    vfs_get_super(sb);
     if (sb->s_op && sb->s_op->alloc_inode)
         inode = sb->s_op->alloc_inode(sb);
     if (!inode)
         inode = calloc(1, sizeof(*inode));
-    if (!inode)
+    if (!inode) {
+        vfs_put_super(sb);
         return NULL;
+    }
 
     inode->i_sb = sb;
     inode->i_blkbits = 12;
@@ -78,23 +81,28 @@ struct vfs_inode *vfs_igrab(struct vfs_inode *inode) {
 }
 
 void vfs_iput(struct vfs_inode *inode) {
+    struct vfs_super_block *sb;
+
     if (!inode)
         return;
     if (!vfs_ref_put(&inode->i_ref))
         return;
 
-    if (inode->i_sb && !llist_empty(&inode->i_sb_list)) {
-        spin_lock(&inode->i_sb->s_inode_lock);
+    sb = inode->i_sb;
+    if (sb && !llist_empty(&inode->i_sb_list)) {
+        spin_lock(&sb->s_inode_lock);
         if (!llist_empty(&inode->i_sb_list))
             llist_delete(&inode->i_sb_list);
-        spin_unlock(&inode->i_sb->s_inode_lock);
+        spin_unlock(&sb->s_inode_lock);
     }
-    if (inode->i_sb && inode->i_sb->s_op && inode->i_sb->s_op->evict_inode)
-        inode->i_sb->s_op->evict_inode(inode);
-    if (inode->i_sb && inode->i_sb->s_op && inode->i_sb->s_op->destroy_inode)
-        inode->i_sb->s_op->destroy_inode(inode);
+    if (sb && sb->s_op && sb->s_op->evict_inode)
+        sb->s_op->evict_inode(inode);
+    if (sb && sb->s_op && sb->s_op->destroy_inode)
+        sb->s_op->destroy_inode(inode);
     else
         free(inode);
+    if (sb)
+        vfs_put_super(sb);
 }
 
 void vfs_inode_init_owner(struct vfs_inode *inode, struct vfs_inode *dir,

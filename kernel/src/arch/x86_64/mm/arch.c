@@ -5,6 +5,8 @@
 #include <task/task.h>
 #include <irq/irq_manager.h>
 
+uint64_t arch_page_table_levels() { return ARCH_MAX_PT_LEVEL; }
+
 uint64_t *get_current_page_dir(bool user) {
     uint64_t page_table_base = 0;
     asm volatile("movq %%cr3, %0" : "=r"(page_table_base));
