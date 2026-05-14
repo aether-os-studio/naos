@@ -1980,8 +1980,7 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
     if (stack_vma) {
         stack_vma->vm_start = USER_STACK_START;
         stack_vma->vm_end = USER_STACK_END;
-        stack_vma->vm_flags |=
-            VMA_ANON | VMA_READ | VMA_WRITE | VMA_EXEC | VMA_STACK;
+        stack_vma->vm_flags |= VMA_ANON | VMA_READ | VMA_WRITE | VMA_STACK;
         stack_vma->vm_type = VMA_TYPE_ANON;
         stack_vma->vm_name = strdup("[stack]");
 

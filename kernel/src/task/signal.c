@@ -4,6 +4,8 @@
 
 #include <fs/vfs/vfs.h>
 #include <task/task.h>
+#include <mm/mm.h>
+#include <mm/page.h>
 
 #include <init/callbacks.h>
 
@@ -404,16 +406,132 @@ static bool signal_sync_user_instruction_memory(uint64_t user_addr,
     return true;
 }
 
-static bool signal_copy_trampoline_to_user(uint64_t user_addr, const void *code,
-                                           size_t code_size) {
-    if (!user_addr || !code || code_size == 0)
-        return false;
+#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv__)
+static const uint8_t *signal_arch_rt_sigreturn_trampoline(size_t *code_size) {
+    if (!code_size)
+        return NULL;
 
-    if (copy_to_user((void *)user_addr, code, code_size))
-        return false;
-
-    return signal_sync_user_instruction_memory(user_addr, code_size);
+#if defined(__x86_64__)
+    *code_size = sizeof(signal_x64_rt_sigreturn_trampoline);
+    return signal_x64_rt_sigreturn_trampoline;
+#elif defined(__aarch64__)
+    *code_size = sizeof(signal_aarch64_rt_sigreturn_trampoline);
+    return signal_aarch64_rt_sigreturn_trampoline;
+#elif defined(__riscv__)
+    *code_size = sizeof(signal_riscv64_rt_sigreturn_trampoline);
+    return signal_riscv64_rt_sigreturn_trampoline;
+#endif
 }
+
+static bool signal_ensure_user_trampoline(task_t *task) {
+    if (!task || !task->mm)
+        return false;
+
+    size_t code_size = 0;
+    const uint8_t *code = signal_arch_rt_sigreturn_trampoline(&code_size);
+    if (!code || code_size == 0 || code_size > PAGE_SIZE)
+        return false;
+
+    vma_manager_t *mgr = &task->mm->task_vma_mgr;
+    spin_lock(&mgr->lock);
+    vma_t *vma = vma_find(mgr, USER_SIGNAL_TRAMPOLINE_START);
+    if (vma) {
+        bool ok =
+            vma->vm_start == USER_SIGNAL_TRAMPOLINE_START &&
+            vma->vm_end == USER_SIGNAL_TRAMPOLINE_END &&
+            (vma->vm_flags & (VMA_READ | VMA_EXEC)) == (VMA_READ | VMA_EXEC) &&
+            !(vma->vm_flags & VMA_WRITE);
+        spin_unlock(&mgr->lock);
+        return ok;
+    }
+
+    if (vma_find_intersection(mgr, USER_SIGNAL_TRAMPOLINE_START,
+                              USER_SIGNAL_TRAMPOLINE_END)) {
+        spin_unlock(&mgr->lock);
+        return false;
+    }
+    spin_unlock(&mgr->lock);
+
+    uint64_t page_paddr = alloc_frames(1);
+    if (!page_paddr)
+        return false;
+
+    void *page = (void *)phys_to_virt(page_paddr);
+    memset(page, 0, PAGE_SIZE);
+    memcpy(page, code, code_size);
+    sync_instruction_memory_range(page, code_size);
+
+    vma_t *new_vma = vma_alloc();
+    if (!new_vma) {
+        address_release(page_paddr);
+        return false;
+    }
+
+    new_vma->vm_start = USER_SIGNAL_TRAMPOLINE_START;
+    new_vma->vm_end = USER_SIGNAL_TRAMPOLINE_END;
+    new_vma->vm_flags = VMA_ANON | VMA_READ | VMA_EXEC;
+    new_vma->vm_type = VMA_TYPE_ANON;
+    new_vma->vm_name = strdup("[sigreturn]");
+    if (!new_vma->vm_name) {
+        vma_free(new_vma);
+        address_release(page_paddr);
+        return false;
+    }
+
+    bool mapped = false;
+    bool inserted = false;
+    bool raced_ok = false;
+
+    spin_lock(&mgr->lock);
+    vma = vma_find(mgr, USER_SIGNAL_TRAMPOLINE_START);
+    if (vma) {
+        raced_ok =
+            vma->vm_start == USER_SIGNAL_TRAMPOLINE_START &&
+            vma->vm_end == USER_SIGNAL_TRAMPOLINE_END &&
+            (vma->vm_flags & (VMA_READ | VMA_EXEC)) == (VMA_READ | VMA_EXEC) &&
+            !(vma->vm_flags & VMA_WRITE);
+        spin_unlock(&mgr->lock);
+        vma_free(new_vma);
+        address_release(page_paddr);
+        return raced_ok;
+    }
+
+    if (vma_find_intersection(mgr, USER_SIGNAL_TRAMPOLINE_START,
+                              USER_SIGNAL_TRAMPOLINE_END)) {
+        spin_unlock(&mgr->lock);
+        vma_free(new_vma);
+        address_release(page_paddr);
+        return false;
+    }
+
+    spin_lock(&task->mm->lock);
+    uint64_t map_ret =
+        map_page_range_mm(task->mm, USER_SIGNAL_TRAMPOLINE_START, page_paddr,
+                          PAGE_SIZE, PT_FLAG_U | PT_FLAG_R | PT_FLAG_X);
+    spin_unlock(&task->mm->lock);
+    mapped = map_ret == 0;
+
+    if (mapped && vma_insert(mgr, new_vma) == 0) {
+        inserted = true;
+        new_vma = NULL;
+    }
+    spin_unlock(&mgr->lock);
+
+    if (!inserted && mapped) {
+        spin_lock(&task->mm->lock);
+        unmap_page_range_mm(task->mm, USER_SIGNAL_TRAMPOLINE_START, PAGE_SIZE);
+        spin_unlock(&task->mm->lock);
+    }
+
+    if (new_vma)
+        vma_free(new_vma);
+    address_release(page_paddr);
+    if (!inserted)
+        return false;
+
+    return true;
+}
+#endif
 
 static inline void signal_set_default(int sig, signal_internal_t action) {
     if (signal_sig_in_range(sig)) {
@@ -696,12 +814,11 @@ static bool signal_x64_setup_frame(task_t *task, struct pt_regs *regs, int sig,
                                saved.rsp);
 
     uint64_t fpstate_bytes = signal_x64_user_fpstate_bytes();
-    const uint8_t *trampoline_code = NULL;
     uint64_t trampoline_bytes = 0;
-    if (!(action->sa_flags & SA_RESTORER) || !action->sa_restorer) {
-        trampoline_code = signal_x64_rt_sigreturn_trampoline;
-        trampoline_bytes = sizeof(signal_x64_rt_sigreturn_trampoline);
-    }
+    bool use_kernel_restorer =
+        !(action->sa_flags & SA_RESTORER) || !action->sa_restorer;
+    if (use_kernel_restorer && !signal_ensure_user_trampoline(task))
+        return false;
 
     signal_x64_frame_layout_t layout;
     signal_x64_build_frame_layout(saved.rsp, fpstate_bytes, trampoline_bytes,
@@ -737,17 +854,14 @@ static bool signal_x64_setup_frame(task_t *task, struct pt_regs *regs, int sig,
     frame_ucontext.uc_mcontext.fpregs = (fpu_context_t *)layout.fpstate_addr;
 
     void *frame_restorer = (void *)action->sa_restorer;
-    if (trampoline_code)
-        frame_restorer = (void *)layout.trampoline_addr;
+    if (use_kernel_restorer)
+        frame_restorer = (void *)USER_SIGNAL_TRAMPOLINE_START;
     if (!signal_x64_copy_fpstate_to_user(task, layout.fpstate_addr,
                                          layout.fpstate_bytes)) {
         return false;
     }
 
-    if ((trampoline_code && !signal_copy_trampoline_to_user(
-                                layout.trampoline_addr, trampoline_code,
-                                layout.trampoline_bytes)) ||
-        copy_to_user((void *)siginfo_addr, info, sizeof(*info)) ||
+    if (copy_to_user((void *)siginfo_addr, info, sizeof(*info)) ||
         copy_to_user((void *)ucontext_addr, &frame_ucontext,
                      sizeof(frame_ucontext)) ||
         copy_to_user((void *)layout.frame_rsp, &frame_restorer,
@@ -1038,12 +1152,11 @@ static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
                                saved.sp_el0);
 
     uint64_t stack_top = saved.sp_el0;
-    const uint8_t *trampoline_code = NULL;
     uint64_t trampoline_bytes = 0;
-    if (!(action->sa_flags & SA_RESTORER) || !action->sa_restorer) {
-        trampoline_code = signal_aarch64_rt_sigreturn_trampoline;
-        trampoline_bytes = sizeof(signal_aarch64_rt_sigreturn_trampoline);
-    }
+    bool use_kernel_restorer =
+        !(action->sa_flags & SA_RESTORER) || !action->sa_restorer;
+    if (use_kernel_restorer && !signal_ensure_user_trampoline(task))
+        return false;
     bool use_altstack =
         (action->sa_flags & SA_ONSTACK) &&
         signal_altstack_config_enabled(&task->signal->altstack) &&
@@ -1059,15 +1172,6 @@ static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
                          sizeof(signal_aarch64_frame_record_t) +
                          trampoline_bytes)
         return false;
-
-    uint64_t trampoline_addr = 0;
-    if (trampoline_bytes != 0) {
-        trampoline_addr = signal_aarch64_align_down(
-            stack_top - trampoline_bytes, sizeof(uint32_t));
-        if (!trampoline_addr)
-            return false;
-        stack_top = trampoline_addr;
-    }
 
     uint64_t frame_record_addr = signal_aarch64_align_down(
         stack_top - sizeof(signal_aarch64_frame_record_t), 16);
@@ -1092,10 +1196,7 @@ static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
         .lr = saved.x30,
     };
 
-    if ((trampoline_code &&
-         !signal_copy_trampoline_to_user(trampoline_addr, trampoline_code,
-                                         trampoline_bytes)) ||
-        copy_to_user((void *)frame_addr, &frame, sizeof(frame)) ||
+    if (copy_to_user((void *)frame_addr, &frame, sizeof(frame)) ||
         copy_to_user((void *)frame_record_addr, &frame_record,
                      sizeof(frame_record))) {
         return false;
@@ -1112,8 +1213,8 @@ static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
         regs->x2 = frame_addr + offsetof(signal_aarch64_frame_t, ucontext);
     }
     regs->x29 = frame_record_addr;
-    regs->x30 =
-        trampoline_code ? trampoline_addr : (uint64_t)action->sa_restorer;
+    regs->x30 = use_kernel_restorer ? USER_SIGNAL_TRAMPOLINE_START
+                                    : (uint64_t)action->sa_restorer;
     regs->cpsr = 0x80000300;
 
     return true;
@@ -1341,12 +1442,11 @@ static bool signal_riscv64_setup_frame(task_t *task, struct pt_regs *regs,
                                saved.sp);
 
     uint64_t stack_top = saved.sp;
-    const uint8_t *trampoline_code = NULL;
     uint64_t trampoline_bytes = 0;
-    if (!(action->sa_flags & SA_RESTORER) || !action->sa_restorer) {
-        trampoline_code = signal_riscv64_rt_sigreturn_trampoline;
-        trampoline_bytes = sizeof(signal_riscv64_rt_sigreturn_trampoline);
-    }
+    bool use_kernel_restorer =
+        !(action->sa_flags & SA_RESTORER) || !action->sa_restorer;
+    if (use_kernel_restorer && !signal_ensure_user_trampoline(task))
+        return false;
     bool use_altstack =
         (action->sa_flags & SA_ONSTACK) &&
         signal_altstack_config_enabled(&task->signal->altstack) &&
@@ -1361,15 +1461,6 @@ static bool signal_riscv64_setup_frame(task_t *task, struct pt_regs *regs,
     if (stack_top <= sizeof(signal_riscv64_frame_t) + trampoline_bytes)
         return false;
 
-    uint64_t trampoline_addr = 0;
-    if (trampoline_bytes != 0) {
-        trampoline_addr = signal_riscv64_align_down(
-            stack_top - trampoline_bytes, sizeof(uint32_t));
-        if (!trampoline_addr)
-            return false;
-        stack_top = trampoline_addr;
-    }
-
     uint64_t frame_addr = signal_riscv64_align_down(
         stack_top - sizeof(signal_riscv64_frame_t), 16);
     if (!frame_addr || frame_addr >= stack_top)
@@ -1382,17 +1473,14 @@ static bool signal_riscv64_setup_frame(task_t *task, struct pt_regs *regs,
     signal_riscv64_fill_ucontext(&frame.ucontext, &saved, restore_mask,
                                  &frame_altstack, task->arch_context->fpu_ctx);
 
-    if ((trampoline_code &&
-         !signal_copy_trampoline_to_user(trampoline_addr, trampoline_code,
-                                         trampoline_bytes)) ||
-        copy_to_user((void *)frame_addr, &frame, sizeof(frame))) {
+    if (copy_to_user((void *)frame_addr, &frame, sizeof(frame))) {
         return false;
     }
 
     *regs = saved;
     regs->sepc = (uint64_t)action->sa_handler;
-    regs->ra =
-        trampoline_code ? trampoline_addr : (uint64_t)action->sa_restorer;
+    regs->ra = use_kernel_restorer ? USER_SIGNAL_TRAMPOLINE_START
+                                   : (uint64_t)action->sa_restorer;
     regs->sp = frame_addr;
     regs->a0 = sig;
     regs->a1 = 0;

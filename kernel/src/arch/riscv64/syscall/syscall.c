@@ -373,7 +373,7 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_AFS_SYSCALL] = (syscall_handle_t)sys_afs_syscall;
     // syscall_handlers[SYS_TUXCALL] = (syscall_handle_t)sys_tuxcall;
     // syscall_handlers[SYS_SECURITY] = (syscall_handle_t)sys_security;
-    syscall_handlers[SYS_GETTID] = (syscall_handle_t)sys_getpid;
+    syscall_handlers[SYS_GETTID] = (syscall_handle_t)sys_gettid;
     // syscall_handlers[SYS_READAHEAD] = (syscall_handle_t)sys_readahead;
     // syscall_handlers[SYS_SETXATTR] = (syscall_handle_t)sys_setxattr;
     // syscall_handlers[SYS_LSETXATTR] = (syscall_handle_t)sys_lsetxattr;
@@ -440,7 +440,7 @@ void syscall_handler_init() {
         (syscall_handle_t)sys_clock_nanosleep;
     syscall_handlers[SYS_EXIT_GROUP] = (syscall_handle_t)task_exit;
     syscall_handlers[SYS_EPOLL_CTL] = (syscall_handle_t)sys_epoll_ctl;
-    // syscall_handlers[SYS_TGKILL] = (syscall_handle_t)sys_tgkill;
+    syscall_handlers[SYS_TGKILL] = (syscall_handle_t)sys_tgkill;
     // syscall_handlers[SYS_UTIMES] = (syscall_handle_t)sys_utimes;
     // syscall_handlers[SYS_VSERVER] = (syscall_handle_t)sys_vserver;
     // syscall_handlers[SYS_MBIND] = (syscall_handle_t)sys_mbind;
@@ -487,8 +487,8 @@ void syscall_handler_init() {
     syscall_handlers[SYS_UNSHARE] = (syscall_handle_t)sys_unshare;
     syscall_handlers[SYS_SET_ROBUST_LIST] =
         (syscall_handle_t)sys_set_robust_list;
-    // syscall_handlers[SYS_GET_ROBUST_LIST] =
-    //     (syscall_handle_t)sys_get_robust_list;
+    syscall_handlers[SYS_GET_ROBUST_LIST] =
+        (syscall_handle_t)sys_get_robust_list;
     // syscall_handlers[SYS_SPLICE] = (syscall_handle_t)sys_splice;
     // syscall_handlers[SYS_TEE] = (syscall_handle_t)sys_tee;
     // syscall_handlers[SYS_SYNC_FILE_RANGE] =
