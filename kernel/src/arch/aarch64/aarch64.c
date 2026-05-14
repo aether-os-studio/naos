@@ -39,6 +39,8 @@ void arch_init() {
 
 void arch_init_after_thread() { pci_brcmstb_init(); }
 
+void arch_init_after_acpi_pci() {}
+
 void arch_input_dev_init() {}
 
 void arch_pause() { asm volatile("nop"); }
@@ -133,3 +135,6 @@ void memory_barrier(void) { __asm__ volatile("dsb sy" : : : "memory"); }
 void read_barrier(void) { __asm__ volatile("dsb ld" : : : "memory"); }
 
 void write_barrier(void) { __asm__ volatile("dsb st" : : : "memory"); }
+
+void arch_enable_user_access() {}
+void arch_disable_user_access() {}

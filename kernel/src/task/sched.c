@@ -91,7 +91,7 @@ static task_t *sched_pick_next_task_internal(sched_rq_t *scheduler,
     task_t *next_task = NULL;
     size_t limit;
 
-    spin_lock(&scheduler->lock);
+    raw_spin_lock(&scheduler->lock);
 
     struct sched_entity *entity = scheduler->curr;
     list_node_t *head = sched_queue_head(scheduler->sched_queue);
@@ -116,7 +116,7 @@ static task_t *sched_pick_next_task_internal(sched_rq_t *scheduler,
         if (__builtin_expect(next && next->on_rq && next->rq == scheduler, 1)) {
             task_t *candidate = next->task;
             if (candidate && candidate->state == TASK_READY &&
-                candidate != excluded) {
+                candidate != excluded && !task_is_on_cpu(candidate)) {
                 scheduler->curr = next;
                 next_task = candidate;
                 goto out;
@@ -130,7 +130,7 @@ static task_t *sched_pick_next_task_internal(sched_rq_t *scheduler,
     next_task = scheduler->idle->task;
 
 out:
-    spin_unlock(&scheduler->lock);
+    raw_spin_unlock(&scheduler->lock);
     return next_task;
 }
 
@@ -141,16 +141,16 @@ void add_sched_entity(task_t *task, sched_rq_t *scheduler) {
     struct sched_entity *entity = task->sched_info;
     entity->task = task;
 
-    spin_lock(&scheduler->lock);
+    raw_spin_lock(&scheduler->lock);
 
     if (entity->on_rq) {
         if (entity->rq == scheduler &&
             sched_queue_contains_locked(scheduler->sched_queue, entity->node)) {
-            spin_unlock(&scheduler->lock);
+            raw_spin_unlock(&scheduler->lock);
             return;
         }
         if (entity->rq && entity->rq != scheduler) {
-            spin_unlock(&scheduler->lock);
+            raw_spin_unlock(&scheduler->lock);
             return;
         }
     }
@@ -160,7 +160,7 @@ void add_sched_entity(task_t *task, sched_rq_t *scheduler) {
 
     list_node_t *node = sched_entity_node_get_or_create(entity);
     if (!node) {
-        spin_unlock(&scheduler->lock);
+        raw_spin_unlock(&scheduler->lock);
         return;
     }
 
@@ -168,7 +168,7 @@ void add_sched_entity(task_t *task, sched_rq_t *scheduler) {
     entity->on_rq = true;
     entity->rq = scheduler;
 
-    spin_unlock(&scheduler->lock);
+    raw_spin_unlock(&scheduler->lock);
 }
 
 void remove_sched_entity(task_t *thread, sched_rq_t *scheduler) {
@@ -177,10 +177,10 @@ void remove_sched_entity(task_t *thread, sched_rq_t *scheduler) {
 
     struct sched_entity *entity = thread->sched_info;
 
-    spin_lock(&scheduler->lock);
+    raw_spin_lock(&scheduler->lock);
 
     if (!entity->on_rq || entity->rq != scheduler) {
-        spin_unlock(&scheduler->lock);
+        raw_spin_unlock(&scheduler->lock);
         return;
     }
 
@@ -198,7 +198,7 @@ void remove_sched_entity(task_t *thread, sched_rq_t *scheduler) {
         scheduler->curr = scheduler->idle;
     }
 
-    spin_unlock(&scheduler->lock);
+    raw_spin_unlock(&scheduler->lock);
 }
 
 task_t *sched_pick_next_task(sched_rq_t *scheduler) {

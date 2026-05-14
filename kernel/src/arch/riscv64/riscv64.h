@@ -1,0 +1,37 @@
+#pragma once
+
+#define ARCH_MAX_IRQ_NUM 1024
+
+#include "arch/riscv64/cpu_local.h"
+#include "arch/riscv64/drivers/serial.h"
+#include "arch/riscv64/irq/ptrace.h"
+#include "arch/riscv64/irq/irq.h"
+#include "arch/riscv64/mm/arch.h"
+#include "arch/riscv64/task/arch_context.h"
+#include "arch/riscv64/smp/smp.h"
+#include "arch/riscv64/syscall/syscall.h"
+#include "arch/riscv64/time/time.h"
+#include "mm/page_table.h"
+
+void arch_early_init();
+void arch_init();
+void arch_init_after_thread();
+void arch_init_after_acpi_pci();
+void arch_input_dev_init();
+
+void arch_pause();
+void arch_wait_for_interrupt();
+
+size_t get_cache_line_size();
+
+void dcache_clean_range(void *addr, size_t size);
+void dcache_invalidate_range(void *addr, size_t size);
+void dcache_flush_range(void *addr, size_t size);
+void sync_instruction_memory_range(void *addr, size_t size);
+
+void memory_barrier(void);
+void read_barrier(void);
+void write_barrier(void);
+
+void arch_enable_user_access();
+void arch_disable_user_access();

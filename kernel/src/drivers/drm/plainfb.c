@@ -1197,6 +1197,12 @@ void drm_plainfb_init() {
         return;
     }
 
+    pci_device_t *fake_gpu_device = pci_devices[0];
+    if (!fake_gpu_device) {
+        printk("plainfb: No PCI device found for GPU\n");
+        return;
+    }
+
     // Create GPU device structure
     plainfb_device_t *gpu_device = malloc(sizeof(plainfb_device_t));
     if (!gpu_device) {
@@ -1275,8 +1281,6 @@ void drm_plainfb_init() {
     }
 
     memset(gpu_device->dumbbuffers, 0, sizeof(gpu_device->dumbbuffers));
-
-    pci_device_t *fake_gpu_device = pci_devices[0];
 
     // Register with DRM subsystem using PCI device
     drm_device_t *drm_dev =

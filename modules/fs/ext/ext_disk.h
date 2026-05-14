@@ -57,6 +57,7 @@
 
 #define EXT4_HUGE_FILE_FL 0x00040000
 #define EXT4_EXTENTS_FL 0x00080000
+#define EXT2_INDEX_FL 0x00001000
 
 #define EXT4_EXT_MAGIC 0xF30A
 #define EXT4_EXT_INIT_MAX_LEN (1u << 15)
@@ -78,6 +79,7 @@
 #define EXT2_FT_FIFO 5
 #define EXT2_FT_SOCK 6
 #define EXT2_FT_SYMLINK 7
+#define EXT4_FT_DIR_CSUM 0xDE
 
 typedef struct ext_super_block {
     uint32_t s_inodes_count;
@@ -252,6 +254,14 @@ typedef struct ext_dir_entry {
     uint8_t file_type;
     char name[];
 } __attribute__((packed)) ext_dir_entry_t;
+
+typedef struct ext_dir_entry_tail {
+    uint32_t det_reserved_zero1;
+    uint16_t det_rec_len;
+    uint8_t det_reserved_zero2;
+    uint8_t det_reserved_ft;
+    uint32_t det_checksum;
+} __attribute__((packed)) ext_dir_entry_tail_t;
 
 typedef struct ext_extent {
     uint32_t ee_block;

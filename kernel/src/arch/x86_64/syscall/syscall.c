@@ -340,7 +340,7 @@ uint64_t sys_uname(uint64_t arg1) {
     strcpy(utsname.machine, machine);
     if (fake_linux) {
         strcpy(utsname.sysname, "Linux");
-        strcpy(utsname.release, "4.0.0-aether");
+        strcpy(utsname.release, "6.0.0-aether");
         strcpy(utsname.version,
                "#1 SMP PREEMPT_DYNAMIC " __DATE__ " " __TIME__);
     } else {

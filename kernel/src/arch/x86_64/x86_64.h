@@ -23,6 +23,7 @@
 void arch_early_init();
 void arch_init();
 void arch_init_after_thread();
+void arch_init_after_acpi_pci();
 void arch_input_dev_init();
 
 static inline void arch_pause() { asm volatile("pause"); }
@@ -39,3 +40,6 @@ void memory_barrier(void);
 void read_barrier(void);
 
 void write_barrier(void);
+
+void arch_enable_user_access();
+void arch_disable_user_access();

@@ -47,6 +47,9 @@ typedef struct ext_mount_ctx {
     uint64_t inodes_count;
     bool has_extents;
     bool has_64bit;
+    bool has_metadata_csum;
+    bool has_dir_index;
+    uint32_t checksum_seed;
     ext_map_cache_entry_t *map_cache_entries;
     uint32_t map_cache_entry_count;
 } ext_mount_ctx_t;
@@ -96,6 +99,15 @@ typedef struct ext_dir_lookup {
     uint16_t prev_rec_len;
 } ext_dir_lookup_t;
 
+typedef struct ext_dir_block_ctx {
+    uint64_t pblock;
+    uint32_t lblock;
+    uint32_t data_size;
+    bool indexed_root;
+    bool has_tail;
+    ext_dir_entry_tail_t *tail;
+} ext_dir_block_ctx_t;
+
 #define EXT_EXTENT_MAX_DEPTH 5u
 
 typedef struct ext_extent_path {
@@ -109,6 +121,13 @@ static int ext_dev_read(ext_mount_ctx_t *fs, uint64_t offset, void *buf,
                         size_t size);
 static int ext_dev_write(ext_mount_ctx_t *fs, uint64_t offset, const void *buf,
                          size_t size);
+static int ext_read_block(ext_mount_ctx_t *fs, uint64_t block, void *buf);
+static int ext_write_block(ext_mount_ctx_t *fs, uint64_t block,
+                           const void *buf);
+static int ext_read_inode(ext_mount_ctx_t *fs, uint32_t ino,
+                          ext_inode_disk_t *inode);
+static int ext_write_inode(ext_mount_ctx_t *fs, uint32_t ino,
+                           const ext_inode_disk_t *inode);
 static int ext_inode_get_block_locked(ext_mount_ctx_t *fs, uint32_t ino,
                                       ext_inode_disk_t *inode,
                                       uint32_t logical_block, bool create,
@@ -202,12 +221,249 @@ static bool ext_inode_uses_extents(const ext_inode_disk_t *inode) {
     return inode && (inode->i_flags & EXT4_EXTENTS_FL);
 }
 
+static bool ext_inode_is_indexed_dir(const ext_inode_disk_t *inode) {
+    return inode && (inode->i_flags & EXT2_INDEX_FL) &&
+           ((inode->i_mode & S_IFMT) == EXT2_S_IFDIR);
+}
+
 static size_t ext_inode_extra_capacity(ext_mount_ctx_t *fs) {
     if (!fs || fs->inode_size <= EXT2_GOOD_OLD_INODE_SIZE)
         return 0;
 
     return MIN((size_t)fs->inode_size - EXT2_GOOD_OLD_INODE_SIZE,
                sizeof(ext_inode_disk_t) - EXT2_GOOD_OLD_INODE_SIZE);
+}
+
+static uint32_t ext_crc32c_update(uint32_t crc, const void *buf, size_t len) {
+    static uint32_t table[256];
+    static bool table_ready;
+    const uint8_t *p = buf;
+
+    if (!table_ready) {
+        for (uint32_t i = 0; i < 256; i++) {
+            uint32_t v = i;
+            for (uint32_t bit = 0; bit < 8; bit++)
+                v = (v & 1) ? (v >> 1) ^ 0x82F63B78u : (v >> 1);
+            table[i] = v;
+        }
+        table_ready = true;
+    }
+
+    crc = ~crc;
+    while (len--)
+        crc = table[(crc ^ *p++) & 0xFFu] ^ (crc >> 8);
+    return ~crc;
+}
+
+static uint32_t ext_metadata_checksum_seed(const ext_super_block_t *sb) {
+    uint32_t crc = 0;
+
+    crc = ext_crc32c_update(crc, sb->s_uuid, sizeof(sb->s_uuid));
+    return crc;
+}
+
+static bool ext_dir_has_tail(ext_mount_ctx_t *fs, const ext_inode_disk_t *inode,
+                             uint32_t data_size) {
+    return fs && inode && fs->has_metadata_csum &&
+           ((inode->i_mode & S_IFMT) == EXT2_S_IFDIR) &&
+           data_size >= sizeof(ext_dir_entry_tail_t);
+}
+
+static ext_dir_entry_tail_t *ext_dir_tail_ptr(const ext_dir_block_ctx_t *ctx,
+                                              uint8_t *buf) {
+    if (!ctx || !ctx->has_tail)
+        return NULL;
+    return (ext_dir_entry_tail_t *)(buf + ctx->data_size);
+}
+
+static uint32_t ext_group_checksum_offset(ext_mount_ctx_t *fs, uint32_t group) {
+    uint64_t gdt_block = fs->block_size == 1024 ? 2 : 1;
+    return (uint32_t)(gdt_block * fs->block_size +
+                      (uint64_t)group * fs->desc_size);
+}
+
+static void ext_group_descriptor_checksum_set(ext_mount_ctx_t *fs,
+                                              uint32_t group) {
+    ext_group_desc_t tmp;
+    size_t desc_len;
+    uint32_t crc = 0;
+    uint32_t group_le = group;
+
+    if (!fs || !fs->has_metadata_csum || group >= fs->group_count)
+        return;
+
+    tmp = fs->groups[group];
+    tmp.bg_checksum = 0;
+    desc_len = MIN((size_t)fs->desc_size, sizeof(tmp));
+    crc = ext_crc32c_update(fs->checksum_seed, &group_le, sizeof(group_le));
+    crc = ext_crc32c_update(crc, &tmp, desc_len);
+    fs->groups[group].bg_checksum = (uint16_t)crc;
+}
+
+static void ext_super_checksum_set(ext_mount_ctx_t *fs) {
+    uint32_t crc;
+    size_t checksum_off;
+
+    if (!fs || !fs->has_metadata_csum)
+        return;
+
+    fs->sb.s_checksum = 0;
+    checksum_off = offsetof(ext_super_block_t, s_checksum);
+    crc = ext_crc32c_update(fs->checksum_seed, &fs->sb, checksum_off);
+    fs->sb.s_checksum = crc;
+}
+
+static void ext_inode_checksum_set(ext_mount_ctx_t *fs, uint32_t ino,
+                                   uint8_t *raw) {
+    uint32_t crc;
+    uint32_t ino_le = ino;
+    uint32_t gen = 0;
+    ext_inode_disk_t *inode;
+
+    if (!fs || !raw || !fs->has_metadata_csum)
+        return;
+
+    inode = (ext_inode_disk_t *)raw;
+    gen = inode->i_generation;
+    inode->i_checksum_lo = 0;
+    inode->i_checksum_hi = 0;
+    crc = ext_crc32c_update(fs->checksum_seed, &ino_le, sizeof(ino_le));
+    crc = ext_crc32c_update(crc, &gen, sizeof(gen));
+    crc = ext_crc32c_update(crc, raw, fs->inode_size);
+    inode->i_checksum_lo = (uint16_t)crc;
+    if (fs->inode_size > EXT2_GOOD_OLD_INODE_SIZE)
+        inode->i_checksum_hi = (uint16_t)(crc >> 16);
+}
+
+static uint32_t ext_bitmap_checksum(ext_mount_ctx_t *fs, uint32_t group,
+                                    const void *buf) {
+    uint32_t crc;
+    uint32_t group_le = group;
+
+    crc = ext_crc32c_update(fs->checksum_seed, &group_le, sizeof(group_le));
+    crc = ext_crc32c_update(crc, buf, fs->block_size);
+    return crc;
+}
+
+static void ext_bitmap_checksum_set(ext_mount_ctx_t *fs, uint32_t group,
+                                    bool inode_bitmap, const void *buf) {
+    uint32_t crc;
+
+    if (!fs || !buf || !fs->has_metadata_csum || group >= fs->group_count)
+        return;
+
+    crc = ext_bitmap_checksum(fs, group, buf);
+    if (inode_bitmap) {
+        fs->groups[group].bg_inode_bitmap_csum_lo = (uint16_t)crc;
+        fs->groups[group].bg_inode_bitmap_csum_hi = (uint16_t)(crc >> 16);
+    } else {
+        fs->groups[group].bg_block_bitmap_csum_lo = (uint16_t)crc;
+        fs->groups[group].bg_block_bitmap_csum_hi = (uint16_t)(crc >> 16);
+    }
+}
+
+static uint32_t ext_dir_block_checksum(ext_mount_ctx_t *fs, uint32_t ino,
+                                       const ext_inode_disk_t *inode,
+                                       uint32_t logical_block,
+                                       const uint8_t *buf, uint32_t data_size) {
+    uint32_t crc;
+    uint32_t ino_le = ino;
+    uint32_t gen = inode ? inode->i_generation : 0;
+    uint32_t lblock_le = logical_block;
+
+    crc = ext_crc32c_update(fs->checksum_seed, &ino_le, sizeof(ino_le));
+    crc = ext_crc32c_update(crc, &gen, sizeof(gen));
+    crc = ext_crc32c_update(crc, &lblock_le, sizeof(lblock_le));
+    crc = ext_crc32c_update(crc, buf, data_size);
+    return crc;
+}
+
+static void ext_dir_block_checksum_set(ext_mount_ctx_t *fs, uint32_t ino,
+                                       const ext_inode_disk_t *inode,
+                                       const ext_dir_block_ctx_t *ctx,
+                                       uint8_t *buf) {
+    ext_dir_entry_tail_t *tail;
+
+    if (!fs || !ctx || !buf || !ctx->has_tail)
+        return;
+
+    tail = ext_dir_tail_ptr(ctx, buf);
+    tail->det_reserved_zero1 = 0;
+    tail->det_rec_len = sizeof(*tail);
+    tail->det_reserved_zero2 = 0;
+    tail->det_reserved_ft = EXT4_FT_DIR_CSUM;
+    tail->det_checksum = ext_dir_block_checksum(fs, ino, inode, ctx->lblock,
+                                                buf, ctx->data_size);
+}
+
+static int ext_dir_block_prepare(ext_mount_ctx_t *fs, uint32_t dir_ino,
+                                 ext_inode_disk_t *dir_inode, uint32_t lblock,
+                                 uint8_t *buf, ext_dir_block_ctx_t *ctx) {
+    uint64_t pblock = 0;
+    uint32_t data_off = 0;
+    uint32_t data_size = fs->block_size;
+    int ret;
+
+    if (!fs || !dir_inode || !buf || !ctx)
+        return -EINVAL;
+
+    ret = ext_inode_get_block_locked(fs, dir_ino, dir_inode, lblock, false,
+                                     &pblock);
+    if (ret)
+        return ret;
+
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->pblock = pblock;
+    ctx->lblock = lblock;
+    if (!pblock)
+        return 0;
+
+    ret = ext_read_block(fs, pblock, buf);
+    if (ret)
+        return ret;
+
+    if (ext_inode_is_indexed_dir(dir_inode) && lblock == 0) {
+        ext_dir_entry_t *dot = (ext_dir_entry_t *)buf;
+        ext_dir_entry_t *dotdot;
+
+        if (dot->rec_len < 8 || dot->rec_len > fs->block_size)
+            return -EIO;
+        dotdot = (ext_dir_entry_t *)(buf + dot->rec_len);
+        if ((uint8_t *)dotdot + sizeof(*dotdot) > buf + fs->block_size ||
+            dotdot->rec_len < 8 ||
+            dot->rec_len + dotdot->rec_len > fs->block_size)
+            return -EIO;
+        data_off = dot->rec_len + dotdot->rec_len;
+        ctx->indexed_root = true;
+    }
+
+    if (ext_dir_has_tail(fs, dir_inode, fs->block_size - data_off)) {
+        ext_dir_entry_tail_t *tail =
+            (ext_dir_entry_tail_t *)(buf + fs->block_size - sizeof(*tail));
+        if (tail->det_reserved_zero1 == 0 &&
+            tail->det_rec_len == sizeof(*tail) &&
+            tail->det_reserved_zero2 == 0 &&
+            tail->det_reserved_ft == EXT4_FT_DIR_CSUM) {
+            ctx->has_tail = true;
+            ctx->tail = tail;
+            data_size = fs->block_size - sizeof(*tail);
+        }
+    }
+
+    ctx->data_size = data_size;
+    return 0;
+}
+
+static int ext_dir_block_write_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
+                                      const ext_inode_disk_t *dir_inode,
+                                      const ext_dir_block_ctx_t *ctx,
+                                      uint8_t *buf) {
+    if (!fs || !ctx || !buf || !ctx->pblock)
+        return -EINVAL;
+
+    if (ctx->has_tail)
+        ext_dir_block_checksum_set(fs, dir_ino, dir_inode, ctx, buf);
+    return ext_write_block(fs, ctx->pblock, buf);
 }
 
 static void ext_inode_init_large_fields(ext_mount_ctx_t *fs,
@@ -652,6 +908,7 @@ static int ext_write_block_cached_locked(ext_mount_ctx_t *fs, uint64_t block,
 
 static int ext_write_super(ext_mount_ctx_t *fs) {
     fs->sb.s_wtime = (uint32_t)ext_now();
+    ext_super_checksum_set(fs);
     return ext_dev_write(fs, 1024, &fs->sb, sizeof(fs->sb));
 }
 
@@ -659,6 +916,7 @@ static int ext_write_group_desc(ext_mount_ctx_t *fs, uint32_t group) {
     uint64_t gdt_block = fs->block_size == 1024 ? 2 : 1;
     uint64_t offset =
         gdt_block * fs->block_size + (uint64_t)group * fs->desc_size;
+    ext_group_descriptor_checksum_set(fs, group);
     return ext_dev_write(fs, offset, &fs->groups[group],
                          MIN((size_t)fs->desc_size, sizeof(ext_group_desc_t)));
 }
@@ -706,6 +964,7 @@ static int ext_write_inode(ext_mount_ctx_t *fs, uint32_t ino,
     }
 
     memcpy(raw, inode, MIN((size_t)fs->inode_size, sizeof(*inode)));
+    ext_inode_checksum_set(fs, ino, raw);
     ret = ext_dev_write(fs, offset, raw, fs->inode_size);
     free(raw);
     return ret;
@@ -778,34 +1037,33 @@ static int ext_lookup_name_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
     uint32_t blocks =
         (uint32_t)((dir_size + fs->block_size - 1) / fs->block_size);
     uint8_t *buf = calloc(1, fs->block_size);
+    ext_dir_block_ctx_t block_ctx;
     if (!buf)
         return -ENOMEM;
 
     for (uint32_t lblock = 0; lblock < blocks; lblock++) {
-        uint64_t pblock = 0;
-        ret = ext_inode_get_block_locked(fs, dir_ino, &dir_inode, lblock, false,
-                                         &pblock);
+        ret = ext_dir_block_prepare(fs, dir_ino, &dir_inode, lblock, buf,
+                                    &block_ctx);
         if (ret) {
             free(buf);
             return ret;
         }
-        if (!pblock)
+        if (!block_ctx.pblock)
             continue;
-
-        ret = ext_read_block(fs, pblock, buf);
-        if (ret) {
-            free(buf);
-            return ret;
-        }
 
         bool has_prev = false;
         uint16_t prev_off = 0;
         uint16_t prev_rec = 0;
-        for (uint32_t off = 0;
-             off + sizeof(ext_dir_entry_t) <= fs->block_size;) {
+        uint32_t off = block_ctx.indexed_root ? 0 : 0;
+        if (block_ctx.indexed_root) {
+            ext_dir_entry_t *dot = (ext_dir_entry_t *)buf;
+            ext_dir_entry_t *dotdot = (ext_dir_entry_t *)(buf + dot->rec_len);
+            off = dot->rec_len + dotdot->rec_len;
+        }
+        for (; off + sizeof(ext_dir_entry_t) <= block_ctx.data_size;) {
             ext_dir_entry_t *entry = (ext_dir_entry_t *)(buf + off);
             if (entry->rec_len < 8 || (entry->rec_len & 3) ||
-                off + entry->rec_len > fs->block_size) {
+                off + entry->rec_len > block_ctx.data_size) {
                 free(buf);
                 return -EIO;
             }
@@ -838,6 +1096,8 @@ static int ext_lookup_name_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
 
 static int ext_bitmap_update(ext_mount_ctx_t *fs, uint64_t block, uint32_t bit,
                              bool set) {
+    uint32_t group;
+    bool is_inode_bitmap = false;
     uint8_t *bitmap = calloc(1, fs->block_size);
     if (!bitmap)
         return -ENOMEM;
@@ -851,6 +1111,16 @@ static int ext_bitmap_update(ext_mount_ctx_t *fs, uint64_t block, uint32_t bit,
         bitmap[bit >> 3] |= mask;
     else
         bitmap[bit >> 3] &= (uint8_t)~mask;
+    for (group = 0; group < fs->group_count; group++) {
+        if (ext_group_block_bitmap(&fs->groups[group]) == block)
+            break;
+        if (ext_group_inode_bitmap(&fs->groups[group]) == block) {
+            is_inode_bitmap = true;
+            break;
+        }
+    }
+    if (group < fs->group_count)
+        ext_bitmap_checksum_set(fs, group, is_inode_bitmap, bitmap);
     ret = ext_write_block(fs, block, bitmap);
     free(bitmap);
     return ret;
@@ -896,6 +1166,7 @@ static int ext_alloc_inode_locked(ext_mount_ctx_t *fs, uint16_t mode,
             }
 
             bitmap[bit >> 3] |= (uint8_t)(1u << (bit & 7));
+            ext_bitmap_checksum_set(fs, group, true, bitmap);
             ret = ext_write_block(fs, ext_group_inode_bitmap(gd), bitmap);
             free(bitmap);
             if (ret)
@@ -1001,6 +1272,7 @@ static int ext_alloc_blocks_locked(ext_mount_ctx_t *fs, uint32_t prefer_group,
             for (uint32_t i = 0; i < run; i++)
                 bitmap[(bit + i) >> 3] |= (uint8_t)(1u << ((bit + i) & 7));
 
+            ext_bitmap_checksum_set(fs, group, false, bitmap);
             ret = ext_write_block(fs, ext_group_block_bitmap(gd), bitmap);
             free(bitmap);
             if (ret)
@@ -2352,36 +2624,35 @@ static int ext_dir_find_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
     uint32_t blocks =
         (uint32_t)((dir_size + fs->block_size - 1) / fs->block_size);
     uint8_t *buf = calloc(1, fs->block_size);
+    ext_dir_block_ctx_t block_ctx;
     if (!buf)
         return -ENOMEM;
 
     memset(result, 0, sizeof(*result));
 
     for (uint32_t lblock = 0; lblock < blocks; lblock++) {
-        uint64_t pblock = 0;
-        int ret = ext_inode_get_block_locked(fs, dir_ino, dir_inode, lblock,
-                                             false, &pblock);
+        int ret = ext_dir_block_prepare(fs, dir_ino, dir_inode, lblock, buf,
+                                        &block_ctx);
         if (ret) {
             free(buf);
             return ret;
         }
-        if (!pblock)
+        if (!block_ctx.pblock)
             continue;
-
-        ret = ext_read_block(fs, pblock, buf);
-        if (ret) {
-            free(buf);
-            return ret;
-        }
 
         bool has_prev = false;
         uint16_t prev_off = 0;
         uint16_t prev_rec = 0;
-        for (uint32_t off = 0;
-             off + sizeof(ext_dir_entry_t) <= fs->block_size;) {
+        uint32_t off = 0;
+        if (block_ctx.indexed_root) {
+            ext_dir_entry_t *dot = (ext_dir_entry_t *)buf;
+            ext_dir_entry_t *dotdot = (ext_dir_entry_t *)(buf + dot->rec_len);
+            off = dot->rec_len + dotdot->rec_len;
+        }
+        for (; off + sizeof(ext_dir_entry_t) <= block_ctx.data_size;) {
             ext_dir_entry_t *entry = (ext_dir_entry_t *)(buf + off);
             if (entry->rec_len < 8 || (entry->rec_len & 3) ||
-                off + entry->rec_len > fs->block_size) {
+                off + entry->rec_len > block_ctx.data_size) {
                 free(buf);
                 return -EIO;
             }
@@ -2432,31 +2703,30 @@ static int ext_dir_add_entry_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
     uint32_t blocks =
         (uint32_t)((dir_size + fs->block_size - 1) / fs->block_size);
     uint8_t *buf = calloc(1, fs->block_size);
+    ext_dir_block_ctx_t block_ctx;
     if (!buf)
         return -ENOMEM;
 
     for (uint32_t lblock = 0; lblock < blocks; lblock++) {
-        uint64_t pblock = 0;
-        ret = ext_inode_get_block_locked(fs, dir_ino, dir_inode, lblock, false,
-                                         &pblock);
+        ret = ext_dir_block_prepare(fs, dir_ino, dir_inode, lblock, buf,
+                                    &block_ctx);
         if (ret) {
             free(buf);
             return ret;
         }
-        if (!pblock)
+        if (!block_ctx.pblock)
             continue;
 
-        ret = ext_read_block(fs, pblock, buf);
-        if (ret) {
-            free(buf);
-            return ret;
+        uint32_t off = 0;
+        if (block_ctx.indexed_root) {
+            ext_dir_entry_t *dot = (ext_dir_entry_t *)buf;
+            ext_dir_entry_t *dotdot = (ext_dir_entry_t *)(buf + dot->rec_len);
+            off = dot->rec_len + dotdot->rec_len;
         }
-
-        for (uint32_t off = 0;
-             off + sizeof(ext_dir_entry_t) <= fs->block_size;) {
+        for (; off + sizeof(ext_dir_entry_t) <= block_ctx.data_size;) {
             ext_dir_entry_t *entry = (ext_dir_entry_t *)(buf + off);
             if (entry->rec_len < 8 || (entry->rec_len & 3) ||
-                off + entry->rec_len > fs->block_size) {
+                off + entry->rec_len > block_ctx.data_size) {
                 free(buf);
                 return -EIO;
             }
@@ -2469,7 +2739,8 @@ static int ext_dir_add_entry_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
                 entry->name_len = (uint8_t)name_len;
                 entry->file_type = file_type;
                 memcpy(entry->name, name, name_len);
-                ret = ext_write_block(fs, pblock, buf);
+                ret = ext_dir_block_write_locked(fs, dir_ino, dir_inode,
+                                                 &block_ctx, buf);
                 if (ret) {
                     free(buf);
                     return ret;
@@ -2492,7 +2763,8 @@ static int ext_dir_add_entry_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
                     new_entry->name_len = (uint8_t)name_len;
                     new_entry->file_type = file_type;
                     memcpy(new_entry->name, name, name_len);
-                    ret = ext_write_block(fs, pblock, buf);
+                    ret = ext_dir_block_write_locked(fs, dir_ino, dir_inode,
+                                                     &block_ctx, buf);
                     if (ret) {
                         free(buf);
                         return ret;
@@ -2521,7 +2793,17 @@ static int ext_dir_add_entry_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
     entry->name_len = (uint8_t)name_len;
     entry->file_type = file_type;
     memcpy(entry->name, name, name_len);
-    ret = ext_write_block(fs, pblock, buf);
+    memset(&block_ctx, 0, sizeof(block_ctx));
+    block_ctx.pblock = pblock;
+    block_ctx.lblock = new_lblock;
+    block_ctx.data_size = fs->block_size;
+    if (ext_dir_has_tail(fs, dir_inode, fs->block_size)) {
+        entry->rec_len =
+            (uint16_t)(fs->block_size - sizeof(ext_dir_entry_tail_t));
+        block_ctx.data_size = fs->block_size - sizeof(ext_dir_entry_tail_t);
+        block_ctx.has_tail = true;
+    }
+    ret = ext_dir_block_write_locked(fs, dir_ino, dir_inode, &block_ctx, buf);
     if (ret) {
         free(buf);
         return ret;
@@ -2547,20 +2829,19 @@ static int ext_dir_remove_entry_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
         return -ENOENT;
 
     uint8_t *buf = calloc(1, fs->block_size);
+    ext_dir_block_ctx_t block_ctx;
     if (!buf)
         return -ENOMEM;
 
-    uint64_t pblock = 0;
-    ret = ext_inode_get_block_locked(fs, dir_ino, dir_inode, lookup.lblock,
-                                     false, &pblock);
+    ret = ext_dir_block_prepare(fs, dir_ino, dir_inode, lookup.lblock, buf,
+                                &block_ctx);
     if (ret) {
         free(buf);
         return ret;
     }
-    ret = ext_read_block(fs, pblock, buf);
-    if (ret) {
+    if (!block_ctx.pblock) {
         free(buf);
-        return ret;
+        return -EIO;
     }
 
     ext_dir_entry_t *entry = (ext_dir_entry_t *)(buf + lookup.offset);
@@ -2572,7 +2853,7 @@ static int ext_dir_remove_entry_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
         entry->rec_len = lookup.rec_len;
     }
 
-    ret = ext_write_block(fs, pblock, buf);
+    ret = ext_dir_block_write_locked(fs, dir_ino, dir_inode, &block_ctx, buf);
     free(buf);
     if (ret)
         return ret;
@@ -2596,28 +2877,26 @@ static int ext_dir_replace_entry_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
         return -ENOENT;
 
     uint8_t *buf = calloc(1, fs->block_size);
+    ext_dir_block_ctx_t block_ctx;
     if (!buf)
         return -ENOMEM;
 
-    uint64_t pblock = 0;
-    ret = ext_inode_get_block_locked(fs, dir_ino, dir_inode, lookup.lblock,
-                                     false, &pblock);
+    ret = ext_dir_block_prepare(fs, dir_ino, dir_inode, lookup.lblock, buf,
+                                &block_ctx);
     if (ret) {
         free(buf);
         return ret;
     }
-
-    ret = ext_read_block(fs, pblock, buf);
-    if (ret) {
+    if (!block_ctx.pblock) {
         free(buf);
-        return ret;
+        return -EIO;
     }
 
     ext_dir_entry_t *entry = (ext_dir_entry_t *)(buf + lookup.offset);
     entry->inode = child_ino;
     entry->file_type = file_type;
 
-    ret = ext_write_block(fs, pblock, buf);
+    ret = ext_dir_block_write_locked(fs, dir_ino, dir_inode, &block_ctx, buf);
     free(buf);
     if (ret)
         return ret;
@@ -2632,29 +2911,29 @@ static int ext_dir_is_empty_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
     uint32_t blocks =
         (uint32_t)((dir_size + fs->block_size - 1) / fs->block_size);
     uint8_t *buf = calloc(1, fs->block_size);
+    ext_dir_block_ctx_t block_ctx;
     if (!buf)
         return -ENOMEM;
 
     for (uint32_t lblock = 0; lblock < blocks; lblock++) {
-        uint64_t pblock = 0;
-        int ret = ext_inode_get_block_locked(fs, dir_ino, dir_inode, lblock,
-                                             false, &pblock);
+        int ret = ext_dir_block_prepare(fs, dir_ino, dir_inode, lblock, buf,
+                                        &block_ctx);
         if (ret) {
             free(buf);
             return ret;
         }
-        if (!pblock)
+        if (!block_ctx.pblock)
             continue;
-        ret = ext_read_block(fs, pblock, buf);
-        if (ret) {
-            free(buf);
-            return ret;
+        uint32_t off = 0;
+        if (block_ctx.indexed_root) {
+            ext_dir_entry_t *dot = (ext_dir_entry_t *)buf;
+            ext_dir_entry_t *dotdot = (ext_dir_entry_t *)(buf + dot->rec_len);
+            off = dot->rec_len + dotdot->rec_len;
         }
-        for (uint32_t off = 0;
-             off + sizeof(ext_dir_entry_t) <= fs->block_size;) {
+        for (; off + sizeof(ext_dir_entry_t) <= block_ctx.data_size;) {
             ext_dir_entry_t *entry = (ext_dir_entry_t *)(buf + off);
             if (entry->rec_len < 8 || (entry->rec_len & 3) ||
-                off + entry->rec_len > fs->block_size) {
+                off + entry->rec_len > block_ctx.data_size) {
                 free(buf);
                 return -EIO;
             }
@@ -2770,29 +3049,24 @@ static int ext_dir_set_dotdot_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
     uint32_t blocks =
         (uint32_t)((dir_size + fs->block_size - 1) / fs->block_size);
     uint8_t *buf = calloc(1, fs->block_size);
+    ext_dir_block_ctx_t block_ctx;
     if (!buf)
         return -ENOMEM;
 
     for (uint32_t lblock = 0; lblock < blocks; lblock++) {
-        uint64_t pblock = 0;
-        int ret = ext_inode_get_block_locked(fs, dir_ino, dir_inode, lblock,
-                                             false, &pblock);
+        int ret = ext_dir_block_prepare(fs, dir_ino, dir_inode, lblock, buf,
+                                        &block_ctx);
         if (ret) {
             free(buf);
             return ret;
         }
-        if (!pblock)
+        if (!block_ctx.pblock)
             continue;
-        ret = ext_read_block(fs, pblock, buf);
-        if (ret) {
-            free(buf);
-            return ret;
-        }
-        for (uint32_t off = 0;
-             off + sizeof(ext_dir_entry_t) <= fs->block_size;) {
+        uint32_t off = 0;
+        for (; off + sizeof(ext_dir_entry_t) <= block_ctx.data_size;) {
             ext_dir_entry_t *entry = (ext_dir_entry_t *)(buf + off);
             if (entry->rec_len < 8 || (entry->rec_len & 3) ||
-                off + entry->rec_len > fs->block_size) {
+                off + entry->rec_len > block_ctx.data_size) {
                 free(buf);
                 return -EIO;
             }
@@ -2800,7 +3074,8 @@ static int ext_dir_set_dotdot_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
                              entry->name[0] == '.' && entry->name[1] == '.';
             if (is_dotdot) {
                 entry->inode = new_parent_ino;
-                ret = ext_write_block(fs, pblock, buf);
+                ret = ext_dir_block_write_locked(fs, dir_ino, dir_inode,
+                                                 &block_ctx, buf);
                 free(buf);
                 return ret;
             }
@@ -2994,6 +3269,7 @@ static int ext_create_inode_common_locked(
 
     if ((mode & S_IFMT) == EXT2_S_IFDIR) {
         uint64_t block = 0;
+        ext_dir_block_ctx_t block_ctx = {0};
         ret = ext_inode_get_block_locked(fs, ino, &disk_inode, 0, true, &block);
         if (ret)
             goto rollback_inode;
@@ -3019,7 +3295,16 @@ static int ext_create_inode_common_locked(
         dotdot->name[0] = '.';
         dotdot->name[1] = '.';
 
-        ret = ext_write_block(fs, block, buf);
+        block_ctx.pblock = block;
+        block_ctx.lblock = 0;
+        block_ctx.data_size = fs->block_size;
+        if (ext_dir_has_tail(fs, &disk_inode, fs->block_size)) {
+            dotdot->rec_len = (uint16_t)(fs->block_size - dot->rec_len -
+                                         sizeof(ext_dir_entry_tail_t));
+            block_ctx.data_size = fs->block_size - sizeof(ext_dir_entry_tail_t);
+            block_ctx.has_tail = true;
+        }
+        ret = ext_dir_block_write_locked(fs, ino, &disk_inode, &block_ctx, buf);
         free(buf);
         if (ret)
             goto rollback_inode_release;
@@ -3160,10 +3445,18 @@ static int ext_mount_prepare_locked(ext_mount_ctx_t *fs, uint64_t dev) {
         (fs->sb.s_feature_incompat & EXT4_FEATURE_INCOMPAT_EXTENTS) != 0;
     fs->has_64bit =
         (fs->sb.s_feature_incompat & EXT4_FEATURE_INCOMPAT_64BIT) != 0;
+    fs->has_metadata_csum = (fs->sb.s_feature_ro_compat &
+                             EXT4_FEATURE_RO_COMPAT_METADATA_CSUM) != 0;
+    fs->has_dir_index =
+        (fs->sb.s_feature_compat & EXT2_FEATURE_COMPAT_DIR_INDEX) != 0;
     fs->ptrs_per_block = fs->block_size / sizeof(uint32_t);
     fs->blocks_count = (uint64_t)fs->sb.s_blocks_count_lo |
                        ((uint64_t)fs->sb.s_blocks_count_hi << 32);
     fs->inodes_count = fs->sb.s_inodes_count;
+    fs->checksum_seed =
+        (fs->sb.s_feature_incompat & EXT4_FEATURE_INCOMPAT_CSUM_SEED)
+            ? fs->sb.s_checksum_seed
+            : ext_metadata_checksum_seed(&fs->sb);
 
     if (fs->inode_size < EXT2_GOOD_OLD_INODE_SIZE ||
         fs->inode_size > fs->block_size || (fs->inode_size & 3))
@@ -3179,14 +3472,17 @@ static int ext_mount_prepare_locked(ext_mount_ctx_t *fs, uint64_t dev) {
                                  fs->sb.s_blocks_per_group);
 
     compat_ok = EXT3_FEATURE_COMPAT_HAS_JOURNAL | EXT2_FEATURE_COMPAT_EXT_ATTR |
-                EXT2_FEATURE_COMPAT_RESIZE_INODE;
+                EXT2_FEATURE_COMPAT_RESIZE_INODE |
+                EXT2_FEATURE_COMPAT_DIR_INDEX;
     ro_ok =
         EXT2_FEATURE_RO_COMPAT_SPARSE_SUPER |
         EXT2_FEATURE_RO_COMPAT_LARGE_FILE | EXT4_FEATURE_RO_COMPAT_HUGE_FILE |
-        EXT4_FEATURE_RO_COMPAT_DIR_NLINK | EXT4_FEATURE_RO_COMPAT_EXTRA_ISIZE;
+        EXT4_FEATURE_RO_COMPAT_DIR_NLINK | EXT4_FEATURE_RO_COMPAT_EXTRA_ISIZE |
+        EXT4_FEATURE_RO_COMPAT_METADATA_CSUM;
     incompat_ok = EXT2_FEATURE_INCOMPAT_FILETYPE |
                   EXT4_FEATURE_INCOMPAT_EXTENTS | EXT4_FEATURE_INCOMPAT_64BIT |
-                  EXT4_FEATURE_INCOMPAT_FLEX_BG;
+                  EXT4_FEATURE_INCOMPAT_FLEX_BG |
+                  EXT4_FEATURE_INCOMPAT_CSUM_SEED;
     if ((fs->sb.s_feature_compat & ~compat_ok) ||
         (fs->sb.s_feature_ro_compat & ~ro_ok) ||
         (fs->sb.s_feature_incompat & ~incompat_ok))
@@ -3221,6 +3517,7 @@ static int ext_iterate_dir_locked(struct vfs_inode *dir,
     uint64_t dir_size;
     uint32_t blocks;
     uint8_t *buf;
+    ext_dir_block_ctx_t block_ctx;
     loff_t index = 0;
     int ret;
 
@@ -3237,27 +3534,25 @@ static int ext_iterate_dir_locked(struct vfs_inode *dir,
         return -ENOMEM;
 
     for (uint32_t lblock = 0; lblock < blocks; lblock++) {
-        uint64_t pblock = 0;
-        ret = ext_inode_get_block_locked(fs, (uint32_t)dir->i_ino, &dir_inode,
-                                         lblock, false, &pblock);
+        ret = ext_dir_block_prepare(fs, (uint32_t)dir->i_ino, &dir_inode,
+                                    lblock, buf, &block_ctx);
         if (ret) {
             free(buf);
             return ret;
         }
-        if (!pblock)
+        if (!block_ctx.pblock)
             continue;
 
-        ret = ext_read_block(fs, pblock, buf);
-        if (ret) {
-            free(buf);
-            return ret;
+        uint32_t off = 0;
+        if (block_ctx.indexed_root) {
+            ext_dir_entry_t *dot = (ext_dir_entry_t *)buf;
+            ext_dir_entry_t *dotdot = (ext_dir_entry_t *)(buf + dot->rec_len);
+            off = dot->rec_len + dotdot->rec_len;
         }
-
-        for (uint32_t off = 0;
-             off + sizeof(ext_dir_entry_t) <= fs->block_size;) {
+        for (; off + sizeof(ext_dir_entry_t) <= block_ctx.data_size;) {
             ext_dir_entry_t *entry = (ext_dir_entry_t *)(buf + off);
             if (entry->rec_len < 8 || (entry->rec_len & 3) ||
-                off + entry->rec_len > fs->block_size) {
+                off + entry->rec_len > block_ctx.data_size) {
                 free(buf);
                 return -EIO;
             }

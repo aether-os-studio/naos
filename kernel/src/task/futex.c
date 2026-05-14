@@ -351,7 +351,7 @@ static uint64_t futex_now_ns(bool realtime) {
     if (!realtime)
         return nano_time();
 
-    return boot_get_boottime() * 1000000000 + nano_time();
+    return boot_get_boottime() * 1000000000ULL + nano_time();
 }
 
 static inline bool futex_should_interrupt_before_sleep(void) {

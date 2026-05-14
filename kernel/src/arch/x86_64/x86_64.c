@@ -33,6 +33,8 @@ void arch_init() {
 
 void arch_init_after_thread() {}
 
+void arch_init_after_acpi_pci() {}
+
 void arch_input_dev_init() {
     bool irq_state = arch_interrupt_enabled();
     if (irq_state)
@@ -50,3 +52,6 @@ void arch_input_dev_init() {
     if (irq_state)
         arch_enable_interrupt();
 }
+
+void arch_enable_user_access() {}
+void arch_disable_user_access() {}

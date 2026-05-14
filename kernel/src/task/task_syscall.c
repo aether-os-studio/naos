@@ -106,10 +106,13 @@ static inline bool timer_clockid_supported(clockid_t clockid) {
     return clockid == CLOCK_REALTIME || clockid == CLOCK_MONOTONIC;
 }
 
+static inline uint64_t realtime_now_ns(void) {
+    return boot_get_boottime() * 1000000000ULL + nano_time();
+}
+
 static inline uint64_t timer_current_time_ns(clockid_t clockid) {
-    if (clockid == CLOCK_REALTIME) {
-        return boot_get_boottime() * 1000000000ULL + nano_time();
-    }
+    if (clockid == CLOCK_REALTIME)
+        return realtime_now_ns();
 
     return nano_time();
 }
@@ -1043,6 +1046,8 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
     uint64_t env_low = UINT64_MAX;
     uint64_t env_high = 0;
 
+    arch_enable_user_access();
+
     const char *execfn_name = execfn ? execfn : task->name;
     size_t name_len = strlen(execfn_name) + 1;
     PUSH_BYTES_TO_STACK(tmp_stack, execfn_name, name_len);
@@ -1178,6 +1183,8 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
         free(argv_addrs);
     if (envp_addrs)
         free(envp_addrs);
+
+    arch_disable_user_access();
 
     return tmp_stack;
 }
@@ -1748,6 +1755,8 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
 
 #if defined(__x86_64__)
     asm volatile("movq %0, %%cr3" ::"r"(new_mm->page_table_addr));
+#elif defined(__riscv__)
+    riscv64_set_page_table_root(new_mm->page_table_addr);
 #elif defined(__aarch64__)
     asm volatile("msr TTBR0_EL1, %0" : : "r"(new_mm->page_table_addr));
     asm volatile("dsb ishst\n\t"
@@ -2049,6 +2058,8 @@ exec_fail_restore_mm:
     self->mm = old_mm;
 #if defined(__x86_64__)
     asm volatile("movq %0, %%cr3" ::"r"(old_mm->page_table_addr));
+#elif defined(__riscv__)
+    riscv64_set_page_table_root(old_mm->page_table_addr);
 #elif defined(__aarch64__)
     asm volatile("msr TTBR0_EL1, %0" : : "r"(old_mm->page_table_addr));
     asm volatile("dsb ishst\n\t"
@@ -2213,12 +2224,18 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
     }
 
     if (target) {
+        int ret_status = 0;
+
         if (status) {
             if (target->status < 128) {
-                *status = ((target->status & 0xff) << 8);
+                ret_status = ((target->status & 0xff) << 8);
             } else {
                 int sig = target->status - 128;
-                *status = (sig & 0xff);
+                ret_status = (sig & 0xff);
+            }
+
+            if (copy_to_user(status, &ret_status, sizeof(int))) {
+                return -EFAULT;
             }
         }
         if (rusage) {
@@ -3108,7 +3125,7 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem) {
 
 uint64_t get_nanotime_by_clockid(int clock_id) {
     if (clock_id == CLOCK_REALTIME) {
-        return boot_get_boottime() * 1000000000 + nano_time();
+        return realtime_now_ns();
     } else if (clock_id == CLOCK_MONOTONIC) {
         return nano_time();
     } else {

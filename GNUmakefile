@@ -105,7 +105,7 @@ clippy:
 ROOTFS_IMG_SIZE ?= 4096
 ROOTFS_EXT_BLOCK_SIZE ?= 1024
 ROOTFS_EXT_INODE_SIZE ?= 256
-ROOTFS_EXT_FEATURES := extent,64bit,flex_bg,huge_file,dir_nlink,extra_isize,^has_journal,^dir_index,^metadata_csum,^quota,^metadata_csum_seed,^orphan_file,^project,^encrypt,^verity,^casefold,^inline_data,^ea_inode,^bigalloc,^mmp,^fast_commit,^sparse_super2
+ROOTFS_EXT_FEATURES := extent,64bit,flex_bg,huge_file,dir_nlink,extra_isize,dir_index,metadata_csum,^has_journal,^quota,^metadata_csum_seed,^orphan_file,^project,^encrypt,^verity,^casefold,^inline_data,^ea_inode,^bigalloc,^mmp,^fast_commit,^sparse_super2
 
 rootfs-$(ARCH).img: user/.build-stamp-$(ARCH)
 	dd if=/dev/zero bs=1M count=0 seek=$(ROOTFS_IMG_SIZE) of=rootfs-$(ARCH).img
@@ -268,7 +268,7 @@ assets/limine:
 
 assets/ovmf-code-$(ARCH).fd:
 	mkdir -p assets
-	curl -Lo assets/edk2-ovmf.tar.gz https://github.com/osdev0/edk2-ovmf-nightly/releases/download/nightly-20260331T020914Z/edk2-ovmf.tar.gz
+	curl -Lo assets/edk2-ovmf.tar.gz https://github.com/osdev0/edk2-ovmf-nightly/releases/download/nightly-20260514T025248Z/edk2-ovmf.tar.gz
 	tar -zxvf assets/edk2-ovmf.tar.gz -C assets/
 
 	cp -r assets/edk2-ovmf/ovmf-code-$(ARCH).fd $@

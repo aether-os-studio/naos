@@ -57,7 +57,7 @@ void ap_kmain(struct limine_mp_info *cpu) {
 
     setup_vectors();
 
-    spin_unlock(&ap_startup_lock);
+    raw_spin_unlock(&ap_startup_lock);
 
     aarch64_cpu_local_init(get_cpuid_by_mpidr(current_mpidr()),
                            current_mpidr());

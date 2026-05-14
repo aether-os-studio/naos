@@ -62,6 +62,8 @@ void init_thread(uint64_t arg) {
 
     acpi_init_after_pci();
 
+    arch_init_after_acpi_pci();
+
     arch_input_dev_init();
 
     fbdev_init();

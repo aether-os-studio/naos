@@ -234,10 +234,13 @@ int task_close_file_descriptor(task_t *task, int fd) {
 static void sched_update_itimer_task(task_t *task, uint64_t now_ms);
 static void task_reap_softirq(void);
 
+static inline uint64_t realtime_now_ns(void) {
+    return boot_get_boottime() * 1000000000ULL + nano_time();
+}
+
 static inline uint64_t task_timer_current_time_ns(clockid_t clock_type) {
-    if (clock_type == CLOCK_REALTIME) {
-        return boot_get_boottime() * 1000000000ULL + nano_time();
-    }
+    if (clock_type == CLOCK_REALTIME)
+        return realtime_now_ns();
 
     return nano_time();
 }
@@ -1247,7 +1250,7 @@ void task_init() {
     task_mark_on_cpu(idle_tasks[current_cpu_id], true);
     task_mm_mark_cpu_active(idle_tasks[current_cpu_id]->mm, current_cpu_id);
 
-    task_initialized = true;
+    __atomic_store_n(&task_initialized, true, __ATOMIC_RELEASE);
 
     can_schedule = true;
 }

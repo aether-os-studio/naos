@@ -29,17 +29,15 @@ typedef struct naos_lwip_mbox {
 
 typedef task_t *sys_thread_t;
 
-void naos_lwip_protect_enter(void);
-void naos_lwip_protect_leave(void);
+sys_prot_t naos_lwip_protect_enter(void);
+void naos_lwip_protect_leave(sys_prot_t level);
 
 #define SYS_ARCH_DECL_PROTECT(level) sys_prot_t level
 #define SYS_ARCH_PROTECT(level)                                                \
     do {                                                                       \
-        (void)(level);                                                         \
-        naos_lwip_protect_enter();                                             \
+        (level) = naos_lwip_protect_enter();                                   \
     } while (0)
 #define SYS_ARCH_UNPROTECT(level)                                              \
     do {                                                                       \
-        (void)(level);                                                         \
-        naos_lwip_protect_leave();                                             \
+        naos_lwip_protect_leave(level);                                        \
     } while (0)

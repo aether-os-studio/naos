@@ -435,7 +435,6 @@ static int timerfdfs_release(struct vfs_inode *inode, struct vfs_file *file) {
     return 0;
 }
 
-// 统一的当前时间获取函数
 static uint64_t get_current_time_ns(int clock_type) {
     if (clock_type == CLOCK_MONOTONIC)
         return nano_time();

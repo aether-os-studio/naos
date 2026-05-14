@@ -432,7 +432,7 @@ uint64_t general_ap_entry() {
 
     syscall_init();
 
-    spin_unlock(&ap_startup_lock);
+    raw_spin_unlock(&ap_startup_lock);
 
     while (!task_initialized) {
         arch_pause();

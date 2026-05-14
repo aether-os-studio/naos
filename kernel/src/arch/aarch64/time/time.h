@@ -17,7 +17,4 @@ typedef struct {
 uint64_t get_counter();
 uint32_t get_freq();
 
-void time_read(tm *time);
-int64_t mktime(tm *time);
-
 uint64_t nano_time();

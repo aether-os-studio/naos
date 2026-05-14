@@ -6,6 +6,18 @@ typedef struct lwip_thread_bootstrap {
 } lwip_thread_bootstrap_t;
 
 static spinlock_t naos_lwip_protect_lock = SPIN_INIT;
+static uintptr_t naos_lwip_protect_owner = 0;
+static uint32_t naos_lwip_protect_depth = 0;
+
+static uintptr_t naos_lwip_protect_owner_id(void) {
+    task_t *task = current_task;
+
+    if (task) {
+        return ((uintptr_t)task << 1) | 1UL;
+    }
+
+    return ((uintptr_t)(current_cpu_id + 1) << 1);
+}
 
 static bool naos_lwip_sem_trywait(sys_sem_t sem) {
     bool acquired = false;
@@ -24,9 +36,36 @@ static bool naos_lwip_sem_trywait(sys_sem_t sem) {
     return acquired;
 }
 
-void naos_lwip_protect_enter(void) { spin_lock(&naos_lwip_protect_lock); }
+sys_prot_t naos_lwip_protect_enter(void) {
+    uintptr_t owner = naos_lwip_protect_owner_id();
+    sys_prot_t level = naos_lwip_protect_depth;
 
-void naos_lwip_protect_leave(void) { spin_unlock(&naos_lwip_protect_lock); }
+    if (naos_lwip_protect_depth && naos_lwip_protect_owner == owner) {
+        naos_lwip_protect_depth++;
+        return level;
+    }
+
+    spin_lock(&naos_lwip_protect_lock);
+    naos_lwip_protect_owner = owner;
+    naos_lwip_protect_depth = 1;
+    return 0;
+}
+
+void naos_lwip_protect_leave(sys_prot_t level) {
+    (void)level;
+
+    uintptr_t owner = naos_lwip_protect_owner_id();
+
+    if (!naos_lwip_protect_depth || naos_lwip_protect_owner != owner) {
+        return;
+    }
+
+    naos_lwip_protect_depth--;
+    if (naos_lwip_protect_depth == 0) {
+        naos_lwip_protect_owner = 0;
+        spin_unlock(&naos_lwip_protect_lock);
+    }
+}
 
 void sys_init(void) {}
 

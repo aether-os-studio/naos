@@ -169,7 +169,7 @@ void boot_smp_init(uintptr_t entry) {
         if (cpu->phys_id == mp_response->bsp_phys_id)
             continue;
 #endif
-        spin_lock(&ap_startup_lock);
+        raw_spin_lock(&ap_startup_lock);
 
         cpu->goto_address = (limine_goto_address)entry;
     }

@@ -31,8 +31,10 @@ void spin_lock(spinlock_t *sl) {
 
     arch_disable_interrupt();
 
-    if (current_task)
-        current_task->preempt_count++;
+    task_t *task = current_task;
+
+    if (task)
+        task->preempt_count++;
 
     raw_spin_lock(sl);
 

@@ -22,6 +22,7 @@
 void arch_early_init();
 void arch_init();
 void arch_init_after_thread();
+void arch_init_after_acpi_pci();
 void arch_input_dev_init();
 
 void arch_pause();
@@ -41,3 +42,6 @@ void sync_instruction_memory_range(void *addr, size_t size);
 void memory_barrier(void);
 void read_barrier(void);
 void write_barrier(void);
+
+void arch_enable_user_access();
+void arch_disable_user_access();
