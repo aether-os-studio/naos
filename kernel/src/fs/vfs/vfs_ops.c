@@ -167,8 +167,18 @@ int vfs_unlinkat(int dfd, const char *pathname, int flags, bool kernel) {
     if (ret < 0)
         return ret;
 
+    if (vfs_qstr_is_dot(&last) || vfs_qstr_is_dotdot(&last)) {
+        ret = -EINVAL;
+        goto out;
+    }
+
     dir = parent.dentry ? parent.dentry->d_inode : NULL;
-    victim = vfs_d_lookup(parent.dentry, &last);
+    victim = vfs_lookup_component(&parent, last.name, 0);
+    if (IS_ERR(victim)) {
+        ret = PTR_ERR(victim);
+        victim = NULL;
+        goto out;
+    }
     if (!dir || !victim || !victim->d_inode) {
         ret = -ENOENT;
         goto out;

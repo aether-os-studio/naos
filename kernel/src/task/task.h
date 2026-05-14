@@ -225,7 +225,8 @@ static inline const struct vfs_path *task_fs_pwd_path(task_t *task) {
 }
 
 static inline bool task_should_index_parent(task_t *task) {
-    return task && task->pid && task_parent_wait_key(task) != 0;
+    return task && task->pid && task_parent_wait_key(task) != 0 &&
+           !task->is_clone && !(task->clone_flags & CLONE_THREAD);
 }
 
 void sched_defer_tick(void);

@@ -1486,7 +1486,7 @@ void task_exit_inner(task_t *task, int64_t code) {
         if (parent && !ignore_sigchld && !sigchld_blocked)
             task_unblock(parent, 128 + SIGCHLD);
         spin_unlock(&task_queue_lock);
-    } else if (!task_has_parent(task)) {
+    } else if (task->is_clone || !task_has_parent(task)) {
         if (task_try_mark_reaped(task))
             task_enqueue_should_free(task);
     }

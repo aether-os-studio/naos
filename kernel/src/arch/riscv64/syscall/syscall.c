@@ -15,6 +15,8 @@ static uint64_t sys_sched_yield(void) {
     return 0;
 }
 
+static uint64_t sys_riscv_hwprobe(void) { return (uint64_t)-ENOSYS; }
+
 static inline uint64_t getrandom_next(uint64_t *state) {
     uint64_t x = *state;
 
@@ -252,7 +254,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_GETSOCKOPT] = (syscall_handle_t)sys_getsockopt;
     syscall_handlers[SYS_CLONE] = (syscall_handle_t)sys_clone;
     syscall_handlers[SYS_EXECVE] = (syscall_handle_t)task_execve;
-    syscall_handlers[SYS_EXIT] = (syscall_handle_t)task_exit;
+    syscall_handlers[SYS_EXIT] = (syscall_handle_t)task_exit_thread;
     syscall_handlers[SYS_WAIT4] = (syscall_handle_t)sys_waitpid;
     syscall_handlers[SYS_KILL] = (syscall_handle_t)sys_kill;
     // syscall_handlers[SYS_SEMGET] = (syscall_handle_t)sys_semget;
@@ -269,7 +271,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_FDATASYNC] = (syscall_handle_t)dummy_syscall_handler;
     syscall_handlers[SYS_TRUNCATE] = (syscall_handle_t)sys_truncate;
     syscall_handlers[SYS_FTRUNCATE] = (syscall_handle_t)sys_ftruncate;
-    syscall_handlers[SYS_GETDENTS64] = (syscall_handle_t)sys_getdents;
+    syscall_handlers[SYS_GETDENTS64] = (syscall_handle_t)sys_getdents64;
     syscall_handlers[SYS_GETCWD] = (syscall_handle_t)sys_getcwd;
     syscall_handlers[SYS_CHDIR] = (syscall_handle_t)sys_chdir;
     syscall_handlers[SYS_FCHDIR] = (syscall_handle_t)sys_fchdir;
@@ -410,7 +412,7 @@ void syscall_handler_init() {
     // = (syscall_handle_t)sys_epoll_wait_old;
     // syscall_handlers[SYS_REMAP_FILE_PAGES] =
     //     (syscall_handle_t)sys_remap_file_pages;
-    syscall_handlers[SYS_GETDENTS64] = (syscall_handle_t)sys_getdents;
+    syscall_handlers[SYS_GETDENTS64] = (syscall_handle_t)sys_getdents64;
     syscall_handlers[SYS_SET_TID_ADDRESS] =
         (syscall_handle_t)sys_set_tid_address;
     // syscall_handlers[SYS_RESTART_SYSCALL] =
@@ -467,6 +469,7 @@ void syscall_handler_init() {
         (syscall_handle_t)sys_inotify_rm_watch;
     // syscall_handlers[SYS_MIGRATE_PAGES] =
     // (syscall_handle_t)sys_migrate_pages;
+    syscall_handlers[SYS_RISCV_HWPROBE] = (syscall_handle_t)sys_riscv_hwprobe;
     syscall_handlers[SYS_OPENAT] = (syscall_handle_t)sys_openat;
     syscall_handlers[SYS_MKDIRAT] = (syscall_handle_t)sys_mkdirat;
     syscall_handlers[SYS_MKNODAT] = (syscall_handle_t)sys_mknodat;
@@ -647,7 +650,8 @@ void riscv64_do_syscall(struct pt_regs *frame) {
 done:
     self->last_syscall_ret = frame->a0;
     ptrace_on_syscall_exit(frame);
-    if (idx != SYS_BRK && idx != SYS_RSEQ && frame->a0 == (uint64_t)-ENOSYS) {
+    if (idx != SYS_BRK && idx != SYS_RSEQ && idx != SYS_RISCV_HWPROBE &&
+        frame->a0 == (uint64_t)-ENOSYS) {
         serial_fprintk("syscall %d not implemented\n", idx);
     }
     uint64_t next_sepc = frame->sepc + 4;

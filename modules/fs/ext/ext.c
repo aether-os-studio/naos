@@ -1081,11 +1081,9 @@ static int ext_lookup_name_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
                 free(buf);
                 return 0;
             }
-            if (entry->inode) {
-                has_prev = true;
-                prev_off = off;
-                prev_rec = entry->rec_len;
-            }
+            has_prev = true;
+            prev_off = off;
+            prev_rec = entry->rec_len;
             off += entry->rec_len;
         }
     }
@@ -2670,11 +2668,9 @@ static int ext_dir_find_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
                 free(buf);
                 return 0;
             }
-            if (entry->inode) {
-                has_prev = true;
-                prev_off = off;
-                prev_rec = entry->rec_len;
-            }
+            has_prev = true;
+            prev_off = off;
+            prev_rec = entry->rec_len;
             off += entry->rec_len;
         }
     }
@@ -2849,8 +2845,9 @@ static int ext_dir_remove_entry_locked(ext_mount_ctx_t *fs, uint32_t dir_ino,
         ext_dir_entry_t *prev = (ext_dir_entry_t *)(buf + lookup.prev_offset);
         prev->rec_len += entry->rec_len;
     } else {
-        memset(entry, 0, entry->rec_len);
-        entry->rec_len = lookup.rec_len;
+        uint16_t rec_len = entry->rec_len;
+        memset(entry, 0, rec_len);
+        entry->rec_len = rec_len;
     }
 
     ret = ext_dir_block_write_locked(fs, dir_ino, dir_inode, &block_ctx, buf);
@@ -3518,7 +3515,6 @@ static int ext_iterate_dir_locked(struct vfs_inode *dir,
     uint32_t blocks;
     uint8_t *buf;
     ext_dir_block_ctx_t block_ctx;
-    loff_t index = 0;
     int ret;
 
     ret = ext_load_inode_locked(dir, &dir_inode);
@@ -3556,21 +3552,23 @@ static int ext_iterate_dir_locked(struct vfs_inode *dir,
                 free(buf);
                 return -EIO;
             }
+            loff_t entry_pos = (loff_t)lblock * fs->block_size + off;
+            loff_t next_pos = entry_pos + entry->rec_len;
+            if (next_pos <= ctx->pos) {
+                off += entry->rec_len;
+                continue;
+            }
             if (entry->inode &&
                 !(entry->name_len == 1 && entry->name[0] == '.') &&
                 !(entry->name_len == 2 && entry->name[0] == '.' &&
                   entry->name[1] == '.')) {
-                if (index++ >= ctx->pos) {
-                    if (ctx->actor(
-                            ctx, entry->name, entry->name_len, index,
-                            entry->inode,
-                            ext_dir_file_type_to_dtype(entry->file_type))) {
-                        free(buf);
-                        ctx->pos = index;
-                        return 0;
-                    }
-                    ctx->pos = index;
+                if (ctx->actor(ctx, entry->name, entry->name_len, next_pos,
+                               entry->inode,
+                               ext_dir_file_type_to_dtype(entry->file_type))) {
+                    free(buf);
+                    return 0;
                 }
+                ctx->pos = next_pos;
             }
             off += entry->rec_len;
         }

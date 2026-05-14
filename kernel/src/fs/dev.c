@@ -744,7 +744,8 @@ static int devtmpfs_iterate_shared(struct vfs_file *file,
     info = devtmpfs_i(file->f_inode);
     mutex_lock(&info->lock);
     llist_for_each(de, tmp, &info->children, node) {
-        if (index++ < ctx->pos)
+        index++;
+        if (index <= ctx->pos)
             continue;
         if (ctx->actor(ctx, de->name, (int)strlen(de->name), index,
                        de->inode->i_ino, devtmpfs_dtype(de->inode->i_mode))) {

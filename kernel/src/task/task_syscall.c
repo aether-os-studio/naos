@@ -102,6 +102,81 @@ static bool wait_has_ptraced_target_waitid(task_t *waiter, int idtype,
     return false;
 }
 
+static void waitpid_mark_waiters_locked(task_t *waiter,
+                                        uint64_t wait_parent_pid,
+                                        int64_t wait_pid) {
+    if (!waiter)
+        return;
+
+    task_index_bucket_t *children =
+        task_index_bucket_lookup(&task_parent_map, wait_parent_pid);
+    struct llist_header *node = children ? children->tasks.next : NULL;
+    while (children && node != &children->tasks) {
+        task_t *task = list_entry(node, task_t, parent_node);
+        node = node->next;
+
+        if (!task || task_parent_wait_key(task) != wait_parent_pid)
+            continue;
+        if (task->state == TASK_DIED || task_is_reaped(task))
+            continue;
+        if (waitpid_task_matches(task, wait_pid, waiter->pgid))
+            task->waitpid = waiter->pid;
+    }
+
+    for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+        hashmap_entry_t *entry = &task_pid_map.buckets[i];
+        task_t *task;
+
+        if (!hashmap_entry_is_occupied(entry))
+            continue;
+
+        task = (task_t *)entry->value;
+        if (!ptrace_matches_waiter(task, waiter))
+            continue;
+        if (task->state == TASK_DIED || ptrace_has_wait_event(task))
+            continue;
+        if (waitpid_task_matches(task, wait_pid, waiter->pgid))
+            task->waitpid = waiter->pid;
+    }
+}
+
+static void waitid_mark_waiters_locked(task_t *waiter, uint64_t wait_parent_pid,
+                                       int idtype, uint64_t match_id) {
+    if (!waiter)
+        return;
+
+    task_index_bucket_t *children =
+        task_index_bucket_lookup(&task_parent_map, wait_parent_pid);
+    struct llist_header *node = children ? children->tasks.next : NULL;
+    while (children && node != &children->tasks) {
+        task_t *task = list_entry(node, task_t, parent_node);
+        node = node->next;
+
+        if (!task || task_parent_wait_key(task) != wait_parent_pid)
+            continue;
+        if (task->state == TASK_DIED || task_is_reaped(task))
+            continue;
+        if (waitid_task_matches(task, idtype, match_id))
+            task->waitpid = waiter->pid;
+    }
+
+    for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+        hashmap_entry_t *entry = &task_pid_map.buckets[i];
+        task_t *task;
+
+        if (!hashmap_entry_is_occupied(entry))
+            continue;
+
+        task = (task_t *)entry->value;
+        if (!ptrace_matches_waiter(task, waiter))
+            continue;
+        if (task->state == TASK_DIED || ptrace_has_wait_event(task))
+            continue;
+        if (waitid_task_matches(task, idtype, match_id))
+            task->waitpid = waiter->pid;
+    }
+}
+
 static inline bool timer_clockid_supported(clockid_t clockid) {
     return clockid == CLOCK_REALTIME || clockid == CLOCK_MONOTONIC;
 }
@@ -2180,6 +2255,11 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
                 found_ptrace_alive = ptr;
             }
         }
+        if (!found_dead && (found_alive || found_ptrace_alive) &&
+            !(options & WNOHANG)) {
+            waitpid_mark_waiters_locked(current_task, wait_parent_pid,
+                                        wait_pid);
+        }
         spin_unlock(&task_queue_lock);
 
         arch_enable_interrupt();
@@ -2208,14 +2288,11 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
         }
 
         if (found_alive) {
-            found_alive->waitpid = current_task->pid;
-            if (found_alive->state != TASK_DIED)
-                task_block(current_task, TASK_BLOCKING, -1, "waitpid");
+            task_block(current_task, TASK_BLOCKING, -1, "waitpid");
             continue;
         }
 
         if (found_ptrace_alive) {
-            found_ptrace_alive->waitpid = current_task->pid;
             task_block(current_task, TASK_BLOCKING, -1, "waitpid-ptrace");
             continue;
         }
@@ -2355,6 +2432,11 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
                 found_ptrace_alive = ptr;
             }
         }
+        if (!found_dead && (found_alive || found_ptrace_alive) &&
+            !(options & WNOHANG)) {
+            waitid_mark_waiters_locked(current_task, wait_parent_pid,
+                                       match_idtype, match_id);
+        }
         spin_unlock(&task_queue_lock);
 
         arch_enable_interrupt();
@@ -2397,14 +2479,11 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
         }
 
         if (found_alive) {
-            found_alive->waitpid = current_task->pid;
-            if (found_alive->state != TASK_DIED)
-                task_block(current_task, TASK_BLOCKING, -1, "waitid");
+            task_block(current_task, TASK_BLOCKING, -1, "waitid");
             continue;
         }
 
         if (found_ptrace_alive) {
-            found_ptrace_alive->waitpid = current_task->pid;
             task_block(current_task, TASK_BLOCKING, -1, "waitid-ptrace");
             continue;
         }
@@ -2750,11 +2829,6 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
         task_fd_info_put(self_fd_info, self);
     }
 
-    spin_lock(&task_queue_lock);
-    task_parent_index_attach_locked(child);
-    task_pgid_index_attach_locked(child);
-    spin_unlock(&task_queue_lock);
-
     child->signal->signal = 0;
 
     if (flags & CLONE_SETTLS) {
@@ -2762,6 +2836,8 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
         child->arch_context->fsbase = tls;
 #elif defined(__aarch64__)
         child->arch_context->tpidr_el0 = tls;
+#elif defined(__riscv__)
+        child->arch_context->ctx->tp = tls;
 #endif
     }
 
@@ -2809,6 +2885,11 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
 
     child->clone_flags = flags;
     child->is_clone = !!(flags & CLONE_THREAD);
+
+    spin_lock(&task_queue_lock);
+    task_parent_index_attach_locked(child);
+    task_pgid_index_attach_locked(child);
+    spin_unlock(&task_queue_lock);
 
     self->child_vfork_done = false;
 
