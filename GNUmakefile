@@ -238,14 +238,15 @@ ifeq ($(BOOT_PROTOCOL), sbi)
 	qemu-system-$(ARCH) \
 		-M virt \
 		-cpu rv64 \
+		-device ramfb \
 		-device qemu-xhci \
 		-device usb-kbd \
 		-device usb-mouse \
 		-kernel kernel/bin-$(ARCH)/kernel \
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
-		-device nvme,drive=rootdisk,serial=1234 \
+		-device virtio-blk-device,drive=rootdisk,serial=1234 \
 		-netdev user,id=net0 \
-		-device virtio-net-pci,netdev=net0 \
+		-device virtio-net-device,netdev=net0 \
 		$(QEMUFLAGS)
 endif
 

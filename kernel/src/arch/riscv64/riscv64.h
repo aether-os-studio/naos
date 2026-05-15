@@ -19,6 +19,8 @@ void arch_init_after_thread();
 void arch_init_after_acpi_pci();
 void arch_input_dev_init();
 
+void arch_shutdown();
+
 void arch_pause();
 void arch_wait_for_interrupt();
 

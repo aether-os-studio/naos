@@ -1395,6 +1395,9 @@ void task_cleanup_fd_info(task_t *task) {
 void task_exit_inner(task_t *task, int64_t code) {
     arch_disable_interrupt();
 
+    if (task->pid == 1)
+        arch_shutdown();
+
     uint64_t before_user_ns = task ? task->user_time_ns : 0;
     task_account_runtime_ns(task, nano_time());
     if (task && task->user_time_ns > before_user_ns)

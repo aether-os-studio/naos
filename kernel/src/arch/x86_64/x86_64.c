@@ -53,5 +53,7 @@ void arch_input_dev_init() {
         arch_enable_interrupt();
 }
 
+void arch_shutdown() {}
+
 void arch_enable_user_access() {}
 void arch_disable_user_access() {}

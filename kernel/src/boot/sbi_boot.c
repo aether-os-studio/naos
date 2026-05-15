@@ -482,8 +482,6 @@ void boot_smp_init(uintptr_t entry) {
             continue;
         }
     }
-
-    unmap_page_range(get_kernel_page_dir(), 0x80200000ULL, map_size);
 }
 
 boot_framebuffer_t *boot_get_framebuffer(void) { return NULL; }
