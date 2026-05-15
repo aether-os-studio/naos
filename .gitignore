@@ -20,4 +20,5 @@
 *.xz
 *.zip
 *.dtb
+*.dts
 *.log

@@ -295,6 +295,8 @@ void syscall_handler_init() {
     syscall_handlers[SYS_SETSID] = (syscall_handle_t)sys_setsid;
     syscall_handlers[SYS_GETGROUPS] = (syscall_handle_t)sys_getgroups;
     syscall_handlers[SYS_SETGROUPS] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_SETREUID] = (syscall_handle_t)sys_setreuid;
+    syscall_handlers[SYS_SETREGID] = (syscall_handle_t)sys_setregid;
     syscall_handlers[SYS_SETRESUID_] = (syscall_handle_t)sys_setresuid;
     syscall_handlers[SYS_GETRESUID_] = (syscall_handle_t)sys_getresuid;
     syscall_handlers[SYS_SETRESUID] = (syscall_handle_t)sys_setresuid;
@@ -304,8 +306,8 @@ void syscall_handler_init() {
     syscall_handlers[SYS_SETFSUID_] = (syscall_handle_t)sys_setfsuid;
     syscall_handlers[SYS_GETSID] = (syscall_handle_t)sys_getsid;
     syscall_handlers[SYS_NEWUNAME] = (syscall_handle_t)sys_newuname;
-    // syscall_handlers[SYS_CAPGET] = (syscall_handle_t)sys_capget;
-    // syscall_handlers[SYS_CAPSET] = (syscall_handle_t)sys_capset;
+    syscall_handlers[SYS_CAPGET] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_CAPSET] = (syscall_handle_t)dummy_syscall_handler;
     // syscall_handlers[SYS_RT_SIGPENDING] =
     // (syscall_handle_t)sys_rt_sigpending;
     syscall_handlers[SYS_RT_SIGTIMEDWAIT_TIME32] =
@@ -444,9 +446,11 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_UTIMES] = (syscall_handle_t)sys_utimes;
     // syscall_handlers[SYS_VSERVER] = (syscall_handle_t)sys_vserver;
     // syscall_handlers[SYS_MBIND] = (syscall_handle_t)sys_mbind;
-    // syscall_handlers[SYS_SET_MEMPOLICY] =
-    // (syscall_handle_t)sys_set_mempolicy; syscall_handlers[SYS_GET_MEMPOLICY]
-    // = (syscall_handle_t)sys_get_mempolicy; syscall_handlers[SYS_MQ_OPEN] =
+    regist_syscall_handler(SYS_SET_MEMPOLICY,
+                           (syscall_handle_t)sys_set_mempolicy);
+    regist_syscall_handler(SYS_GET_MEMPOLICY,
+                           (syscall_handle_t)sys_get_mempolicy);
+    // syscall_handlers[SYS_MQ_OPEN] =
     // (syscall_handle_t)sys_mq_open; syscall_handlers[SYS_MQ_UNLINK] =
     // (syscall_handle_t)sys_mq_unlink; syscall_handlers[SYS_MQ_TIMEDSEND] =
     // (syscall_handle_t)sys_mq_timedsend; syscall_handlers[SYS_MQ_TIMEDRECEIVE]
@@ -455,9 +459,10 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_MQ_NOTIFY] = (syscall_handle_t)sys_mq_notify;
     // syscall_handlers[SYS_MQ_GETSETATTR] =
     // (syscall_handle_t)sys_mq_getsetattr; syscall_handlers[SYS_KEXEC_LOAD] =
-    // (syscall_handle_t)sys_kexec_load; syscall_handlers[SYS_WAITID] =
-    // (syscall_handle_t)sys_waitid; syscall_handlers[SYS_ADD_KEY] =
-    // (syscall_handle_t)sys_add_key; syscall_handlers[SYS_REQUEST_KEY] =
+    // (syscall_handle_t)sys_kexec_load;
+    syscall_handlers[SYS_WAITID] = (syscall_handle_t)sys_waitid;
+    // syscall_handlers[SYS_ADD_KEY] = (syscall_handle_t)sys_add_key;
+    // syscall_handlers[SYS_REQUEST_KEY] =
     // (syscall_handle_t)sys_request_key; syscall_handlers[SYS_KEYCTL] =
     // (syscall_handle_t)sys_keyctl; syscall_handlers[SYS_IOPRIO_SET] =
     // (syscall_handle_t)sys_ioprio_set; syscall_handlers[SYS_IOPRIO_GET] =
@@ -546,8 +551,7 @@ void syscall_handler_init() {
     // (syscall_handle_t)sys_sched_setattr; syscall_handlers[SYS_SCHED_GETATTR]
     // = (syscall_handle_t)sys_sched_getattr;
     syscall_handlers[SYS_RENAMEAT2] = (syscall_handle_t)sys_renameat2;
-    // syscall_handlers[SYS_SECCOMP] =
-    // (syscall_handle_t)sys_seccomp;
+    // syscall_handlers[SYS_SECCOMP] = (syscall_handle_t)sys_seccomp;
     syscall_handlers[SYS_GETRANDOM] = (syscall_handle_t)sys_getrandom;
     syscall_handlers[SYS_MEMFD_CREATE] = (syscall_handle_t)sys_memfd_create;
     // syscall_handlers[SYS_KEXEC_FILE_LOAD] =

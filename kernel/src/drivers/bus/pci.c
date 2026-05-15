@@ -1,6 +1,7 @@
 #include <mm/mm.h>
 #include <drivers/logger.h>
 #include <drivers/bus/pci.h>
+#include <drivers/bus/pci-dtb_ecam.h>
 #include <uacpi/acpi.h>
 #include <uacpi/tables.h>
 
@@ -907,6 +908,10 @@ void pci_controller_init() {
             pci_scan_segment(&pcie_device_op, segment_group);
         }
     }
+
+#ifndef __x86_64__
+    pci_dtb_ecam_init();
+#endif
 }
 
 static pci_driver_t *pci_current_probe_driver;
