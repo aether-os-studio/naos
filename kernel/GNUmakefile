@@ -18,7 +18,7 @@ ifeq ($(filter $(ARCH),aarch64 loongarch64 riscv64 x86_64),)
     $(error Architecture $(ARCH) not supported)
 endif
 
-GLOBAL_CFLAGS := -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-cast-function-type -Wno-sign-compare -Wno-discarded-qualifiers -Wno-address-of-packed-member
+GLOBAL_CFLAGS := -D__$(BOOT_PROTOCOL)__ -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-cast-function-type -Wno-sign-compare -Wno-discarded-qualifiers -Wno-address-of-packed-member
 
 # User controllable C flags.
 ifeq ($(BUILD_MODE), debug)
@@ -144,7 +144,7 @@ override LDFLAGS += \
     -nostdlib \
     -static \
     -z max-page-size=0x1000 \
-    -T linker-$(ARCH).ld
+    -T linker-$(ARCH)-$(BOOT_PROTOCOL).ld
 
 ifneq ($(CC_IS_CLANG),1)
 override LDFLAGS += -Wl,--build-id=none
@@ -166,7 +166,14 @@ override SRCFILES += $(shell find src/init -name "*.[Sc]" | LC_ALL=C sort)
 override SRCFILES += $(shell find src/task -name "*.[Sc]" | LC_ALL=C sort)
 override SRCFILES += $(shell find src/block -name "*.[Sc]" | LC_ALL=C sort)
 override SRCFILES += $(shell find src/net -name "*.[Sc]" | LC_ALL=C sort)
+ifeq ($(BOOT_PROTOCOL), limine)
 override SRCFILES += src/boot/limine_boot.c
+endif
+ifeq ($(BOOT_PROTOCOL), sbi)
+override SRCFILES += src/boot/sbi/opensbi_boot.c
+override SRCFILES += src/boot/sbi/boot_mm.c
+override SRCFILES += src/boot/sbi/entry.S
+endif
 override CFILES := $(filter %.c,$(SRCFILES))
 override ASFILES := $(filter %.S,$(SRCFILES))
 override OBJ := $(addprefix obj-$(ARCH)/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o))
@@ -187,7 +194,7 @@ endif
 
 .PHONY: bin-$(ARCH)/$(OUTPUT)
 # Link rules for the final executable.
-bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH).ld $(OBJ)
+bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH)-$(BOOT_PROTOCOL).ld $(OBJ)
 	$(call PRINT_STEP,LD,$@)
 	$(Q)mkdir -p "$$(dirname $@)"
 	$(Q)$(LINKER) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a -o $@

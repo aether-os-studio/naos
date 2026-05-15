@@ -247,4 +247,4 @@ kernel_thread_func:
     mv a0, s1
     jalr s0
     li a0, 0
-    j task_exit_thread
+    tail task_exit_thread
