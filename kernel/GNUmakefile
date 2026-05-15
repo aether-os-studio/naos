@@ -113,6 +113,7 @@ ifeq ($(ARCH),riscv64)
     override CFLAGS += \
         -march=rv64imafd_zicsr_zifencei \
         -mabi=lp64d \
+        -mcmodel=medany \
         -mno-relax \
         -D__riscv__
     ifeq ($(CC_IS_CLANG),0)
@@ -170,9 +171,8 @@ ifeq ($(BOOT_PROTOCOL), limine)
 override SRCFILES += src/boot/limine_boot.c
 endif
 ifeq ($(BOOT_PROTOCOL), sbi)
-override SRCFILES += src/boot/sbi/opensbi_boot.c
-override SRCFILES += src/boot/sbi/boot_mm.c
-override SRCFILES += src/boot/sbi/entry.S
+override SRCFILES += src/boot/sbi/boot.S
+override SRCFILES += src/boot/sbi_boot.c
 endif
 override CFILES := $(filter %.c,$(SRCFILES))
 override ASFILES := $(filter %.S,$(SRCFILES))

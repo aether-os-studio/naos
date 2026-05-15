@@ -557,7 +557,7 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_KEXEC_FILE_LOAD] =
     //     (syscall_handle_t)sys_kexec_file_load;
     // syscall_handlers[SYS_BPF] = (syscall_handle_t)sys_bpf;
-    // syscall_handlers[SYS_EXECVEAT] = (syscall_handle_t)sys_execveat;
+    syscall_handlers[SYS_EXECVEAT] = (syscall_handle_t)sys_execveat;
     // syscall_handlers[SYS_USERFAULTFD] = (syscall_handle_t)sys_userfaultfd;
     syscall_handlers[SYS_MEMBARRIER] = (syscall_handle_t)sys_membarrier;
     // syscall_handlers[SYS_MLOCK2] = (syscall_handle_t)sys_mlock2;
@@ -590,7 +590,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_PIDFD_OPEN] = (syscall_handle_t)sys_pidfd_open;
     syscall_handlers[SYS_CLONE3] = (syscall_handle_t)sys_clone3;
     syscall_handlers[SYS_CLOSE_RANGE] = (syscall_handle_t)sys_close_range;
-    // syscall_handlers[SYS_OPENAT2] = (syscall_handle_t)sys_openat2;
+    syscall_handlers[SYS_OPENAT2] = (syscall_handle_t)sys_openat2;
     // syscall_handlers[SYS_PIDFD_GETFD] = (syscall_handle_t)sys_pidfd_getfd;
     syscall_handlers[SYS_FACCESSAT2] = (syscall_handle_t)sys_faccessat2;
     // syscall_handlers[SYS_PROCESS_MADVISE] =

@@ -1,86 +1,78 @@
-/* Tell the linker that we want a riscv64 ELF64 output file */
 OUTPUT_FORMAT(elf64-littleriscv)
+ENTRY(_sbi_start)
 
-/* We want the symbol kmain to be our entry point */
-ENTRY(_start)
+KERNEL_PHYS_BASE = 0x80200000;
+KERNEL_VIRT_BASE = 0xffffffff80200000;
+KERNEL_VIRT_OFFSET = KERNEL_VIRT_BASE - KERNEL_PHYS_BASE;
 
-SECTIONS {
-    KERNEL_PHYS_BASE = 0x80000000;
-    KERNEL_VIRT_BASE = 0xffffffff80000000;
-    KERNEL_VMA = KERNEL_VIRT_BASE - KERNEL_PHYS_BASE;
-    /* 内核物理加载地址 */
-    . = KERNEL_PHYS_BASE + 0x200000;
+PHDRS
+{
+    boot PT_LOAD FLAGS(7);
+    text PT_LOAD FLAGS(5);
+    rodata PT_LOAD FLAGS(4);
+    data PT_LOAD FLAGS(6);
+}
 
-    kernel_phys_start = .;
-    kernel_virt_start = . + KERNEL_VMA;
+SECTIONS
+{
+    . = KERNEL_PHYS_BASE;
 
-    /* 低地址部分 - 用于启动 */
-    .bootstrap : {
-        *(.boot)
-        *(.boot.*)
-    }
-
-    /* 内核虚拟地址 - 高半部分 */
-    . += KERNEL_VMA;
+    __sbi_boot_start = .;
+    .sbi_boot : {
+        KEEP(*(.sbi_boot .sbi_boot.*))
+    } :boot
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
+    __sbi_boot_end = .;
+    __sbi_boot_start_virt = __sbi_boot_start + KERNEL_VIRT_OFFSET;
+    __sbi_boot_end_virt = __sbi_boot_end + KERNEL_VIRT_OFFSET;
+    __sbi_boot_hartid_virt = sbi_boot_hartid + KERNEL_VIRT_OFFSET;
+    __sbi_boot_dtb_phys_virt = sbi_boot_dtb_phys + KERNEL_VIRT_OFFSET;
+    __sbi_root_pt_virt = __sbi_root_pt + KERNEL_VIRT_OFFSET;
+    __sbi_hhdm_l1_pts_virt = __sbi_hhdm_l1_pts + KERNEL_VIRT_OFFSET;
 
-    text_start_va = .;
-    .text (text_start_va) : AT(text_start_va - KERNEL_VMA) {
+    . += KERNEL_VIRT_OFFSET;
+    __kernel_image_start = KERNEL_VIRT_BASE;
+
+    .text : AT(ADDR(.text) - KERNEL_VIRT_OFFSET) {
         _text = .;
-        *(.text)
-        *(.text.*)
+        *(.text .text.*)
         _etext = .;
-    }
+    } :text
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
-    rodata_start_va = .;
-    .rodata (rodata_start_va) : AT(rodata_start_va - KERNEL_VMA) {
-        *(.rodata)
-        *(.rodata.*)
-    }
+    .rodata : AT(ADDR(.rodata) - KERNEL_VIRT_OFFSET) {
+        *(.rodata .rodata.*)
+    } :rodata
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
-    ksymtab_start_va = .;
-    .ksymtab (ksymtab_start_va) : AT(ksymtab_start_va - KERNEL_VMA) {
-        __ksymtab_start = .;
-        KEEP(*(.ksymtab))
-        __ksymtab_end = .;
-    }
+    .data : AT(ADDR(.data) - KERNEL_VIRT_OFFSET) {
+        *(.data .data.*)
+        *(.sdata .sdata.*)
+    } :data
 
-    . = ALIGN(CONSTANT(MAXPAGESIZE));
-
-    data_start_va = .;
-    .data (data_start_va) : AT(data_start_va - KERNEL_VMA) {
-        *(.sdata)
-        *(.sdata.*)
-        *(.data)
-        *(.data.*)
-    }
-
-    . = ALIGN(CONSTANT(MAXPAGESIZE));
-
-    _bss_start = .;
-
-    bss_start_va = .;
-    .bss (bss_start_va) : AT(bss_start_va - KERNEL_VMA) {
-        *(.sbss)
-        *(.sbss.*)
-        *(.bss)
-        *(.bss.*)
+    .bss : AT(ADDR(.bss) - KERNEL_VIRT_OFFSET) {
+        *(.sbss .sbss.*)
+        *(.bss .bss.*)
         *(COMMON)
-    }
+    } :data
 
-    _bss_end = .;
+    . = ALIGN(CONSTANT(MAXPAGESIZE));
 
+    .initramfs : AT(ADDR(.initramfs) - KERNEL_VIRT_OFFSET) {
+        __initramfs_start = .;
+        *(.initramfs)
+        __initramfs_end = .;
+    } :data
+
+    . = ALIGN(CONSTANT(MAXPAGESIZE));
     __kernel_image_end = .;
 
-    kernel_virt_end = .;
-    kernel_phys_end = . - KERNEL_VMA;
+    __kernel_phys_start = __kernel_image_start - KERNEL_VIRT_OFFSET;
+    __kernel_phys_end = __kernel_image_end - KERNEL_VIRT_OFFSET;
 
-    /* Discard .note.* and .eh_frame* since they may cause issues on some hosts. */
     /DISCARD/ : {
         *(.eh_frame*)
         *(.note .note.*)
