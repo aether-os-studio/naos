@@ -1464,6 +1464,20 @@ static uint32_t ext_extent_node_first_lblock(const ext_extent_header_t *hdr) {
     return ext_extent_first_const(hdr)[0].ee_block;
 }
 
+static void *ext_extent_node_entries(ext_extent_header_t *hdr) {
+    return (uint8_t *)hdr + sizeof(*hdr);
+}
+
+static const void *
+ext_extent_node_entries_const(const ext_extent_header_t *hdr) {
+    return (const uint8_t *)hdr + sizeof(*hdr);
+}
+
+static size_t ext_extent_node_entry_size(const ext_extent_header_t *hdr) {
+    return hdr && hdr->eh_depth ? sizeof(ext_extent_idx_t)
+                                : sizeof(ext_extent_t);
+}
+
 static void ext_extent_path_release(ext_extent_path_t *path, uint16_t depth) {
     if (!path)
         return;
@@ -1632,9 +1646,11 @@ static int ext_extent_refresh_parents_locked(ext_mount_ctx_t *fs,
 static int ext_extent_grow_tree_locked(ext_mount_ctx_t *fs,
                                        ext_inode_disk_t *inode) {
     ext_extent_header_t *root;
-    uint8_t *leaf_buf = NULL;
-    ext_extent_header_t *leaf_hdr;
-    uint64_t leaf_block = 0;
+    uint8_t *child_buf = NULL;
+    ext_extent_header_t *child_hdr;
+    uint64_t child_block = 0;
+    uint16_t old_depth;
+    size_t entry_size;
     int ret;
 
     if (!fs || !inode)
@@ -1643,32 +1659,37 @@ static int ext_extent_grow_tree_locked(ext_mount_ctx_t *fs,
     root = ext_inode_extent_header(inode);
     if (!ext_extent_header_valid(root, ext_extent_inode_max_entries()))
         return -EIO;
-    if (root->eh_depth != 0 || !root->eh_entries)
+    if (!root->eh_entries)
         return -EINVAL;
+    if (root->eh_depth >= EXT_EXTENT_MAX_DEPTH)
+        return -ENOSPC;
 
-    ret = ext_alloc_block_locked(fs, 0, &leaf_block);
+    old_depth = root->eh_depth;
+    entry_size = ext_extent_node_entry_size(root);
+
+    ret = ext_alloc_block_locked(fs, 0, &child_block);
     if (ret)
         return ret;
 
-    leaf_buf = calloc(1, fs->block_size);
-    if (!leaf_buf) {
-        ext_free_block_locked(fs, leaf_block);
+    child_buf = calloc(1, fs->block_size);
+    if (!child_buf) {
+        ext_free_block_locked(fs, child_block);
         return -ENOMEM;
     }
 
-    leaf_hdr = (ext_extent_header_t *)leaf_buf;
-    leaf_hdr->eh_magic = EXT4_EXT_MAGIC;
-    leaf_hdr->eh_entries = root->eh_entries;
-    leaf_hdr->eh_max = ext_extent_block_max_entries(fs);
-    leaf_hdr->eh_depth = 0;
-    leaf_hdr->eh_generation = root->eh_generation;
-    memcpy(ext_extent_first(leaf_hdr), ext_extent_first(root),
-           root->eh_entries * sizeof(ext_extent_t));
+    child_hdr = (ext_extent_header_t *)child_buf;
+    child_hdr->eh_magic = EXT4_EXT_MAGIC;
+    child_hdr->eh_entries = root->eh_entries;
+    child_hdr->eh_max = ext_extent_block_max_entries(fs);
+    child_hdr->eh_depth = old_depth;
+    child_hdr->eh_generation = root->eh_generation;
+    memcpy(ext_extent_node_entries(child_hdr), ext_extent_node_entries(root),
+           root->eh_entries * entry_size);
 
-    ret = ext_write_block_cached_locked(fs, leaf_block, leaf_buf);
+    ret = ext_write_block_cached_locked(fs, child_block, child_buf);
     if (ret) {
-        free(leaf_buf);
-        ext_free_block_locked(fs, leaf_block);
+        free(child_buf);
+        ext_free_block_locked(fs, child_block);
         return ret;
     }
 
@@ -1677,15 +1698,160 @@ static int ext_extent_grow_tree_locked(ext_mount_ctx_t *fs,
     root->eh_magic = EXT4_EXT_MAGIC;
     root->eh_entries = 1;
     root->eh_max = ext_extent_inode_max_entries();
-    root->eh_depth = 1;
+    root->eh_depth = old_depth + 1;
     root->eh_generation = 0;
     ext_extent_first_idx(root)[0].ei_block =
-        leaf_hdr->eh_entries ? ext_extent_first(leaf_hdr)[0].ee_block : 0;
-    ext_extent_idx_leaf_set(&ext_extent_first_idx(root)[0], leaf_block);
+        ext_extent_node_first_lblock(child_hdr);
+    ext_extent_idx_leaf_set(&ext_extent_first_idx(root)[0], child_block);
     ext_inode_add_fs_blocks(fs, inode, 1);
 
-    free(leaf_buf);
+    free(child_buf);
     return 0;
+}
+
+static int ext_extent_split_child_locked(ext_mount_ctx_t *fs,
+                                         ext_inode_disk_t *inode,
+                                         ext_extent_path_t path[],
+                                         uint16_t parent_level,
+                                         uint32_t prefer_group) {
+    ext_extent_header_t *parent_hdr;
+    ext_extent_header_t *child_hdr;
+    ext_extent_header_t *new_hdr;
+    ext_extent_idx_t *parent_idx;
+    uint8_t *new_buf;
+    uint64_t new_block = 0;
+    uint16_t child_level = parent_level + 1;
+    uint16_t entries;
+    uint16_t split;
+    uint16_t moved;
+    uint16_t insert_slot;
+    size_t entry_size;
+    int ret;
+
+    if (!fs || !inode || !path || child_level > EXT_EXTENT_MAX_DEPTH)
+        return -EINVAL;
+
+    parent_hdr = path[parent_level].hdr;
+    child_hdr = path[child_level].hdr;
+    if (!parent_hdr || !child_hdr || !parent_hdr->eh_depth)
+        return -EIO;
+    if (parent_hdr->eh_entries >= parent_hdr->eh_max)
+        return -ENOSPC;
+    if (!child_hdr->eh_entries)
+        return -EIO;
+
+    entries = child_hdr->eh_entries;
+    split = entries / 2;
+    if (!split)
+        split = 1;
+    if (split >= entries)
+        split = entries - 1;
+    moved = entries - split;
+    entry_size = ext_extent_node_entry_size(child_hdr);
+
+    ret = ext_alloc_block_locked(fs, prefer_group, &new_block);
+    if (ret)
+        return ret;
+
+    new_buf = calloc(1, fs->block_size);
+    if (!new_buf) {
+        ext_free_block_locked(fs, new_block);
+        return -ENOMEM;
+    }
+
+    new_hdr = (ext_extent_header_t *)new_buf;
+    new_hdr->eh_magic = EXT4_EXT_MAGIC;
+    new_hdr->eh_entries = moved;
+    new_hdr->eh_max = ext_extent_block_max_entries(fs);
+    new_hdr->eh_depth = child_hdr->eh_depth;
+    new_hdr->eh_generation = child_hdr->eh_generation;
+    memcpy(ext_extent_node_entries(new_hdr),
+           (const uint8_t *)ext_extent_node_entries_const(child_hdr) +
+               split * entry_size,
+           moved * entry_size);
+
+    parent_idx = ext_extent_first_idx(parent_hdr);
+    insert_slot = path[parent_level].slot + 1;
+    if (insert_slot > parent_hdr->eh_entries) {
+        free(new_buf);
+        ext_free_block_locked(fs, new_block);
+        return -EIO;
+    }
+
+    ret = ext_write_block_cached_locked(fs, new_block, new_buf);
+    if (ret) {
+        free(new_buf);
+        return ret;
+    }
+
+    child_hdr->eh_entries = split;
+    memmove(&parent_idx[insert_slot + 1], &parent_idx[insert_slot],
+            (parent_hdr->eh_entries - insert_slot) * sizeof(ext_extent_idx_t));
+    parent_idx[insert_slot].ei_block = ext_extent_node_first_lblock(new_hdr);
+    ext_extent_idx_leaf_set(&parent_idx[insert_slot], new_block);
+    parent_hdr->eh_entries++;
+    ext_inode_add_fs_blocks(fs, inode, 1);
+
+    free(new_buf);
+    return 0;
+}
+
+static int ext_extent_ensure_leaf_room_locked(ext_mount_ctx_t *fs, uint32_t ino,
+                                              ext_inode_disk_t *inode,
+                                              uint32_t logical_block) {
+    uint32_t prefer_group;
+
+    if (!fs || !inode)
+        return -EINVAL;
+
+    prefer_group = (ino - 1) / fs->sb.s_inodes_per_group;
+
+    for (;;) {
+        ext_extent_path_t path[EXT_EXTENT_MAX_DEPTH + 1];
+        ext_extent_header_t *leaf_hdr;
+        uint16_t depth = 0;
+        bool split_done = false;
+        int ret;
+
+        ret =
+            ext_extent_load_path_locked(fs, inode, logical_block, path, &depth);
+        if (ret)
+            return ret;
+
+        leaf_hdr = path[depth].hdr;
+        if (leaf_hdr->eh_entries < leaf_hdr->eh_max) {
+            ext_extent_path_release(path, depth);
+            return 0;
+        }
+
+        for (int level = (int)depth - 1; level >= 0; level--) {
+            if (path[level].hdr->eh_entries < path[level].hdr->eh_max) {
+                ret = ext_extent_split_child_locked(
+                    fs, inode, path, (uint16_t)level, prefer_group);
+                if (!ret)
+                    ret = ext_extent_flush_path_locked(fs, path, depth);
+                ext_extent_path_release(path, depth);
+                if (ret)
+                    return ret;
+                split_done = true;
+                break;
+            }
+        }
+
+        if (split_done)
+            continue;
+
+        if (path[0].hdr->eh_entries >= path[0].hdr->eh_max) {
+            ext_extent_path_release(path, depth);
+            ret = ext_extent_grow_tree_locked(fs, inode);
+            if (ret)
+                return ret;
+            continue;
+        }
+
+        ext_extent_path_release(path, depth);
+        return -EIO;
+    }
 }
 
 static int ext_extent_map_blocks_locked(ext_mount_ctx_t *fs, uint32_t ino,
@@ -1758,12 +1924,10 @@ retry:
 
     if (entries >= leaf_hdr->eh_max) {
         ext_extent_path_release(path, depth);
-        if (depth == 0) {
-            ret = ext_extent_grow_tree_locked(fs, inode);
-            if (!ret)
-                goto retry;
-        }
-        return -ENOTSUP;
+        ret = ext_extent_ensure_leaf_room_locked(fs, ino, inode, logical_block);
+        if (!ret)
+            goto retry;
+        return ret;
     }
 
     uint32_t prefer_group = (ino - 1) / fs->sb.s_inodes_per_group;
@@ -2086,6 +2250,7 @@ cleanup:
 }
 
 static int ext_inode_clear_block_extent_locked(ext_mount_ctx_t *fs,
+                                               uint32_t ino,
                                                ext_inode_disk_t *inode,
                                                uint32_t logical_block) {
     ext_extent_path_t path[EXT_EXTENT_MAX_DEPTH + 1];
@@ -2122,7 +2287,11 @@ static int ext_inode_clear_block_extent_locked(ext_mount_ctx_t *fs,
     if (delta > 0 && delta < len - 1 &&
         leaf_hdr->eh_entries >= leaf_hdr->eh_max) {
         ext_extent_path_release(path, depth);
-        return -ENOTSUP;
+        ret = ext_extent_ensure_leaf_room_locked(fs, ino, inode, logical_block);
+        if (ret)
+            return ret;
+        return ext_inode_clear_block_extent_locked(fs, ino, inode,
+                                                   logical_block);
     }
 
     ret = ext_free_block_locked(fs, phys + delta);
@@ -2179,11 +2348,12 @@ static int ext_inode_clear_block_extent_locked(ext_mount_ctx_t *fs,
     return ret;
 }
 
-static int ext_inode_clear_block_locked(ext_mount_ctx_t *fs,
+static int ext_inode_clear_block_locked(ext_mount_ctx_t *fs, uint32_t ino,
                                         ext_inode_disk_t *inode,
                                         uint32_t logical_block) {
     if (ext_inode_uses_extents(inode))
-        return ext_inode_clear_block_extent_locked(fs, inode, logical_block);
+        return ext_inode_clear_block_extent_locked(fs, ino, inode,
+                                                   logical_block);
 
     return ext_inode_clear_block_legacy_locked(fs, inode, logical_block);
 }
@@ -2238,8 +2408,8 @@ static int ext_inode_truncate_locked(ext_mount_ctx_t *fs, uint32_t ino,
     }
 
     while (old_blocks > new_blocks) {
-        ret =
-            ext_inode_clear_block_locked(fs, inode, (uint32_t)(old_blocks - 1));
+        ret = ext_inode_clear_block_locked(fs, ino, inode,
+                                           (uint32_t)(old_blocks - 1));
         if (ret)
             return ret;
         old_blocks--;
@@ -3093,8 +3263,8 @@ static int ext_release_inode_locked(ext_mount_ctx_t *fs, uint32_t ino,
             (ext_inode_size_get(inode) + fs->block_size - 1) / fs->block_size;
     }
     while (blocks > 0) {
-        int ret =
-            ext_inode_clear_block_locked(fs, inode, (uint32_t)(blocks - 1));
+        int ret = ext_inode_clear_block_locked(fs, ino, inode,
+                                               (uint32_t)(blocks - 1));
         if (ret)
             return ret;
         blocks--;
