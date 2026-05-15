@@ -13,6 +13,7 @@ PHDRS
     text PT_LOAD;
     rodata PT_LOAD;
     data PT_LOAD;
+    kallsyms PT_LOAD;
 }
 
 SECTIONS
@@ -63,6 +64,14 @@ SECTIONS
         *(.bss .bss.*)
         *(COMMON)
     } :data
+
+    . = ALIGN(CONSTANT(MAXPAGESIZE));
+
+    .kallsyms : {
+        KEEP(*(.kallsyms))
+    } :kallsyms
+
+    . = ALIGN(CONSTANT(MAXPAGESIZE));
 
     __kernel_image_end = .;
 

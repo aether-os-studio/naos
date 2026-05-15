@@ -11,6 +11,7 @@ PHDRS
     text PT_LOAD FLAGS(5);
     rodata PT_LOAD FLAGS(4);
     data PT_LOAD FLAGS(6);
+    kallsyms PT_LOAD FLAGS(4);
 }
 
 SECTIONS
@@ -28,6 +29,7 @@ SECTIONS
     __sbi_boot_end_virt = __sbi_boot_end + KERNEL_VIRT_OFFSET;
     __sbi_boot_hartid_virt = sbi_boot_hartid + KERNEL_VIRT_OFFSET;
     __sbi_boot_dtb_phys_virt = sbi_boot_dtb_phys + KERNEL_VIRT_OFFSET;
+    __sbi_ap_trampoline_virt = sbi_ap_trampoline + KERNEL_VIRT_OFFSET;
     __sbi_root_pt_virt = __sbi_root_pt + KERNEL_VIRT_OFFSET;
     __sbi_hhdm_l1_pts_virt = __sbi_hhdm_l1_pts + KERNEL_VIRT_OFFSET;
 
@@ -53,6 +55,14 @@ SECTIONS
         *(.sdata .sdata.*)
     } :data
 
+    .initramfs : AT(ADDR(.initramfs) - KERNEL_VIRT_OFFSET) {
+        __initramfs_start = .;
+        KEEP(*(.initramfs))
+        __initramfs_end = .;
+    } :data
+
+    . = ALIGN(CONSTANT(MAXPAGESIZE));
+
     .bss : AT(ADDR(.bss) - KERNEL_VIRT_OFFSET) {
         *(.sbss .sbss.*)
         *(.bss .bss.*)
@@ -61,11 +71,9 @@ SECTIONS
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
-    .initramfs : AT(ADDR(.initramfs) - KERNEL_VIRT_OFFSET) {
-        __initramfs_start = .;
-        *(.initramfs)
-        __initramfs_end = .;
-    } :data
+    .kallsyms : AT(ADDR(.kallsyms) - KERNEL_VIRT_OFFSET) {
+        KEEP(*(.kallsyms))
+    } :kallsyms
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
     __kernel_image_end = .;

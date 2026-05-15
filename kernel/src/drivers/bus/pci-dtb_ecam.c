@@ -14,6 +14,7 @@ typedef struct {
     uint64_t pci_addr;
     uint64_t cpu_addr;
     uint64_t size;
+    uint64_t alloc_next;
 } pci_dtb_ecam_range_t;
 
 typedef struct {
@@ -270,8 +271,63 @@ static uint64_t pci_dtb_ecam_convert_bar_address(uint64_t pci_addr) {
     return pci_addr;
 }
 
+static uint64_t
+pci_dtb_ecam_allocate_bar_address(uint32_t bus, uint32_t slot, uint32_t func,
+                                  uint32_t segment, uint32_t bar_index,
+                                  uint64_t size, bool mmio, bool prefetchable,
+                                  bool is_64bit) {
+    (void)bus;
+    (void)slot;
+    (void)func;
+    (void)bar_index;
+    (void)prefetchable;
+
+    if (!mmio || size == 0)
+        return 0;
+
+    for (int i = 0; i < ecam_controller_count; i++) {
+        pci_dtb_ecam_controller_t *controller = &ecam_controllers[i];
+        if (!controller->initialized || controller->segment != segment)
+            continue;
+
+        for (int j = 0; j < controller->range_count; j++) {
+            pci_dtb_ecam_range_t *range = &controller->ranges[j];
+            uint32_t space_code = (range->flags >> 24) & 0x3;
+
+            if (space_code != 0x2 && space_code != 0x3)
+                continue;
+            if (!is_64bit && range->pci_addr + range->size > UINT32_MAX)
+                continue;
+
+            uint64_t alloc = range->alloc_next;
+            if (alloc == 0)
+                alloc = range->pci_addr;
+            alloc = PADDING_UP(alloc, size);
+
+            if (alloc < range->pci_addr ||
+                alloc + size > range->pci_addr + range->size) {
+                continue;
+            }
+            if (!is_64bit && alloc + size > UINT32_MAX)
+                continue;
+
+            range->alloc_next = alloc + size;
+            printk("PCI DTB ECAM: assigned BAR%u for %02x:%02x.%u at "
+                   "PCI 0x%llx size 0x%llx\n",
+                   bar_index, bus, slot, func, alloc, size);
+            return alloc;
+        }
+    }
+
+    printk("PCI DTB ECAM: failed to assign BAR%u for %02x:%02x.%u size "
+           "0x%llx\n",
+           bar_index, bus, slot, func, size);
+    return 0;
+}
+
 static pci_device_op_t pci_dtb_ecam_device_op = {
     .convert_bar_address = pci_dtb_ecam_convert_bar_address,
+    .allocate_bar_address = pci_dtb_ecam_allocate_bar_address,
     .read8 = pci_dtb_ecam_read8,
     .write8 = pci_dtb_ecam_write8,
     .read16 = pci_dtb_ecam_read16,

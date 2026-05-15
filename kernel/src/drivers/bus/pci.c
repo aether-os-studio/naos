@@ -156,6 +156,7 @@ uint32_t pci_enumerate_capability_list(pci_device_t *pci_dev,
 
 pci_device_op_t pcie_device_op = {
     .convert_bar_address = NULL,
+    .allocate_bar_address = NULL,
     .read8 = pci_read8,
     .write8 = pci_write8,
     .read16 = pci_read16,
@@ -603,13 +604,6 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
 
     switch (header_type) {
     case 0x00: { // Standard device (Endpoint)
-        // 启用设备命令寄存器
-        uint16_t command = op->read16(bus, device, function, segment, 0x04);
-        command |= (1 << 0); // I/O Space Enable
-        command |= (1 << 1); // Memory Space Enable
-        command |= (1 << 2); // Bus Master Enable
-        op->write16(bus, device, function, segment, 0x04, command);
-
         // 读取 subsystem ID
         uint32_t subsystem = op->read32(bus, device, function, segment, 0x2C);
         pci_device->subsystem_vendor_id = subsystem & 0xFFFF;
@@ -631,18 +625,11 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
         for (int i = 0; i < 6; i++) {
             uint32_t offset = 0x10 + i * 4;
             uint32_t bar = op->read32(bus, device, function, segment, offset);
-
-            if (bar == 0) {
-                pci_device->bars[i].size = 0;
-                pci_device->bars[i].address = 0;
-                pci_device->bars[i].mmio = false;
-                pci_device->bars[i].prefetchable = false;
-                continue;
-            }
+            uint32_t original_bar = bar;
 
             if (bar & 0x01) {
                 // I/O Space BAR
-                pci_device->bars[i].address = bar & 0xFFFFFFFC;
+                uint64_t base = bar & 0xFFFFFFFC;
                 pci_device->bars[i].mmio = false;
                 pci_device->bars[i].prefetchable = false;
 
@@ -652,7 +639,15 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
                     op->read32(bus, device, function, segment, offset);
                 op->write32(bus, device, function, segment, offset, bar);
 
-                pci_device->bars[i].size = ~(size_mask & 0xFFFFFFFC) + 1;
+                uint64_t size = ~(size_mask & 0xFFFFFFFC) + 1;
+                if (size_mask == 0 || size_mask == 0xffffffff || size == 0) {
+                    pci_device->bars[i].size = 0;
+                    pci_device->bars[i].address = 0;
+                    continue;
+                }
+
+                pci_device->bars[i].address = base;
+                pci_device->bars[i].size = size;
             } else {
                 // Memory Space BAR
                 uint8_t mem_type = (bar >> 1) & 0x3;
@@ -670,6 +665,26 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
                     op->write32(bus, device, function, segment, offset, bar);
 
                     uint64_t size = ~(size_mask & 0xFFFFFFF0) + 1;
+                    if (size_mask == 0 || size_mask == 0xffffffff ||
+                        size == 0) {
+                        pci_device->bars[i].address = 0;
+                        pci_device->bars[i].size = 0;
+                        pci_device->bars[i].mmio = true;
+                        pci_device->bars[i].prefetchable = prefetchable;
+                        continue;
+                    }
+
+                    if (base == 0 && op->allocate_bar_address) {
+                        base = op->allocate_bar_address(bus, device, function,
+                                                        segment, i, size, true,
+                                                        prefetchable, false);
+                        if (base != 0) {
+                            uint32_t new_bar = (uint32_t)(base & 0xFFFFFFF0) |
+                                               (original_bar & 0xF);
+                            op->write32(bus, device, function, segment, offset,
+                                        new_bar);
+                        }
+                    }
 
                     if (op->convert_bar_address) {
                         base = op->convert_bar_address(base);
@@ -712,6 +727,36 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
                     uint64_t size_mask =
                         ((uint64_t)size_hi << 32) | (size_lo & 0xFFFFFFF0);
                     uint64_t size = ~size_mask + 1;
+                    if (size_mask == 0 || size_mask == UINT64_MAX ||
+                        size == 0) {
+                        pci_device->bars[i].address = 0;
+                        pci_device->bars[i].size = 0;
+                        pci_device->bars[i].mmio = true;
+                        pci_device->bars[i].prefetchable = prefetchable;
+                        i++;
+                        if (i < 6) {
+                            pci_device->bars[i].address = 0;
+                            pci_device->bars[i].size = 0;
+                            pci_device->bars[i].mmio = true;
+                            pci_device->bars[i].prefetchable = prefetchable;
+                        }
+                        continue;
+                    }
+
+                    if (base == 0 && op->allocate_bar_address) {
+                        base = op->allocate_bar_address(bus, device, function,
+                                                        segment, i, size, true,
+                                                        prefetchable, true);
+                        if (base != 0) {
+                            uint32_t new_lo =
+                                (uint32_t)(base & 0xFFFFFFF0) | (orig_lo & 0xF);
+                            uint32_t new_hi = (uint32_t)(base >> 32);
+                            op->write32(bus, device, function, segment, offset,
+                                        new_lo);
+                            op->write32(bus, device, function, segment,
+                                        offset + 4, new_hi);
+                        }
+                    }
 
                     if (op->convert_bar_address) {
                         base = op->convert_bar_address(base);
@@ -732,6 +777,13 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
                 }
             }
         }
+
+        // 启用设备命令寄存器
+        uint16_t command = op->read16(bus, device, function, segment, 0x04);
+        command |= (1 << 0); // I/O Space Enable
+        command |= (1 << 1); // Memory Space Enable
+        command |= (1 << 2); // Bus Master Enable
+        op->write16(bus, device, function, segment, 0x04, command);
 
         // 添加到设备列表
         if (pci_device_number < PCI_DEVICE_MAX) {

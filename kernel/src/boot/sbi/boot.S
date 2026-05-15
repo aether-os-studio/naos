@@ -47,6 +47,31 @@ _sbi_start:
     wfi
     j 2b
 
+.global sbi_ap_trampoline
+.type sbi_ap_trampoline, @function
+sbi_ap_trampoline:
+    csrw sie, zero
+    csrw satp, zero
+    sfence.vma zero, zero
+
+    lla t0, __sbi_boot_stack_top
+    mv sp, t0
+
+    /*
+     * SBI HSM starts a hart with a0=hartid and a1=opaque. The opaque value is
+     * a physical pointer to struct sbi_ap_startup_data.
+     */
+    mv t0, a1
+    ld t1, 0(t0)
+    ld t2, 8(t0)
+    ld t3, 16(t0)
+
+    csrw satp, t1
+    sfence.vma zero, zero
+
+    mv sp, t2
+    jr t3
+
 .type __sbi_setup_page_tables, @function
 __sbi_setup_page_tables:
     lla t0, __sbi_root_pt

@@ -1,7 +1,10 @@
 #include <boot/boot.h>
+#include <arch/riscv64/mm/arch.h>
 #include <drivers/fdt/fdt.h>
+#include <drivers/logger.h>
 #include <limine.h>
 #include <mm/hhdm.h>
+#include <mm/mm.h>
 
 static uintptr_t align_down(uintptr_t value, uintptr_t align);
 static uintptr_t align_up(uintptr_t value, uintptr_t align);
@@ -11,6 +14,8 @@ static uintptr_t align_up(uintptr_t value, uintptr_t align);
 #define SBI_KERNEL_VIRT_OFFSET (0xffffffff80200000ULL - 0x80200000ULL)
 #define SBI_HHDM_ROOT_INDEX_START 256
 #define SBI_HHDM_ROOT_INDEX_END 510
+#define SBI_EXT_HSM 0x48534dULL
+#define SBI_HSM_HART_START 0
 
 extern uint64_t __sbi_boot_hartid_virt;
 extern uint64_t __sbi_boot_dtb_phys_virt;
@@ -18,6 +23,7 @@ extern char __kernel_image_start[];
 extern char __kernel_image_end[];
 extern char __sbi_boot_start_virt[];
 extern char __sbi_boot_end_virt[];
+extern char __sbi_ap_trampoline_virt[];
 extern uint64_t __sbi_root_pt_virt[];
 extern uint64_t __sbi_hhdm_l1_pts_virt[];
 
@@ -29,6 +35,44 @@ static char sbi_cmdline[1] = "";
 static uint64_t sbi_bsp_hartid(void) { return __sbi_boot_hartid_virt; }
 
 static uint64_t sbi_dtb_phys(void) { return __sbi_boot_dtb_phys_virt; }
+
+typedef struct sbi_ret {
+    int64_t error;
+    uint64_t value;
+} sbi_ret_t;
+
+typedef struct sbi_ap_startup_data {
+    uint64_t satp;
+    uint64_t stack_top;
+    uint64_t entry;
+} sbi_ap_startup_data_t;
+
+static sbi_ret_t sbi_ecall(uint64_t eid, uint64_t fid, uint64_t arg0,
+                           uint64_t arg1, uint64_t arg2, uint64_t arg3,
+                           uint64_t arg4, uint64_t arg5) {
+    register uint64_t a0 asm("a0") = arg0;
+    register uint64_t a1 asm("a1") = arg1;
+    register uint64_t a2 asm("a2") = arg2;
+    register uint64_t a3 asm("a3") = arg3;
+    register uint64_t a4 asm("a4") = arg4;
+    register uint64_t a5 asm("a5") = arg5;
+    register uint64_t a6 asm("a6") = fid;
+    register uint64_t a7 asm("a7") = eid;
+
+    asm volatile("ecall"
+                 : "+r"(a0), "+r"(a1)
+                 : "r"(a2), "r"(a3), "r"(a4), "r"(a5), "r"(a6), "r"(a7)
+                 : "memory");
+
+    return (sbi_ret_t){.error = (int64_t)a0, .value = a1};
+}
+
+static int64_t sbi_hart_start(uint64_t hartid, uint64_t start_addr,
+                              uint64_t opaque) {
+    return sbi_ecall(SBI_EXT_HSM, SBI_HSM_HART_START, hartid, start_addr,
+                     opaque, 0, 0, 0)
+        .error;
+}
 
 static uintptr_t align_down(uintptr_t value, uintptr_t align) {
     return value & ~(align - 1);
@@ -191,6 +235,87 @@ static uint64_t fdt_cells_read64(const fdt32_t *cells, int cell_count) {
     return value;
 }
 
+static bool sbi_hart_seen(const uint64_t *harts, uint64_t count,
+                          uint64_t hartid) {
+    for (uint64_t i = 0; i < count; i++) {
+        if (harts[i] == hartid)
+            return true;
+    }
+
+    return false;
+}
+
+static bool sbi_cpu_node_enabled(const void *fdt, int node) {
+    int len = 0;
+    const char *status = fdt_getprop(fdt, node, "status", &len);
+    if (!status)
+        return true;
+
+    return strcmp(status, "disabled") != 0;
+}
+
+static bool sbi_read_cpu_hartid(const void *fdt, int cpus, int cpu_node,
+                                uint64_t *hartid) {
+    int len = 0;
+    const char *device_type = fdt_getprop(fdt, cpu_node, "device_type", &len);
+    if (!device_type || strcmp(device_type, "cpu") != 0)
+        return false;
+
+    if (!sbi_cpu_node_enabled(fdt, cpu_node))
+        return false;
+
+    int address_cells = 1;
+    const fdt32_t *prop = fdt_getprop(fdt, cpus, "#address-cells", &len);
+    if (prop && len >= 4)
+        address_cells = (int)fdt32_to_cpu(*prop);
+
+    if (address_cells <= 0 || address_cells > 2)
+        return false;
+
+    const fdt32_t *reg = fdt_getprop(fdt, cpu_node, "reg", &len);
+    if (!reg || len < address_cells * (int)sizeof(fdt32_t))
+        return false;
+
+    *hartid = fdt_cells_read64(reg, address_cells);
+    return true;
+}
+
+static uint64_t sbi_discover_harts_from_dtb(uint64_t *harts,
+                                            uint64_t max_harts) {
+    uint64_t count = 0;
+    uint64_t bsp = sbi_bsp_hartid();
+
+    if (max_harts == 0)
+        return 0;
+
+    harts[count++] = bsp;
+
+    const void *fdt = sbi_dtb_early_ptr();
+    if (!fdt || fdt_check_header(fdt) != 0)
+        return count;
+
+    int cpus = fdt_path_offset(fdt, "/cpus");
+    if (cpus < 0)
+        return count;
+
+    int cpu_node = -1;
+    fdt_for_each_subnode(cpu_node, fdt, cpus) {
+        uint64_t hartid = 0;
+        if (!sbi_read_cpu_hartid(fdt, cpus, cpu_node, &hartid))
+            continue;
+
+        if (sbi_hart_seen(harts, count, hartid))
+            continue;
+
+        if (count >= max_harts)
+            break;
+
+        harts[count++] = hartid;
+    }
+
+    return count;
+}
+
 static void sbi_build_memory_map_from_dtb(void) {
     if (sbi_memory_map_ready)
         return;
@@ -281,11 +406,84 @@ uint64_t boot_get_boottime(void) { return 0; }
 
 extern uint64_t cpu_count;
 extern uint64_t cpuid_to_hartid[MAX_CPU_NUM];
+extern spinlock_t ap_startup_lock;
+
+uintptr_t ap_entry_point;
+
+void sbi_ap_entry(uint64_t hartid) {
+    ((void (*)(uint64_t))ap_entry_point)(hartid);
+}
 
 void boot_smp_init(uintptr_t entry) {
-    (void)entry;
+    ap_entry_point = entry;
+
+    uint64_t discovered_harts[MAX_CPU_NUM];
+    uint64_t discovered_count =
+        sbi_discover_harts_from_dtb(discovered_harts, MAX_CPU_NUM);
+    if (discovered_count == 0) {
+        discovered_harts[0] = sbi_bsp_hartid();
+        discovered_count = 1;
+    }
+
     cpu_count = 1;
     cpuid_to_hartid[0] = sbi_bsp_hartid();
+
+    uint64_t satp =
+        riscv64_make_satp((uint64_t)virt_to_phys(get_kernel_page_dir()));
+    uint64_t trampoline_phys =
+        high_virt_to_loaded_phys((uintptr_t)&__sbi_ap_trampoline_virt);
+    size_t map_size = align_up((uintptr_t)&__sbi_boot_end_virt -
+                                   (uintptr_t)&__sbi_boot_start_virt,
+                               PAGE_SIZE);
+    if (map_page_range(get_kernel_page_dir(), 0x80200000ULL, 0x80200000ULL,
+                       map_size, PT_FLAG_R | PT_FLAG_W | PT_FLAG_X) != 0) {
+        printk("SBI SMP: cannot map AP trampoline\n");
+        return;
+    }
+
+    for (uint64_t i = 0; i < discovered_count; i++) {
+        uint64_t hartid = discovered_harts[i];
+        if (hartid == sbi_bsp_hartid())
+            continue;
+
+        if (cpu_count >= MAX_CPU_NUM)
+            break;
+
+        uint64_t stack_phys = alloc_frames(STACK_SIZE / PAGE_SIZE);
+        uint64_t data_phys = alloc_frames(1);
+        if (!stack_phys || !data_phys) {
+            printk("SBI SMP: cannot allocate startup state for hart %llu\n",
+                   hartid);
+            continue;
+        }
+
+        sbi_ap_startup_data_t *data =
+            (sbi_ap_startup_data_t *)phys_to_virt(data_phys);
+        memset(data, 0, PAGE_SIZE);
+        data->satp = satp;
+        data->stack_top =
+            (uint64_t)(uintptr_t)phys_to_virt(stack_phys + STACK_SIZE);
+        data->entry = (uint64_t)(uintptr_t)sbi_ap_entry;
+        memory_barrier();
+
+        uint64_t cpu_id = cpu_count;
+        cpuid_to_hartid[cpu_id] = hartid;
+        cpu_count = cpu_id + 1;
+        memory_barrier();
+
+        raw_spin_lock(&ap_startup_lock);
+
+        int64_t err = sbi_hart_start(hartid, trampoline_phys, data_phys);
+        if (err != 0) {
+            raw_spin_unlock(&ap_startup_lock);
+            cpu_count = cpu_id;
+            printk("SBI SMP: hart_start failed for hart %llu: %lld\n", hartid,
+                   err);
+            continue;
+        }
+    }
+
+    unmap_page_range(get_kernel_page_dir(), 0x80200000ULL, map_size);
 }
 
 boot_framebuffer_t *boot_get_framebuffer(void) { return NULL; }
@@ -301,16 +499,26 @@ void *boot_get_executable_file(size_t *size) {
 extern char __initramfs_start[];
 extern char __initramfs_end[];
 
-boot_module_t boot_modules[1];
+static boot_module_t boot_modules[1];
 
 void boot_get_modules(boot_module_t **modules, size_t *count) {
+    if (count)
+        *count = 0;
+
+    if (modules == NULL)
+        return;
+
+    size_t initramfs_size =
+        (size_t)((uintptr_t)&__initramfs_end - (uintptr_t)&__initramfs_start);
+    if (initramfs_size == 0)
+        return;
+
     boot_modules[0] = (boot_module_t){
         .path = "initramfs.img",
         .data = (const void *)&__initramfs_start,
-        .size = (size_t)((uintptr_t)&__initramfs_end -
-                         (uintptr_t)&__initramfs_start),
+        .size = initramfs_size,
     };
-    *modules = boot_modules;
+    modules[0] = &boot_modules[0];
     if (count)
         *count = 1;
 }

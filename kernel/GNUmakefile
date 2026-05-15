@@ -179,6 +179,24 @@ override ASFILES := $(filter %.S,$(SRCFILES))
 override OBJ := $(addprefix obj-$(ARCH)/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o))
 override HEADER_DEPS := $(addprefix obj-$(ARCH)/,$(CFILES:.c=.c.d) $(ASFILES:.S=.S.d))
 
+GENERATED_DIR := obj-$(ARCH)/generated
+KALLSYMS_C := $(GENERATED_DIR)/kallsyms.c
+KALLSYMS_OBJ := $(KALLSYMS_C).o
+KALLSYMS_PRELINK := $(GENERATED_DIR)/kernel.prelink
+KALLSYMS_AWK := scripts/gen-kallsyms.awk
+
+override OBJ += $(KALLSYMS_OBJ)
+
+ifeq ($(BOOT_PROTOCOL),sbi)
+SBI_INITRAMFS_IMAGE := $(PROJECT_ROOT)/initramfs-$(ARCH).img
+SBI_INITRAMFS_ASM := $(GENERATED_DIR)/sbi_initramfs.S
+SBI_INITRAMFS_OBJ := $(SBI_INITRAMFS_ASM).o
+
+override OBJ += $(SBI_INITRAMFS_OBJ)
+endif
+
+KALLSYMS_PRELINK_OBJ := $(filter-out $(KALLSYMS_OBJ),$(OBJ))
+
 # Default target. This must come first, before header dependencies.
 .PHONY: all
 all: bin-$(ARCH)/$(OUTPUT)
@@ -194,10 +212,39 @@ endif
 
 .PHONY: bin-$(ARCH)/$(OUTPUT)
 # Link rules for the final executable.
-bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH)-$(BOOT_PROTOCOL).ld $(OBJ)
+bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH)-$(BOOT_PROTOCOL).ld $(OBJ) $(KALLSYMS_C)
 	$(call PRINT_STEP,LD,$@)
 	$(Q)mkdir -p "$$(dirname $@)"
 	$(Q)$(LINKER) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a -o $@
+
+ifeq ($(BOOT_PROTOCOL),sbi)
+$(SBI_INITRAMFS_ASM): $(SBI_INITRAMFS_IMAGE) GNUmakefile
+	$(call PRINT_STEP,GEN,$@)
+	$(Q)mkdir -p "$$(dirname $@)"
+	$(Q)printf '%s\n' \
+		'.section .initramfs, "a", @progbits' \
+		'.balign 16' \
+		'.incbin "$(SBI_INITRAMFS_IMAGE)"' \
+		'.balign 16' > $@
+
+$(SBI_INITRAMFS_OBJ): $(SBI_INITRAMFS_ASM)
+	$(call PRINT_STEP,AS,$<)
+	$(Q)$(CC) $(CFLAGS) $(CPPFLAGS) -DASM_FILE -c $< -o $@
+endif
+
+$(KALLSYMS_PRELINK): GNUmakefile linker-$(ARCH)-$(BOOT_PROTOCOL).ld $(KALLSYMS_PRELINK_OBJ)
+	$(call PRINT_STEP,LD,$@)
+	$(Q)mkdir -p "$$(dirname $@)"
+	$(Q)$(LINKER) $(LDFLAGS) $(KALLSYMS_PRELINK_OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a -o $@
+
+$(KALLSYMS_C): $(KALLSYMS_PRELINK) $(KALLSYMS_AWK) GNUmakefile
+	$(call PRINT_STEP,GEN,$@)
+	$(Q)mkdir -p "$$(dirname $@)"
+	$(Q)$(NM) -n --defined-only $< | awk -f $(KALLSYMS_AWK) > $@
+
+$(KALLSYMS_OBJ): $(KALLSYMS_C)
+	$(call PRINT_STEP,CC,$<)
+	$(Q)$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 
 # Compilation rules for *.c files.
 obj-$(ARCH)/src/%.c.o: src/%.c GNUmakefile

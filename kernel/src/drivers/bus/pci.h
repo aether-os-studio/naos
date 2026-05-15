@@ -40,6 +40,10 @@ typedef struct {
  */
 typedef struct {
     uint64_t (*convert_bar_address)(uint64_t bar_address);
+    uint64_t (*allocate_bar_address)(uint32_t bus, uint32_t slot, uint32_t func,
+                                     uint32_t segment, uint32_t bar_index,
+                                     uint64_t size, bool mmio,
+                                     bool prefetchable, bool is_64bit);
     uint8_t (*read8)(uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4,
                      uint32_t arg5);
     void (*write8)(uint32_t arg1, uint32_t arg2, uint32_t arg3, uint32_t arg4,

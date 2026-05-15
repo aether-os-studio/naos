@@ -7,7 +7,7 @@
 #include <mm/mm.h>
 #include <task/task.h>
 
-void ap_entry(struct limine_mp_info *cpu);
+void ap_entry(uint64_t hartid);
 extern void setup_trap_vector();
 extern bool task_initialized;
 
@@ -115,8 +115,14 @@ uint64_t get_cpuid_by_hartid(uint64_t hartid) {
 
 uint64_t riscv64_sched_ipi_irq(void) { return sched_ipi_irq; }
 
+void limine_ap_stub(struct limine_mp_info *cpu);
+
 void smp_init() {
+#if defined(__sbi__)
     boot_smp_init((uintptr_t)ap_entry);
+#else
+    boot_smp_init((uintptr_t)limine_ap_stub);
+#endif
 
     sched_ipi_irq = irq_allocate_irqnum();
     irq_regist_ipi(sched_ipi_irq, riscv64_sched_ipi_handler, 0, NULL,
@@ -125,13 +131,13 @@ void smp_init() {
     irq_set_sched_ipi(sched_ipi_irq);
 }
 
-void ap_entry(struct limine_mp_info *cpu) {
+void ap_entry(uint64_t hartid) {
     arch_disable_interrupt();
 
     riscv64_set_page_table_root((uint64_t)virt_to_phys(get_kernel_page_dir()));
 
-    uint32_t cpu_id = (uint32_t)get_cpuid_by_hartid(cpu->hartid);
-    riscv64_cpu_local_init(cpu_id, cpu->hartid);
+    uint32_t cpu_id = (uint32_t)get_cpuid_by_hartid(hartid);
+    riscv64_cpu_local_init(cpu_id, hartid);
     setup_trap_vector();
 
     raw_spin_unlock(&ap_startup_lock);
@@ -155,3 +161,5 @@ void ap_entry(struct limine_mp_info *cpu) {
         arch_wait_for_interrupt();
     }
 }
+
+void limine_ap_stub(struct limine_mp_info *cpu) { ap_entry(cpu->hartid); }

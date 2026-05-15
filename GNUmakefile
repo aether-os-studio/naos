@@ -78,6 +78,10 @@ kernel:
 	$(call PRINT_STEP,MAKE,kernel)
 	$(Q)$(MAKE) -C kernel -j$(shell nproc)
 
+ifeq ($(BOOT_PROTOCOL),sbi)
+kernel: initramfs-$(ARCH).img
+endif
+
 user: user/.build-stamp-$(ARCH)
 user/.build-stamp-$(ARCH):
 	$(call PRINT_STEP,MAKE,user)
@@ -299,5 +303,5 @@ modules:
 	$(MAKE) -C modules -j$(shell nproc)
 
 .PHONY: initramfs-$(ARCH).img
-initramfs-$(ARCH).img: rootfs-$(ARCH).img
+initramfs-$(ARCH).img: rootfs-$(ARCH).img modules
 	sh mkinitcpio.sh

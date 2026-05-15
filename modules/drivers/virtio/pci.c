@@ -139,6 +139,8 @@ virtio_driver_t *virtio_pci_init(void *data) {
     }
 
     virtio_pci_device_t *pci = malloc(sizeof(virtio_pci_device_t));
+    if (!pci)
+        goto fail;
     memset(pci, 0, sizeof(virtio_pci_device_t));
     pci->pci_dev = device;
     pci->device_type = device_type;
@@ -151,7 +153,7 @@ virtio_driver_t *virtio_pci_init(void *data) {
         pci_bar_t *bar = &device->bars[pci->common_cfg->bar];
         uint64_t bar_paddr = bar->address + pci->common_cfg->offset;
         if (bar_paddr == 0)
-            goto done;
+            goto fail_pci;
         uint64_t bar_vaddr = (uint64_t)phys_to_virt(bar_paddr);
         map_page_range(get_current_page_dir(false), bar_vaddr, bar_paddr,
                        pci->common_cfg->length,
@@ -174,7 +176,7 @@ virtio_driver_t *virtio_pci_init(void *data) {
         pci_bar_t *bar = &device->bars[notify_cfg->bar];
         uint64_t bar_paddr = bar->address + notify_cfg->offset;
         if (bar_paddr == 0)
-            goto done;
+            goto fail_pci;
         uint64_t bar_vaddr = (uint64_t)phys_to_virt(bar_paddr);
         map_page_range(get_current_page_dir(false), bar_vaddr, bar_paddr,
                        notify_cfg->length,
@@ -197,7 +199,7 @@ virtio_driver_t *virtio_pci_init(void *data) {
         pci_bar_t *bar = &device->bars[pci->device_cfg->bar];
         uint64_t bar_paddr = bar->address + pci->device_cfg->offset;
         if (bar_paddr == 0)
-            goto done;
+            goto fail_pci;
         uint64_t bar_vaddr = (uint64_t)phys_to_virt(bar_paddr);
         map_page_range(get_current_page_dir(false), bar_vaddr, bar_paddr,
                        pci->device_cfg->length,
@@ -214,7 +216,6 @@ virtio_driver_t *virtio_pci_init(void *data) {
         return NULL;
     }
 
-done:
     pci->notify_off_multiplier = notify_off_multiplier;
     pci->host_visible_shm_paddr = host_visible_shm_paddr;
     pci->host_visible_shm_size = host_visible_shm_size;
@@ -228,6 +229,17 @@ done:
     driver->data = (void *)pci;
     driver->op = &virtio_pci_driver_op;
     return driver;
+
+fail_pci:
+    free(pci);
+fail:
+    if (common_cfg)
+        free(common_cfg);
+    if (notify_cfg)
+        free(notify_cfg);
+    if (device_cfg)
+        free(device_cfg);
+    return NULL;
 }
 
 virtio_device_type_t virtio_pci_get_device_type(void *data) {

@@ -9,19 +9,21 @@ uint64_t kernel_modules_load_offset = 0;
 size_t dlfunc_count = 0;
 
 typedef struct {
-    Elf64_Sym *symtab;
-    char *strtab;
-    size_t num_symbols;
-    bool initialized;
-    bool available;
-} kernel_symbol_table_t;
+    uint64_t addr;
+    const char *name;
+    uint8_t type;
+    uint8_t exported;
+    uint8_t can_describe_ip;
+} kernel_builtin_symbol_t;
+
+extern const kernel_builtin_symbol_t kallsyms_symbols[] __attribute__((weak));
+extern const uint64_t kallsyms_num __attribute__((weak));
 
 static dlfunc_t __printf = {.name = "printf", .addr = (void *)printk};
 static dlfunc_t resolved_func;
 static module_symbol_t *loaded_module_symbols = NULL;
 static size_t loaded_module_symbol_count = 0;
 static size_t loaded_module_symbol_capacity = 0;
-static kernel_symbol_table_t kernel_symbol_table = {0};
 
 static void *find_symbol_address(const char *symbol_name, Elf64_Ehdr *ehdr,
                                  uint64_t offset);
@@ -176,51 +178,24 @@ static bool mmap_phdr_segment(Elf64_Ehdr *ehdr, Elf64_Phdr *phdrs,
     return true;
 }
 
-static bool init_kernel_symbol_table() {
-    if (kernel_symbol_table.initialized) {
-        return kernel_symbol_table.available;
-    }
-
-    kernel_symbol_table.initialized = true;
-
-    size_t executable_size = 0;
-    Elf64_Ehdr *ehdr = (Elf64_Ehdr *)boot_get_executable_file(&executable_size);
-    if (ehdr == NULL || executable_size < sizeof(*ehdr)) {
-        serial_fprintk(
-            "Kernel executable file is unavailable for symbol lookup.\n");
-        return false;
-    }
-
-    if (!arch_check_elf(ehdr)) {
-        serial_fprintk("Kernel executable file is not a valid ELF file.\n");
-        return false;
-    }
-
-    if (!get_elf_symbol_table(ehdr, &kernel_symbol_table.symtab,
-                              &kernel_symbol_table.strtab,
-                              &kernel_symbol_table.num_symbols)) {
-        serial_fprintk("Cannot find symbol table in kernel executable ELF.\n");
-        return false;
-    }
-
-    kernel_symbol_table.available = true;
-    return true;
+static bool kernel_symbol_table_available() {
+    return (uintptr_t)kallsyms_symbols != 0 && (uintptr_t)&kallsyms_num != 0 &&
+           kallsyms_num != 0;
 }
 
 static void *lookup_kernel_symbol_by_name(const char *name) {
-    if (name == NULL || !init_kernel_symbol_table()) {
+    if (name == NULL || !kernel_symbol_table_available()) {
         return NULL;
     }
 
-    for (size_t i = 0; i < kernel_symbol_table.num_symbols; i++) {
-        Elf64_Sym *sym = &kernel_symbol_table.symtab[i];
-        if (!elf_symbol_is_exported(sym)) {
+    for (size_t i = 0; i < (size_t)kallsyms_num; i++) {
+        const kernel_builtin_symbol_t *sym = &kallsyms_symbols[i];
+        if (!sym->exported || sym->name == NULL) {
             continue;
         }
 
-        const char *symbol_name = &kernel_symbol_table.strtab[sym->st_name];
-        if (strcmp(symbol_name, name) == 0) {
-            return (void *)(uintptr_t)sym->st_value;
+        if (strcmp(sym->name, name) == 0) {
+            return (void *)(uintptr_t)sym->addr;
         }
     }
 
@@ -1096,25 +1071,20 @@ static bool lookup_module_symbol_by_addr(uint64_t addr,
 
 static bool lookup_kernel_symbol_by_addr(uint64_t addr,
                                          symbol_lookup_result_t *result) {
-    if (!init_kernel_symbol_table()) {
+    if (!kernel_symbol_table_available()) {
         return false;
     }
 
     bool found = false;
 
-    for (size_t i = 0; i < kernel_symbol_table.num_symbols; i++) {
-        Elf64_Sym *sym = &kernel_symbol_table.symtab[i];
-        if (!elf_symbol_can_describe_ip(sym) || addr < sym->st_value) {
+    for (size_t i = 0; i < (size_t)kallsyms_num; i++) {
+        const kernel_builtin_symbol_t *sym = &kallsyms_symbols[i];
+        if (!sym->can_describe_ip || sym->name == NULL || addr < sym->addr) {
             continue;
         }
 
-        const char *symbol_name = &kernel_symbol_table.strtab[sym->st_name];
-        bool exact_match =
-            sym->st_size != 0 && addr - sym->st_value < sym->st_size;
-
-        if (update_symbol_lookup_result(result, symbol_name, NULL,
-                                        sym->st_value, sym->st_size, false,
-                                        exact_match)) {
+        if (update_symbol_lookup_result(result, sym->name, NULL, sym->addr, 0,
+                                        false, false)) {
             found = true;
         }
     }
