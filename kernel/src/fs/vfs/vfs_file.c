@@ -1,7 +1,6 @@
 #include "fs/vfs/vfs_internal.h"
 #include "fs/vfs/notify.h"
 #include "task/task.h"
-#include <mm/cache.h>
 #include <mm/mm.h>
 
 static unsigned int vfs_open_lookup_flags(const struct vfs_open_how *how) {
@@ -599,7 +598,6 @@ int vfs_poll(vfs_node_t *node, size_t events) {
 int vfs_truncate_path(const struct vfs_path *path, uint64_t size) {
     struct vfs_kstat stat;
     struct vfs_inode *inode;
-    uint64_t old_size;
     int ret;
 
     if (!path || !path->dentry || !path->dentry->d_inode)
@@ -609,16 +607,11 @@ int vfs_truncate_path(const struct vfs_path *path, uint64_t size) {
     if (!inode->i_op || !inode->i_op->setattr)
         return -EOPNOTSUPP;
 
-    old_size = inode->i_size;
     vfs_fill_generic_kstat(path, &stat);
     stat.size = size;
 
     ret = inode->i_op->setattr(path->dentry, &stat);
     if (ret == 0) {
-        uint64_t first = (size + PAGE_SIZE - 1) / PAGE_SIZE;
-        uint64_t last = (old_size > 0) ? ((old_size - 1) / PAGE_SIZE) : 0;
-        for (uint64_t p = first; p <= last; p++)
-            cache_page_invalidate_range(inode, p * PAGE_SIZE, PAGE_SIZE);
         notifyfs_queue_inode_event(inode, inode, NULL, IN_MODIFY, 0);
     }
     return ret;

@@ -8,7 +8,6 @@
 #include <mm/mm_syscall.h>
 
 #include <mm/mm.h>
-#include <mm/cache.h>
 #include <arch/arch.h>
 #include <task/task.h>
 
@@ -4456,7 +4455,6 @@ static void ext_destroy_inode(struct vfs_inode *inode) {
     ext_inode_info_t *info = ext_i(inode);
     if (!info)
         return;
-    cache_page_drop_inode(inode);
     if (info->symlink)
         free(info->symlink);
     info->symlink = NULL;

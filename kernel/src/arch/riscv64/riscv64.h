@@ -3,6 +3,7 @@
 #define ARCH_MAX_IRQ_NUM 1024
 
 #include "arch/riscv64/cpu_local.h"
+#include "arch/riscv64/drivers/rtc-goldfish.h"
 #include "arch/riscv64/drivers/serial.h"
 #include "arch/riscv64/irq/ptrace.h"
 #include "arch/riscv64/irq/irq.h"

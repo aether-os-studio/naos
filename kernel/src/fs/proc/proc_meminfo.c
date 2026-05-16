@@ -1,6 +1,5 @@
 #include <fs/proc/proc.h>
 #include <libs/string_builder.h>
-#include <mm/cache.h>
 #include <mm/mm.h>
 
 char *meminfo_origin[] = {
@@ -40,7 +39,6 @@ char *proc_gen_meminfo(size_t *context_len) {
     uint64_t reclaimable_pages = 0;
     uint64_t managed_pages = 0;
     uint64_t free_pages = 0;
-    cache_stats_t cache_stats = {0};
     const uint64_t page_kb = PAGE_SIZE / 1024;
 
     for (int i = 0; i < __MAX_NR_ZONES; i++) {
@@ -51,32 +49,20 @@ char *proc_gen_meminfo(size_t *context_len) {
         free_pages += zone_free_pages(zone);
     }
 
-    cache_get_stats(&cache_stats);
-    reclaimable_pages = cache_stats.block_pages + cache_stats.page_pages;
+    reclaimable_pages = 0;
 
     values[0] = managed_pages * page_kb;
     values[1] = free_pages * page_kb;
     values[2] = (free_pages + reclaimable_pages) * page_kb;
-    values[3] = cache_stats.block_pages * page_kb;
-    values[4] = cache_stats.page_pages * page_kb;
-    values[6] =
-        (cache_stats.dirty_pages + cache_stats.writeback_pages) * page_kb;
-    values[7] = (reclaimable_pages >
-                 cache_stats.dirty_pages + cache_stats.writeback_pages)
-                    ? (reclaimable_pages - cache_stats.dirty_pages -
-                       cache_stats.writeback_pages) *
-                          page_kb
-                    : 0;
+    values[3] = 0 * page_kb;
+    values[4] = 0 * page_kb;
+    values[6] = 0 * page_kb;
+    values[7] = 0 * page_kb;
     values[10] = values[6];
-    values[11] = (cache_stats.page_pages >
-                  cache_stats.dirty_pages + cache_stats.writeback_pages)
-                     ? (cache_stats.page_pages - cache_stats.dirty_pages -
-                        cache_stats.writeback_pages) *
-                           page_kb
-                     : 0;
-    values[18] = cache_stats.dirty_pages * page_kb;
-    values[19] = cache_stats.writeback_pages * page_kb;
-    values[21] = cache_stats.page_pages * page_kb;
+    values[11] = 0 * page_kb;
+    values[18] = 0 * page_kb;
+    values[19] = 0 * page_kb;
+    values[21] = 0 * page_kb;
     values[23] = reclaimable_pages * page_kb;
     values[25] = reclaimable_pages * page_kb;
     values[33] = values[0];

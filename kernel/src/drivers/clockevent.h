@@ -2,7 +2,7 @@
 
 #include <libs/klibc.h>
 
-#define CLOCKEVENT_MIN_PROGRAM_DELTA_NS (200ULL * 1000ULL * 1000ULL)
+#define CLOCKEVENT_MIN_PROGRAM_DELTA_NS (500ULL * 1000ULL * 1000ULL)
 
 struct clockevent_device;
 

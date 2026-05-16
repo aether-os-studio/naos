@@ -1,6 +1,5 @@
 #include <block/block.h>
 #include <mm/mm.h>
-#include <mm/cache.h>
 #include <block/partition.h>
 #include <dev/device.h>
 #include <arch/arch.h>
@@ -51,7 +50,6 @@ void blkdev_register(blkdev_t *dev) {
 void blkdev_unregister(blkdev_t *dev) {
     if (dev->mounted)
         blkdev_unmount(dev);
-    cache_block_drop_drive(dev->id);
     llist_delete(&dev->list);
     free(dev->name);
 }
@@ -261,12 +259,15 @@ static bool blk_copy_from_buffer(void *dst, const void *src, uint64_t len,
     return true;
 }
 
-static uint64_t blkdev_backend_read(blkdev_t *dev, uint64_t offset, void *buf,
-                                    uint64_t len) {
-    if (!dev || !dev->ptr || !dev->read)
-        return (uint64_t)-1;
+uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len) {
     if (len == 0)
         return 0;
+
+    blkdev_t *dev = find_blkdev_by_id(drive);
+    if (!dev)
+        return (uint64_t)-ENODEV;
+    if (!dev || !dev->ptr || !dev->read)
+        return (uint64_t)-ENOSYS;
 
     const uint64_t bs = dev->block_size;
     const uint64_t max_sec = dev->max_op_size / bs;
@@ -371,12 +372,16 @@ static uint64_t blkdev_backend_read(blkdev_t *dev, uint64_t offset, void *buf,
     return total;
 }
 
-static uint64_t blkdev_backend_write(blkdev_t *dev, uint64_t offset,
-                                     const void *buf, uint64_t len) {
-    if (!dev || !dev->ptr || !dev->write)
-        return (uint64_t)-1;
+uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
+                      uint64_t len) {
     if (len == 0)
         return 0;
+
+    blkdev_t *dev = find_blkdev_by_id(drive);
+    if (!dev)
+        return (uint64_t)-ENODEV;
+    if (!dev->ptr || !dev->read || !dev->write)
+        return (uint64_t)-ENOSYS;
 
     const uint64_t bs = dev->block_size;
     const uint64_t max_sec = dev->max_op_size / bs;
@@ -492,120 +497,4 @@ static uint64_t blkdev_backend_write(blkdev_t *dev, uint64_t offset,
     }
 
     return total;
-}
-
-static int blkdev_fill_cache_page(blkdev_t *dev, uint64_t page_index,
-                                  cache_entry_t *entry) {
-    uint64_t page_offset = page_index * PAGE_SIZE;
-    uint64_t load_bytes = 0;
-
-    memset(cache_entry_data(entry), 0, PAGE_SIZE);
-    if (page_offset < dev->size)
-        load_bytes = MIN((uint64_t)PAGE_SIZE, dev->size - page_offset);
-
-    if (load_bytes > 0 &&
-        blkdev_backend_read(dev, page_offset, cache_entry_data(entry),
-                            load_bytes) != load_bytes) {
-        cache_entry_abort_fill(entry);
-        return -1;
-    }
-
-    cache_entry_mark_ready(entry, load_bytes);
-    return 0;
-}
-
-static uint64_t blkdev_read_cache_and_populate(blkdev_t *dev,
-                                               uint64_t page_index, void *dst) {
-    bool created = false;
-    cache_entry_t *entry =
-        cache_block_get_or_create(dev->id, page_index, &created);
-    if (!entry)
-        return 0;
-
-    if (created && blkdev_fill_cache_page(dev, page_index, entry) < 0) {
-        cache_entry_put(entry);
-        return 0;
-    }
-
-    memcpy(dst, cache_entry_data(entry), PAGE_SIZE);
-    cache_entry_put(entry);
-    return PAGE_SIZE;
-}
-
-uint64_t blkdev_read(uint64_t drive, uint64_t offset, void *buf, uint64_t len) {
-    blkdev_t *dev = find_blkdev_by_id(drive);
-    if (!dev || !dev->ptr || !dev->read)
-        return (uint64_t)-1;
-    if (len == 0)
-        return 0;
-
-    bool dst_is_userspace = blk_buffer_is_userspace(buf, len);
-    uint8_t *dst = (uint8_t *)buf;
-    uint64_t total = 0;
-
-    if (!dst_is_userspace && IS_DMA_BUF(dst) && (offset % PAGE_SIZE) == 0 &&
-        (len % PAGE_SIZE) == 0 && (PAGE_SIZE % dev->block_size) == 0) {
-        uint64_t page_index = offset / PAGE_SIZE;
-        uint64_t pages = len / PAGE_SIZE;
-
-        while (pages > 0) {
-            if (blkdev_read_cache_and_populate(dev, page_index, dst) !=
-                PAGE_SIZE) {
-                return (uint64_t)-1;
-            }
-
-            dst += PAGE_SIZE;
-            total += PAGE_SIZE;
-            page_index++;
-            pages--;
-        }
-
-        return total;
-    }
-
-    while (total < len) {
-        uint64_t cur = offset + total;
-        uint64_t page_index = cur / PAGE_SIZE;
-        uint64_t page_off = cur % PAGE_SIZE;
-        uint64_t chunk = MIN((uint64_t)PAGE_SIZE - page_off, len - total);
-        bool created = false;
-        cache_entry_t *entry =
-            cache_block_get_or_create(dev->id, page_index, &created);
-
-        if (!entry) {
-            return blkdev_backend_read(dev, offset + total, dst, len - total) ==
-                           (len - total)
-                       ? len
-                       : (uint64_t)-1;
-        }
-
-        if (created && blkdev_fill_cache_page(dev, page_index, entry) < 0) {
-            cache_entry_put(entry);
-            return (uint64_t)-1;
-        }
-
-        if (!blk_copy_to_buffer(dst,
-                                (uint8_t *)cache_entry_data(entry) + page_off,
-                                chunk, dst_is_userspace)) {
-            cache_entry_put(entry);
-            return (uint64_t)-1;
-        }
-
-        cache_entry_put(entry);
-        dst += chunk;
-        total += chunk;
-    }
-
-    return total;
-}
-
-uint64_t blkdev_write(uint64_t drive, uint64_t offset, const void *buf,
-                      uint64_t len) {
-    blkdev_t *dev = find_blkdev_by_id(drive);
-    uint64_t written = blkdev_backend_write(dev, offset, buf, len);
-
-    if (written != (uint64_t)-1 && written != 0)
-        cache_block_invalidate_range(drive, offset, written);
-
-    return written;
 }

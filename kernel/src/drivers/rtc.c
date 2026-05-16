@@ -1,3 +1,4 @@
+#include <boot/boot.h>
 #include <drivers/logger.h>
 #include <drivers/rtc.h>
 
@@ -156,6 +157,35 @@ int rtc_alarm_enable_irq(bool enabled) {
         return -ENODEV;
 
     return rtc->ops->alarm_enable_irq(rtc, enabled);
+}
+
+int rtc_read_realtime(rtc_realtime_t *time) {
+    rtc_device_t *rtc;
+    rtc_time_t tm;
+    uint64_t mono_ns;
+    int ret;
+
+    if (!time)
+        return -EINVAL;
+
+    rtc = rtc_get_default();
+    if (rtc && rtc->ops->read_realtime) {
+        ret = rtc->ops->read_realtime(rtc, time);
+        if (ret == 0)
+            return 0;
+    }
+
+    ret = rtc_read_time(&tm);
+    if (ret == 0) {
+        time->sec = rtc_time_to_seconds(&tm);
+        time->nsec = 0;
+        return 0;
+    }
+
+    mono_ns = nano_time();
+    time->sec = boot_get_boottime() + mono_ns / 1000000000ULL;
+    time->nsec = (uint32_t)(mono_ns % 1000000000ULL);
+    return 0;
 }
 
 void rtc_handle_alarm_irq(void) {}

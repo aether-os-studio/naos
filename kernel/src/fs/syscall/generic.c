@@ -3,7 +3,6 @@
 #include <boot/boot.h>
 #include <net/socket.h>
 #include <drivers/logger.h>
-#include <mm/cache.h>
 #include <fs/vfs/notify.h>
 #include <task/ns.h>
 #include <task/task_syscall.h>

@@ -219,7 +219,7 @@ run-aarch64-single: assets/ovmf-code-$(ARCH).fd all-single
 run-riscv64: assets/ovmf-code-$(ARCH).fd all
 ifeq ($(BOOT_PROTOCOL), limine)
 	qemu-system-$(ARCH) \
-		-M virt \
+		-M virt,acpi=off \
 		-cpu rv64 \
 		-device ramfb \
 		-device qemu-xhci \

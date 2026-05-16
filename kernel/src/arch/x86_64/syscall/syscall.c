@@ -9,6 +9,7 @@
 #include <task/keyring.h>
 #include <task/ptrace.h>
 #include <task/task_syscall.h>
+#include <drivers/rtc.h>
 #include <net/net_syscall.h>
 
 static uint64_t copy_timespec_to_user(uint64_t user_addr, uint64_t sec,
@@ -258,10 +259,9 @@ uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     case 0: // CLOCK_REALTIME
     case 5: // CLOCK_REALTIME_COARSE
     {
-        uint64_t nano = nano_time();
-        return copy_timespec_to_user(arg2,
-                                     boot_get_boottime() + nano / 1000000000,
-                                     nano % 1000000000ULL);
+        rtc_realtime_t now;
+        rtc_read_realtime(&now);
+        return copy_timespec_to_user(arg2, now.sec, now.nsec);
     }
     case 2: // CLOCK_PROCESS_CPUTIME_ID
     case 3: // CLOCK_THREAD_CPUTIME_ID
@@ -296,7 +296,9 @@ uint64_t sys_clock_getres(uint64_t arg1, uint64_t arg2) {
 }
 
 uint64_t sys_time(uint64_t arg1) {
-    uint64_t timestamp = boot_get_boottime() + nano_time() / 1000000000;
+    rtc_realtime_t now;
+    rtc_read_realtime(&now);
+    uint64_t timestamp = now.sec;
     if (arg1) {
         if (copy_to_user((void *)arg1, &timestamp, sizeof(timestamp))) {
             return (uint64_t)-EFAULT;
@@ -313,9 +315,9 @@ uint64_t sys_accept_normal(uint64_t arg1, struct sockaddr_un *arg2,
 uint64_t sys_pipe_normal(uint64_t arg1) { return sys_pipe((int *)arg1, 0); }
 
 uint64_t sys_gettimeofday(uint64_t arg1) {
-    uint64_t nano = nano_time();
-    uint64_t timestamp = boot_get_boottime() + nano / 1000000000;
-    return copy_timeval_to_user(arg1, timestamp, (nano % 1000000000ULL) / 1000);
+    rtc_realtime_t now;
+    rtc_read_realtime(&now);
+    return copy_timeval_to_user(arg1, now.sec, now.nsec / 1000);
 }
 
 uint64_t sys_uname(uint64_t arg1) {

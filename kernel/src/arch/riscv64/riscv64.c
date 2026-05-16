@@ -17,6 +17,7 @@ void arch_early_init() {
 
 void arch_init() {
     timer_init();
+    rtc_goldfish_init();
     timer_init_percpu();
     syscall_handler_init();
 }

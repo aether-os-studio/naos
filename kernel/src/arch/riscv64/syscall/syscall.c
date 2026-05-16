@@ -8,6 +8,7 @@
 #include <task/keyring.h>
 #include <task/ptrace.h>
 #include <task/task_syscall.h>
+#include <drivers/rtc.h>
 #include <net/net_syscall.h>
 
 static uint64_t sys_sched_yield(void) {
@@ -58,12 +59,15 @@ static uint64_t sys_clock_gettime(uint64_t clockid, uint64_t tp, uint64_t a3,
         (int64_t)clockid != CLOCK_MONOTONIC)
         return (uint64_t)-EINVAL;
 
+    if ((int64_t)clockid == CLOCK_REALTIME) {
+        rtc_realtime_t now;
+        rtc_read_realtime(&now);
+        return copy_timespec_to_user(tp, now.sec, now.nsec);
+    }
+
     uint64_t nano_now = nano_time();
-    uint64_t time_ns =
-        ((int64_t)clockid == CLOCK_REALTIME) ? realtime_time() : nano_now;
-    uint64_t s = time_ns / 1000000000ULL;
-    uint64_t ns = time_ns % 1000000000ULL;
-    return copy_timespec_to_user(tp, s, ns);
+    return copy_timespec_to_user(tp, nano_now / 1000000000ULL,
+                                 nano_now % 1000000000ULL);
 }
 
 static uint64_t sys_clock_getres(uint64_t clockid, uint64_t tp, uint64_t a3,
@@ -153,10 +157,11 @@ static uint64_t sys_gettimeofday_rv(uint64_t tv, uint64_t tz, uint64_t a3,
     if (!tv)
         return 0;
 
-    uint64_t now_ns = realtime_time();
+    rtc_realtime_t now;
+    rtc_read_realtime(&now);
     struct timeval value = {
-        .tv_sec = (long)(now_ns / 1000000000ULL),
-        .tv_usec = (long)((now_ns / 1000ULL) % 1000000ULL),
+        .tv_sec = (long)now.sec,
+        .tv_usec = (long)(now.nsec / 1000),
     };
     return copy_to_user((void *)tv, &value, sizeof(value)) ? (uint64_t)-EFAULT
                                                            : 0;

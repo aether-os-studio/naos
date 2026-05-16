@@ -1,7 +1,6 @@
 #include <arch/arch.h>
 #include <mm/buddy.h>
 #include <mm/bitmap.h>
-#include <mm/cache.h>
 #include <mm/page.h>
 
 extern Bitmap usable_regions;
@@ -455,8 +454,6 @@ uintptr_t alloc_frames(size_t count) {
         }
 
         if (attempt == 0) {
-            if (cache_reclaim_pages(required_pages * 128) != 0)
-                continue;
             task_reap_deferred(16);
             continue;
         }

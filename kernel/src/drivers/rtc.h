@@ -17,6 +17,11 @@ typedef struct rtc_alarm {
     bool pending;
 } rtc_alarm_t;
 
+typedef struct rtc_realtime {
+    uint64_t sec;
+    uint32_t nsec;
+} rtc_realtime_t;
+
 struct rtc_device;
 
 typedef struct rtc_class_ops {
@@ -25,6 +30,7 @@ typedef struct rtc_class_ops {
     int (*read_alarm)(struct rtc_device *rtc, rtc_alarm_t *alarm);
     int (*set_alarm)(struct rtc_device *rtc, const rtc_alarm_t *alarm);
     int (*alarm_enable_irq)(struct rtc_device *rtc, bool enabled);
+    int (*read_realtime)(struct rtc_device *rtc, rtc_realtime_t *time);
 } rtc_class_ops_t;
 
 typedef struct rtc_device {
@@ -41,6 +47,7 @@ int rtc_set_time(const rtc_time_t *tm);
 int rtc_read_alarm(rtc_alarm_t *alarm);
 int rtc_set_alarm(const rtc_alarm_t *alarm);
 int rtc_alarm_enable_irq(bool enabled);
+int rtc_read_realtime(rtc_realtime_t *time);
 
 bool rtc_time_valid(const rtc_time_t *tm);
 uint64_t rtc_time_to_seconds(const rtc_time_t *tm);
