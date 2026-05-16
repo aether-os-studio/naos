@@ -866,7 +866,8 @@ static int lwip_socket_setsockopt_impl(lwip_socket_state_t *sock, int level,
                 if (!dev) {
                     return -ENODEV;
                 }
-                strncpy(sock->bind_to_dev, dev->name, IFNAMSIZ - 1);
+                snprintf(sock->bind_to_dev, IFNAMSIZ, "%s", dev->name);
+                sock->bind_to_dev[IFNAMSIZ - 1] = '\0';
                 sock->bind_to_dev[IFNAMSIZ - 1] = '\0';
                 netdev_put(dev);
             } else {
@@ -888,6 +889,10 @@ static int lwip_socket_setsockopt_impl(lwip_socket_state_t *sock, int level,
                 char ifname[IFNAMSIZ];
                 netdev_t *dev = NULL;
 
+                if (optlen > IFNAMSIZ) {
+                    ret = -EINVAL;
+                    break;
+                }
                 memset(ifname, 0, sizeof(ifname));
                 memcpy(ifname, optval, optlen);
                 ifname[IFNAMSIZ - 1] = '\0';
@@ -896,8 +901,7 @@ static int lwip_socket_setsockopt_impl(lwip_socket_state_t *sock, int level,
                 if (!dev) {
                     return -ENODEV;
                 }
-                strncpy(sock->bind_to_dev, dev->name, IFNAMSIZ - 1);
-                sock->bind_to_dev[IFNAMSIZ - 1] = '\0';
+                snprintf(sock->bind_to_dev, IFNAMSIZ, "%s", dev->name);
                 sock->bind_to_ifindex = (int)(dev->id + 1);
                 netdev_put(dev);
             }
@@ -2163,7 +2167,7 @@ static int lwip_socket_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
 
         if (cmd == SIOCGIWNAME) {
             memset(req.u.name, 0, sizeof(req.u.name));
-            strncpy(req.u.name, "IEEE 802.11", IFNAMSIZ - 1);
+            snprintf(req.u.name, IFNAMSIZ, "%s", "IEEE 802.11");
         } else if (cmd == SIOCGIWMODE) {
             req.u.mode = IW_MODE_INFRA;
         } else if (cmd == SIOCGIWAP) {
