@@ -6,6 +6,7 @@
 #include <task/ptrace.h>
 #include <task/sched.h>
 #include <drivers/logger.h>
+#include <drivers/clockevent.h>
 #include <fs/vfs/vfs.h>
 #include <fs/fs_syscall.h>
 #include <arch/arch.h>
@@ -545,6 +546,9 @@ void task_timeout_cancel(task_t *task) {
     task_timeout_remove_locked(task);
     task_timeout_refresh_next_locked();
     spin_unlock(&task_timeout_lock);
+
+    clockevent_program_event(
+        __atomic_load_n(&task_timeout_next_ns, __ATOMIC_ACQUIRE));
 }
 
 static void task_timeout_arm(task_t *task) {
@@ -553,6 +557,9 @@ static void task_timeout_arm(task_t *task) {
     task_timeout_add_locked(task);
     task_timeout_refresh_next_locked();
     spin_unlock(&task_timeout_lock);
+
+    clockevent_program_event(
+        __atomic_load_n(&task_timeout_next_ns, __ATOMIC_ACQUIRE));
 }
 
 static void task_timeout_softirq(void) {
@@ -581,6 +588,9 @@ static void task_timeout_softirq(void) {
 
         if (irq_state)
             arch_enable_interrupt();
+
+        clockevent_program_event(
+            __atomic_load_n(&task_timeout_next_ns, __ATOMIC_ACQUIRE));
 
         if (!expired_count) {
             return;
@@ -1653,10 +1663,19 @@ void sched_defer_tick(void) {
 
 void sched_check_wakeup() {
     uint64_t next = __atomic_load_n(&task_timeout_next_ns, __ATOMIC_ACQUIRE);
-    if (next != UINT64_MAX && next <= nano_time()) {
-        if (softirq_raise(SOFTIRQ_TIMER))
-            sched_wake_worker(0);
-    }
+    if (next == UINT64_MAX)
+        return;
+
+    uint64_t now = nano_time();
+    if (next > now && next - now > CLOCKEVENT_MIN_PROGRAM_DELTA_NS)
+        return;
+
+    if (softirq_raise(SOFTIRQ_TIMER))
+        sched_wake_worker(0);
+}
+
+uint64_t sched_next_wakeup_ns(void) {
+    return __atomic_load_n(&task_timeout_next_ns, __ATOMIC_ACQUIRE);
 }
 
 static int task_kill_process_group_internal(int pgid, int sig,

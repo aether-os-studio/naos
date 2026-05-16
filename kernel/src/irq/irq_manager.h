@@ -40,6 +40,7 @@ void irq_regist_ipi(uint64_t irq_num,
 bool irq_send_ipi(uint32_t cpu_id, uint64_t irq_num);
 void irq_set_sched_ipi(uint64_t irq_num);
 bool irq_trigger_sched_ipi(uint32_t cpu_id);
+bool irq_is_registered(uint64_t irq_num);
 
 void irq_manager_init();
 

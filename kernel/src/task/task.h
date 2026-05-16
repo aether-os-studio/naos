@@ -235,6 +235,7 @@ static inline bool task_should_index_parent(task_t *task) {
 void sched_defer_tick(void);
 void sched_wake_worker(uint32_t cpu_id);
 void sched_check_wakeup();
+uint64_t sched_next_wakeup_ns(void);
 
 struct vfs_process_fs *task_current_vfs_fs(void);
 fd_info_t *task_fd_info_get(task_t *task);

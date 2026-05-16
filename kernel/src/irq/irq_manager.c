@@ -130,6 +130,13 @@ bool irq_trigger_sched_ipi(uint32_t cpu_id) {
     return irq_send_ipi(cpu_id, irq_num);
 }
 
+bool irq_is_registered(uint64_t irq_num) {
+    if (irq_num >= ARCH_MAX_IRQ_NUM)
+        return false;
+
+    return __atomic_load_n(&actions[irq_num].used, __ATOMIC_ACQUIRE);
+}
+
 uint64_t irq = IRQ_ALLOCATE_NUM_BASE;
 spinlock_t irq_lock = SPIN_INIT;
 

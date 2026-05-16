@@ -215,6 +215,8 @@ typedef struct override {
 
 override_t overrides[ARCH_MAX_IRQ_NUM];
 uint64_t overrides_count = 0;
+static uint32_t ioapic_vector_gsi[ARCH_MAX_IRQ_NUM];
+static bool ioapic_vector_gsi_valid[ARCH_MAX_IRQ_NUM];
 
 void apic_handle_override(
     struct acpi_madt_interrupt_source_override *override_madt) {
@@ -226,6 +228,11 @@ void apic_handle_override(
 }
 
 bool apic_vector_to_gsi(uint8_t vector, uint32_t *out) {
+    if (ioapic_vector_gsi_valid[vector]) {
+        *out = ioapic_vector_gsi[vector];
+        return true;
+    }
+
     uint32_t irq = vector - 32;
     override_t *override = NULL;
     for (uint64_t i = 0; i < overrides_count; i++) {
@@ -240,11 +247,8 @@ bool apic_vector_to_gsi(uint8_t vector, uint32_t *out) {
     return found;
 }
 
-ioapic_t *apic_find_ioapic_by_vector(uint8_t vector) {
-    uint32_t gsi;
-    bool found_override = apic_vector_to_gsi(vector, &gsi);
-
-    ioapic_t *ioapic = found_override ? NULL : &ioapics[0];
+static ioapic_t *apic_find_ioapic_by_gsi(uint32_t gsi) {
+    ioapic_t *ioapic = NULL;
     for (uint64_t i = 0; i < ioapic_count; i++) {
         if (gsi >= ioapics[i].gsi_start &&
             gsi < (ioapics[i].gsi_start + ioapics[i].count)) {
@@ -256,32 +260,64 @@ ioapic_t *apic_find_ioapic_by_vector(uint8_t vector) {
     return ioapic;
 }
 
+ioapic_t *apic_find_ioapic_by_vector(uint8_t vector) {
+    uint32_t gsi;
+
+    apic_vector_to_gsi(vector, &gsi);
+    return apic_find_ioapic_by_gsi(gsi);
+}
+
+static uint32_t apic_isa_irq_to_gsi(uint32_t irq) {
+    for (uint64_t i = 0; i < overrides_count; i++) {
+        if (overrides[i].bus_irq == irq)
+            return overrides[i].gsi;
+    }
+
+    return irq;
+}
+
+bool apic_gsi_available(uint32_t gsi) {
+    if (!apic_find_ioapic_by_gsi(gsi))
+        return false;
+
+    for (uint64_t vector = 0; vector < ARCH_MAX_IRQ_NUM; vector++) {
+        if (ioapic_vector_gsi_valid[vector] && ioapic_vector_gsi[vector] == gsi)
+            return false;
+    }
+
+    return true;
+}
+
 void ioapic_add(uint8_t vector, uint32_t irq) {
-    ioapic_t *ioapic = apic_find_ioapic_by_vector(vector);
+    uint32_t gsi = irq < 16 ? apic_isa_irq_to_gsi(irq) : irq;
+    ioapic_t *ioapic = apic_find_ioapic_by_gsi(gsi);
     if (!ioapic) {
-        printk("Cannot find ioapic for vector %d\n", vector);
+        printk("Cannot find ioapic for vector %d gsi %d\n", vector, gsi);
         return;
     }
-    uint32_t ioredtbl =
-        (uint32_t)(0x10 + (uint32_t)((irq - ioapic->gsi_start) * 2));
+    uint32_t ioredtbl = (uint32_t)(0x10 + (gsi - ioapic->gsi_start) * 2);
     uint64_t redirect = (uint64_t)vector;
     redirect |= lapic_id() << 56;
     ioapic_write(ioapic, ioredtbl, (uint32_t)redirect);
     ioapic_write(ioapic, ioredtbl + 1, (uint32_t)(redirect >> 32));
+
+    ioapic_vector_gsi[vector] = gsi;
+    ioapic_vector_gsi_valid[vector] = true;
 }
 
 void io_apic_init() {}
 
 void ioapic_enable(uint8_t vector) {
-    ioapic_t *ioapic = apic_find_ioapic_by_vector(vector);
+    uint32_t gsi;
+    apic_vector_to_gsi(vector, &gsi);
+
+    ioapic_t *ioapic = apic_find_ioapic_by_gsi(gsi);
     if (!ioapic) {
         printk("Cannot find ioapic for vector %d\n", vector);
         return;
     }
 
-    uint32_t gsi;
-    bool found = apic_vector_to_gsi(vector, &gsi);
-    uint64_t index = 0x10 + (((found ? (gsi - ioapic->gsi_start) : gsi)) * 2);
+    uint64_t index = 0x10 + ((gsi - ioapic->gsi_start) * 2);
     uint64_t value = (uint64_t)ioapic_read(ioapic, index + 1) << 32 |
                      (uint64_t)ioapic_read(ioapic, index);
     value &= (~0x10000UL);
@@ -290,15 +326,16 @@ void ioapic_enable(uint8_t vector) {
 }
 
 void ioapic_disable(uint8_t vector) {
-    ioapic_t *ioapic = apic_find_ioapic_by_vector(vector);
+    uint32_t gsi;
+    apic_vector_to_gsi(vector, &gsi);
+
+    ioapic_t *ioapic = apic_find_ioapic_by_gsi(gsi);
     if (!ioapic) {
         printk("Cannot find ioapic for vector %d\n", vector);
         return;
     }
 
-    uint32_t gsi;
-    bool found = apic_vector_to_gsi(vector, &gsi);
-    uint64_t index = 0x10 + (((found ? (gsi - ioapic->gsi_start) : gsi)) * 2);
+    uint64_t index = 0x10 + ((gsi - ioapic->gsi_start) * 2);
     uint64_t value = (uint64_t)ioapic_read(ioapic, index + 1) << 32 |
                      (uint64_t)ioapic_read(ioapic, index);
     value |= 0x10000UL;

@@ -18,6 +18,8 @@ void arch_early_init() {
 
     apic_timer_init();
     local_apic_init();
+    hpet_clockevent_init();
+    rtc_cmos_init();
 
     apic_ipi_init();
 

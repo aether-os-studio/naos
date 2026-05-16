@@ -10,9 +10,6 @@ override OUTPUT := kernel
 
 ARCH_DIR := src/arch/$(ARCH)
 
-# Install prefix; /usr/local is a good, standard default pick.
-PREFIX := /usr/local
-
 # Check if the architecture is supported.
 ifeq ($(filter $(ARCH),aarch64 loongarch64 riscv64 x86_64),)
     $(error Architecture $(ARCH) not supported)
@@ -269,15 +266,3 @@ clean:
 distclean:
 	$(call PRINT_STEP,DISTCLEAN,kernel)
 	$(Q)rm -rf bin-* obj-* freestnd-c-hdrs src/limine.h
-
-# Install the final built executable to its final on-root location.
-.PHONY: install
-install: all
-	install -d "$(DESTDIR)$(PREFIX)/share/$(OUTPUT)"
-	install -m 644 bin-$(ARCH)/$(OUTPUT) "$(DESTDIR)$(PREFIX)/share/$(OUTPUT)/$(OUTPUT)-$(ARCH)"
-
-# Try to undo whatever the "install" target did.
-.PHONY: uninstall
-uninstall:
-	rm -f "$(DESTDIR)$(PREFIX)/share/$(OUTPUT)/$(OUTPUT)-$(ARCH)"
-	-rmdir "$(DESTDIR)$(PREFIX)/share/$(OUTPUT)"

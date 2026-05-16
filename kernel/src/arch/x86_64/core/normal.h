@@ -5,6 +5,7 @@
 void apic_init();
 
 void hpet_init();
+void hpet_clockevent_init(void);
 uint64_t nano_time();
 uint64_t hpet_nano_time();
 bool tsc_clocksource_available();
@@ -57,6 +58,7 @@ void apic_ipi_init();
 void ioapic_enable(uint8_t vector);
 void ioapic_disable(uint8_t vector);
 void ioapic_add(uint8_t vector, uint32_t irq);
+bool apic_gsi_available(uint32_t gsi);
 
 int64_t apic_mask(uint64_t irq, uint64_t flags);
 int64_t apic_unmask(uint64_t irq, uint64_t flags);

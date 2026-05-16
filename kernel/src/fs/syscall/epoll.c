@@ -499,8 +499,9 @@ static uint64_t do_epoll_wait(struct vfs_file *epoll_file,
         }
 
         int64_t block_ns = wait_ns;
-        if (block_ns < 0 || block_ns > 10000000LL)
+        if (block_ns < 0 || block_ns > 10000000LL) {
             block_ns = 10000000LL;
+        }
 
         arch_enable_interrupt();
         int block_reason =
