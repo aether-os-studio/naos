@@ -238,6 +238,10 @@ void sched_check_wakeup();
 uint64_t sched_next_wakeup_ns(void);
 
 struct vfs_process_fs *task_current_vfs_fs(void);
+fd_info_t *task_fd_info_alloc(size_t max_fds);
+fd_info_t *task_fd_info_clone(fd_info_t *old);
+int task_fd_info_expand(fd_info_t *fd_info, size_t min_fds);
+void task_fd_info_free(fd_info_t *fd_info);
 fd_info_t *task_fd_info_get(task_t *task);
 fd_info_t *task_fd_info_replace(task_t *task, fd_info_t *new_info);
 fd_info_t *task_fd_info_detach(task_t *task);

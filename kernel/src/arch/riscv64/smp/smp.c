@@ -118,9 +118,10 @@ uint64_t riscv64_sched_ipi_irq(void) { return sched_ipi_irq; }
 void limine_ap_stub(struct limine_mp_info *cpu);
 
 void smp_init() {
-#if defined(__sbi__)
+#ifdef CONFIG_BOOT_SBI
     boot_smp_init((uintptr_t)ap_entry);
-#else
+#endif
+#ifdef CONFIG_BOOT_LIMINE
     boot_smp_init((uintptr_t)limine_ap_stub);
 #endif
 

@@ -46,6 +46,74 @@ struct vfs_process_fs *task_current_vfs_fs(void) {
     return current_task ? task_vfs_fs(current_task) : NULL;
 }
 
+fd_info_t *task_fd_info_alloc(size_t max_fds) {
+    if (max_fds == 0)
+        max_fds = 1;
+    if (max_fds > SIZE_MAX / sizeof(fd_entry_t))
+        return NULL;
+
+    fd_info_t *fd_info = calloc(1, sizeof(*fd_info));
+    if (!fd_info)
+        return NULL;
+
+    fd_info->fds = calloc(max_fds, sizeof(fd_entry_t));
+    if (!fd_info->fds) {
+        free(fd_info);
+        return NULL;
+    }
+
+    fd_info->max_fds = max_fds;
+    spin_init(&fd_info->fdt_lock);
+    task_fd_info_ref_init(fd_info, 1);
+    return fd_info;
+}
+
+fd_info_t *task_fd_info_clone(fd_info_t *old) {
+    if (!old)
+        return NULL;
+
+    fd_info_t *new_info = task_fd_info_alloc(old->max_fds);
+    if (!new_info)
+        return NULL;
+
+    with_fd_info_lock(old, {
+        for (size_t i = 0; i < old->max_fds; i++) {
+            if (!old->fds[i].file)
+                continue;
+            new_info->fds[i].file = vfs_file_get(old->fds[i].file);
+            new_info->fds[i].flags = old->fds[i].flags;
+        }
+    });
+
+    return new_info;
+}
+
+int task_fd_info_expand(fd_info_t *fd_info, size_t min_fds) {
+    if (!fd_info)
+        return -EINVAL;
+    if (min_fds <= fd_info->max_fds)
+        return 0;
+    if (min_fds > SIZE_MAX / sizeof(fd_entry_t))
+        return -ENOMEM;
+
+    fd_entry_t *new_fds = calloc(min_fds, sizeof(*new_fds));
+    if (!new_fds)
+        return -ENOMEM;
+
+    memcpy(new_fds, fd_info->fds, fd_info->max_fds * sizeof(*new_fds));
+    free(fd_info->fds);
+    fd_info->fds = new_fds;
+    fd_info->max_fds = min_fds;
+    return 0;
+}
+
+void task_fd_info_free(fd_info_t *fd_info) {
+    if (!fd_info)
+        return;
+    free(fd_info->fds);
+    free(fd_info);
+}
+
 fd_info_t *task_fd_info_get(task_t *task) {
     fd_info_t *fd_info = NULL;
 
@@ -83,14 +151,18 @@ struct vfs_file *task_get_file(task_t *task, int fd) {
     struct vfs_file *file = NULL;
     fd_info_t *fd_info;
 
-    if (!task || fd < 0 || fd >= MAX_FD_NUM)
+    if (!task || fd < 0)
         return NULL;
 
     fd_info = task_fd_info_get(task);
     if (!fd_info)
         return NULL;
 
-    with_fd_info_lock(fd_info, { file = vfs_file_get(fd_info->fds[fd].file); });
+    with_fd_info_lock(fd_info, {
+        if ((size_t)fd >= fd_info->max_fds)
+            break;
+        file = vfs_file_get(fd_info->fds[fd].file);
+    });
 
     task_fd_info_put(fd_info, task);
 
@@ -102,7 +174,7 @@ int task_get_fd_flags_for_file(task_t *task, int fd, struct vfs_file *file,
     fd_info_t *fd_info;
     int ret = -EBADF;
 
-    if (!task || fd < 0 || fd >= MAX_FD_NUM || !file || !flags)
+    if (!task || fd < 0 || !file || !flags)
         return -EBADF;
 
     fd_info = task_fd_info_get(task);
@@ -110,6 +182,8 @@ int task_get_fd_flags_for_file(task_t *task, int fd, struct vfs_file *file,
         return -EBADF;
 
     with_fd_info_lock(fd_info, {
+        if ((size_t)fd >= fd_info->max_fds)
+            break;
         if (fd_info->fds[fd].file != file)
             break;
         *flags = fd_info->fds[fd].flags;
@@ -125,7 +199,7 @@ int task_set_fd_flags_mask_for_file(task_t *task, int fd, struct vfs_file *file,
     fd_info_t *fd_info;
     int ret = -EBADF;
 
-    if (!task || fd < 0 || fd >= MAX_FD_NUM || !file)
+    if (!task || fd < 0 || !file)
         return -EBADF;
 
     fd_info = task_fd_info_get(task);
@@ -133,6 +207,8 @@ int task_set_fd_flags_mask_for_file(task_t *task, int fd, struct vfs_file *file,
         return -EBADF;
 
     with_fd_info_lock(fd_info, {
+        if ((size_t)fd >= fd_info->max_fds)
+            break;
         if (fd_info->fds[fd].file != file)
             break;
         fd_info->fds[fd].flags &= ~clear;
@@ -153,19 +229,44 @@ int task_install_file(task_t *task, struct vfs_file *file,
         return -EINVAL;
     if (min_fd < 0)
         min_fd = 0;
+    if ((size_t)min_fd >= task->rlim[RLIMIT_NOFILE].rlim_cur)
+        return -EMFILE;
 
     fd_info = task_fd_info_get(task);
     if (!fd_info)
         return -EINVAL;
 
     with_fd_info_lock(fd_info, {
-        for (int i = min_fd; i < MAX_FD_NUM; ++i) {
+        size_t limit =
+            MIN(fd_info->max_fds, task->rlim[RLIMIT_NOFILE].rlim_cur);
+        for (size_t i = (size_t)min_fd; i < limit; ++i) {
             if (fd_info->fds[i].file)
                 continue;
             fd_info->fds[i].file = vfs_file_get(file);
             fd_info->fds[i].flags = fd_flags;
-            newfd = i;
+            newfd = (int)i;
             break;
+        }
+
+        if (newfd < 0 &&
+            task->rlim[RLIMIT_NOFILE].rlim_cur > fd_info->max_fds) {
+            size_t old_max = fd_info->max_fds;
+            size_t new_max = MIN(task->rlim[RLIMIT_NOFILE].rlim_cur,
+                                 MAX(old_max * 2, old_max + 1));
+            if ((size_t)min_fd >= new_max)
+                new_max = (size_t)min_fd + 1;
+            if (task_fd_info_expand(fd_info, new_max) < 0)
+                break;
+
+            limit = MIN(fd_info->max_fds, task->rlim[RLIMIT_NOFILE].rlim_cur);
+            for (size_t i = MAX((size_t)min_fd, old_max); i < limit; ++i) {
+                if (fd_info->fds[i].file)
+                    continue;
+                fd_info->fds[i].file = vfs_file_get(file);
+                fd_info->fds[i].flags = fd_flags;
+                newfd = (int)i;
+                break;
+            }
         }
     });
 
@@ -180,8 +281,10 @@ int task_replace_file(task_t *task, int fd, struct vfs_file *file,
                       unsigned int fd_flags) {
     fd_info_t *fd_info;
     struct vfs_file *old = NULL;
+    int ret = fd;
 
-    if (!task || !file || fd < 0 || fd >= MAX_FD_NUM)
+    if (!task || !file || fd < 0 ||
+        (size_t)fd >= task->rlim[RLIMIT_NOFILE].rlim_cur)
         return -EINVAL;
 
     fd_info = task_fd_info_get(task);
@@ -189,12 +292,26 @@ int task_replace_file(task_t *task, int fd, struct vfs_file *file,
         return -EINVAL;
 
     with_fd_info_lock(fd_info, {
+        if ((size_t)fd >= fd_info->max_fds &&
+            (size_t)fd < task->rlim[RLIMIT_NOFILE].rlim_cur) {
+            if (task_fd_info_expand(fd_info, (size_t)fd + 1) < 0) {
+                ret = -ENOMEM;
+                break;
+            }
+        }
+        if ((size_t)fd >= fd_info->max_fds) {
+            ret = -EINVAL;
+            break;
+        }
         old = fd_info->fds[fd].file;
         fd_info->fds[fd].file = vfs_file_get(file);
         fd_info->fds[fd].flags = fd_flags;
     });
 
     task_fd_info_put(fd_info, task);
+
+    if (ret < 0)
+        return ret;
 
     if (old) {
         on_close_file_call(task, fd, old);
@@ -203,14 +320,14 @@ int task_replace_file(task_t *task, int fd, struct vfs_file *file,
         on_open_file_call(task, fd);
     }
 
-    return fd;
+    return ret;
 }
 
 int task_close_file_descriptor(task_t *task, int fd) {
     fd_info_t *fd_info;
     struct vfs_file *file = NULL;
 
-    if (!task || fd < 0 || fd >= MAX_FD_NUM)
+    if (!task || fd < 0)
         return -EBADF;
 
     fd_info = task_fd_info_get(task);
@@ -218,6 +335,8 @@ int task_close_file_descriptor(task_t *task, int fd) {
         return -EBADF;
 
     with_fd_info_lock(fd_info, {
+        if ((size_t)fd >= fd_info->max_fds)
+            break;
         file = fd_info->fds[fd].file;
         fd_info->fds[fd].file = NULL;
         fd_info->fds[fd].flags = 0;
@@ -1100,11 +1219,12 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     if (!task->nsproxy) {
         goto fail;
     }
-    task->fd_info = calloc(1, sizeof(fd_info_t));
+
+    task_init_default_rlimits(task);
+
+    task->fd_info = task_fd_info_alloc(MAX_FD_NUM);
     if (!task->fd_info)
         goto fail;
-    spin_init(&task->fd_info->fdt_lock);
-    task_fd_info_ref_init(task->fd_info, 1);
     {
         struct vfs_open_how in_how = {.flags = O_RDONLY};
         struct vfs_open_how out_how = {.flags = O_WRONLY};
@@ -1137,8 +1257,6 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->env_end = 0;
 
     spin_init(&task->timers_lock);
-
-    task_init_default_rlimits(task);
 
     task->clone_flags = 0;
 

@@ -321,7 +321,6 @@ void syscall_handler_init() {
         (syscall_handle_t)sys_rt_sigqueueinfo;
     syscall_handlers[SYS_RT_SIGSUSPEND] = (syscall_handle_t)sys_sigsuspend;
     syscall_handlers[SYS_SIGALTSTACK] = (syscall_handle_t)sys_sigaltstack;
-    // syscall_handlers[SYS_UTIME] = (syscall_handle_t)sys_utime;
     // syscall_handlers[SYS_USELIB] = (syscall_handle_t)sys_uselib;
     syscall_handlers[SYS_PERSONALITY] = (syscall_handle_t)sys_personality;
     // syscall_handlers[SYS_USTAT] = (syscall_handle_t)sys_ustat;
@@ -448,7 +447,6 @@ void syscall_handler_init() {
     syscall_handlers[SYS_EXIT_GROUP] = (syscall_handle_t)task_exit;
     syscall_handlers[SYS_EPOLL_CTL] = (syscall_handle_t)sys_epoll_ctl;
     syscall_handlers[SYS_TGKILL] = (syscall_handle_t)sys_tgkill;
-    // syscall_handlers[SYS_UTIMES] = (syscall_handle_t)sys_utimes;
     // syscall_handlers[SYS_VSERVER] = (syscall_handle_t)sys_vserver;
     // syscall_handlers[SYS_MBIND] = (syscall_handle_t)sys_mbind;
     regist_syscall_handler(SYS_SET_MEMPOLICY,

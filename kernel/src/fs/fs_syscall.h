@@ -1114,15 +1114,18 @@ uint64_t sys_fadvise64(int fd, uint64_t offset, uint64_t len, int advice);
 
 /**
  * Linux contract: update path timestamps with nanosecond resolution.
- * Current kernel: currently returns success without mutating timestamps.
- * Gaps: this is an ABI stub, not a real timestamp update implementation.
+ * Current kernel: supports UTIME_NOW, UTIME_OMIT, AT_EMPTY_PATH,
+ * AT_SYMLINK_NOFOLLOW, and NULL pathname fd targeting.
+ * Gaps: timestamp changes are applied through generic inode metadata;
+ * filesystems that keep separate persistent timestamp state are not yet
+ * integrated here.
  */
 uint64_t sys_utimensat(int dfd, const char *pathname, struct timespec *utimes,
                        int flags);
 /**
  * Linux contract: legacy futimesat(2) timestamp update entry point.
- * Current kernel: currently returns success without mutating timestamps.
- * Gaps: this is an ABI stub, not a real timestamp update implementation.
+ * Current kernel: converts timeval input to utimensat-compatible nanosecond
+ * timestamps and follows the same path/fd resolution rules.
  */
 uint64_t sys_futimesat(int dfd, const char *pathname, struct timeval *utimes);
 

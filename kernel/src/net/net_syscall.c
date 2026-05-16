@@ -394,7 +394,7 @@ uint64_t sys_shutdown(uint64_t fd, uint64_t how) {
     fd_t *node = task_get_file(current_task, (int)fd);
     uint64_t ret;
 
-    if (fd >= MAX_FD_NUM || !node)
+    if (!node)
         return -EBADF;
 
     if (!is_socket(node)) {
@@ -415,7 +415,7 @@ uint64_t sys_shutdown(uint64_t fd, uint64_t how) {
 
 uint64_t sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen) {
     fd_t *node = task_get_file(current_task, fd);
-    if (fd < 0 || fd >= MAX_FD_NUM || !node)
+    if (fd < 0 || !node)
         return -EBADF;
     if (!addrlen) {
         vfs_file_put(node);
@@ -473,7 +473,7 @@ uint64_t sys_getpeername(int fd, struct sockaddr_un *addr, socklen_t *addrlen) {
 uint64_t sys_getsockname(int sockfd, struct sockaddr_un *addr,
                          socklen_t *addrlen) {
     fd_t *node = task_get_file(current_task, sockfd);
-    if (sockfd < 0 || sockfd >= MAX_FD_NUM || !node)
+    if (sockfd < 0 || !node)
         return -EBADF;
     if (!addrlen) {
         vfs_file_put(node);
@@ -531,7 +531,7 @@ uint64_t sys_getsockname(int sockfd, struct sockaddr_un *addr,
 uint64_t sys_setsockopt(int fd, int level, int optname, const void *optval,
                         socklen_t optlen) {
     fd_t *node = task_get_file(current_task, fd);
-    if (fd < 0 || fd >= MAX_FD_NUM || !node)
+    if (fd < 0 || !node)
         return -EBADF;
     if (!is_socket(node)) {
         vfs_file_put(node);
@@ -560,7 +560,7 @@ uint64_t sys_setsockopt(int fd, int level, int optname, const void *optval,
 uint64_t sys_getsockopt(int fd, int level, int optname, void *optval,
                         socklen_t *optlen) {
     fd_t *node = task_get_file(current_task, fd);
-    if (fd < 0 || fd >= MAX_FD_NUM || !node)
+    if (fd < 0 || !node)
         return -EBADF;
     if (!optlen) {
         vfs_file_put(node);
@@ -664,7 +664,7 @@ uint64_t sys_socketpair(int domain, int type, int protocol, int *sv) {
 uint64_t sys_bind(int sockfd, const struct sockaddr_un *addr,
                   socklen_t addrlen) {
     fd_t *node = task_get_file(current_task, sockfd);
-    if (sockfd < 0 || sockfd >= MAX_FD_NUM || !node)
+    if (sockfd < 0 || !node)
         return -EBADF;
     if (!is_socket(node)) {
         vfs_file_put(node);
@@ -690,7 +690,7 @@ uint64_t sys_bind(int sockfd, const struct sockaddr_un *addr,
 
 uint64_t sys_listen(int sockfd, int backlog) {
     fd_t *node = task_get_file(current_task, sockfd);
-    if (sockfd < 0 || sockfd >= MAX_FD_NUM || !node)
+    if (sockfd < 0 || !node)
         return -EBADF;
     if (!is_socket(node)) {
         vfs_file_put(node);
@@ -709,7 +709,7 @@ uint64_t sys_listen(int sockfd, int backlog) {
 
 uint64_t sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen,
                     uint64_t flags) {
-    if (!current_task || sockfd < 0 || sockfd >= MAX_FD_NUM)
+    if (!current_task || sockfd < 0)
         return -EBADF;
 
     fd_t *node = task_get_file(current_task, sockfd);
@@ -766,7 +766,7 @@ uint64_t sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen,
 uint64_t sys_connect(int sockfd, const struct sockaddr_un *addr,
                      socklen_t addrlen) {
     fd_t *node = task_get_file(current_task, sockfd);
-    if (sockfd < 0 || sockfd >= MAX_FD_NUM || !node)
+    if (sockfd < 0 || !node)
         return -EBADF;
     if (!is_socket(node)) {
         vfs_file_put(node);
@@ -792,7 +792,7 @@ uint64_t sys_connect(int sockfd, const struct sockaddr_un *addr,
 
 int64_t sys_send(int sockfd, void *buff, size_t len, int flags,
                  struct sockaddr_un *dest_addr, socklen_t addrlen) {
-    if (sockfd < 0 || sockfd >= MAX_FD_NUM)
+    if (sockfd < 0)
         return -EBADF;
     if (socket_validate_user_mapped_buffer(buff, len) < 0)
         return -EFAULT;
@@ -837,7 +837,7 @@ int64_t sys_send(int sockfd, void *buff, size_t len, int flags,
 
 int64_t sys_recv(int sockfd, void *buf, size_t len, int flags,
                  struct sockaddr_un *dest_addr, socklen_t *addrlen) {
-    if (sockfd < 0 || sockfd >= MAX_FD_NUM)
+    if (sockfd < 0)
         return -EBADF;
     if (socket_validate_user_mapped_buffer(buf, len) < 0)
         return -EFAULT;
@@ -913,7 +913,7 @@ int64_t sys_recv(int sockfd, void *buf, size_t len, int flags,
 }
 
 int64_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
-    if (sockfd < 0 || sockfd >= MAX_FD_NUM)
+    if (sockfd < 0)
         return -EBADF;
 
     fd_t *node = task_get_file(current_task, sockfd);
@@ -943,7 +943,7 @@ int64_t sys_sendmsg(int sockfd, const struct msghdr *msg, int flags) {
 }
 
 int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
-    if (sockfd < 0 || sockfd >= MAX_FD_NUM)
+    if (sockfd < 0)
         return -EBADF;
 
     fd_t *node = task_get_file(current_task, sockfd);
@@ -1015,7 +1015,7 @@ int64_t sys_recvmmsg(int sockfd, struct mmsghdr *msgvec, unsigned int vlen,
     if (ret < 0)
         return ret;
 
-    if (sockfd < 0 || sockfd >= MAX_FD_NUM)
+    if (sockfd < 0)
         return -EBADF;
 
     fd_t *node = task_get_file(current_task, sockfd);

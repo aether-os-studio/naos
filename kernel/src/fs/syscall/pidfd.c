@@ -518,7 +518,7 @@ int pidfd_get_pid_from_fd(uint64_t fd, uint64_t *pid_out) {
     struct vfs_file *file;
     pidfd_ctx_t *ctx;
 
-    if (!pid_out || fd >= MAX_FD_NUM)
+    if (!pid_out)
         return -EBADF;
 
     file = task_get_file(current_task, (int)fd);

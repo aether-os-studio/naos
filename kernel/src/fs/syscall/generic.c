@@ -10,6 +10,14 @@
 #define FIONBIO_INTERNAL_DISABLE ((ssize_t) - 1)
 #define FIONBIO_INTERNAL_ENABLE ((ssize_t) - 2)
 
+#ifndef UTIME_NOW
+#define UTIME_NOW ((1L << 30) - 1L)
+#endif
+
+#ifndef UTIME_OMIT
+#define UTIME_OMIT ((1L << 30) - 2L)
+#endif
+
 static uint64_t do_unlink(const char *name);
 static volatile uint64_t tmpfile_seq = 1;
 
@@ -566,6 +574,155 @@ static int generic_setattr_path(const struct vfs_path *path, bool set_mode,
     if (set_size)
         stat.size = size;
     return inode->i_op->setattr(path->dentry, &stat);
+}
+
+static struct vfs_timespec64 generic_realtime_now(void) {
+    uint64_t now = boot_get_boottime() * 1000000000ULL + nano_time();
+
+    return (struct vfs_timespec64){
+        .sec = (int64_t)(now / 1000000000ULL),
+        .nsec = (uint32_t)(now % 1000000000ULL),
+    };
+}
+
+static bool generic_inode_owner_or_root(const struct vfs_inode *inode) {
+    uid32_t fsuid;
+
+    if (!inode)
+        return false;
+
+    fsuid = vfs_current_fsuid();
+    return fsuid == 0 || fsuid == inode->i_uid;
+}
+
+static int generic_utimens_path(const struct vfs_path *path,
+                                const struct timespec *times, bool set_atime,
+                                bool set_mtime, bool all_now) {
+    struct vfs_inode *inode;
+    struct vfs_timespec64 now;
+    int ret;
+
+    if (!set_atime && !set_mtime)
+        return 0;
+    if (!path || !path->dentry || !path->dentry->d_inode)
+        return -ENOENT;
+    if (path->mnt && (path->mnt->mnt_flags & VFS_MNT_READONLY))
+        return -EROFS;
+
+    inode = path->dentry->d_inode;
+    if (all_now) {
+        ret = vfs_inode_permission(inode, VFS_MAY_WRITE);
+        if (ret < 0 && !generic_inode_owner_or_root(inode))
+            return -EACCES;
+    } else if (!generic_inode_owner_or_root(inode)) {
+        return -EPERM;
+    }
+
+    now = generic_realtime_now();
+    spin_lock(&inode->i_lock);
+    if (set_atime) {
+        if (!times || times[0].tv_nsec == UTIME_NOW) {
+            inode->i_atime = now;
+        } else {
+            inode->i_atime.sec = times[0].tv_sec;
+            inode->i_atime.nsec = (uint32_t)times[0].tv_nsec;
+        }
+    }
+    if (set_mtime) {
+        if (!times || times[1].tv_nsec == UTIME_NOW) {
+            inode->i_mtime = now;
+        } else {
+            inode->i_mtime.sec = times[1].tv_sec;
+            inode->i_mtime.nsec = (uint32_t)times[1].tv_nsec;
+        }
+    }
+    inode->i_ctime = now;
+    spin_unlock(&inode->i_lock);
+
+    notifyfs_queue_inode_event(inode, inode, NULL, IN_ATTRIB, 0);
+    return 0;
+}
+
+static int generic_get_empty_path(int dfd, struct vfs_path *path) {
+    const struct vfs_path *pwd;
+
+    if (!path)
+        return -EINVAL;
+
+    if (dfd != AT_FDCWD)
+        return generic_get_fd_path(dfd, path);
+
+    pwd = task_fs_pwd_path(current_task);
+    if (!pwd || !pwd->mnt || !pwd->dentry)
+        return -ENOENT;
+
+    path->mnt = pwd->mnt;
+    path->dentry = pwd->dentry;
+    vfs_path_get(path);
+    return 0;
+}
+
+static int generic_do_utimensat(int dfd, const char *pathname,
+                                const struct timespec *times, int flags) {
+    struct vfs_path path = {0};
+    char pathname_buf[512] = {0};
+    bool set_atime = true;
+    bool set_mtime = true;
+    bool all_now = !times;
+    int ret;
+
+    if (flags & ~(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH))
+        return -EINVAL;
+
+    if (times) {
+        for (int i = 0; i < 2; i++) {
+            long nsec = times[i].tv_nsec;
+
+            if (nsec == UTIME_OMIT) {
+                if (i == 0)
+                    set_atime = false;
+                else
+                    set_mtime = false;
+                continue;
+            }
+
+            if (nsec == UTIME_NOW)
+                continue;
+
+            if (times[i].tv_sec < 0 || nsec < 0 || nsec >= 1000000000L)
+                return -EINVAL;
+        }
+
+        all_now =
+            times[0].tv_nsec == UTIME_NOW && times[1].tv_nsec == UTIME_NOW;
+        if (!set_atime && !set_mtime)
+            return 0;
+    }
+
+    if (!pathname) {
+        if (dfd == AT_FDCWD)
+            return -EFAULT;
+        if (flags & AT_SYMLINK_NOFOLLOW)
+            return -EINVAL;
+        ret = generic_get_fd_path(dfd, &path);
+    } else {
+        if (copy_from_user_str(pathname_buf, pathname, sizeof(pathname_buf)))
+            return -EFAULT;
+
+        if ((flags & AT_EMPTY_PATH) && pathname_buf[0] == '\0') {
+            ret = generic_get_empty_path(dfd, &path);
+        } else {
+            unsigned int lookup_flags =
+                (flags & AT_SYMLINK_NOFOLLOW) ? LOOKUP_NOFOLLOW : LOOKUP_FOLLOW;
+            ret = vfs_filename_lookup(dfd, pathname_buf, lookup_flags, &path);
+        }
+    }
+    if (ret < 0)
+        return ret;
+
+    ret = generic_utimens_path(&path, times, set_atime, set_mtime, all_now);
+    vfs_path_put(&path);
+    return ret;
 }
 
 static int generic_chown_path(const struct vfs_path *path, uint64_t uid,
@@ -1265,9 +1422,6 @@ uint64_t sys_close(uint64_t fd) {
     task_t *self = current_task;
     fd_info_t *fd_info;
 
-    if (fd >= MAX_FD_NUM)
-        return (uint64_t)-EBADF;
-
     fd_t *entry = NULL;
     uint64_t ret = (uint64_t)-EBADF;
     fd_info = task_fd_info_get(self);
@@ -1275,6 +1429,8 @@ uint64_t sys_close(uint64_t fd) {
         return (uint64_t)-EBADF;
 
     with_fd_info_lock(fd_info, {
+        if (fd >= fd_info->max_fds)
+            break;
         entry = fd_info->fds[fd].file;
         if (!entry)
             break;
@@ -1310,23 +1466,11 @@ static int close_range_unshare_fd_table(task_t *self) {
         return 0;
     }
 
-    fd_info_t *new_info = calloc(1, sizeof(fd_info_t));
+    fd_info_t *new_info = task_fd_info_clone(old);
     if (!new_info) {
         task_fd_info_put(old, self);
         return -ENOMEM;
     }
-
-    spin_init(&new_info->fdt_lock);
-    task_fd_info_ref_init(new_info, 1);
-
-    with_fd_info_lock(old, {
-        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-            if (old->fds[i].file) {
-                new_info->fds[i].file = vfs_file_get(old->fds[i].file);
-                new_info->fds[i].flags = old->fds[i].flags;
-            }
-        }
-    });
 
     fd_info_t *replaced = task_fd_info_replace(self, new_info);
     task_fd_info_put(old, self);
@@ -1353,20 +1497,23 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
         }
     }
 
-    if (fd >= MAX_FD_NUM) {
+    fd_info_t *fd_info = task_fd_info_get(self);
+    if (!fd_info)
+        return (uint64_t)-EBADF;
+
+    size_t table_max = fd_info->max_fds;
+    if (fd >= table_max) {
+        task_fd_info_put(fd_info, self);
         return 0;
     }
 
-    if (maxfd >= MAX_FD_NUM) {
-        maxfd = MAX_FD_NUM - 1;
+    if (maxfd >= table_max) {
+        maxfd = table_max - 1;
     }
 
     if (flags & CLOSE_RANGE_CLOEXEC) {
-        fd_info_t *fd_info = task_fd_info_get(self);
-        if (!fd_info)
-            return (uint64_t)-EBADF;
         with_fd_info_lock(fd_info, {
-            for (uint64_t fd_ = fd; fd_ <= maxfd; fd_++) {
+            for (size_t fd_ = fd; fd_ <= maxfd; fd_++) {
                 if (!fd_info->fds[fd_].file)
                     continue;
                 fd_info->fds[fd_].flags |= FD_CLOEXEC;
@@ -1376,13 +1523,14 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
         return 0;
     }
 
-    fd_t *to_close[MAX_FD_NUM] = {0};
+    fd_t **to_close = calloc(table_max, sizeof(*to_close));
+    if (!to_close) {
+        task_fd_info_put(fd_info, self);
+        return (uint64_t)-ENOMEM;
+    }
 
-    fd_info_t *fd_info = task_fd_info_get(self);
-    if (!fd_info)
-        return (uint64_t)-EBADF;
     with_fd_info_lock(fd_info, {
-        for (uint64_t fd_ = fd; fd_ <= maxfd; fd_++) {
+        for (size_t fd_ = fd; fd_ <= maxfd; fd_++) {
             fd_t *entry = fd_info->fds[fd_].file;
             if (!entry)
                 continue;
@@ -1394,7 +1542,7 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
     });
     task_fd_info_put(fd_info, self);
 
-    for (uint64_t fd_ = fd; fd_ <= maxfd; fd_++) {
+    for (size_t fd_ = fd; fd_ <= maxfd; fd_++) {
         fd_t *entry = to_close[fd_];
         if (!entry)
             continue;
@@ -1402,6 +1550,7 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
         on_close_file_call(self, fd_, entry);
         vfs_close_file(entry);
     }
+    free(to_close);
 
     return 0;
 }
@@ -1411,10 +1560,6 @@ uint64_t sys_copy_file_range(uint64_t fd_in, int *offset_in_user,
                              uint64_t len, uint64_t flags) {
     loff_t src_pos;
     loff_t dst_pos;
-    if (fd_in >= MAX_FD_NUM || fd_out >= MAX_FD_NUM) {
-        return (uint64_t)-EBADF;
-    }
-
     fd_t *in_fd = task_get_file(current_task, (int)fd_in);
     fd_t *out_fd = task_get_file(current_task, (int)fd_out);
     if (!in_fd || !out_fd) {
@@ -1589,9 +1734,6 @@ uint64_t sys_pwrite64(int fd, const void *buf, size_t len, uint64_t offset) {
 
 uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
                       size_t count) {
-    if (out_fd >= MAX_FD_NUM || in_fd >= MAX_FD_NUM)
-        return -EBADF;
-
     fd_t *out_handle = task_get_file(current_task, (int)out_fd);
     fd_t *in_handle = task_get_file(current_task, (int)in_fd);
     loff_t read_pos = 0;
@@ -1730,10 +1872,6 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
     task_t *self = current_task;
     fd_t *f;
     int ret = -ENOSYS;
-
-    if (fd >= MAX_FD_NUM) {
-        return (uint64_t)-EBADF;
-    }
 
     f = task_get_file(self, (int)fd);
     if (!f) {
@@ -2275,9 +2413,9 @@ static uint64_t dup_to_exact(task_t *self, uint64_t fd, uint64_t newfd,
                              bool cloexec, bool allow_same_fd) {
     if (!self)
         return (uint64_t)-EBADF;
-    if (fd >= MAX_FD_NUM)
+    if (fd >= self->rlim[RLIMIT_NOFILE].rlim_cur)
         return (uint64_t)-EBADF;
-    if (newfd >= MAX_FD_NUM)
+    if (newfd >= self->rlim[RLIMIT_NOFILE].rlim_cur)
         return (uint64_t)-EBADF;
 
     uint64_t ret = newfd;
@@ -2289,6 +2427,16 @@ static uint64_t dup_to_exact(task_t *self, uint64_t fd, uint64_t newfd,
     if (!fd_info)
         return (uint64_t)-EBADF;
     with_fd_info_lock(fd_info, {
+        if (fd >= fd_info->max_fds) {
+            ret = (uint64_t)-EBADF;
+            break;
+        }
+        if (newfd >= fd_info->max_fds &&
+            task_fd_info_expand(fd_info, (size_t)newfd + 1) < 0) {
+            ret = (uint64_t)-ENOMEM;
+            break;
+        }
+
         if (!fd_info->fds[fd].file) {
             ret = (uint64_t)-EBADF;
             break;
@@ -2343,9 +2491,9 @@ static uint64_t dup_to_free_slot(task_t *self, uint64_t fd, uint64_t start,
                                  bool cloexec) {
     if (!self)
         return (uint64_t)-EBADF;
-    if (fd >= MAX_FD_NUM)
+    if (fd >= self->rlim[RLIMIT_NOFILE].rlim_cur)
         return (uint64_t)-EBADF;
-    if (start >= MAX_FD_NUM)
+    if (start >= self->rlim[RLIMIT_NOFILE].rlim_cur)
         return (uint64_t)-EINVAL;
 
     uint64_t ret = (uint64_t)-EBADF;
@@ -2354,18 +2502,43 @@ static uint64_t dup_to_free_slot(task_t *self, uint64_t fd, uint64_t start,
     if (!fd_info)
         return (uint64_t)-EBADF;
     with_fd_info_lock(fd_info, {
+        if (fd >= fd_info->max_fds) {
+            ret = (uint64_t)-EBADF;
+            break;
+        }
+
         if (!fd_info->fds[fd].file) {
             ret = (uint64_t)-EBADF;
             break;
         }
 
         uint64_t i;
-        for (i = start; i < MAX_FD_NUM; i++) {
+        size_t limit =
+            MIN(fd_info->max_fds, self->rlim[RLIMIT_NOFILE].rlim_cur);
+        for (i = start; i < limit; i++) {
             if (!fd_info->fds[i].file)
                 break;
         }
 
-        if (i == MAX_FD_NUM) {
+        if (i == limit &&
+            self->rlim[RLIMIT_NOFILE].rlim_cur > fd_info->max_fds) {
+            size_t old_max = fd_info->max_fds;
+            size_t new_max = MIN(self->rlim[RLIMIT_NOFILE].rlim_cur,
+                                 MAX(old_max * 2, old_max + 1));
+            if (start >= new_max)
+                new_max = start + 1;
+            if (task_fd_info_expand(fd_info, new_max) < 0) {
+                ret = (uint64_t)-ENOMEM;
+                break;
+            }
+            limit = MIN(fd_info->max_fds, self->rlim[RLIMIT_NOFILE].rlim_cur);
+            for (i = MAX(start, old_max); i < limit; i++) {
+                if (!fd_info->fds[i].file)
+                    break;
+            }
+        }
+
+        if (i == limit) {
             ret = (uint64_t)-EMFILE;
             break;
         }
@@ -2413,7 +2586,7 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
     fd_t *file = task_get_file(self, (int)fd);
     uint64_t out = (uint64_t)-EINVAL;
     unsigned int fd_flags = 0;
-    if (fd >= MAX_FD_NUM || !file)
+    if (!file)
         return (uint64_t)-EBADF;
 
     switch (command) {
@@ -2611,10 +2784,6 @@ uint64_t do_stat_fd(int fd, struct stat *buf) {
 }
 
 uint64_t sys_fstat(uint64_t fd, struct stat *user_buf) {
-    if (fd >= MAX_FD_NUM) {
-        return (uint64_t)-EBADF;
-    }
-
     struct stat res;
     int ret = do_stat_fd(fd, &res);
     if (ret < 0)
@@ -3043,7 +3212,7 @@ static int resolve_linkat_source_path(uint64_t olddirfd, const char *oldpath,
 
     if ((flags & AT_EMPTY_PATH) && oldpath && oldpath[0] == '\0') {
         fd_t *file = task_get_file(current_task, (int)olddirfd);
-        if (olddirfd >= MAX_FD_NUM || !file)
+        if (!file)
             return -EBADF;
         source_out->mnt = file->f_path.mnt;
         source_out->dentry = file->f_path.dentry;
@@ -3056,7 +3225,7 @@ static int resolve_linkat_source_path(uint64_t olddirfd, const char *oldpath,
         int fd = -1;
         if (parse_proc_self_fd_path(oldpath, &fd)) {
             fd_t *file = task_get_file(current_task, fd);
-            if (fd < 0 || fd >= MAX_FD_NUM || !file)
+            if (fd < 0 || !file)
                 return -ENOENT;
             source_out->mnt = file->f_path.mnt;
             source_out->dentry = file->f_path.dentry;
@@ -3313,7 +3482,7 @@ uint64_t sys_ftruncate(int fd, uint64_t length) {
 uint64_t sys_flock(int fd, uint64_t operation) {
     fd_t *file = task_get_file(current_task, fd);
 
-    if (fd < 0 || fd >= MAX_FD_NUM || !file)
+    if (fd < 0 || !file)
         return -EBADF;
 
     vfs_node_t *node = file->f_inode;
@@ -3373,7 +3542,7 @@ uint64_t sys_flock(int fd, uint64_t operation) {
 
 uint64_t sys_fadvise64(int fd, uint64_t offset, uint64_t len, int advice) {
     fd_t *file = task_get_file(current_task, fd);
-    if (fd < 0 || fd >= MAX_FD_NUM || !file)
+    if (fd < 0 || !file)
         return -EBADF;
     vfs_file_put(file);
 
@@ -3386,11 +3555,40 @@ uint64_t sys_fadvise64(int fd, uint64_t offset, uint64_t len, int advice) {
 
 uint64_t sys_utimensat(int dfd, const char *pathname, struct timespec *ntimes,
                        int flags) {
-    return 0;
+    struct timespec user_times[2];
+
+    if (flags & ~(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH))
+        return (uint64_t)-EINVAL;
+
+    if (ntimes) {
+        if (copy_from_user(user_times, ntimes, sizeof(user_times)))
+            return (uint64_t)-EFAULT;
+    }
+
+    return (uint64_t)generic_do_utimensat(dfd, pathname,
+                                          ntimes ? user_times : NULL, flags);
 }
 
 uint64_t sys_futimesat(int dfd, const char *pathname, struct timeval *utimes) {
-    return 0;
+    struct timespec ntimes[2];
+    struct timeval tv[2];
+
+    if (!utimes)
+        return sys_utimensat(dfd, pathname, NULL, 0);
+
+    if (copy_from_user(tv, utimes, sizeof(tv)))
+        return (uint64_t)-EFAULT;
+
+    for (int i = 0; i < 2; i++) {
+        if (tv[i].tv_sec < 0 || tv[i].tv_usec < 0 ||
+            tv[i].tv_usec >= 1000000L) {
+            return (uint64_t)-EINVAL;
+        }
+        ntimes[i].tv_sec = tv[i].tv_sec;
+        ntimes[i].tv_nsec = tv[i].tv_usec * 1000L;
+    }
+
+    return (uint64_t)generic_do_utimensat(dfd, pathname, ntimes, 0);
 }
 
 extern uint64_t memory_size;

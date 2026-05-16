@@ -15,7 +15,14 @@ ifeq ($(filter $(ARCH),aarch64 loongarch64 riscv64 x86_64),)
     $(error Architecture $(ARCH) not supported)
 endif
 
-GLOBAL_CFLAGS := -D__$(BOOT_PROTOCOL)__ -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-cast-function-type -Wno-sign-compare -Wno-discarded-qualifiers -Wno-address-of-packed-member
+GLOBAL_CFLAGS := -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-cast-function-type -Wno-sign-compare -Wno-discarded-qualifiers -Wno-address-of-packed-member
+ifeq ($(BOOT_PROTOCOL), limine)
+    GLOBAL_CFLAGS += -DCONFIG_BOOT_LIMINE
+else ifeq ($(BOOT_PROTOCOL), sbi)
+    GLOBAL_CFLAGS += -DCONFIG_BOOT_SBI
+else
+    $(error Boot protocol $(BOOT_PROTOCOL) not supported)
+endif
 
 # User controllable C flags.
 ifeq ($(BUILD_MODE), debug)

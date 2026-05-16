@@ -1052,7 +1052,7 @@ static int unix_socket_prepare_ancillary(const struct msghdr *msg,
             for (uint32_t i = 0; i < file_count; i++) {
                 int send_fd = fds[i];
                 fd_t *send_file = task_get_file(current_task, send_fd);
-                if (send_fd < 0 || send_fd >= MAX_FD_NUM || !send_file) {
+                if (send_fd < 0 || !send_file) {
                     unix_socket_ancillary_free(anc);
                     return -EBADF;
                 }
@@ -1730,10 +1730,29 @@ static size_t unix_socket_install_pending_files(fd_t **pending_files,
     with_fd_info_lock(fd_info, {
         for (size_t i = 0; i < pending_count; i++) {
             int new_fd = -1;
-            for (int fd_idx = 0; fd_idx < MAX_FD_NUM; fd_idx++) {
+            size_t limit = MIN(fd_info->max_fds,
+                               current_task->rlim[RLIMIT_NOFILE].rlim_cur);
+            for (size_t fd_idx = 0; fd_idx < limit; fd_idx++) {
                 if (fd_info->fds[fd_idx].file == NULL) {
-                    new_fd = fd_idx;
+                    new_fd = (int)fd_idx;
                     break;
+                }
+            }
+
+            if (new_fd < 0 &&
+                current_task->rlim[RLIMIT_NOFILE].rlim_cur > fd_info->max_fds) {
+                size_t old_max = fd_info->max_fds;
+                size_t new_max = MIN(current_task->rlim[RLIMIT_NOFILE].rlim_cur,
+                                     MAX(old_max * 2, old_max + 1));
+                if (task_fd_info_expand(fd_info, new_max) < 0)
+                    break;
+                limit = MIN(fd_info->max_fds,
+                            current_task->rlim[RLIMIT_NOFILE].rlim_cur);
+                for (size_t fd_idx = old_max; fd_idx < limit; fd_idx++) {
+                    if (fd_info->fds[fd_idx].file == NULL) {
+                        new_fd = (int)fd_idx;
+                        break;
+                    }
                 }
             }
 
@@ -1930,10 +1949,6 @@ int socket_listen(uint64_t fd, int backlog) {
 
 int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
                   uint64_t flags) {
-    if (fd >= MAX_FD_NUM) {
-        return -EBADF;
-    }
-
     fd_t *listener_fd = task_get_file(current_task, (int)fd);
     if (!listener_fd) {
         return -EBADF;
@@ -2072,7 +2087,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
 
 uint64_t socket_shutdown(uint64_t fd, uint64_t how) {
     fd_t *file = task_get_file(current_task, (int)fd);
-    if (fd >= MAX_FD_NUM || !file)
+    if (!file)
         return -EBADF;
     if (how > SHUT_RDWR) {
         vfs_file_put(file);
@@ -3047,7 +3062,7 @@ int unix_socket_pair(int domain, int type, int protocol, int *sv) {
 int unix_socket_getsockname(uint64_t fd, struct sockaddr_un *addr,
                             socklen_t *addrlen) {
     fd_t *file = task_get_file(current_task, (int)fd);
-    if (fd >= MAX_FD_NUM || !file)
+    if (!file)
         return -(EBADF);
 
     socket_handle_t *handle = sockfs_file_handle(file);
@@ -3062,7 +3077,7 @@ int unix_socket_getsockname(uint64_t fd, struct sockaddr_un *addr,
 size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr,
                                socklen_t *len) {
     fd_t *file = task_get_file(current_task, (int)fd);
-    if (fd >= MAX_FD_NUM || !file)
+    if (!file)
         return (size_t)-EBADF;
 
     socket_handle_t *handle = sockfs_file_handle(file);

@@ -783,10 +783,39 @@ void task_fd_info_put(fd_info_t *fd_info, task_t *task) {
     if (task_fd_info_ref_put(fd_info) > 0)
         return;
 
-    struct vfs_file *to_close[MAX_FD_NUM] = {0};
+    size_t max_fds = fd_info->max_fds;
+    struct vfs_file **to_close = calloc(max_fds, sizeof(*to_close));
+    if (!to_close) {
+        size_t scan = 0;
+        while (scan < max_fds) {
+            struct vfs_file *entry = NULL;
+            size_t fd = scan;
+
+            with_fd_info_lock(fd_info, {
+                while (scan < fd_info->max_fds) {
+                    if (fd_info->fds[scan].file) {
+                        fd = scan;
+                        entry = fd_info->fds[scan].file;
+                        fd_info->fds[scan].file = NULL;
+                        fd_info->fds[scan].flags = 0;
+                        scan++;
+                        break;
+                    }
+                    scan++;
+                }
+            });
+
+            if (!entry)
+                break;
+            on_close_file_call(task, fd, entry);
+            vfs_close_file(entry);
+        }
+        task_fd_info_free(fd_info);
+        return;
+    }
 
     with_fd_info_lock(fd_info, {
-        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+        for (size_t i = 0; i < fd_info->max_fds; i++) {
             if (!fd_info->fds[i].file)
                 continue;
 
@@ -797,14 +826,15 @@ void task_fd_info_put(fd_info_t *fd_info, task_t *task) {
         }
     });
 
-    for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+    for (size_t i = 0; i < max_fds; i++) {
         if (!to_close[i])
             continue;
         on_close_file_call(task, i, to_close[i]);
         vfs_close_file(to_close[i]);
     }
 
-    free(fd_info);
+    free(to_close);
+    task_fd_info_free(fd_info);
 }
 
 void task_cleanup_partial(task_t *task, bool kernel_mm) {
@@ -2003,28 +2033,12 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
             exec_fail_ret = (uint64_t)-EBADF;
             goto exec_fail_restore_mm;
         }
-        fd_info_t *new = calloc(1, sizeof(fd_info_t));
+        fd_info_t *new = task_fd_info_clone(old);
         if (!new) {
             task_fd_info_put(old, self);
             exec_fail_ret = (uint64_t)-ENOMEM;
             goto exec_fail_restore_mm;
         }
-        task_fd_info_ref_init(new, 1);
-
-        spin_init(&new->fdt_lock);
-        with_fd_info_lock(old, {
-            for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-                struct vfs_file *fd = old->fds[i].file;
-
-                if (fd) {
-                    new->fds[i].file = vfs_file_get(fd);
-                    new->fds[i].flags = old->fds[i].flags;
-                } else {
-                    new->fds[i].file = NULL;
-                    new->fds[i].flags = 0;
-                }
-            }
-        });
 
         fd_info_t *replaced = task_fd_info_replace(self, new);
         task_fd_info_put(old, self);
@@ -2055,16 +2069,23 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
     free(new_envp);
     new_envp = NULL;
 
-    struct vfs_file *exec_close_files[MAX_FD_NUM] = {0};
-
     fd_info_t *exec_fd_info = task_fd_info_get(self);
     if (!exec_fd_info) {
         exec_fail_ret = (uint64_t)-EBADF;
         goto exec_fail_restore_mm;
     }
 
+    size_t exec_max_fds = exec_fd_info->max_fds;
+    struct vfs_file **exec_close_files =
+        calloc(exec_max_fds, sizeof(*exec_close_files));
+    if (!exec_close_files) {
+        task_fd_info_put(exec_fd_info, self);
+        exec_fail_ret = (uint64_t)-ENOMEM;
+        goto exec_fail_restore_mm;
+    }
+
     with_fd_info_lock(exec_fd_info, {
-        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+        for (size_t i = 0; i < exec_fd_info->max_fds; i++) {
             if (!exec_fd_info->fds[i].file)
                 continue;
 
@@ -2079,12 +2100,13 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
 
     task_fd_info_put(exec_fd_info, self);
 
-    for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+    for (size_t i = 0; i < exec_max_fds; i++) {
         if (!exec_close_files[i])
             continue;
         on_close_file_call(self, i, exec_close_files[i]);
         vfs_close_file(exec_close_files[i]);
     }
+    free(exec_close_files);
 
     task_signal_info_t *new_signal = task_signal_reset_after_exec(self);
     if (!new_signal) {
@@ -2801,31 +2823,18 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
     child->load_start = self->load_start;
     child->load_end = self->load_end;
 
-    child->fd_info = (flags & CLONE_FILES) ? task_fd_info_get(self)
-                                           : calloc(1, sizeof(fd_info_t));
-    if (!child->fd_info)
-        goto fail;
-
-    if (!(flags & CLONE_FILES)) {
-        spin_init(&child->fd_info->fdt_lock);
-        task_fd_info_ref_init(child->fd_info, 1);
+    if (flags & CLONE_FILES) {
+        child->fd_info = task_fd_info_get(self);
+        if (!child->fd_info)
+            goto fail;
+    } else {
         fd_info_t *self_fd_info = task_fd_info_get(self);
         if (!self_fd_info)
             goto fail;
-        with_fd_info_lock(self_fd_info, {
-            for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-                struct vfs_file *fd = self_fd_info->fds[i].file;
-
-                if (fd) {
-                    child->fd_info->fds[i].file = vfs_file_get(fd);
-                    child->fd_info->fds[i].flags = self_fd_info->fds[i].flags;
-                } else {
-                    child->fd_info->fds[i].file = NULL;
-                    child->fd_info->fds[i].flags = 0;
-                }
-            }
-        });
+        child->fd_info = task_fd_info_clone(self_fd_info);
         task_fd_info_put(self_fd_info, self);
+        if (!child->fd_info)
+            goto fail;
     }
 
     child->signal->signal = 0;
@@ -2909,7 +2918,7 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
     add_sched_entity(child, &schedulers[child->cpu_id]);
 
     on_new_task_call(child);
-    for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
+    for (size_t i = 0; child->fd_info && i < child->fd_info->max_fds; i++) {
         if (child->fd_info->fds[i].file) {
             on_open_file_call(child, i);
         }
@@ -2936,31 +2945,6 @@ fail:
 uint64_t task_fork(struct pt_regs *regs, bool vfork) {
     uint64_t flags = vfork ? (CLONE_VFORK | CLONE_VM) : 0;
     return sys_clone(regs, flags, 0, NULL, NULL, 0);
-}
-
-static fd_info_t *task_fd_info_clone(fd_info_t *old) {
-    fd_info_t *new_info;
-
-    if (!old)
-        return NULL;
-
-    new_info = calloc(1, sizeof(*new_info));
-    if (!new_info)
-        return NULL;
-
-    spin_init(&new_info->fdt_lock);
-    task_fd_info_ref_init(new_info, 1);
-
-    with_fd_info_lock(old, {
-        for (uint64_t i = 0; i < MAX_FD_NUM; i++) {
-            if (!old->fds[i].file)
-                continue;
-            new_info->fds[i].file = vfs_file_get(old->fds[i].file);
-            new_info->fds[i].flags = old->fds[i].flags;
-        }
-    });
-
-    return new_info;
 }
 
 static int task_fs_rebind_mount_namespace(task_fs_t *fs,
