@@ -132,10 +132,8 @@ void frame_init(void) {
     for (uint64_t i = 0; i < memory_map->entry_count; i++) {
         boot_memory_map_entry_t *region = &memory_map->entries[i];
 
-#if defined(__x86_64__)
-        if (region->addr < 0x100000)
+        if (!arch_memory_region_usable(region->addr, region->len))
             continue;
-#endif
 
         if (region->type == USABLE && region->len >= bitmap_size_aligned) {
             bitmap_address = region->addr;
@@ -156,10 +154,8 @@ void frame_init(void) {
     for (uint64_t i = 0; i < memory_map->entry_count; i++) {
         boot_memory_map_entry_t *region = &memory_map->entries[i];
 
-#if defined(__x86_64__)
-        if (region->addr < 0x100000)
+        if (!arch_memory_region_usable(region->addr, region->len))
             continue;
-#endif
 
         if (region->type == USABLE) {
             size_t start_frame = region->addr / PAGE_SIZE;
@@ -170,12 +166,6 @@ void frame_init(void) {
             }
         }
     }
-
-#if defined(__x86_64__)
-    // 保留低 1MB
-    size_t low_1M_frames = 0x100000 / PAGE_SIZE;
-    bitmap_set_range(&usable_regions, 0, low_1M_frames, false);
-#endif
 
     // 标记 bitmap 自身占用的区域为不可用
     size_t bitmap_frame_start = bitmap_address / PAGE_SIZE;
@@ -193,10 +183,8 @@ void frame_init(void) {
     for (uint64_t i = 0; i < memory_map->entry_count; i++) {
         boot_memory_map_entry_t *region = &memory_map->entries[i];
 
-#if defined(__x86_64__)
-        if (region->addr < 0x100000)
+        if (!arch_memory_region_usable(region->addr, region->len))
             continue;
-#endif
 
         if (region->type != USABLE)
             continue;

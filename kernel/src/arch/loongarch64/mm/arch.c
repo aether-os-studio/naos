@@ -15,6 +15,44 @@ void loongarch64_set_user_page_table_root(uint64_t root_paddr) {
     arch_flush_tlb_all();
 }
 
+void set_current_page_dir(bool user, uint64_t pgdir) {
+    if (user)
+        csr_write(LOONGARCH_CSR_PGDL, pgdir & ARCH_PTE_ADDR_MASK);
+    else
+        csr_write(LOONGARCH_CSR_PGDH, pgdir & ARCH_PTE_ADDR_MASK);
+    arch_flush_tlb_all();
+}
+
+void arch_page_table_init(void) {}
+
+uint64_t arch_page_table_root_entries(int level) {
+    (void)level;
+    return (1UL << ARCH_PT_OFFSET_PER_LEVEL);
+}
+
+uint64_t arch_make_page_table_entry(uint64_t paddr, uint64_t flags) {
+    return ARCH_MAKE_PDE(paddr, flags);
+}
+
+void arch_page_table_prepare_new(uint64_t *root) { memset(root, 0, PAGE_SIZE); }
+
+void arch_page_table_copy_kernel(uint64_t *dst, uint64_t *src) {
+    (void)dst;
+    (void)src;
+}
+
+bool arch_page_table_flags_writable(uint64_t flags) {
+    return (flags & ARCH_PT_FLAG_WRITEABLE) != 0;
+}
+
+uint64_t arch_page_table_flags_make_cow(uint64_t flags) {
+    return (flags | ARCH_PT_FLAG_COW) & ~ARCH_PT_FLAG_WRITEABLE;
+}
+
+uint64_t arch_page_table_flags_make_writable(uint64_t flags) {
+    return (flags | ARCH_PT_FLAG_WRITEABLE) & ~ARCH_PT_FLAG_COW;
+}
+
 uint64_t get_arch_page_table_flags(uint64_t flags) {
     uint64_t attr = ARCH_PT_FLAG_PRESENT | ARCH_PT_FLAG_HW_VALID |
                     ARCH_PT_FLAG_CACHE_CC | ARCH_PT_FLAG_GLOBAL |

@@ -50,3 +50,22 @@ void write_barrier(void) { __asm__ volatile("" ::: "memory"); }
 void arch_enable_user_access() {}
 
 void arch_disable_user_access() {}
+
+bool arch_memory_region_usable(uint64_t addr, uint64_t len) {
+    (void)addr;
+    (void)len;
+    return true;
+}
+
+uintptr_t arch_get_return_address(uint32_t level) {
+    if (level != 0)
+        return 0;
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wframe-address"
+#endif
+    return (uintptr_t)__builtin_return_address(0);
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+}

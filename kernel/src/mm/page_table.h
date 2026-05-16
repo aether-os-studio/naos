@@ -18,6 +18,15 @@ uint64_t arch_page_table_levels();
 
 uint64_t *get_kernel_page_dir();
 uint64_t *get_current_page_dir(bool user);
+void set_current_page_dir(bool user, uint64_t pgdir);
+void arch_page_table_init(void);
+uint64_t arch_page_table_root_entries(int level);
+uint64_t arch_make_page_table_entry(uint64_t paddr, uint64_t flags);
+void arch_page_table_prepare_new(uint64_t *root);
+void arch_page_table_copy_kernel(uint64_t *dst, uint64_t *src);
+bool arch_page_table_flags_writable(uint64_t flags);
+uint64_t arch_page_table_flags_make_cow(uint64_t flags);
+uint64_t arch_page_table_flags_make_writable(uint64_t flags);
 
 struct task_mm_info;
 typedef struct task_mm_info task_mm_info_t;

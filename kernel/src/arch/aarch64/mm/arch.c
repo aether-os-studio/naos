@@ -33,6 +33,46 @@ uint64_t *get_current_page_dir(bool user) {
     return phys_to_virt(page_table_base);
 }
 
+void set_current_page_dir(bool user, uint64_t pgdir) {
+    if (user) {
+        asm volatile("msr TTBR0_EL1, %0" : : "r"(pgdir) : "memory");
+    } else {
+        asm volatile("msr TTBR1_EL1, %0" : : "r"(pgdir) : "memory");
+    }
+    arch_flush_tlb_all();
+}
+
+void arch_page_table_init(void) { setup_mair(); }
+
+uint64_t arch_page_table_root_entries(int level) {
+    (void)level;
+    return (1UL << ARCH_PT_OFFSET_PER_LEVEL);
+}
+
+uint64_t arch_make_page_table_entry(uint64_t paddr, uint64_t flags) {
+    return ARCH_MAKE_PDE(paddr,
+                         ARCH_PT_TABLE_FLAGS | (flags & ARCH_PT_FLAG_USER));
+}
+
+void arch_page_table_prepare_new(uint64_t *root) { memset(root, 0, PAGE_SIZE); }
+
+void arch_page_table_copy_kernel(uint64_t *dst, uint64_t *src) {
+    (void)dst;
+    (void)src;
+}
+
+bool arch_page_table_flags_writable(uint64_t flags) {
+    return (flags & ARCH_PT_FLAG_READONLY) == 0;
+}
+
+uint64_t arch_page_table_flags_make_cow(uint64_t flags) {
+    return (flags | ARCH_PT_FLAG_COW | ARCH_PT_FLAG_READONLY);
+}
+
+uint64_t arch_page_table_flags_make_writable(uint64_t flags) {
+    return (flags & ~(ARCH_PT_FLAG_COW | ARCH_PT_FLAG_READONLY));
+}
+
 uint64_t get_arch_page_table_flags(uint64_t flags) {
     uint64_t attr = ARCH_PT_FLAG_VALID | ARCH_PT_FLAG_4K_PAGE |
                     ARCH_PT_FLAG_INNER_SH | ARCH_PT_FLAG_ACCESS;

@@ -7,16 +7,7 @@
 #include <libs/termios.h>
 #include <mm/shm.h>
 #include <task/ns.h>
-
-#if defined(__x86_64__)
-#include <arch/x86_64/irq/ptrace.h>
-#elif defined(__aarch64__)
-#include <arch/aarch64/irq/ptrace.h>
-#elif defined(__riscv__)
-#include <arch/riscv64/irq/ptrace.h>
-#elif defined(__loongarch64__)
-#include <arch/loongarch64/irq/ptrace.h>
-#endif
+#include <arch/task_abi.h>
 
 typedef enum task_state {
     TASK_CREATING = 1,
@@ -89,13 +80,8 @@ typedef struct sigaltstack {
 #define SS_DISABLE 2
 #define SS_AUTODISARM (1U << 31)
 
-#if defined(__aarch64__)
-#define MINSIGSTKSZ 5120
-#define SIGSTKSZ 16384
-#else
-#define MINSIGSTKSZ 2048
-#define SIGSTKSZ 8192
-#endif
+#define MINSIGSTKSZ ARCH_MINSIGSTKSZ
+#define SIGSTKSZ ARCH_SIGSTKSZ
 
 #define SIGEV_SIGNAL 0    /* notify via signal */
 #define SIGEV_NONE 1      /* other notification: meaningless */

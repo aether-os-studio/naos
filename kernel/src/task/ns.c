@@ -1,6 +1,7 @@
 #include <fs/vfs/vfs.h>
 #include <task/ns.h>
 #include <task/task.h>
+#include <arch/task_abi.h>
 
 static uint64_t next_namespace_inum = 1;
 
@@ -196,17 +197,7 @@ task_uts_namespace_create(const task_uts_namespace_t *parent) {
     strcpy(uts_ns->nodename, "aether");
     strcpy(uts_ns->release, BUILD_VERSION);
     strcpy(uts_ns->version, BUILD_VERSION);
-#if defined(__x86_64__)
-    strcpy(uts_ns->machine, "x86_64");
-#elif defined(__aarch64__)
-    strcpy(uts_ns->machine, "aarch64");
-#elif defined(__riscv64)
-    strcpy(uts_ns->machine, "riscv64");
-#elif defined(__loongarch64__)
-    strcpy(uts_ns->machine, "loongarch64");
-#else
-    strcpy(uts_ns->machine, "unknown");
-#endif
+    strcpy(uts_ns->machine, ARCH_UTS_MACHINE);
     uts_ns->domainname[0] = '\0';
     return uts_ns;
 }

@@ -39,6 +39,18 @@ void riscv64_fpu_state_init(fpu_context_t *fpu_ctx);
 void riscv64_fpu_save(fpu_context_t *fpu_ctx);
 void riscv64_fpu_restore(fpu_context_t *fpu_ctx);
 
+static inline uint64_t arch_regs_get_user_sp(const struct pt_regs *regs) {
+    return regs->sp;
+}
+
+static inline void arch_regs_set_user_sp(struct pt_regs *regs, uint64_t sp) {
+    regs->sp = sp;
+}
+
+static inline void arch_context_set_tls(arch_context_t *context, uint64_t tls) {
+    context->ctx->tp = tls;
+}
+
 #define switch_mm(prev, next)                                                  \
     do {                                                                       \
         if ((prev)->mm != (next)->mm) {                                        \

@@ -1,5 +1,4 @@
-#include <arch/aarch64/drivers/timer.h>
-#include <arch/aarch64/drivers/gic.h>
+#include <arch/arch.h>
 #include <acpi/uacpi/acpi.h>
 #include <acpi/uacpi/tables.h>
 #include <boot/boot.h>

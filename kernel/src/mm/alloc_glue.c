@@ -153,22 +153,12 @@ static void abort_print_symbol(uintptr_t addr, int level) {
 #pragma GCC diagnostic ignored "-Wframe-address"
 #endif
 
-#if defined(__loongarch64__)
+#if defined(__GNUC__) || defined(__clang__)
 #define ABORT_PRINT_RETURN_ADDRESS(level)                                      \
     do {                                                                       \
-        uintptr_t addr = 0;                                                    \
-        if ((level) == 0)                                                      \
-            addr = (uintptr_t)__builtin_return_address(0);                     \
+        uintptr_t addr = arch_get_return_address(level);                       \
         if (addr == 0)                                                         \
             goto abort_trace_done;                                             \
-        if (addr < get_physical_memory_offset())                               \
-            goto abort_trace_done;                                             \
-        abort_print_symbol(addr, level);                                       \
-    } while (0)
-#elif defined(__GNUC__) || defined(__clang__)
-#define ABORT_PRINT_RETURN_ADDRESS(level)                                      \
-    do {                                                                       \
-        uintptr_t addr = (uintptr_t)__builtin_return_address(level);           \
         if (addr < get_physical_memory_offset())                               \
             goto abort_trace_done;                                             \
         abort_print_symbol(addr, level);                                       \
@@ -188,28 +178,6 @@ void abort() {
     ABORT_PRINT_RETURN_ADDRESS(7);
     ABORT_PRINT_RETURN_ADDRESS(8);
     ABORT_PRINT_RETURN_ADDRESS(9);
-    ABORT_PRINT_RETURN_ADDRESS(10);
-    ABORT_PRINT_RETURN_ADDRESS(11);
-    ABORT_PRINT_RETURN_ADDRESS(12);
-    ABORT_PRINT_RETURN_ADDRESS(13);
-    ABORT_PRINT_RETURN_ADDRESS(14);
-    ABORT_PRINT_RETURN_ADDRESS(15);
-    ABORT_PRINT_RETURN_ADDRESS(16);
-    ABORT_PRINT_RETURN_ADDRESS(17);
-    ABORT_PRINT_RETURN_ADDRESS(18);
-    ABORT_PRINT_RETURN_ADDRESS(19);
-    ABORT_PRINT_RETURN_ADDRESS(20);
-    ABORT_PRINT_RETURN_ADDRESS(21);
-    ABORT_PRINT_RETURN_ADDRESS(22);
-    ABORT_PRINT_RETURN_ADDRESS(23);
-    ABORT_PRINT_RETURN_ADDRESS(24);
-    ABORT_PRINT_RETURN_ADDRESS(25);
-    ABORT_PRINT_RETURN_ADDRESS(26);
-    ABORT_PRINT_RETURN_ADDRESS(27);
-    ABORT_PRINT_RETURN_ADDRESS(28);
-    ABORT_PRINT_RETURN_ADDRESS(29);
-    ABORT_PRINT_RETURN_ADDRESS(30);
-    ABORT_PRINT_RETURN_ADDRESS(31);
 
 abort_trace_done:
     printk("======== abort traceback end =======\n");

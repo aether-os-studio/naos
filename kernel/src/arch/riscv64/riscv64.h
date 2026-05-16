@@ -1,6 +1,7 @@
 #pragma once
 
 #define ARCH_MAX_IRQ_NUM 1024
+#define SCHED_HZ 250
 
 #include "arch/riscv64/cpu_local.h"
 #include "arch/riscv64/drivers/rtc-goldfish.h"
@@ -38,3 +39,5 @@ void write_barrier(void);
 
 void arch_enable_user_access();
 void arch_disable_user_access();
+bool arch_memory_region_usable(uint64_t addr, uint64_t len);
+uintptr_t arch_get_return_address(uint32_t level);

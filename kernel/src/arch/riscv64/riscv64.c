@@ -100,3 +100,43 @@ void arch_disable_user_access(void) {
     uint64_t sum = RISCV_SSTATUS_SUM;
     asm volatile("csrc sstatus, %0" : : "r"(sum) : "memory");
 }
+
+bool arch_memory_region_usable(uint64_t addr, uint64_t len) {
+    (void)addr;
+    (void)len;
+    return true;
+}
+
+uintptr_t arch_get_return_address(uint32_t level) {
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wframe-address"
+#endif
+    switch (level) {
+    case 0:
+        return (uintptr_t)__builtin_return_address(0);
+    case 1:
+        return (uintptr_t)__builtin_return_address(1);
+    case 2:
+        return (uintptr_t)__builtin_return_address(2);
+    case 3:
+        return (uintptr_t)__builtin_return_address(3);
+    case 4:
+        return (uintptr_t)__builtin_return_address(4);
+    case 5:
+        return (uintptr_t)__builtin_return_address(5);
+    case 6:
+        return (uintptr_t)__builtin_return_address(6);
+    case 7:
+        return (uintptr_t)__builtin_return_address(7);
+    case 8:
+        return (uintptr_t)__builtin_return_address(8);
+    case 9:
+        return (uintptr_t)__builtin_return_address(9);
+    default:
+        return 0;
+    }
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+}

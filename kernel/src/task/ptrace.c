@@ -1,84 +1,6 @@
 #include <task/ptrace.h>
 #include <task/task_syscall.h>
 
-#if defined(__x86_64__)
-typedef struct x64_user_regs_struct {
-    uint64_t r15;
-    uint64_t r14;
-    uint64_t r13;
-    uint64_t r12;
-    uint64_t rbp;
-    uint64_t rbx;
-    uint64_t r11;
-    uint64_t r10;
-    uint64_t r9;
-    uint64_t r8;
-    uint64_t rax;
-    uint64_t rcx;
-    uint64_t rdx;
-    uint64_t rsi;
-    uint64_t rdi;
-    uint64_t orig_rax;
-    uint64_t rip;
-    uint64_t cs;
-    uint64_t eflags;
-    uint64_t rsp;
-    uint64_t ss;
-    uint64_t fs_base;
-    uint64_t gs_base;
-    uint64_t ds;
-    uint64_t es;
-    uint64_t fs;
-    uint64_t gs;
-} x64_user_regs_struct_t;
-#endif
-
-#if defined(__aarch64__)
-typedef struct aarch64_user_pt_regs {
-    uint64_t regs[31];
-    uint64_t sp;
-    uint64_t pc;
-    uint64_t pstate;
-} aarch64_user_pt_regs_t;
-#endif
-
-#if defined(__riscv__)
-typedef struct riscv64_user_regs_struct {
-    uint64_t pc;
-    uint64_t ra;
-    uint64_t sp;
-    uint64_t gp;
-    uint64_t tp;
-    uint64_t t0;
-    uint64_t t1;
-    uint64_t t2;
-    uint64_t s0;
-    uint64_t s1;
-    uint64_t a0;
-    uint64_t a1;
-    uint64_t a2;
-    uint64_t a3;
-    uint64_t a4;
-    uint64_t a5;
-    uint64_t a6;
-    uint64_t a7;
-    uint64_t s2;
-    uint64_t s3;
-    uint64_t s4;
-    uint64_t s5;
-    uint64_t s6;
-    uint64_t s7;
-    uint64_t s8;
-    uint64_t s9;
-    uint64_t s10;
-    uint64_t s11;
-    uint64_t t3;
-    uint64_t t4;
-    uint64_t t5;
-    uint64_t t6;
-} riscv64_user_regs_struct_t;
-#endif
-
 static task_t *ptrace_find_target(task_t *tracer, uint64_t pid) {
     task_t *target;
 
@@ -211,18 +133,6 @@ static void ptrace_stop_event(task_t *task, uint32_t event, uint64_t message) {
     task_block(task, TASK_BLOCKING, -1, "ptrace-exec");
 }
 
-static uint32_t ptrace_audit_arch(void) {
-#if defined(__x86_64__)
-    return AUDIT_ARCH_X86_64;
-#elif defined(__aarch64__)
-    return AUDIT_ARCH_AARCH64;
-#elif defined(__riscv__)
-    return AUDIT_ARCH_RISCV64;
-#else
-    return 0;
-#endif
-}
-
 static void ptrace_fill_syscall_info(struct ptrace_syscall_info *info,
                                      const struct pt_regs *regs,
                                      uint8_t last_stop) {
@@ -230,63 +140,8 @@ static void ptrace_fill_syscall_info(struct ptrace_syscall_info *info,
         return;
 
     memset(info, 0, sizeof(*info));
-    info->arch = ptrace_audit_arch();
-
-#if defined(__x86_64__)
-    info->instruction_pointer = regs->rip;
-    info->stack_pointer = regs->rsp;
-
-    if (last_stop == PTRACE_STOP_SYSCALL_ENTER) {
-        info->op = PTRACE_SYSCALL_INFO_ENTRY;
-        info->entry.nr = regs->orig_rax;
-        info->entry.args[0] = regs->rdi;
-        info->entry.args[1] = regs->rsi;
-        info->entry.args[2] = regs->rdx;
-        info->entry.args[3] = regs->r10;
-        info->entry.args[4] = regs->r8;
-        info->entry.args[5] = regs->r9;
-    } else if (last_stop == PTRACE_STOP_SYSCALL_EXIT) {
-        info->op = PTRACE_SYSCALL_INFO_EXIT;
-        info->exit.rval = (int64_t)regs->rax;
-        info->exit.is_error = (int64_t)regs->rax < 0;
-    }
-#elif defined(__aarch64__)
-    info->instruction_pointer = regs->pc;
-    info->stack_pointer = regs->sp_el0;
-
-    if (last_stop == PTRACE_STOP_SYSCALL_ENTER) {
-        info->op = PTRACE_SYSCALL_INFO_ENTRY;
-        info->entry.nr = regs->syscallno;
-        info->entry.args[0] = regs->x0;
-        info->entry.args[1] = regs->x1;
-        info->entry.args[2] = regs->x2;
-        info->entry.args[3] = regs->x3;
-        info->entry.args[4] = regs->x4;
-        info->entry.args[5] = regs->x5;
-    } else if (last_stop == PTRACE_STOP_SYSCALL_EXIT) {
-        info->op = PTRACE_SYSCALL_INFO_EXIT;
-        info->exit.rval = (int64_t)regs->x0;
-        info->exit.is_error = (int64_t)regs->x0 < 0;
-    }
-#elif defined(__riscv__)
-    info->instruction_pointer = regs->sepc;
-    info->stack_pointer = regs->sp;
-
-    if (last_stop == PTRACE_STOP_SYSCALL_ENTER) {
-        info->op = PTRACE_SYSCALL_INFO_ENTRY;
-        info->entry.nr = regs->a7;
-        info->entry.args[0] = regs->a0;
-        info->entry.args[1] = regs->a1;
-        info->entry.args[2] = regs->a2;
-        info->entry.args[3] = regs->a3;
-        info->entry.args[4] = regs->a4;
-        info->entry.args[5] = regs->a5;
-    } else if (last_stop == PTRACE_STOP_SYSCALL_EXIT) {
-        info->op = PTRACE_SYSCALL_INFO_EXIT;
-        info->exit.rval = (int64_t)regs->a0;
-        info->exit.is_error = (int64_t)regs->a0 < 0;
-    }
-#endif
+    info->arch = arch_ptrace_audit_arch();
+    arch_ptrace_fill_syscall_info(info, regs, last_stop);
 }
 
 static uint64_t ptrace_copy_regs(task_t *target, void *user_buf) {
@@ -297,101 +152,7 @@ static uint64_t ptrace_copy_regs(task_t *target, void *user_buf) {
     if (!target->ptrace_stopped && !target->ptrace_wait_pending)
         return (uint64_t)-ESRCH;
 
-#if defined(__x86_64__)
-    x64_user_regs_struct_t user_regs = {
-        .r15 = regs->r15,
-        .r14 = regs->r14,
-        .r13 = regs->r13,
-        .r12 = regs->r12,
-        .rbp = regs->rbp,
-        .rbx = regs->rbx,
-        .r11 = regs->r11,
-        .r10 = regs->r10,
-        .r9 = regs->r9,
-        .r8 = regs->r8,
-        .rax = regs->rax,
-        .rcx = regs->rcx,
-        .rdx = regs->rdx,
-        .rsi = regs->rsi,
-        .rdi = regs->rdi,
-        .orig_rax = regs->orig_rax,
-        .rip = regs->rip,
-        .cs = regs->cs,
-        .eflags = regs->rflags,
-        .rsp = regs->rsp,
-        .ss = regs->ss,
-        .fs_base = target->arch_context ? target->arch_context->fsbase : 0,
-        .gs_base = target->arch_context ? target->arch_context->gsbase : 0,
-        .ds = 0,
-        .es = 0,
-        .fs = 0,
-        .gs = 0,
-    };
-
-    if (copy_to_user(user_buf, &user_regs, sizeof(user_regs)))
-        return (uint64_t)-EFAULT;
-#elif defined(__aarch64__)
-    aarch64_user_pt_regs_t user_regs = {
-        .regs =
-            {
-                regs->x0,  regs->x1,  regs->x2,  regs->x3,  regs->x4,
-                regs->x5,  regs->x6,  regs->x7,  regs->x8,  regs->x9,
-                regs->x10, regs->x11, regs->x12, regs->x13, regs->x14,
-                regs->x15, regs->x16, regs->x17, regs->x18, regs->x19,
-                regs->x20, regs->x21, regs->x22, regs->x23, regs->x24,
-                regs->x25, regs->x26, regs->x27, regs->x28, regs->x29,
-                regs->x30,
-            },
-        .sp = regs->sp_el0,
-        .pc = regs->pc,
-        .pstate = regs->cpsr,
-    };
-
-    if (copy_to_user(user_buf, &user_regs, sizeof(user_regs)))
-        return (uint64_t)-EFAULT;
-#elif defined(__riscv__)
-    riscv64_user_regs_struct_t user_regs = {
-        .pc = regs->sepc,
-        .ra = regs->ra,
-        .sp = regs->sp,
-        .gp = regs->gp,
-        .tp = regs->tp,
-        .t0 = regs->t0,
-        .t1 = regs->t1,
-        .t2 = regs->t2,
-        .s0 = regs->s0,
-        .s1 = regs->s1,
-        .a0 = regs->a0,
-        .a1 = regs->a1,
-        .a2 = regs->a2,
-        .a3 = regs->a3,
-        .a4 = regs->a4,
-        .a5 = regs->a5,
-        .a6 = regs->a6,
-        .a7 = regs->a7,
-        .s2 = regs->s2,
-        .s3 = regs->s3,
-        .s4 = regs->s4,
-        .s5 = regs->s5,
-        .s6 = regs->s6,
-        .s7 = regs->s7,
-        .s8 = regs->s8,
-        .s9 = regs->s9,
-        .s10 = regs->s10,
-        .s11 = regs->s11,
-        .t3 = regs->t3,
-        .t4 = regs->t4,
-        .t5 = regs->t5,
-        .t6 = regs->t6,
-    };
-
-    if (copy_to_user(user_buf, &user_regs, sizeof(user_regs)))
-        return (uint64_t)-EFAULT;
-#else
-    return (uint64_t)-ENOSYS;
-#endif
-
-    return 0;
+    return arch_ptrace_copy_regs(target, regs, user_buf);
 }
 
 static uint64_t ptrace_copy_regset(task_t *target, void *data, uint64_t note) {
@@ -405,15 +166,9 @@ static uint64_t ptrace_copy_regset(task_t *target, void *data, uint64_t note) {
     if (note != NT_PRSTATUS || !iov.iov_base)
         return (uint64_t)-EINVAL;
 
-#if defined(__x86_64__)
-    full_len = sizeof(x64_user_regs_struct_t);
-#elif defined(__aarch64__)
-    full_len = sizeof(aarch64_user_pt_regs_t);
-#elif defined(__riscv__)
-    full_len = sizeof(riscv64_user_regs_struct_t);
-#else
-    return (uint64_t)-ENOSYS;
-#endif
+    full_len = arch_ptrace_regset_size();
+    if (full_len == 0)
+        return (uint64_t)-ENOSYS;
 
     if (iov.len < full_len)
         return (uint64_t)-EIO;

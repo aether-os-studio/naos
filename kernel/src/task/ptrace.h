@@ -89,6 +89,14 @@ struct ptrace_syscall_info {
     };
 };
 
+uint32_t arch_ptrace_audit_arch(void);
+uint64_t arch_ptrace_copy_regs(task_t *target, const struct pt_regs *regs,
+                               void *user_buf);
+size_t arch_ptrace_regset_size(void);
+void arch_ptrace_fill_syscall_info(struct ptrace_syscall_info *info,
+                                   const struct pt_regs *regs,
+                                   uint8_t last_stop);
+
 static inline bool ptrace_is_traced(const task_t *task) {
     return task && task->ptrace_tracer_pid != 0;
 }

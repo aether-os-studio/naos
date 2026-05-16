@@ -351,10 +351,8 @@ static uint64_t task_user_translate_access(task_t *task, uint64_t uaddr,
             uint64_t flags = ARCH_READ_PTE_FLAG(entry);
             if (!(flags & ARCH_PT_FLAG_USER))
                 return 0;
-#if !defined(__aarch64__)
-            if (write && !(flags & ARCH_PT_FLAG_WRITEABLE))
+            if (write && !arch_page_table_flags_writable(flags))
                 return 0;
-#endif
             return (ARCH_READ_PTE(entry) & ~PAGE_CALC_PAGE_TABLE_MASK(i + 1)) +
                    (uaddr & PAGE_CALC_PAGE_TABLE_MASK(i + 1));
         }
@@ -370,10 +368,8 @@ static uint64_t task_user_translate_access(task_t *task, uint64_t uaddr,
     uint64_t flags = ARCH_READ_PTE_FLAG(pte);
     if (!(flags & ARCH_PT_FLAG_USER))
         return 0;
-#if !defined(__aarch64__)
-    if (write && !(flags & ARCH_PT_FLAG_WRITEABLE))
+    if (write && !arch_page_table_flags_writable(flags))
         return 0;
-#endif
 
     return ARCH_READ_PTE(pte) + (uaddr & PAGE_CALC_PAGE_TABLE_MASK(levels));
 }
@@ -1846,11 +1842,8 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
     memset(new_mm, 0, sizeof(task_mm_info_t));
     spin_init(&new_mm->lock);
     new_mm->page_table_addr = alloc_frames(1);
-    memset((void *)phys_to_virt(new_mm->page_table_addr), 0, PAGE_SIZE);
-#if defined(__x86_64__) || defined(__riscv__)
-    memcpy((uint64_t *)phys_to_virt(new_mm->page_table_addr) + 256,
-           get_kernel_page_dir() + 256, PAGE_SIZE / 2);
-#endif
+    arch_page_table_prepare_new(
+        (uint64_t *)phys_to_virt(new_mm->page_table_addr));
     new_mm->ref_count = 1;
     vma_manager_init(&new_mm->task_vma_mgr, true);
 
@@ -1858,19 +1851,7 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
     new_mm->brk_current = new_mm->brk_start;
     new_mm->brk_end = USER_BRK_END;
 
-#if defined(__x86_64__)
-    asm volatile("movq %0, %%cr3" ::"r"(new_mm->page_table_addr));
-#elif defined(__riscv__)
-    riscv64_set_page_table_root(new_mm->page_table_addr);
-#elif defined(__loongarch64__)
-    loongarch64_set_user_page_table_root(new_mm->page_table_addr);
-#elif defined(__aarch64__)
-    asm volatile("msr TTBR0_EL1, %0" : : "r"(new_mm->page_table_addr));
-    asm volatile("dsb ishst\n\t"
-                 "tlbi vmalle1is\n\t"
-                 "dsb ish\n\t"
-                 "isb\n\t");
-#endif
+    set_current_page_dir(true, new_mm->page_table_addr);
 
     self->mm = new_mm;
 
@@ -2154,19 +2135,7 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
 
 exec_fail_restore_mm:
     self->mm = old_mm;
-#if defined(__x86_64__)
-    asm volatile("movq %0, %%cr3" ::"r"(old_mm->page_table_addr));
-#elif defined(__riscv__)
-    riscv64_set_page_table_root(old_mm->page_table_addr);
-#elif defined(__loongarch64__)
-    loongarch64_set_user_page_table_root(old_mm->page_table_addr);
-#elif defined(__aarch64__)
-    asm volatile("msr TTBR0_EL1, %0" : : "r"(old_mm->page_table_addr));
-    asm volatile("dsb ishst\n\t"
-                 "tlbi vmalle1is\n\t"
-                 "dsb ish\n\t"
-                 "isb\n\t");
-#endif
+    set_current_page_dir(true, old_mm->page_table_addr);
     free_page_table(new_mm);
     if (interpreter_path)
         free(interpreter_path);
@@ -2779,25 +2748,13 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
                       flags);
     shm_fork(self, child);
 
-#if defined(__x86_64__)
-    uint64_t user_sp = regs->rsp;
-#elif defined(__aarch64__)
-    uint64_t user_sp = regs->sp_el0;
-#elif defined(__riscv__) || defined(__loongarch64__)
-    uint64_t user_sp = regs->sp;
-#endif
+    uint64_t user_sp = arch_regs_get_user_sp(regs);
 
     if (newsp) {
         user_sp = newsp;
     }
 
-#if defined(__x86_64__)
-    child->arch_context->ctx->rsp = user_sp;
-#elif defined(__aarch64__)
-    child->arch_context->ctx->sp_el0 = user_sp;
-#elif defined(__riscv__) || defined(__loongarch64__)
-    child->arch_context->ctx->sp = user_sp;
-#endif
+    arch_regs_set_user_sp(child->arch_context->ctx, user_sp);
 
     child->is_kernel = false;
     child->parent =
@@ -2844,13 +2801,7 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
     child->signal->signal = 0;
 
     if (flags & CLONE_SETTLS) {
-#if defined(__x86_64__)
-        child->arch_context->fsbase = tls;
-#elif defined(__aarch64__)
-        child->arch_context->tpidr_el0 = tls;
-#elif defined(__riscv__) || defined(__loongarch64__)
-        child->arch_context->ctx->tp = tls;
-#endif
+        arch_context_set_tls(child->arch_context, tls);
     }
 
     child->parent_death_sig = (uint64_t)-1;

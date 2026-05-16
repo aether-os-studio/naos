@@ -23,6 +23,18 @@ typedef struct fpu_context {
     uint32_t reserved;
 } __attribute__((aligned(16))) fpu_context_t;
 
+static inline uint64_t arch_regs_get_user_sp(const struct pt_regs *regs) {
+    return regs->sp;
+}
+
+static inline void arch_regs_set_user_sp(struct pt_regs *regs, uint64_t sp) {
+    regs->sp = sp;
+}
+
+static inline void arch_context_set_tls(arch_context_t *context, uint64_t tls) {
+    context->ctx->tp = tls;
+}
+
 #define switch_mm(prev, next)                                                  \
     do {                                                                       \
         (void)(prev);                                                          \

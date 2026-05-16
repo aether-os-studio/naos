@@ -95,26 +95,20 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
                 return a;
             }
             memset((uint64_t *)phys_to_virt(a), 0, PAGE_SIZE);
-            pgdir[index] = ARCH_MAKE_PDE(a, ARCH_PT_TABLE_FLAGS
-#if !defined(__riscv__) && !defined(__loongarch64__)
-                                                | (flags & ARCH_PT_FLAG_USER)
-#endif
-            );
+            pgdir[index] = arch_make_page_table_entry(a, flags);
             created_parent_tables[created_tables] = pgdir;
             created_parent_indices[created_tables] = index;
             created_table_addrs[created_tables] = a;
             created_tables++;
-        }
-#if !defined(__riscv__) && !defined(__loongarch64__)
-        else {
+        } else {
             if ((flags & ARCH_PT_FLAG_USER) && !(addr & ARCH_PT_FLAG_USER)) {
                 uint64_t pa = ARCH_READ_PTE(addr);
                 uint64_t old_flags = ARCH_READ_PTE_FLAG(addr);
-                pgdir[index] = ARCH_MAKE_PDE(pa, old_flags | ARCH_PT_FLAG_USER);
+                pgdir[index] =
+                    arch_make_page_table_entry(pa, old_flags | flags);
                 arch_flush_tlb(vaddr);
             }
         }
-#endif
 
         pgdir = (uint64_t *)phys_to_virt(ARCH_READ_PTE(pgdir[index]));
     }
@@ -291,14 +285,6 @@ static uint64_t page_table_entry_span(int level) {
     return PAGE_CALC_PAGE_TABLE_SIZE(levels - level + 1);
 }
 
-static bool pte_is_writable(uint64_t flags) {
-#if defined(__aarch64__)
-    return (flags & ARCH_PT_FLAG_READONLY) == 0;
-#else
-    return (flags & ARCH_PT_FLAG_WRITEABLE) != 0;
-#endif
-}
-
 static bool vma_is_private_mapping(vma_t *vma) {
     return vma && !(vma->vm_flags & (VMA_SHARED | VMA_SHM | VMA_DEVICE));
 }
@@ -316,11 +302,7 @@ static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level,
     uint64_t *new_table = (uint64_t *)phys_to_virt(frame);
     memset(new_table, 0, PAGE_SIZE);
 
-    uint64_t entries = (1UL << ARCH_PT_OFFSET_PER_LEVEL);
-#if defined(__x86_64__) || defined(__riscv__)
-    if ((uint64_t)level == arch_page_table_levels())
-        entries >>= 1;
-#endif
+    uint64_t entries = arch_page_table_root_entries(level);
 
     for (uint64_t i = 0; i < entries; i++) {
         uint64_t entry = source_table[i];
@@ -344,13 +326,8 @@ static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level,
             }
 
             if (managed && vma_is_private_mapping(vma_find(mgr, entry_vaddr)) &&
-                pte_is_writable(flags)) {
-                flags |= ARCH_PT_FLAG_COW;
-#if defined(__aarch64__)
-                flags |= ARCH_PT_FLAG_READONLY;
-#else
-                flags &= ~ARCH_PT_FLAG_WRITEABLE;
-#endif
+                arch_page_table_flags_writable(flags)) {
+                flags = arch_page_table_flags_make_cow(flags);
                 source_table[i] = ARCH_MAKE_PTE(paddr, flags);
                 arch_flush_tlb(entry_vaddr);
             }
@@ -388,11 +365,7 @@ static void free_page_table_recursive(uint64_t *table, int level) {
     if (!table_phys)
         return;
 
-    uint64_t entries = (1UL << ARCH_PT_OFFSET_PER_LEVEL);
-#if defined(__x86_64__) || defined(__riscv__)
-    if ((uint64_t)level == arch_page_table_levels())
-        entries >>= 1;
-#endif
+    uint64_t entries = arch_page_table_root_entries(level);
 
     if (level == 1) {
         for (uint64_t i = 0; i < entries; i++) {
@@ -457,10 +430,7 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
         return NULL;
     }
 
-#if defined(__x86_64__) || defined(__riscv__)
-    memcpy(new_root + ((1UL << ARCH_PT_OFFSET_PER_LEVEL) >> 1),
-           old_root + ((1UL << ARCH_PT_OFFSET_PER_LEVEL) >> 1), PAGE_SIZE / 2);
-#endif
+    arch_page_table_copy_kernel(new_root, old_root);
 
     new_mm->page_table_addr = (uint64_t)virt_to_phys(new_root);
     new_mm->ref_count = 1;
@@ -518,13 +488,7 @@ void free_page_table(task_mm_info_t *directory) {
 }
 
 void page_table_init() {
-#if defined(__aarch64__)
-    extern void setup_mair(void);
-    setup_mair();
-#endif
-#if defined(__x86_64__) || defined(__riscv__)
-    memset(get_current_page_dir(false), 0, PAGE_SIZE / 2);
-#endif
+    arch_page_table_init();
     kernel_page_dir = get_current_page_dir(false);
 }
 

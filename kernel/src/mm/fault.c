@@ -287,12 +287,7 @@ map_cow_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
     if (address_is_managed(old_paddr) &&
         page_refcount_read(get_page_by_addr(old_paddr)) == 1) {
         uint64_t flags = ARCH_READ_PTE_FLAG(current_entry);
-#if defined(__aarch64__)
-        flags &= ~ARCH_PT_FLAG_READONLY;
-#else
-        flags |= ARCH_PT_FLAG_WRITEABLE;
-#endif
-        flags &= ~ARCH_PT_FLAG_COW;
+        flags = arch_page_table_flags_make_writable(flags);
 
         pgdir[index] = ARCH_MAKE_PTE(old_paddr, flags);
         arch_flush_tlb(aligned_vaddr);
@@ -311,12 +306,7 @@ map_cow_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
     fault_sync_page_before_user_map(snapshot, new_paddr);
 
     uint64_t flags = ARCH_READ_PTE_FLAG(current_entry);
-#if defined(__aarch64__)
-    flags &= ~ARCH_PT_FLAG_READONLY;
-#else
-    flags |= ARCH_PT_FLAG_WRITEABLE;
-#endif
-    flags &= ~ARCH_PT_FLAG_COW;
+    flags = arch_page_table_flags_make_writable(flags);
 
     pgdir[index] = ARCH_MAKE_PTE(new_paddr, flags);
     arch_flush_tlb(aligned_vaddr);
