@@ -1,0 +1,18 @@
+#pragma once
+
+#include <libs/klibc.h>
+
+struct task;
+typedef struct task task_t;
+
+typedef struct loongarch64_cpu_local {
+    task_t *task_ptr;
+    uint32_t cpu_id;
+    uint32_t reserved0;
+} loongarch64_cpu_local_t;
+
+loongarch64_cpu_local_t *loongarch64_get_cpu_local(void);
+loongarch64_cpu_local_t *loongarch64_get_cpu_local_by_id(uint32_t cpu_id);
+void loongarch64_cpu_local_init(uint32_t cpu_id);
+void loongarch64_cpu_local_set_current(task_t *current);
+uint32_t loongarch64_current_cpu_id(void);

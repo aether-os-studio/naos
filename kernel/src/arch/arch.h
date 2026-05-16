@@ -6,7 +6,7 @@
 #include <arch/aarch64/aarch64.h>
 #elif defined(__riscv__)
 #include <arch/riscv64/riscv64.h>
-#elif defined(__loongarch64)
+#elif defined(__loongarch64__)
 #include <arch/loongarch64/loongarch64.h>
 #endif
 

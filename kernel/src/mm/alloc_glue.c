@@ -153,6 +153,19 @@ static void abort_print_symbol(uintptr_t addr, int level) {
 #pragma GCC diagnostic ignored "-Wframe-address"
 #endif
 
+#if defined(__loongarch64__)
+#define ABORT_PRINT_RETURN_ADDRESS(level)                                      \
+    do {                                                                       \
+        uintptr_t addr = 0;                                                    \
+        if ((level) == 0)                                                      \
+            addr = (uintptr_t)__builtin_return_address(0);                     \
+        if (addr == 0)                                                         \
+            goto abort_trace_done;                                             \
+        if (addr < get_physical_memory_offset())                               \
+            goto abort_trace_done;                                             \
+        abort_print_symbol(addr, level);                                       \
+    } while (0)
+#elif defined(__GNUC__) || defined(__clang__)
 #define ABORT_PRINT_RETURN_ADDRESS(level)                                      \
     do {                                                                       \
         uintptr_t addr = (uintptr_t)__builtin_return_address(level);           \
@@ -160,6 +173,7 @@ static void abort_print_symbol(uintptr_t addr, int level) {
             goto abort_trace_done;                                             \
         abort_print_symbol(addr, level);                                       \
     } while (0)
+#endif
 
 void abort() {
     printk("======== abort traceback =======\n");

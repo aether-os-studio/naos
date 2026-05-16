@@ -264,6 +264,10 @@ static inline char *strrchr(const char *s, int c) {
 }
 
 char *strdup(const char *s);
+void *malloc(size_t size);
+void *calloc(size_t nmemb, size_t size);
+void *realloc(void *ptr, size_t size);
+void free(void *ptr);
 
 typedef struct spinlock {
     volatile uint8_t lock;

@@ -15,6 +15,8 @@
 #include <arch/aarch64/syscall/nr.h>
 #elif defined(__riscv__)
 #include <arch/riscv64/syscall/nr.h>
+#elif defined(__loongarch64__)
+#include <arch/loongarch64/syscall/nr.h>
 #endif
 
 #define SIGNAL_MIN_SIGSET_SIZE sizeof(uint32_t)
@@ -28,7 +30,7 @@ typedef struct signal_kernel_sigaction {
     void (*restorer)(void);
     sigset_t mask;
 } signal_kernel_sigaction_t;
-#elif defined(__riscv__)
+#elif defined(__riscv__) || defined(__loongarch64__)
 typedef struct signal_kernel_sigaction {
     sighandler_t handler;
     unsigned long flags;
@@ -54,7 +56,7 @@ typedef struct signal_kernel_sigaction {
 #define SIGNAL_AARCH64_RT_SIGRETURN_TRAMPOLINE_SIZE 8U
 #endif
 
-#if defined(__riscv__)
+#if defined(__riscv__) || defined(__loongarch64__)
 #define SIGNAL_RISCV64_RT_SIGRETURN_TRAMPOLINE_SIZE 8U
 #define SIGNAL_RISCV64_SYSCALL_INS_LEN 4U
 #define SIGNAL_RISCV64_USER_SSTATUS ((1UL << 18) | (1UL << 13) | (1UL << 5))
@@ -196,7 +198,7 @@ static inline uint64_t signal_current_user_sp(task_t *task) {
 #elif defined(__riscv__)
     struct pt_regs *regs = (struct pt_regs *)task->syscall_stack - 1;
     return regs->sp;
-#elif defined(__loongarch64)
+#elif defined(__loongarch64__)
     struct pt_regs *regs = (struct pt_regs *)task->syscall_stack - 1;
     return regs->usp;
 #else
@@ -358,7 +360,7 @@ static inline bool signal_arch_user_context(struct pt_regs *regs) {
     return (regs->cpsr & 0xF) == 0;
 #elif defined(__riscv__)
     return (regs->sstatus & (1ULL << 8)) == 0;
-#elif defined(__loongarch64)
+#elif defined(__loongarch64__)
     return (regs->csr_prmd & 0x3) == 0;
 #else
     return true;
@@ -380,7 +382,7 @@ static const uint8_t signal_aarch64_rt_sigreturn_trampoline
 };
 #endif
 
-#if defined(__riscv__)
+#if defined(__riscv__) || defined(__loongarch64__)
 static const uint8_t signal_riscv64_rt_sigreturn_trampoline
     [SIGNAL_RISCV64_RT_SIGRETURN_TRAMPOLINE_SIZE] = {
         0x93, 0x08, 0xB0, 0x08, // li a7, 139
@@ -414,7 +416,8 @@ static bool signal_sync_user_instruction_memory(uint64_t user_addr,
     return true;
 }
 
-#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv__)
+#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv__) ||       \
+    defined(__loongarch64__)
 static const uint8_t *signal_arch_rt_sigreturn_trampoline(size_t *code_size) {
     if (!code_size)
         return NULL;
@@ -425,7 +428,7 @@ static const uint8_t *signal_arch_rt_sigreturn_trampoline(size_t *code_size) {
 #elif defined(__aarch64__)
     *code_size = sizeof(signal_aarch64_rt_sigreturn_trampoline);
     return signal_aarch64_rt_sigreturn_trampoline;
-#elif defined(__riscv__)
+#elif defined(__riscv__) || defined(__loongarch64__)
     *code_size = sizeof(signal_riscv64_rt_sigreturn_trampoline);
     return signal_riscv64_rt_sigreturn_trampoline;
 #endif
@@ -1671,7 +1674,7 @@ uint64_t sys_sigaction(int sig, const void *action, void *oldaction,
         memset(&new_action, 0, sizeof(new_action));
         new_action.sa_handler = user_action.handler;
         new_action.sa_flags = (int)user_action.flags;
-#if defined(__riscv__)
+#if defined(__riscv__) || defined(__loongarch64__)
         new_action.sa_restorer = NULL;
 #else
         new_action.sa_restorer = user_action.restorer;
@@ -1705,7 +1708,7 @@ uint64_t sys_sigaction(int sig, const void *action, void *oldaction,
             .handler = old_local.sa_handler,
             .flags = (unsigned long)old_local.sa_flags,
             .mask = sigset_kernel_to_user(old_local.sa_mask),
-#if !defined(__riscv__)
+#if !defined(__riscv__) && !defined(__loongarch64__)
             .restorer = old_local.sa_restorer,
 #endif
         };

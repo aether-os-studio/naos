@@ -2,6 +2,8 @@
 #include <drivers/drm/drm_ioctl.h>
 #include <drivers/drm/drm_core.h>
 #include <drivers/drm/drm.h>
+#include <drivers/logger.h>
+#include <mm/mm.h>
 #include <fs/vfs/vfs.h>
 #include <fs/sys.h>
 

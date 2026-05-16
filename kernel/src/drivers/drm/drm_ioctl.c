@@ -8,6 +8,7 @@
 #include <drivers/drm/drm.h>
 #include <drivers/drm/drm_ioctl.h>
 #include <drivers/drm/drm_core.h>
+#include <drivers/logger.h>
 #include <fs/fs_syscall.h>
 #include <fs/dev.h>
 #include <fs/proc.h>

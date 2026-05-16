@@ -830,7 +830,7 @@ static bool handle_relocations(Elf64_Rela *rela_start, Elf64_Sym *symtab,
 
             *target_addr = sym_addr + rela->r_addend;
         }
-#elif defined(__loongarch64) || defined(__loongarch64__)
+#elif defined(__loongarch64__)
         if (type == R_LARCH_JUMP_SLOT) {
             uint64_t sym_addr = 0;
             if (!resolve_symbol_address(symtab, strtab, sym_idx, offset,

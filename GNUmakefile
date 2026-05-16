@@ -76,7 +76,7 @@ libgcc_$(ARCH).a:
 .PHONY: kernel
 kernel:
 	$(call PRINT_STEP,MAKE,kernel)
-	$(Q)$(MAKE) -C kernel -j$(shell nproc)
+	$(Q)$(MAKE) -C kernel
 
 ifeq ($(BOOT_PROTOCOL),sbi)
 kernel: initramfs-$(ARCH).img
@@ -129,7 +129,7 @@ else ifeq ($(ARCH),loongarch64)
 EFI_FILE_SINGLE = assets/limine/BOOTLOONGARCH64.EFI
 endif
 
-$(IMAGE_NAME).img: assets/limine modules kernel initramfs-$(ARCH).img rootfs-$(ARCH).img
+$(IMAGE_NAME).img: assets/limine modules kernel initramfs-$(ARCH).img
 	dd if=/dev/zero of=$(IMAGE_NAME).img bs=1M seek=0 count=256
 	sgdisk --new=1:1M:255M $(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 $(IMAGE_NAME).img
@@ -160,7 +160,7 @@ run: run-$(ARCH)
 run-single: run-$(ARCH)-single
 
 .PHONY: run-x86_64
-run-x86_64: assets/ovmf-code-$(ARCH).fd all
+run-x86_64: assets/ovmf-code-$(ARCH).fd all rootfs-$(ARCH).img
 	qemu-system-$(ARCH) \
 		-M q35 \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
@@ -190,7 +190,7 @@ run-x86_64-single: assets/ovmf-code-$(ARCH).fd all-single
 		$(QEMUFLAGS)
 
 .PHONY: run-aarch64
-run-aarch64: assets/ovmf-code-$(ARCH).fd all
+run-aarch64: assets/ovmf-code-$(ARCH).fd all rootfs-$(ARCH).img
 	qemu-system-$(ARCH) \
 		-M virt \
 		-device ramfb \
@@ -220,7 +220,7 @@ run-aarch64-single: assets/ovmf-code-$(ARCH).fd all-single
 		$(QEMUFLAGS)
 
 .PHONY: run-riscv64
-run-riscv64: assets/ovmf-code-$(ARCH).fd all
+run-riscv64: assets/ovmf-code-$(ARCH).fd all rootfs-$(ARCH).img
 ifeq ($(BOOT_PROTOCOL), limine)
 	qemu-system-$(ARCH) \
 		-M virt,acpi=off \
@@ -266,6 +266,7 @@ run-riscv64-single: assets/ovmf-code-$(ARCH).fd all-single
 
 .PHONY: run-loongarch64
 run-loongarch64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
+ifeq ($(BOOT_PROTOCOL), limine)
 	qemu-system-$(ARCH) \
 		-M virt \
 		-device ramfb \
@@ -276,6 +277,17 @@ run-loongarch64: assets/ovmf-code-$(ARCH).fd $(IMAGE_NAME).img
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-device nvme,drive=harddisk,serial=1234 \
 		$(QEMUFLAGS)
+endif
+ifeq ($(BOOT_PROTOCOL), laboot)
+	qemu-system-$(ARCH) \
+		-M virt \
+		-device ramfb \
+		-device qemu-xhci \
+		-device usb-kbd \
+		-device usb-mouse \
+		-kernel kernel/bin-$(ARCH)/kernel \
+		$(QEMUFLAGS)
+endif
 
 assets/limine:
 	rm -rf assets/limine
@@ -301,7 +313,7 @@ assets/ovmf-code-$(ARCH).fd:
 
 .PHONY: modules
 modules:
-	$(MAKE) -C modules -j$(shell nproc)
+	$(MAKE) -C modules
 
 .PHONY: initramfs-$(ARCH).img
 initramfs-$(ARCH).img: rootfs-$(ARCH).img modules

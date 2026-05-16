@@ -4,6 +4,7 @@
 #include <drivers/bus/bus.h>
 #include <drivers/logger.h>
 #include <drivers/bus/usb.h>
+#include <mm/mm.h>
 #include <task/task.h>
 
 attribute_t usb_bus_subsystem_attr = {

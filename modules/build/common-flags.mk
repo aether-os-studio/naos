@@ -1,6 +1,7 @@
 MODULES_ROOT ?= $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 
 GLOBAL_CFLAGS := -fno-stack-protector -Wno-address-of-packed-member -fPIC -fno-builtin -nostdinc -nostdlib \
+                    -std=gnu11 \
                     -D_KERNEL \
                     -D_STANDALONE \
                     -D__aether__ \

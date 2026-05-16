@@ -1862,6 +1862,8 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
     asm volatile("movq %0, %%cr3" ::"r"(new_mm->page_table_addr));
 #elif defined(__riscv__)
     riscv64_set_page_table_root(new_mm->page_table_addr);
+#elif defined(__loongarch64__)
+    loongarch64_set_user_page_table_root(new_mm->page_table_addr);
 #elif defined(__aarch64__)
     asm volatile("msr TTBR0_EL1, %0" : : "r"(new_mm->page_table_addr));
     asm volatile("dsb ishst\n\t"
@@ -2156,6 +2158,8 @@ exec_fail_restore_mm:
     asm volatile("movq %0, %%cr3" ::"r"(old_mm->page_table_addr));
 #elif defined(__riscv__)
     riscv64_set_page_table_root(old_mm->page_table_addr);
+#elif defined(__loongarch64__)
+    loongarch64_set_user_page_table_root(old_mm->page_table_addr);
 #elif defined(__aarch64__)
     asm volatile("msr TTBR0_EL1, %0" : : "r"(old_mm->page_table_addr));
     asm volatile("dsb ishst\n\t"
@@ -2779,7 +2783,7 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
     uint64_t user_sp = regs->rsp;
 #elif defined(__aarch64__)
     uint64_t user_sp = regs->sp_el0;
-#elif defined(__riscv__)
+#elif defined(__riscv__) || defined(__loongarch64__)
     uint64_t user_sp = regs->sp;
 #endif
 
@@ -2791,7 +2795,7 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
     child->arch_context->ctx->rsp = user_sp;
 #elif defined(__aarch64__)
     child->arch_context->ctx->sp_el0 = user_sp;
-#elif defined(__riscv__)
+#elif defined(__riscv__) || defined(__loongarch64__)
     child->arch_context->ctx->sp = user_sp;
 #endif
 
@@ -2844,7 +2848,7 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
         child->arch_context->fsbase = tls;
 #elif defined(__aarch64__)
         child->arch_context->tpidr_el0 = tls;
-#elif defined(__riscv__)
+#elif defined(__riscv__) || defined(__loongarch64__)
         child->arch_context->ctx->tp = tls;
 #endif
     }

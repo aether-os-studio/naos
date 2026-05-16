@@ -137,7 +137,6 @@ ifeq ($(ARCH),loongarch64)
     override CFLAGS += \
         -march=loongarch64 \
         -mabi=lp64s \
-        -gdwarf-2 \
 		-D__loongarch64__
     ifeq ($(CC_IS_CLANG),0)
         override LDFLAGS += \
@@ -181,7 +180,7 @@ override SRCFILES += src/boot/sbi/boot.S
 override SRCFILES += src/boot/sbi_boot.c
 endif
 ifeq ($(BOOT_PROTOCOL), laboot)
-override SRCFILES += src/boot/laboot/entry.S
+override SRCFILES += src/boot/laboot/boot.S
 override SRCFILES += src/boot/la_boot.c
 endif
 override CFILES := $(filter %.c,$(SRCFILES))
@@ -197,12 +196,20 @@ KALLSYMS_AWK := scripts/gen-kallsyms.awk
 
 override OBJ += $(KALLSYMS_OBJ)
 
-ifeq ($(BOOT_PROTOCOL),sbi)
+ifeq ($(BOOT_PROTOCOL), sbi)
 SBI_INITRAMFS_IMAGE := $(PROJECT_ROOT)/initramfs-$(ARCH).img
 SBI_INITRAMFS_ASM := $(GENERATED_DIR)/sbi_initramfs.S
 SBI_INITRAMFS_OBJ := $(SBI_INITRAMFS_ASM).o
 
 override OBJ += $(SBI_INITRAMFS_OBJ)
+endif
+
+ifeq ($(BOOT_PROTOCOL), laboot)
+LABOOT_INITRAMFS_IMAGE := $(PROJECT_ROOT)/initramfs-$(ARCH).img
+LABOOT_INITRAMFS_ASM := $(GENERATED_DIR)/laboot_initramfs.S
+LABOOT_INITRAMFS_OBJ := $(LABOOT_INITRAMFS_ASM).o
+
+override OBJ += $(LABOOT_INITRAMFS_OBJ)
 endif
 
 KALLSYMS_PRELINK_OBJ := $(filter-out $(KALLSYMS_OBJ),$(OBJ))
@@ -227,7 +234,7 @@ bin-$(ARCH)/$(OUTPUT): GNUmakefile linker-$(ARCH)-$(BOOT_PROTOCOL).ld $(OBJ) $(K
 	$(Q)mkdir -p "$$(dirname $@)"
 	$(Q)$(LINKER) $(LDFLAGS) $(OBJ) $(PROJECT_ROOT)/libgcc_$(ARCH).a -o $@
 
-ifeq ($(BOOT_PROTOCOL),sbi)
+ifeq ($(BOOT_PROTOCOL), sbi)
 $(SBI_INITRAMFS_ASM): $(SBI_INITRAMFS_IMAGE) GNUmakefile
 	$(call PRINT_STEP,GEN,$@)
 	$(Q)mkdir -p "$$(dirname $@)"
@@ -241,6 +248,22 @@ $(SBI_INITRAMFS_OBJ): $(SBI_INITRAMFS_ASM)
 	$(call PRINT_STEP,AS,$<)
 	$(Q)$(CC) $(CFLAGS) $(CPPFLAGS) -DASM_FILE -c $< -o $@
 endif
+
+ifeq ($(BOOT_PROTOCOL), laboot)
+$(LABOOT_INITRAMFS_ASM): $(LABOOT_INITRAMFS_IMAGE) GNUmakefile
+	$(call PRINT_STEP,GEN,$@)
+	$(Q)mkdir -p "$$(dirname $@)"
+	$(Q)printf '%s\n' \
+		'.section .initramfs, "a", @progbits' \
+		'.balign 16' \
+		'.incbin "$(LABOOT_INITRAMFS_IMAGE)"' \
+		'.balign 16' > $@
+
+$(LABOOT_INITRAMFS_OBJ): $(LABOOT_INITRAMFS_ASM)
+	$(call PRINT_STEP,AS,$<)
+	$(Q)$(CC) $(CFLAGS) $(CPPFLAGS) -DASM_FILE -c $< -o $@
+endif
+
 
 $(KALLSYMS_PRELINK): GNUmakefile linker-$(ARCH)-$(BOOT_PROTOCOL).ld $(KALLSYMS_PRELINK_OBJ)
 	$(call PRINT_STEP,LD,$@)

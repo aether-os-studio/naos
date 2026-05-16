@@ -65,11 +65,11 @@ uint64_t get_memory_size() {
     if (!memory_map || memory_map->entry_count == 0)
         return 0;
 
-    for (uint64_t i = memory_map->entry_count; i > 0; i--) {
-        boot_memory_map_entry_t *region = &memory_map->entries[i - 1];
-        if (region->type == USABLE) {
+    for (uint64_t i = 0; i < memory_map->entry_count; i++) {
+        boot_memory_map_entry_t *region = &memory_map->entries[i];
+        if (region->type == USABLE &&
+            region->addr + region->len > all_memory_size) {
             all_memory_size = region->addr + region->len;
-            break;
         }
     }
 

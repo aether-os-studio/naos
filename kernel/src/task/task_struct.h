@@ -14,6 +14,8 @@
 #include <arch/aarch64/irq/ptrace.h>
 #elif defined(__riscv__)
 #include <arch/riscv64/irq/ptrace.h>
+#elif defined(__loongarch64__)
+#include <arch/loongarch64/irq/ptrace.h>
 #endif
 
 typedef enum task_state {

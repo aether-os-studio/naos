@@ -494,7 +494,7 @@ static void generic_fill_stat_from_kstat(struct stat *buf,
     buf->st_blksize = (long)stat->blksize;
     buf->st_size = (long long)stat->size;
     buf->st_blocks = (unsigned long)stat->blocks;
-#if defined(__riscv__)
+#if defined(__riscv__) || defined(__loongarch64__)
     buf->st_atime = stat->atime.sec;
     buf->st_atime_nsec = (unsigned long)stat->atime.nsec;
     buf->st_mtime = stat->mtime.sec;

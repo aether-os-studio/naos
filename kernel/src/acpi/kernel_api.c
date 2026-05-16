@@ -1,4 +1,5 @@
 #include <uacpi/kernel_api.h>
+#include <arch/arch.h>
 #include <boot/boot.h>
 #include <mm/mm.h>
 #include <drivers/logger.h>
