@@ -82,6 +82,10 @@ ifeq ($(BOOT_PROTOCOL),sbi)
 kernel: initramfs-$(ARCH).img
 endif
 
+ifeq ($(BOOT_PROTOCOL),laboot)
+kernel: initramfs-$(ARCH).img
+endif
+
 user: user/.build-stamp-$(ARCH)
 user/.build-stamp-$(ARCH):
 	$(call PRINT_STEP,MAKE,user)

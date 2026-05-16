@@ -20,6 +20,8 @@ ifeq ($(BOOT_PROTOCOL), limine)
     GLOBAL_CFLAGS += -DCONFIG_BOOT_LIMINE
 else ifeq ($(BOOT_PROTOCOL), sbi)
     GLOBAL_CFLAGS += -DCONFIG_BOOT_SBI
+else ifeq ($(BOOT_PROTOCOL), laboot)
+    GLOBAL_CFLAGS += -DCONFIG_BOOT_LABOOT
 else
     $(error Boot protocol $(BOOT_PROTOCOL) not supported)
 endif
@@ -177,6 +179,10 @@ endif
 ifeq ($(BOOT_PROTOCOL), sbi)
 override SRCFILES += src/boot/sbi/boot.S
 override SRCFILES += src/boot/sbi_boot.c
+endif
+ifeq ($(BOOT_PROTOCOL), laboot)
+override SRCFILES += src/boot/laboot/entry.S
+override SRCFILES += src/boot/la_boot.c
 endif
 override CFILES := $(filter %.c,$(SRCFILES))
 override ASFILES := $(filter %.S,$(SRCFILES))
