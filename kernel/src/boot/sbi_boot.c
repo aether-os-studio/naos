@@ -402,7 +402,9 @@ void boot_get_smbios_entries(void **entry32, void **entry64) {
         *entry64 = NULL;
 }
 
-uint64_t boot_get_boottime(void) { return 0; }
+uint64_t sbi_boottime = 0;
+
+uint64_t boot_get_boottime(void) { return sbi_boottime; }
 
 extern uint64_t cpu_count;
 extern uint64_t cpuid_to_hartid[MAX_CPU_NUM];

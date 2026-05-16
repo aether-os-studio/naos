@@ -234,6 +234,15 @@ void rtc_goldfish_init(void) {
             (volatile uint8_t *)(virt_base + (phys - phys_base));
         rtc_register_device(&goldfish_rtc_device);
         printk("goldfish-rtc: mmio %#018lx size %#lx\n", phys, size);
+
+#ifdef CONFIG_BOOT_SBI
+        extern uint64_t sbi_boottime;
+        rtc_realtime_t boottime;
+        if (rtc_read_realtime(&boottime) == 0) {
+            sbi_boottime = boottime.sec;
+        }
+#endif
+
         return;
     }
 }

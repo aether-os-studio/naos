@@ -2,6 +2,18 @@
 #include <irq/irq_manager.h>
 #include <arch/arch.h>
 #include <task/task.h>
+#include <task/signal.h>
+
+static inline bool aarch64_user_mode_frame(const struct pt_regs *regs) {
+    return regs && ((regs->cpsr & 0xF) == 0);
+}
+
+static void aarch64_handle_signal_on_user_return(struct pt_regs *regs) {
+    if (aarch64_user_mode_frame(regs) && current_task && current_task->signal &&
+        current_task->signal->signal) {
+        task_signal(regs);
+    }
+}
 
 void arch_enable_interrupt() {
     asm volatile("msr daifclr, #3\n\t"
@@ -43,4 +55,5 @@ void aarch64_do_irq(struct pt_regs *regs) {
         return;
 
     do_irq(regs, irq);
+    aarch64_handle_signal_on_user_return(regs);
 }

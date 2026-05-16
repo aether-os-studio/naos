@@ -24,6 +24,13 @@ static inline bool aarch64_user_mode_frame(const struct pt_regs *frame) {
     return frame && ((frame->cpsr & 0xF) == 0);
 }
 
+static void aarch64_handle_signal_on_user_return(struct pt_regs *frame) {
+    if (aarch64_user_mode_frame(frame) && current_task &&
+        current_task->signal && current_task->signal->signal) {
+        task_signal(frame);
+    }
+}
+
 static uint64_t aarch64_fault_flags(uint32_t ec, uint32_t iss) {
     uint64_t flags = 0;
 
@@ -520,10 +527,12 @@ void handle_exception(struct pt_regs *frame) {
         page_fault_result_t result =
             handle_page_fault_flags(current_task, fault_addr, fault_flags);
         if (result == PF_RES_OK) {
+            aarch64_handle_signal_on_user_return(frame);
             return;
         } else if (aarch64_fault_access_allowed_now(current_task, fault_addr,
                                                     fault_flags)) {
             arch_flush_tlb(fault_addr);
+            aarch64_handle_signal_on_user_return(frame);
             return;
         } else if (result == PF_RES_SEGF) {
             // if (aarch64_user_mode_frame(frame) && current_task) {

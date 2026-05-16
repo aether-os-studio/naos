@@ -647,7 +647,7 @@ void syscall_handler_init() {
                            (syscall_handle_t)dummy_syscall_handler);
     regist_syscall_handler(SYS_FREMOVEXATTR,
                            (syscall_handle_t)dummy_syscall_handler);
-    regist_syscall_handler(SYS_TKILL, (syscall_handle_t)sys_kill);
+    regist_syscall_handler(SYS_TKILL, (syscall_handle_t)sys_tkill);
     regist_syscall_handler(SYS_TIME, (syscall_handle_t)sys_time);
     regist_syscall_handler(SYS_FUTEX, (syscall_handle_t)sys_futex);
     regist_syscall_handler(SYS_SCHED_SETAFFINITY,

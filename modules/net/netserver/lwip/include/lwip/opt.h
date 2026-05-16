@@ -1811,7 +1811,7 @@
  * address equal to the netif IP address, looping them back up the stack.
  */
 #if !defined LWIP_NETIF_LOOPBACK || defined __DOXYGEN__
-#define LWIP_NETIF_LOOPBACK 0
+#define LWIP_NETIF_LOOPBACK 1
 #endif
 
 /**

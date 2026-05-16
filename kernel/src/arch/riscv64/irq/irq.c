@@ -45,6 +45,13 @@ static bool riscv_user_mode_frame(const struct pt_regs *regs) {
     return regs && ((regs->sstatus & RISCV_SSTATUS_SPP) == 0);
 }
 
+static void riscv_handle_signal_on_user_return(struct pt_regs *regs) {
+    if (riscv_user_mode_frame(regs) && current_task && current_task->signal &&
+        current_task->signal->signal) {
+        task_signal(regs);
+    }
+}
+
 static bool riscv_sum_user_data_fault(const struct pt_regs *regs,
                                       uint64_t cause) {
     if (!regs || !current_task || !current_task->mm)
@@ -283,11 +290,14 @@ void trap_dispatch(struct pt_regs *regs) {
         switch (cause) {
         case RISCV_SCAUSE_SUPERVISOR_TIMER:
             do_irq(regs, ARCH_TIMER_IRQ);
+            riscv_handle_signal_on_user_return(regs);
             return;
         case RISCV_SCAUSE_SUPERVISOR_SOFTWARE:
             do_irq(regs, riscv64_sched_ipi_irq());
+            riscv_handle_signal_on_user_return(regs);
             return;
         case RISCV_SCAUSE_SUPERVISOR_EXTERNAL:
+            riscv_handle_signal_on_user_return(regs);
             return;
         default:
             riscv_unhandled_trap(regs);
@@ -306,6 +316,7 @@ void trap_dispatch(struct pt_regs *regs) {
     case RISCV_SCAUSE_LOAD_PAGE_FAULT:
     case RISCV_SCAUSE_STORE_PAGE_FAULT:
         riscv_handle_page_fault(regs);
+        riscv_handle_signal_on_user_return(regs);
         return;
     default:
         riscv_unhandled_trap(regs);

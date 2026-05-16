@@ -1,5 +1,20 @@
 #include <libs/klibc.h>
 #include <arch/arch.h>
+#include <task/task.h>
+#include <task/signal.h>
+
+extern void do_irq(struct pt_regs *regs, uint64_t irq_num);
+
+static inline bool x64_user_mode_frame(const struct pt_regs *regs) {
+    return regs && ((regs->cs & 0x3) == 0x3);
+}
+
+static void x64_handle_signal_on_user_return(struct pt_regs *regs) {
+    if (x64_user_mode_frame(regs) && current_task && current_task->signal &&
+        current_task->signal->signal) {
+        task_signal(regs);
+    }
+}
 
 void arch_enable_interrupt() { open_interrupt; }
 
@@ -52,7 +67,7 @@ bool arch_interrupt_enabled() {
         "leaq ret_from_intr(%rip), %rax\n\t"                                   \
         "pushq %rax \n\t"                                                      \
         "movq	$" #number ", %rsi\n\t"                                        \
-        "jmp do_irq\n\t");
+        "jmp x64_do_irq\n\t");
 
 // 构造中断入口
 BUILD_IRQ(0x20);
@@ -357,4 +372,9 @@ void generic_interrupt_table_init_early() {
     for (int i = 0x20; i < 0x100; ++i) {
         set_intr_gate(i, 0, interrupt_table[i - 0x20]);
     }
+}
+
+void x64_do_irq(struct pt_regs *regs, uint64_t irq_num) {
+    do_irq(regs, irq_num);
+    x64_handle_signal_on_user_return(regs);
 }

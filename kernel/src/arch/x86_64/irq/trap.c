@@ -4,6 +4,7 @@
 #include <drivers/logger.h>
 #include <drivers/tty.h>
 #include <task/task.h>
+#include <task/signal.h>
 #include <mod/dlinker.h>
 #include <mm/fault.h>
 
@@ -29,6 +30,13 @@ static uint64_t x64_error_code_to_fault_flags(uint64_t error_code) {
         fault_flags |= PF_ACCESS_READ;
 
     return fault_flags;
+}
+
+static void x64_handle_signal_on_user_return(struct pt_regs *regs) {
+    if (regs && (regs->cs & 0x3) == 0x3 && current_task &&
+        current_task->signal && current_task->signal->signal) {
+        task_signal(regs);
+    }
 }
 
 static bool x64_fault_access_allowed_now(task_t *task, uint64_t vaddr,
@@ -481,12 +489,16 @@ void do_page_fault(struct pt_regs *regs, uint64_t error_code) {
 
     task_t *self = current_task;
 
-    if (handle_page_fault_flags(
-            self, cr2, x64_error_code_to_fault_flags(error_code)) == PF_RES_OK)
+    if (handle_page_fault_flags(self, cr2,
+                                x64_error_code_to_fault_flags(error_code)) ==
+        PF_RES_OK) {
+        x64_handle_signal_on_user_return(regs);
         return;
+    }
 
     if (x64_fault_access_allowed_now(self, cr2, error_code)) {
         arch_flush_tlb(cr2);
+        x64_handle_signal_on_user_return(regs);
         return;
     }
 

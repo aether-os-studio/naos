@@ -21,12 +21,19 @@
 #define SIGNAL_MAX_SIGSET_SIZE sizeof(sigset_t)
 #define SIGNAL_MAX_MASKED_SIG ((int)(sizeof(sigset_t) * 8 - 1))
 
-#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv__)
+#if defined(__x86_64__) || defined(__aarch64__)
 typedef struct signal_kernel_sigaction {
     sighandler_t handler;
     unsigned long flags;
     void (*restorer)(void);
     sigset_t mask;
+} signal_kernel_sigaction_t;
+#elif defined(__riscv__)
+typedef struct signal_kernel_sigaction {
+    sighandler_t handler;
+    unsigned long flags;
+    sigset_t mask;
+    void *unused;
 } signal_kernel_sigaction_t;
 #endif
 
@@ -51,6 +58,7 @@ typedef struct signal_kernel_sigaction {
 #define SIGNAL_RISCV64_RT_SIGRETURN_TRAMPOLINE_SIZE 8U
 #define SIGNAL_RISCV64_SYSCALL_INS_LEN 4U
 #define SIGNAL_RISCV64_USER_SSTATUS ((1UL << 18) | (1UL << 13) | (1UL << 5))
+#define SIGNAL_RISCV64_FRAME_FROM_SYSCALL 1U
 #endif
 
 signal_internal_t signal_internal_decisions[MAXSIG] = {0};
@@ -1308,34 +1316,46 @@ typedef struct signal_riscv64_ucontext {
 typedef struct signal_riscv64_frame {
     siginfo_t info;
     signal_riscv64_ucontext_t ucontext;
+    uint64_t flags;
+    uint64_t syscall_pc;
 } signal_riscv64_frame_t;
+
+_Static_assert(sizeof(signal_riscv64_user_sigset_t) +
+                       sizeof(((signal_riscv64_ucontext_t *)0)->__unused) ==
+                   1024 / 8,
+               "RISC-V user sigset in ucontext must be 1024 bits");
+_Static_assert(offsetof(signal_riscv64_ucontext_t, uc_mcontext) == 176,
+               "RISC-V ucontext.uc_mcontext offset must match the Linux ABI");
+_Static_assert(offsetof(signal_riscv64_sigcontext_t, sc_regs.pc) == 0,
+               "RISC-V mcontext PC must be gregs[0] for musl MC_PC");
 
 static inline uint64_t signal_riscv64_align_down(uint64_t value,
                                                  uint64_t align) {
     return value & ~(align - 1);
 }
 
-static inline void
+static inline bool
 signal_riscv64_prepare_syscall_result(struct pt_regs *saved,
                                       const sigaction_t *action) {
     if (!saved || !action || saved->syscallno == NO_SYSCALL ||
         saved->syscallno == SYS_RT_SIGRETURN)
-        return;
+        return false;
 
     int64_t retval = (int64_t)saved->a0;
-    if (retval >= 0)
-        return;
-
-    switch (-retval) {
-    case ERESTARTNOHAND:
-    case ERESTART_RESTARTBLOCK:
-    case ERESTARTSYS:
-    case ERESTARTNOINTR:
-        saved->a0 = (uint64_t)-EINTR;
-        break;
-    default:
-        return;
+    if (retval < 0) {
+        switch (-retval) {
+        case ERESTARTNOHAND:
+        case ERESTART_RESTARTBLOCK:
+        case ERESTARTSYS:
+        case ERESTARTNOINTR:
+            saved->a0 = (uint64_t)-EINTR;
+            break;
+        default:
+            break;
+        }
     }
+
+    return true;
 }
 
 static inline void
@@ -1435,7 +1455,7 @@ static bool signal_riscv64_setup_frame(task_t *task, struct pt_regs *regs,
                                        const siginfo_t *info,
                                        sigset_t restore_mask) {
     struct pt_regs saved = *regs;
-    signal_riscv64_prepare_syscall_result(&saved, action);
+    bool from_syscall = signal_riscv64_prepare_syscall_result(&saved, action);
 
     stack_t frame_altstack;
     signal_altstack_format_old(&frame_altstack, &task->signal->altstack,
@@ -1469,6 +1489,10 @@ static bool signal_riscv64_setup_frame(task_t *task, struct pt_regs *regs,
     signal_riscv64_frame_t frame;
     memset(&frame, 0, sizeof(frame));
     memcpy(&frame.info, info, sizeof(frame.info));
+    if (from_syscall) {
+        frame.flags |= SIGNAL_RISCV64_FRAME_FROM_SYSCALL;
+        frame.syscall_pc = saved.sepc;
+    }
     riscv64_fpu_save(task->arch_context->fpu_ctx);
     signal_riscv64_fill_ucontext(&frame.ucontext, &saved, restore_mask,
                                  &frame_altstack, task->arch_context->fpu_ctx);
@@ -1647,9 +1671,13 @@ uint64_t sys_sigaction(int sig, const void *action, void *oldaction,
         memset(&new_action, 0, sizeof(new_action));
         new_action.sa_handler = user_action.handler;
         new_action.sa_flags = (int)user_action.flags;
+#if defined(__riscv__)
+        new_action.sa_restorer = NULL;
+#else
         new_action.sa_restorer = user_action.restorer;
+#endif
         new_action.sa_mask = sigset_user_to_kernel(user_action.mask);
-#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv__)
+#if defined(__x86_64__) || defined(__aarch64__)
         if (new_action.sa_handler != SIG_DFL &&
             new_action.sa_handler != SIG_IGN &&
             (new_action.sa_flags & SA_RESTORER) != 0 &&
@@ -1676,8 +1704,10 @@ uint64_t sys_sigaction(int sig, const void *action, void *oldaction,
         signal_kernel_sigaction_t user_old = {
             .handler = old_local.sa_handler,
             .flags = (unsigned long)old_local.sa_flags,
-            .restorer = old_local.sa_restorer,
             .mask = sigset_kernel_to_user(old_local.sa_mask),
+#if !defined(__riscv__)
+            .restorer = old_local.sa_restorer,
+#endif
         };
 
         if (copy_to_user(oldaction, &user_old, sizeof(user_old))) {
@@ -1802,6 +1832,10 @@ uint64_t sys_sigreturn(struct pt_regs *regs) {
     }
 
     signal_riscv64_restore_ptregs(regs, &frame.ucontext);
+    if ((frame.flags & SIGNAL_RISCV64_FRAME_FROM_SYSCALL) != 0 &&
+        regs->sepc == frame.syscall_pc) {
+        regs->sepc += SIGNAL_RISCV64_SYSCALL_INS_LEN;
+    }
     memcpy(self->arch_context->fpu_ctx->f,
            frame.ucontext.uc_mcontext.sc_fpregs.d.f,
            sizeof(self->arch_context->fpu_ctx->f));
@@ -2036,6 +2070,24 @@ uint64_t sys_kill(int pid, int sig) {
     }
 
     return (uint64_t)-EINVAL;
+}
+
+uint64_t sys_tkill(int pid, int sig) {
+    if (pid <= 0 || sig < 0 || sig >= MAXSIG) {
+        return (uint64_t)-EINVAL;
+    }
+
+    task_t *task = task_find_by_pid((uint64_t)pid);
+    if (!task) {
+        return (uint64_t)-ESRCH;
+    }
+    if (sig == 0) {
+        return 0;
+    }
+
+    task_send_signal(task, sig, SI_TKILL);
+
+    return 0;
 }
 
 uint64_t sys_tgkill(int tgid, int pid, int sig) {
