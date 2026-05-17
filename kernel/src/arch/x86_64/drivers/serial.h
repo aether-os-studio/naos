@@ -1,13 +1,6 @@
 #pragma once
 
 #include <arch/x86_64/io.h>
+#include <drivers/serial.h>
 
 #define SERIAL_PORT 0x3f8
-
-int init_serial();
-
-char read_serial();
-
-void write_serial(char ch);
-
-void serial_printk(const char *buf, int len);

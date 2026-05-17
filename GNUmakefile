@@ -40,6 +40,8 @@ endif
 
 ifeq ($(MON), 1)
 override QEMUFLAGS := $(QEMUFLAGS) -monitor stdio
+else
+override QEMUFLAGS := $(QEMUFLAGS) -monitor none
 endif
 
 ifeq ($(HVF), 1)
@@ -255,10 +257,7 @@ run-riscv64-single: assets/ovmf-code-$(ARCH).fd all-single
 	qemu-system-$(ARCH) \
 		-M virt \
 		-cpu rv64 \
-		-device ramfb \
-		-device qemu-xhci \
-		-device usb-kbd \
-		-device usb-mouse \
+		-nographic \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=single-$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-device usb-storage,drive=harddisk \
@@ -281,10 +280,7 @@ endif
 ifeq ($(BOOT_PROTOCOL), laboot)
 	qemu-system-$(ARCH) \
 		-M virt \
-		-device ramfb \
-		-device qemu-xhci \
-		-device usb-kbd \
-		-device usb-mouse \
+		-nographic \
 		-kernel kernel/bin-$(ARCH)/kernel \
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
 		-device virtio-blk-pci,drive=rootdisk,serial=1234 \

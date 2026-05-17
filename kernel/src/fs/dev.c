@@ -4,6 +4,7 @@
 #include <block/partition.h>
 #include <dev/device.h>
 #include <drivers/logger.h>
+#include <drivers/serial.h>
 #include <drivers/tty.h>
 #include <drivers/pty.h>
 #include <net/netlink.h>

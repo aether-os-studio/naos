@@ -1,6 +1,15 @@
 #include <arch/arch.h>
 
-bool serial_initialized = false;
+static bool x86_64_serial_can_read(serial_driver_t *driver);
+static bool x86_64_serial_read(serial_driver_t *driver, char *ch);
+static void x86_64_serial_write(serial_driver_t *driver, char ch);
+
+static serial_driver_t x86_64_serial_driver = {
+    .name = "x86_64-16550",
+    .can_read = x86_64_serial_can_read,
+    .read = x86_64_serial_read,
+    .write = x86_64_serial_write,
+};
 
 int init_serial() {
     io_out8(SERIAL_PORT + 1, 0x00); // 禁止COM的中断发生
@@ -16,42 +25,29 @@ int init_serial() {
 
     // 检查串口是否有问题（即：与发送的字节不一样）
     if (io_in8(SERIAL_PORT + 0) != 0xAE) {
-        serial_initialized = false;
         return 1;
     }
 
-    serial_initialized = true;
     // 如果串口没有故障，将其设置为正常运行模式。
     // (非环回，启用IRQ，启用OUT#1和OUT#2位)
     io_out8(SERIAL_PORT + 4, 0x0F);
-    return 0;
+    return serial_register_driver(&x86_64_serial_driver);
 }
 
-char read_serial() {
-    while ((io_in8(SERIAL_PORT + 5) & 1) == 0)
-        arch_pause();
-    return io_in8(SERIAL_PORT);
+static bool x86_64_serial_can_read(serial_driver_t *driver) {
+    return (io_in8(SERIAL_PORT + 5) & 1) != 0;
 }
 
-void write_serial(char a) {
+static bool x86_64_serial_read(serial_driver_t *driver, char *ch) {
+    if (!x86_64_serial_can_read(driver))
+        return false;
+
+    *ch = io_in8(SERIAL_PORT);
+    return true;
+}
+
+static void x86_64_serial_write(serial_driver_t *driver, char a) {
     while ((io_in8(SERIAL_PORT + 5) & 0x20) == 0)
         arch_pause();
     io_out8(SERIAL_PORT, a);
-}
-
-spinlock_t write_serial_lock = SPIN_INIT;
-
-void serial_printk(const char *buf, int len) {
-    if (!serial_initialized)
-        return;
-
-    spin_lock(&write_serial_lock);
-
-    for (int i = 0; i < len; i++) {
-        if (buf[i] == '\n')
-            write_serial('\r');
-        write_serial(buf[i]);
-    }
-
-    spin_unlock(&write_serial_lock);
 }

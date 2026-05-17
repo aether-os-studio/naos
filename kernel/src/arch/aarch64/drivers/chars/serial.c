@@ -4,9 +4,19 @@
 #include <acpi/uacpi/acpi.h>
 #include <acpi/uacpi/tables.h>
 
-bool serial_initialized = false;
-
 pl011_dev_t uart0 = {0};
+
+static bool aarch64_serial_can_read(serial_driver_t *driver);
+static bool aarch64_serial_read(serial_driver_t *driver, char *ch);
+static void aarch64_serial_write(serial_driver_t *driver, char ch);
+
+static serial_driver_t aarch64_serial_driver = {
+    .name = "aarch64-pl011",
+    .private_data = &uart0,
+    .can_read = aarch64_serial_can_read,
+    .read = aarch64_serial_read,
+    .write = aarch64_serial_write,
+};
 
 int init_serial() {
     struct uacpi_table spcr_table;
@@ -49,8 +59,7 @@ int init_serial() {
             if (ret)
                 return -1;
 
-            serial_initialized = true;
-            break;
+            return serial_register_driver(&aarch64_serial_driver);
         default:
             break;
         }
@@ -60,24 +69,21 @@ int init_serial() {
     return -1;
 }
 
-char read_serial() {
-    // if (serial_initialized) {
-    //     char c;
-    //     pl011_read(&uart0, (uint8_t *)&c, 1);
-    //     return c;
-    // }
-    return 0;
+static bool aarch64_serial_can_read(serial_driver_t *driver) {
+    pl011_dev_t *dev = driver->private_data;
+    return pl011_rx_ready(dev);
 }
 
-void write_serial(char a) {
-    if (serial_initialized)
-        pl011_write(&uart0, (const uint8_t *)&a, 1);
+static bool aarch64_serial_read(serial_driver_t *driver, char *ch) {
+    pl011_dev_t *dev = driver->private_data;
+
+    if (!pl011_getc_nonblock(dev, ch))
+        return false;
+
+    return true;
 }
 
-void serial_printk(const char *buf, int len) {
-    for (int i = 0; i < len; i++) {
-        if (buf[i] == '\n')
-            write_serial('\r');
-        write_serial(buf[i]);
-    }
+static void aarch64_serial_write(serial_driver_t *driver, char ch) {
+    pl011_dev_t *dev = driver->private_data;
+    pl011_write(dev, (const uint8_t *)&ch, 1);
 }

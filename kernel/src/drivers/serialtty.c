@@ -2,6 +2,7 @@
 #include <dev/device.h>
 #include <task/signal.h>
 #include <drivers/serialtty.h>
+#include <drivers/serial.h>
 #include <mm/mm.h>
 #include <libs/keys.h>
 #include <task/task.h>
@@ -12,7 +13,6 @@ void terminal_flush_serial(tty_t *session) {
     return;
 }
 
-extern bool serial_initialized;
 extern void send_process_group_signal(int pgid, int sig);
 
 size_t terminal_read_serial(tty_t *device, char *buf, size_t count) {
@@ -29,8 +29,8 @@ size_t terminal_read_serial(tty_t *device, char *buf, size_t count) {
             return read ? read : (size_t)-EINTR;
         }
 
-        char c = read_serial();
-        if (c) {
+        char c;
+        if (serial_read(&c)) {
             if (device->termios.c_lflag & ISIG) {
                 uint64_t pgid = device->at_process_group_id;
                 if (pgid) {
@@ -211,18 +211,13 @@ int terminal_ioctl_serial(tty_t *device, uint32_t cmd, uint64_t arg) {
     }
 }
 
-bool io_switch_serial = false;
-
 int terminal_poll_serial(tty_t *device, int events) {
     ssize_t revents = 0;
-    if ((events & EPOLLERR) || (events & EPOLLPRI))
-        return 0;
 
-    if ((events & EPOLLIN) && io_switch_serial)
+    if ((events & EPOLLIN) && serial_can_read())
         revents |= EPOLLIN;
     if (events & EPOLLOUT)
         revents |= EPOLLOUT;
-    io_switch_serial = !io_switch_serial;
 
     return revents;
 }

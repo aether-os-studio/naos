@@ -2,6 +2,7 @@
 #include <mm/mm.h>
 #include <task/signal.h>
 #include <drivers/fbtty.h>
+#include <drivers/serial.h>
 #include <libs/keys.h>
 #include <task/task.h>
 #include <libs/termios.h>

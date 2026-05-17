@@ -19,7 +19,16 @@ static volatile uint8_t *uart0 = NULL;
 static uint32_t uart_reg_shift = 0;
 static uint32_t uart_reg_io_width = 1;
 
-bool serial_initialized = false;
+static bool riscv64_serial_can_read(serial_driver_t *driver);
+static bool riscv64_serial_read(serial_driver_t *driver, char *ch);
+static void riscv64_serial_write(serial_driver_t *driver, char ch);
+
+static serial_driver_t riscv64_serial_driver = {
+    .name = "riscv64-16550",
+    .can_read = riscv64_serial_can_read,
+    .read = riscv64_serial_read,
+    .write = riscv64_serial_write,
+};
 
 static uint64_t fdt_read_cells(const uint32_t **p, int cells) {
     uint64_t value = 0;
@@ -311,37 +320,28 @@ int init_serial() {
     uart_reg_io_width = 1;
 
     if (init_serial_from_acpi() != 0 && init_serial_from_dtb() != 0) {
-        serial_initialized = false;
         return -1;
     }
 
-    serial_initialized = (uart0 != NULL);
-    return serial_initialized ? 0 : -1;
+    return uart0 ? serial_register_driver(&riscv64_serial_driver) : -1;
 }
 
-char read_serial() {
-    if (!serial_initialized)
-        return 0;
-    if ((uart_read_reg(UART_LSR) & UART_LSR_DR) == 0)
-        return 0;
-    return (char)uart_read_reg(UART_RBR);
+static bool riscv64_serial_can_read(serial_driver_t *driver) {
+    return uart0 && (uart_read_reg(UART_LSR) & UART_LSR_DR) != 0;
 }
 
-void write_serial(char ch) {
-    if (!serial_initialized)
+static bool riscv64_serial_read(serial_driver_t *driver, char *ch) {
+    if (!riscv64_serial_can_read(driver))
+        return false;
+
+    *ch = (char)uart_read_reg(UART_RBR);
+    return true;
+}
+
+static void riscv64_serial_write(serial_driver_t *driver, char ch) {
+    if (!uart0)
         return;
     while ((uart_read_reg(UART_LSR) & UART_LSR_THRE) == 0)
         arch_pause();
     uart_write_reg(UART_THR, (uint8_t)ch);
-}
-
-void serial_printk(const char *buf, int len) {
-    if (!serial_initialized || !buf || len <= 0)
-        return;
-
-    for (int i = 0; i < len; i++) {
-        if (buf[i] == '\n')
-            write_serial('\r');
-        write_serial(buf[i]);
-    }
 }
