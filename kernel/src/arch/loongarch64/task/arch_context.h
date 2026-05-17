@@ -11,11 +11,27 @@ typedef struct task task_t;
 typedef struct arch_context {
     uint64_t ra;
     uint64_t sp;
+    uint64_t fp;
+    uint64_t s0;
+    uint64_t s1;
+    uint64_t s2;
+    uint64_t s3;
+    uint64_t s4;
+    uint64_t s5;
+    uint64_t s6;
+    uint64_t s7;
+    uint64_t s8;
     uint64_t page_table_addr;
     bool kernel_interrupt_enabled;
     struct pt_regs *ctx;
     struct fpu_context *fpu_ctx;
 } arch_context_t;
+
+_Static_assert(offsetof(arch_context_t, s8) == 88,
+               "loongarch64 entry.S arch_context offset mismatch");
+
+void loongarch64_switch_to(arch_context_t *prev_ctx, arch_context_t *next_ctx,
+                           task_t *prev, task_t *next);
 
 typedef struct fpu_context {
     uint64_t f[32];
@@ -37,14 +53,15 @@ static inline void arch_context_set_tls(arch_context_t *context, uint64_t tls) {
 
 #define switch_mm(prev, next)                                                  \
     do {                                                                       \
-        (void)(prev);                                                          \
-        (void)(next);                                                          \
+        if ((prev)->mm != (next)->mm) {                                        \
+            loongarch64_set_user_page_table_root((next)->mm->page_table_addr); \
+        }                                                                      \
     } while (0)
 
 #define switch_to(prev, next)                                                  \
     do {                                                                       \
-        (void)(prev);                                                          \
-        (void)(next);                                                          \
+        loongarch64_switch_to((prev)->arch_context, (next)->arch_context,      \
+                              (prev), (next));                                 \
     } while (0)
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_addr,

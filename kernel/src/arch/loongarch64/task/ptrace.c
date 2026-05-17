@@ -1,8 +1,13 @@
 #include <task/ptrace.h>
 
-uint32_t arch_ptrace_audit_arch(void) { return 0; }
+uint32_t arch_ptrace_audit_arch(void) {
+    return 0xc0000102U; // AUDIT_ARCH_LOONGARCH64
+}
 
-size_t arch_ptrace_regset_size(void) { return 0; }
+size_t arch_ptrace_regset_size(void) {
+
+    return 45 * sizeof(uint64_t); // Linux UAPI
+}
 
 void arch_ptrace_fill_syscall_info(struct ptrace_syscall_info *info,
                                    const struct pt_regs *regs,

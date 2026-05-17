@@ -9,7 +9,12 @@ void arch_early_init() {
     loongarch64_cpu_local_init(0);
 }
 
-void arch_init() { syscall_handler_init(); }
+void arch_init() {
+    irq_init();
+    timer_init();
+    timer_init_percpu();
+    syscall_handler_init();
+}
 
 void arch_init_after_thread() {}
 

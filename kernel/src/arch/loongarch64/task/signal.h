@@ -1,5 +1,6 @@
 #pragma once
 
+#include <arch/loongarch64/csr.h>
 #include <arch/loongarch64/syscall/nr.h>
 
 #define SIGNAL_ARCH_HAS_RESTORER_FIELD 0
@@ -19,7 +20,8 @@ signal_arch_user_sp_from_regs(const struct pt_regs *regs) {
 }
 
 static inline bool signal_arch_user_context(const struct pt_regs *regs) {
-    return regs && (regs->csr_prmd & 0x3) == 0;
+    return regs &&
+           ((regs->csr_prmd & LOONGARCH_PRMD_PPLV_MASK) == LOONGARCH_PLV_USER);
 }
 
 static inline const uint8_t *
