@@ -1,8 +1,19 @@
 #include <boot/boot.h>
+#include <arch/loongarch64/csr.h>
 #include <drivers/fdt/fdt.h>
+#include <drivers/logger.h>
 #include <limine.h>
 #include <mm/hhdm.h>
 #include <mm/mm.h>
+
+extern char __kernel_phys_start[];
+extern char __kernel_phys_end[];
+extern char __kernel_virt_start[];
+extern char __kernel_virt_end[];
+extern char __boot_start_virt[];
+extern char __boot_end_virt[];
+
+extern char __ap_startup_info_virt[];
 
 #define LABOOT_PAGE_DIRTY ((uint64_t)1 << 1)
 #define LABOOT_PAGE_CACHE_CC ((uint64_t)1 << 4)
@@ -27,9 +38,9 @@
 #define EFI_CONVENTIONAL_MEMORY 7
 #define EFI_PERSISTENT_MEMORY 14
 #define EFI_MEMORY_RUNTIME ((uint64_t)1 << 63)
-
 #define LABOOT_KERNEL_VIRT_OFFSET (0xffffffff80300000ULL - 0x00300000ULL)
 #define LABOOT_HHDM_L2_TABLE_COUNT 254
+#define LABOOT_IPI_BOOT_CPU 0x0U
 
 struct boot_info {
     uint64_t bsp_phys_id;
@@ -136,9 +147,23 @@ static struct boot_info laboot_boot_info;
 static bool laboot_memory_map_ready = false;
 static boot_memory_map_t laboot_memory_map_scratch;
 static boot_memory_map_t laboot_memory_map;
-static uint8_t laboot_efi_mmap_buffer[256 * 1024] __attribute__((aligned(16)));
 static uint64_t laboot_valen = 39;
 static uint64_t laboot_boottime = 0;
+
+typedef struct laboot_ap_startup_data {
+    uint64_t pwctl0;
+    uint64_t pwctl1;
+    uint64_t stlbpgsize;
+    uint64_t pgdl;
+    uint64_t pgdh;
+    uint64_t dmw0;
+    uint64_t dmw1;
+    uint64_t dmw2;
+    uint64_t dmw3;
+    uint64_t tlbrentry;
+    uint64_t stack_top;
+    uint64_t entry;
+} laboot_ap_startup_data_t;
 
 extern char __kernel_image_start[];
 extern char __kernel_image_end[];
@@ -148,8 +173,10 @@ extern uint64_t __boot_root_pt_virt[];
 extern uint64_t __boot_high_l2_pt_virt[];
 extern uint64_t __boot_hhdm_l3_pt_virt[];
 extern uint64_t __boot_hhdm_pt_pages_virt[];
+extern void laboot_ap_entry(void);
 
 static void laboot_build_memory_map(void);
+static void laboot_find_dtb_from_system_table(void);
 
 static uintptr_t align_down(uintptr_t value, uintptr_t align) {
     return value & ~(align - 1);
@@ -305,6 +332,89 @@ static bool laboot_append_memory_entry(boot_memory_map_t *map,
 
     map->entries[map->entry_count++] = entry;
     return true;
+}
+
+static bool laboot_phys_id_seen(const uint64_t *phys_ids, uint64_t count,
+                                uint64_t phys_id) {
+    for (uint64_t i = 0; i < count; i++) {
+        if (phys_ids[i] == phys_id)
+            return true;
+    }
+
+    return false;
+}
+
+static bool laboot_cpu_node_enabled(const void *fdt, int node) {
+    int len = 0;
+    const char *status = fdt_getprop(fdt, node, "status", &len);
+    if (!status)
+        return true;
+
+    return strcmp(status, "disabled") != 0;
+}
+
+static uint64_t fdt_cells_read64(const fdt32_t *cells, int cell_count);
+
+static bool laboot_read_cpu_phys_id(const void *fdt, int cpus, int cpu_node,
+                                    uint64_t *phys_id) {
+    int len = 0;
+    const char *device_type = fdt_getprop(fdt, cpu_node, "device_type", &len);
+    if (!device_type || strcmp(device_type, "cpu") != 0)
+        return false;
+
+    if (!laboot_cpu_node_enabled(fdt, cpu_node))
+        return false;
+
+    int address_cells = 1;
+    const fdt32_t *prop = fdt_getprop(fdt, cpus, "#address-cells", &len);
+    if (prop && len >= 4)
+        address_cells = (int)fdt32_to_cpu(*prop);
+
+    if (address_cells <= 0 || address_cells > 2)
+        return false;
+
+    const fdt32_t *reg = fdt_getprop(fdt, cpu_node, "reg", &len);
+    if (!reg || len < address_cells * (int)sizeof(fdt32_t))
+        return false;
+
+    *phys_id = fdt_cells_read64(reg, address_cells);
+    return true;
+}
+
+static uint64_t laboot_discover_phys_ids_from_dtb(uint64_t *phys_ids,
+                                                  uint64_t max_phys_ids) {
+    if (max_phys_ids == 0)
+        return 0;
+
+    uint64_t count = 0;
+    uint64_t bsp = laboot_boot_info.bsp_phys_id;
+    phys_ids[count++] = bsp;
+
+    laboot_find_dtb_from_system_table();
+    const void *fdt = (void *)laboot_boot_info.dtb_virt;
+    if (!fdt || fdt_check_header(fdt) != 0)
+        return count;
+
+    int cpus = fdt_path_offset(fdt, "/cpus");
+    if (cpus < 0)
+        return count;
+
+    int cpu_node = -1;
+    fdt_for_each_subnode(cpu_node, fdt, cpus) {
+        uint64_t phys_id = 0;
+        if (!laboot_read_cpu_phys_id(fdt, cpus, cpu_node, &phys_id))
+            continue;
+
+        if (laboot_phys_id_seen(phys_ids, count, phys_id))
+            continue;
+
+        if (count >= max_phys_ids)
+            break;
+
+        phys_ids[count++] = phys_id;
+    }
+
+    return count;
 }
 
 static void laboot_add_reserved_range(uintptr_t start, uintptr_t end) {
@@ -539,11 +649,11 @@ static void laboot_build_memory_map_from_dtb(void) {
 
 static void laboot_reserve_loaded_ranges(void) {
     laboot_add_reserved_range(
-        high_virt_to_loaded_phys((uintptr_t)&__kernel_image_start),
-        high_virt_to_loaded_phys((uintptr_t)&__kernel_image_end));
-    laboot_add_reserved_range(
         high_virt_to_loaded_phys((uintptr_t)&__boot_start_virt),
         high_virt_to_loaded_phys((uintptr_t)&__boot_end_virt));
+    laboot_add_reserved_range(
+        high_virt_to_loaded_phys((uintptr_t)&__kernel_virt_start),
+        high_virt_to_loaded_phys((uintptr_t)&__kernel_virt_end));
 
     const void *fdt = (void *)laboot_boot_info.dtb_virt;
     if (fdt && fdt_check_header(fdt) == 0) {
@@ -566,6 +676,68 @@ static void laboot_build_memory_map(void) {
 
     laboot_reserve_loaded_ranges();
     laboot_memory_map_ready = true;
+}
+
+extern uint64_t cpu_count;
+extern uint64_t cpuid_to_physid[MAX_CPU_NUM];
+extern spinlock_t ap_startup_lock;
+
+static void laboot_fill_ap_startup_data(laboot_ap_startup_data_t *data,
+                                        uintptr_t stack_top, uintptr_t entry) {
+    data->pwctl0 = csr_read(LOONGARCH_CSR_PWCTL0);
+    data->pwctl1 = csr_read(LOONGARCH_CSR_PWCTL1);
+    data->stlbpgsize = csr_read(LOONGARCH_CSR_STLBPGSIZE);
+    data->pgdl = csr_read(LOONGARCH_CSR_PGDL);
+    data->pgdh = csr_read(LOONGARCH_CSR_PGDH);
+    data->dmw0 = csr_read(LOONGARCH_CSR_DMWIN0);
+    data->dmw1 = csr_read(LOONGARCH_CSR_DMWIN1);
+    data->dmw2 = csr_read(LOONGARCH_CSR_DMWIN2);
+    data->dmw3 = csr_read(LOONGARCH_CSR_DMWIN3);
+    data->tlbrentry = csr_read(LOONGARCH_CSR_TLBRENTRY);
+    data->stack_top = stack_top;
+    data->entry = entry;
+}
+
+void boot_smp_init(uintptr_t entry) {
+    uint64_t discovered_phys_ids[MAX_CPU_NUM];
+    uint64_t discovered_count =
+        laboot_discover_phys_ids_from_dtb(discovered_phys_ids, MAX_CPU_NUM);
+    if (discovered_count == 0) {
+        discovered_phys_ids[0] = laboot_boot_info.bsp_phys_id;
+        discovered_count = 1;
+    }
+
+    cpu_count = 1;
+    cpuid_to_physid[0] = laboot_boot_info.bsp_phys_id;
+
+    for (uint64_t i = 0; i < discovered_count; i++) {
+        uint64_t phys_id = discovered_phys_ids[i];
+        if (phys_id == laboot_boot_info.bsp_phys_id)
+            continue;
+
+        loongarch_iocsr_clear_mbuf((uint32_t)phys_id, 0);
+
+        if (cpu_count >= MAX_CPU_NUM)
+            break;
+
+        uint64_t stack_phys = alloc_frames(STACK_SIZE / PAGE_SIZE);
+        laboot_ap_startup_data_t *data =
+            (laboot_ap_startup_data_t *)&__ap_startup_info_virt;
+        laboot_fill_ap_startup_data(
+            data, (uintptr_t)phys_to_virt(stack_phys + STACK_SIZE), entry);
+        memory_barrier();
+
+        uint64_t cpu_id = cpu_count;
+        cpuid_to_physid[cpu_id] = phys_id;
+        cpu_count = cpu_id + 1;
+        memory_barrier();
+
+        raw_spin_lock(&ap_startup_lock);
+
+        loongarch_iocsr_send_mbuf64((uint32_t)phys_id, 0,
+                                    (uint64_t)laboot_ap_entry);
+        loongarch_iocsr_send_ipi((uint32_t)phys_id, LABOOT_IPI_BOOT_CPU);
+    }
 }
 
 extern void kmain();

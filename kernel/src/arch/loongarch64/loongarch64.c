@@ -6,7 +6,9 @@ void fast_copy_16(void *dst, const void *src, size_t size) {
 
 void arch_early_init() {
     init_serial();
-    loongarch64_cpu_local_init(0);
+    smp_init();
+    loongarch64_cpu_local_init(
+        get_cpuid_by_physid(csr_read(LOONGARCH_CSR_CPUID)));
 }
 
 void arch_init() {

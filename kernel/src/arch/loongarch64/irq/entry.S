@@ -44,6 +44,13 @@
 .equ CSR_ESTAT,    0x5
 .equ CSR_ERA,      0x6
 .equ CSR_BADV,     0x7
+.equ CSR_KS0,      0x30
+.equ CSR_KS1,      0x31
+.equ CSR_KS2,      0x32
+.equ CSR_KS3,      0x33
+.equ CSR_KS4,      0x34
+
+.equ CPU_LOCAL_SYSCALL_STACK, 8
 
 .equ CTX_RA,       0
 .equ CTX_SP,       8
@@ -61,10 +68,31 @@
 .global loongarch64_trap_entry
 .align 12
 loongarch64_trap_entry:
+    csrwr $t0, CSR_KS1
+    csrwr $t1, CSR_KS2
+    csrwr $r21, CSR_KS3
+    csrrd $t0, CSR_PRMD
+    andi $t0, $t0, 0x3
+    ori $t1, $zero, 0x3
+    bne $t0, $t1, 1f
+    csrrd $t0, CSR_KS0
+    beqz $t0, 1f
+    move $r21, $t0
+    ld.d $t0, $r21, CPU_LOCAL_SYSCALL_STACK
+    beqz $t0, 1f
+    move $t1, $sp
+    move $sp, $t0
+    b 2f
+1:
+    move $t1, $sp
+2:
+    csrwr $t1, CSR_KS4
     addi.d $sp, $sp, -PT_SIZE
     st.d $ra, $sp, PT_RA
     st.d $zero, $sp, PT_GP
     st.d $tp, $sp, PT_TP
+    csrrd $t0, CSR_KS1
+    csrrd $t1, CSR_KS2
     st.d $t0, $sp, PT_T0
     st.d $t1, $sp, PT_T1
     st.d $t2, $sp, PT_T2
@@ -74,7 +102,8 @@ loongarch64_trap_entry:
     st.d $t6, $sp, PT_T6
     st.d $t7, $sp, PT_T7
     st.d $t8, $sp, PT_T8
-    st.d $r21, $sp, PT_R21
+    csrrd $t0, CSR_KS3
+    st.d $t0, $sp, PT_R21
     st.d $fp, $sp, PT_FP
     st.d $s0, $sp, PT_S0
     st.d $s1, $sp, PT_S1
@@ -94,7 +123,7 @@ loongarch64_trap_entry:
     st.d $a6, $sp, PT_A6
     st.d $a7, $sp, PT_A7
 
-    addi.d $t0, $sp, PT_SIZE
+    csrrd $t0, CSR_KS4
     st.d $t0, $sp, PT_SP
     st.d $t0, $sp, PT_USP
 

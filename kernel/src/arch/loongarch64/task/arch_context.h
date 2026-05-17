@@ -35,9 +35,17 @@ void loongarch64_switch_to(arch_context_t *prev_ctx, arch_context_t *next_ctx,
 
 typedef struct fpu_context {
     uint64_t f[32];
+    uint64_t fcc;
     uint32_t fcsr;
     uint32_t reserved;
 } __attribute__((aligned(16))) fpu_context_t;
+
+_Static_assert(sizeof(fpu_context_t) == 272,
+               "loongarch64 fpu_context_t must hold 32 FPRs, FCC and FCSR");
+
+void loongarch64_fpu_state_init(fpu_context_t *fpu_ctx);
+void loongarch64_fpu_save(fpu_context_t *fpu_ctx);
+void loongarch64_fpu_restore(fpu_context_t *fpu_ctx);
 
 static inline uint64_t arch_regs_get_user_sp(const struct pt_regs *regs) {
     return regs->sp;

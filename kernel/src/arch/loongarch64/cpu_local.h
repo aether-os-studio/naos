@@ -7,6 +7,8 @@ typedef struct task task_t;
 
 typedef struct loongarch64_cpu_local {
     task_t *task_ptr;
+    uint64_t syscall_stack;
+    uint64_t kernel_stack;
     uint32_t cpu_id;
     uint32_t reserved0;
 } loongarch64_cpu_local_t;

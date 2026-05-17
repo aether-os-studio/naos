@@ -345,6 +345,49 @@ boot_enable_paging:
 
     jr $s0
 
+.global laboot_ap_entry
+.type laboot_ap_entry, @function
+laboot_ap_entry:
+    csrrd $a0, CSR_CPUID
+
+    load_abs $t0, ap_startup_info
+
+    ld.d $t1, $t0, 0
+    csrwr $t1, CSR_PWCTL0
+    ld.d $t1, $t0, 8
+    csrwr $t1, CSR_PWCTL1
+    ld.d $t1, $t0, 16
+    csrwr $t1, CSR_STLBPGSIZE
+
+    ld.d $t1, $t0, 24
+    csrwr $t1, CSR_PGDL
+    ld.d $t1, $t0, 32
+    csrwr $t1, CSR_PGDH
+    invtlb 0, $zero, $zero
+
+    ld.d $t1, $t0, 40
+    csrwr $t1, CSR_DMWIN0
+    ld.d $t1, $t0, 48
+    csrwr $t1, CSR_DMWIN1
+    ld.d $t1, $t0, 56
+    csrwr $t1, CSR_DMWIN2
+    ld.d $t1, $t0, 64
+    csrwr $t1, CSR_DMWIN3
+    ld.d $t1, $t0, 72
+    csrwr $t1, CSR_TLBRENTRY
+
+    ld.d $sp, $t0, 80
+    ld.d $t2, $t0, 88
+
+    li.w $t3, CRMD_DA | CRMD_PG | CRMD_IE
+    li.w $t4, CRMD_DA | CRMD_PG | CRMD_IE
+    xori $t3, $t3, CRMD_DA | CRMD_IE
+    csrxchg $t3, $t4, CSR_CRMD
+    ibar 0
+    dbar 0
+
+    jirl $zero, $t2, 0
+
 .align 12
 .global boot_tlb_refill
 .type boot_tlb_refill, @function
@@ -436,3 +479,20 @@ boot_info:
     .quad 0 /* system_table_phys */
     .quad 0 /* cmdline_virt */
     .quad 0 /* system_table_virt */
+
+.section .boot.data, "aw", @progbits
+.align 3
+.global ap_startup_info
+ap_startup_info:
+    .quad 0 /* pwctl0 */
+    .quad 0 /* pwctl1 */
+    .quad 0 /* stlbpgsize */
+    .quad 0 /* pgdl */
+    .quad 0 /* pgdh */
+    .quad 0 /* dmw0 */
+    .quad 0 /* dmw1 */
+    .quad 0 /* dmw2 */
+    .quad 0 /* dmw3 */
+    .quad 0 /* tlbrentry */
+    .quad 0 /* stack_top */
+    .quad 0 /* entry */

@@ -36,6 +36,7 @@ SECTIONS
 
     . = ALIGN(0x1000);
     __boot_end = .;
+    __ap_startup_info_virt = ap_startup_info + KERNEL_VIRT_OFFSET;
     __boot_start_virt = __boot_start + KERNEL_VIRT_OFFSET;
     __boot_end_virt = __boot_end + KERNEL_VIRT_OFFSET;
     __boot_root_pt_virt = boot_root_pt + KERNEL_VIRT_OFFSET;
