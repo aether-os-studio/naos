@@ -44,6 +44,7 @@ SECTIONS
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
     .rodata : {
+        *(.srodata .srodata.*)
         *(.rodata .rodata.*)
     } :rodata
 
@@ -51,7 +52,9 @@ SECTIONS
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
     .data : {
+        *(.got .got.*)
         *(.data .data.*)
+        *(.sdata .sdata.*)
     } :data
 
     /* NOTE: .bss needs to be the last thing mapped to :data, otherwise lots of */
@@ -59,6 +62,7 @@ SECTIONS
     /* If you need, for example, .init_array and .fini_array, those should be placed */
     /* above this. */
     .bss : {
+        *(.sbss .sbss.*)
         *(.bss .bss.*)
         *(COMMON)
     } :data

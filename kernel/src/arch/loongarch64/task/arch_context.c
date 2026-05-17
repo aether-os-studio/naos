@@ -14,7 +14,8 @@ extern void loongarch64_trap_return(void);
 
 static inline uint64_t loongarch64_fpu_enable_kernel(void) {
     uint64_t euen = csr_read(LOONGARCH_CSR_EUEN);
-    csr_write(LOONGARCH_CSR_EUEN, euen | LOONGARCH_EUEN_FPE);
+    csr_write(LOONGARCH_CSR_EUEN,
+              euen | LOONGARCH_EUEN_FPE | LOONGARCH_EUEN_SXE);
     return euen;
 }
 
@@ -35,38 +36,38 @@ void loongarch64_fpu_save(fpu_context_t *fpu_ctx) {
 
     uint64_t euen = loongarch64_fpu_enable_kernel();
 
-    asm volatile("fst.d $f0,  %0, 0\n\t"
-                 "fst.d $f1,  %0, 8\n\t"
-                 "fst.d $f2,  %0, 16\n\t"
-                 "fst.d $f3,  %0, 24\n\t"
-                 "fst.d $f4,  %0, 32\n\t"
-                 "fst.d $f5,  %0, 40\n\t"
-                 "fst.d $f6,  %0, 48\n\t"
-                 "fst.d $f7,  %0, 56\n\t"
-                 "fst.d $f8,  %0, 64\n\t"
-                 "fst.d $f9,  %0, 72\n\t"
-                 "fst.d $f10, %0, 80\n\t"
-                 "fst.d $f11, %0, 88\n\t"
-                 "fst.d $f12, %0, 96\n\t"
-                 "fst.d $f13, %0, 104\n\t"
-                 "fst.d $f14, %0, 112\n\t"
-                 "fst.d $f15, %0, 120\n\t"
-                 "fst.d $f16, %0, 128\n\t"
-                 "fst.d $f17, %0, 136\n\t"
-                 "fst.d $f18, %0, 144\n\t"
-                 "fst.d $f19, %0, 152\n\t"
-                 "fst.d $f20, %0, 160\n\t"
-                 "fst.d $f21, %0, 168\n\t"
-                 "fst.d $f22, %0, 176\n\t"
-                 "fst.d $f23, %0, 184\n\t"
-                 "fst.d $f24, %0, 192\n\t"
-                 "fst.d $f25, %0, 200\n\t"
-                 "fst.d $f26, %0, 208\n\t"
-                 "fst.d $f27, %0, 216\n\t"
-                 "fst.d $f28, %0, 224\n\t"
-                 "fst.d $f29, %0, 232\n\t"
-                 "fst.d $f30, %0, 240\n\t"
-                 "fst.d $f31, %0, 248\n\t"
+    asm volatile("vst $vr0,  %0, 0\n\t"
+                 "vst $vr1,  %0, 16\n\t"
+                 "vst $vr2,  %0, 32\n\t"
+                 "vst $vr3,  %0, 48\n\t"
+                 "vst $vr4,  %0, 64\n\t"
+                 "vst $vr5,  %0, 80\n\t"
+                 "vst $vr6,  %0, 96\n\t"
+                 "vst $vr7,  %0, 112\n\t"
+                 "vst $vr8,  %0, 128\n\t"
+                 "vst $vr9,  %0, 144\n\t"
+                 "vst $vr10, %0, 160\n\t"
+                 "vst $vr11, %0, 176\n\t"
+                 "vst $vr12, %0, 192\n\t"
+                 "vst $vr13, %0, 208\n\t"
+                 "vst $vr14, %0, 224\n\t"
+                 "vst $vr15, %0, 240\n\t"
+                 "vst $vr16, %0, 256\n\t"
+                 "vst $vr17, %0, 272\n\t"
+                 "vst $vr18, %0, 288\n\t"
+                 "vst $vr19, %0, 304\n\t"
+                 "vst $vr20, %0, 320\n\t"
+                 "vst $vr21, %0, 336\n\t"
+                 "vst $vr22, %0, 352\n\t"
+                 "vst $vr23, %0, 368\n\t"
+                 "vst $vr24, %0, 384\n\t"
+                 "vst $vr25, %0, 400\n\t"
+                 "vst $vr26, %0, 416\n\t"
+                 "vst $vr27, %0, 432\n\t"
+                 "vst $vr28, %0, 448\n\t"
+                 "vst $vr29, %0, 464\n\t"
+                 "vst $vr30, %0, 480\n\t"
+                 "vst $vr31, %0, 496\n\t"
                  :
                  : "r"(fpu_ctx)
                  : "memory");
@@ -100,38 +101,38 @@ void loongarch64_fpu_restore(fpu_context_t *fpu_ctx) {
 
     uint64_t euen = loongarch64_fpu_enable_kernel();
 
-    asm volatile("fld.d $f0,  %0, 0\n\t"
-                 "fld.d $f1,  %0, 8\n\t"
-                 "fld.d $f2,  %0, 16\n\t"
-                 "fld.d $f3,  %0, 24\n\t"
-                 "fld.d $f4,  %0, 32\n\t"
-                 "fld.d $f5,  %0, 40\n\t"
-                 "fld.d $f6,  %0, 48\n\t"
-                 "fld.d $f7,  %0, 56\n\t"
-                 "fld.d $f8,  %0, 64\n\t"
-                 "fld.d $f9,  %0, 72\n\t"
-                 "fld.d $f10, %0, 80\n\t"
-                 "fld.d $f11, %0, 88\n\t"
-                 "fld.d $f12, %0, 96\n\t"
-                 "fld.d $f13, %0, 104\n\t"
-                 "fld.d $f14, %0, 112\n\t"
-                 "fld.d $f15, %0, 120\n\t"
-                 "fld.d $f16, %0, 128\n\t"
-                 "fld.d $f17, %0, 136\n\t"
-                 "fld.d $f18, %0, 144\n\t"
-                 "fld.d $f19, %0, 152\n\t"
-                 "fld.d $f20, %0, 160\n\t"
-                 "fld.d $f21, %0, 168\n\t"
-                 "fld.d $f22, %0, 176\n\t"
-                 "fld.d $f23, %0, 184\n\t"
-                 "fld.d $f24, %0, 192\n\t"
-                 "fld.d $f25, %0, 200\n\t"
-                 "fld.d $f26, %0, 208\n\t"
-                 "fld.d $f27, %0, 216\n\t"
-                 "fld.d $f28, %0, 224\n\t"
-                 "fld.d $f29, %0, 232\n\t"
-                 "fld.d $f30, %0, 240\n\t"
-                 "fld.d $f31, %0, 248\n\t"
+    asm volatile("vld $vr0,  %0, 0\n\t"
+                 "vld $vr1,  %0, 16\n\t"
+                 "vld $vr2,  %0, 32\n\t"
+                 "vld $vr3,  %0, 48\n\t"
+                 "vld $vr4,  %0, 64\n\t"
+                 "vld $vr5,  %0, 80\n\t"
+                 "vld $vr6,  %0, 96\n\t"
+                 "vld $vr7,  %0, 112\n\t"
+                 "vld $vr8,  %0, 128\n\t"
+                 "vld $vr9,  %0, 144\n\t"
+                 "vld $vr10, %0, 160\n\t"
+                 "vld $vr11, %0, 176\n\t"
+                 "vld $vr12, %0, 192\n\t"
+                 "vld $vr13, %0, 208\n\t"
+                 "vld $vr14, %0, 224\n\t"
+                 "vld $vr15, %0, 240\n\t"
+                 "vld $vr16, %0, 256\n\t"
+                 "vld $vr17, %0, 272\n\t"
+                 "vld $vr18, %0, 288\n\t"
+                 "vld $vr19, %0, 304\n\t"
+                 "vld $vr20, %0, 320\n\t"
+                 "vld $vr21, %0, 336\n\t"
+                 "vld $vr22, %0, 352\n\t"
+                 "vld $vr23, %0, 368\n\t"
+                 "vld $vr24, %0, 384\n\t"
+                 "vld $vr25, %0, 400\n\t"
+                 "vld $vr26, %0, 416\n\t"
+                 "vld $vr27, %0, 432\n\t"
+                 "vld $vr28, %0, 448\n\t"
+                 "vld $vr29, %0, 464\n\t"
+                 "vld $vr30, %0, 480\n\t"
+                 "vld $vr31, %0, 496\n\t"
                  :
                  : "r"(fpu_ctx)
                  : "memory");
@@ -201,6 +202,7 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
     dst->ctx = (struct pt_regs *)stack - 1;
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
     dst->ctx->a0 = 0;
+    dst->ctx->pc += 4;
     dst->ctx->syscallno = src->ctx ? src->ctx->syscallno : NO_SYSCALL;
     dst->ra = (uint64_t)ret_from_fork;
     dst->sp = (uint64_t)dst->ctx;

@@ -62,6 +62,7 @@ SECTIONS
 
     . = ALIGN(0x1000);
     .data : AT(ADDR(.data) - KERNEL_VIRT_OFFSET) {
+        *(.got .got.*)
         *(.data .data.*)
         *(.sdata .sdata.*)
     } :data

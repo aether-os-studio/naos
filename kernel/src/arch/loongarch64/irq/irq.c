@@ -1,9 +1,11 @@
 #include <arch/loongarch64/csr.h>
 #include <arch/loongarch64/irq/irq.h>
+#include <arch/loongarch64/mm/arch.h>
 #include <arch/loongarch64/time/time.h>
 #include <arch/loongarch64/syscall/syscall.h>
 #include <irq/irq_manager.h>
 #include <mm/fault.h>
+#include <mm/vma.h>
 #include <task/signal.h>
 #include <task/task.h>
 
@@ -30,10 +32,54 @@ static void loongarch64_handle_signal_on_user_return(struct pt_regs *regs) {
     }
 }
 
+static void loongarch64_dump_regs(const struct pt_regs *regs,
+                                  const char *reason) {
+    if (!regs)
+        return;
+
+    printk("======== LoongArch64 register dump ========\n");
+    if (reason)
+        printk("%s\n", reason);
+
+    if (current_task) {
+        printk(
+            "current_task->pid = %lu, cpu_id = %d, current_task->name = %s\n",
+            current_task->pid, current_task->cpu_id, current_task->name);
+    }
+
+    printk(" PC = %#018lx,  RA = %#018lx,  SP = %#018lx, USP = %#018lx\n",
+           regs->pc, regs->ra, regs->sp, regs->usp);
+    printk(" TP = %#018lx,  GP = %#018lx,  FP = %#018lx, R21 = %#018lx\n",
+           regs->tp, regs->gp, regs->fp, regs->r21);
+
+    printk(" A0 = %#018lx,  A1 = %#018lx,  A2 = %#018lx,  A3 = %#018lx\n",
+           regs->a0, regs->a1, regs->a2, regs->a3);
+    printk(" A4 = %#018lx,  A5 = %#018lx,  A6 = %#018lx,  A7 = %#018lx\n",
+           regs->a4, regs->a5, regs->a6, regs->a7);
+
+    printk(" T0 = %#018lx,  T1 = %#018lx,  T2 = %#018lx,  T3 = %#018lx\n",
+           regs->t0, regs->t1, regs->t2, regs->t3);
+    printk(" T4 = %#018lx,  T5 = %#018lx,  T6 = %#018lx,  T7 = %#018lx\n",
+           regs->t4, regs->t5, regs->t6, regs->t7);
+    printk(" T8 = %#018lx\n", regs->t8);
+
+    printk(" S0 = %#018lx,  S1 = %#018lx,  S2 = %#018lx,  S3 = %#018lx\n",
+           regs->s0, regs->s1, regs->s2, regs->s3);
+    printk(" S4 = %#018lx,  S5 = %#018lx,  S6 = %#018lx,  S7 = %#018lx\n",
+           regs->s4, regs->s5, regs->s6, regs->s7);
+    printk(" S8 = %#018lx\n", regs->s8);
+
+    printk("PRMD = %#018lx, ESTAT = %#018lx, BADV = %#018lx, syscallno = "
+           "%#018lx\n",
+           regs->csr_prmd, regs->csr_estat, regs->csr_badv, regs->syscallno);
+    printk("======== LoongArch64 register dump end ========\n");
+}
+
 static void loongarch64_unhandled_trap(struct pt_regs *regs) {
     printk("Unhandled LoongArch trap: estat=%#018lx era=%#018lx badv=%#018lx "
            "prmd=%#018lx\n",
            regs->csr_estat, regs->pc, regs->csr_badv, regs->csr_prmd);
+    loongarch64_dump_regs(regs, "Unhandled LoongArch trap");
     if (current_task) {
         printk("current_task=%s pid=%lu\n", current_task->name,
                current_task->pid);
@@ -95,7 +141,38 @@ static void loongarch64_handle_page_fault(struct pt_regs *regs,
     printk("LoongArch page fault unresolved: result=%d ecode=%#lx "
            "badv=%#018lx era=%#018lx flags=%#018lx\n",
            result, ecode, fault_addr, regs->pc, fault_flags);
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+    spin_lock(&mgr->lock);
+    vma_t *vma = vma_find(mgr, fault_addr);
+    if (vma) {
+        printk("Fault VMA: [%#018lx, %#018lx) vm_flags=%#018lx "
+               "vm_type=%d name=%s\n",
+               vma->vm_start, vma->vm_end, vma->vm_flags, vma->vm_type,
+               vma->vm_name ? vma->vm_name : "(null)");
+    } else {
+        printk("Fault VMA: none\n");
+    }
+    spin_unlock(&mgr->lock);
+    loongarch64_dump_regs(regs, "Unresolved LoongArch page fault");
+
     task_exit(128 + SIGSEGV);
+}
+
+static bool loongarch64_handle_disabled_fp_simd(struct pt_regs *regs,
+                                                uint64_t ecode) {
+    if (!loongarch64_user_mode_frame(regs))
+        return false;
+
+    switch (ecode) {
+    case LOONGARCH_ECODE_FPD:
+        csr_set(LOONGARCH_CSR_EUEN, LOONGARCH_EUEN_FPE);
+        return true;
+    case LOONGARCH_ECODE_SXD:
+        csr_set(LOONGARCH_CSR_EUEN, LOONGARCH_EUEN_FPE | LOONGARCH_EUEN_SXE);
+        return true;
+    default:
+        return false;
+    }
 }
 
 void loongarch64_trap_dispatch(struct pt_regs *regs) {
@@ -121,6 +198,10 @@ void loongarch64_trap_dispatch(struct pt_regs *regs) {
     if (loongarch64_page_fault_ecode(ecode)) {
         loongarch64_handle_page_fault(regs, ecode);
         loongarch64_handle_signal_on_user_return(regs);
+        return;
+    }
+
+    if (loongarch64_handle_disabled_fp_simd(regs, ecode)) {
         return;
     }
 

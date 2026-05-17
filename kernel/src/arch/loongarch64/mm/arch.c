@@ -46,17 +46,21 @@ bool arch_page_table_flags_writable(uint64_t flags) {
 }
 
 uint64_t arch_page_table_flags_make_cow(uint64_t flags) {
-    return (flags | ARCH_PT_FLAG_COW) & ~ARCH_PT_FLAG_WRITEABLE;
+    return (flags | ARCH_PT_FLAG_COW) &
+           ~(ARCH_PT_FLAG_WRITEABLE | ARCH_PT_FLAG_DIRTY);
 }
 
 uint64_t arch_page_table_flags_make_writable(uint64_t flags) {
-    return (flags | ARCH_PT_FLAG_WRITEABLE) & ~ARCH_PT_FLAG_COW;
+    return (flags | ARCH_PT_FLAG_WRITEABLE | ARCH_PT_FLAG_DIRTY) &
+           ~ARCH_PT_FLAG_COW;
 }
 
 uint64_t get_arch_page_table_flags(uint64_t flags) {
     uint64_t attr = ARCH_PT_FLAG_PRESENT | ARCH_PT_FLAG_HW_VALID |
-                    ARCH_PT_FLAG_CACHE_CC | ARCH_PT_FLAG_GLOBAL |
-                    ARCH_PT_FLAG_MODIFIED;
+                    ARCH_PT_FLAG_CACHE_CC | ARCH_PT_FLAG_MODIFIED;
+
+    if ((flags & PT_FLAG_U) == 0)
+        attr |= ARCH_PT_FLAG_GLOBAL;
 
     if (flags & PT_FLAG_W)
         attr |= ARCH_PT_FLAG_WRITE | ARCH_PT_FLAG_DIRTY;

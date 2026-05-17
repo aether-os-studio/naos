@@ -92,6 +92,8 @@ static inline void iocsr_write64(uint32_t reg, uint64_t value) {
 #define LOONGARCH_CRMD_PG (1UL << 4)
 
 #define LOONGARCH_EUEN_FPE (1UL << 0)
+#define LOONGARCH_EUEN_SXE (1UL << 1)
+#define LOONGARCH_EUEN_ASXE (1UL << 2)
 
 #define LOONGARCH_ESTAT_IS_SHIFT 0
 #define LOONGARCH_ESTAT_IS_MASK 0x1fffUL
@@ -101,6 +103,9 @@ static inline void iocsr_write64(uint32_t reg, uint64_t value) {
 
 #define LOONGARCH_ECODE_INT 0
 #define LOONGARCH_ECODE_SYS 0xb
+#define LOONGARCH_ECODE_FPD 0xf
+#define LOONGARCH_ECODE_SXD 0x10
+#define LOONGARCH_ECODE_ASXD 0x11
 
 #define LOONGARCH_INT_TIMER 11
 #define LOONGARCH_ECFG_TIMER (1UL << LOONGARCH_INT_TIMER)
