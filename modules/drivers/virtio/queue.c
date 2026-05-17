@@ -51,9 +51,8 @@ virtqueue_t *virt_queue_new(virtio_driver_t *driver, uint16_t queue_idx,
 
         queue->inner.legacy = malloc(sizeof(virtqueue_legacy_t));
         memset(queue->inner.legacy, 0, sizeof(virtqueue_legacy_t));
-        queue->inner.legacy->paddr = translate_address(
-            get_current_page_dir(false),
-            (uint64_t)alloc_frames_bytes(PADDING_UP(size, PAGE_SIZE)));
+        queue->inner.legacy->paddr = kernel_virt_to_phys(
+            alloc_frames_bytes(PADDING_UP(size, PAGE_SIZE)));
         queue->inner.legacy->avail_offset = desc_size;
         queue->inner.legacy->used_offset =
             PADDING_UP(desc_size + avail_size, PAGE_SIZE);
@@ -72,15 +71,12 @@ virtqueue_t *virt_queue_new(virtio_driver_t *driver, uint16_t queue_idx,
         queue_part_sizes(queue_size, &desc_size, &avail_size, &used_size);
         queue->inner.modern = malloc(sizeof(virtqueue_modern_t));
         memset(queue->inner.modern, 0, sizeof(virtqueue_modern_t));
-        queue->inner.modern->driver_to_device_paddr =
-            translate_address(get_current_page_dir(false),
-                              (uint64_t)alloc_frames_bytes(PADDING_UP(
-                                  desc_size + avail_size, PAGE_SIZE)));
+        queue->inner.modern->driver_to_device_paddr = kernel_virt_to_phys(
+            alloc_frames_bytes(PADDING_UP(desc_size + avail_size, PAGE_SIZE)));
         queue->inner.modern->driver_to_device_size =
             PADDING_UP(desc_size + avail_size, PAGE_SIZE);
-        queue->inner.modern->device_to_driver_paddr = translate_address(
-            get_current_page_dir(false),
-            (uint64_t)alloc_frames_bytes(PADDING_UP(used_size, PAGE_SIZE)));
+        queue->inner.modern->device_to_driver_paddr = kernel_virt_to_phys(
+            alloc_frames_bytes(PADDING_UP(used_size, PAGE_SIZE)));
         queue->inner.modern->device_to_driver_size =
             PADDING_UP(used_size, PAGE_SIZE);
         queue->inner.modern->avail_offset = desc_size;

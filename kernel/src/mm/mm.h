@@ -28,14 +28,31 @@ typedef struct task_mm_info {
     spinlock_t lock;
     uint64_t active_cpu_mask[MM_ACTIVE_CPU_WORDS];
     vma_manager_t task_vma_mgr;
+    uint64_t mmap_top;
+    uint64_t signal_trampoline_start;
+    uint64_t pie_base;
+    uint64_t interpreter_base;
     uint64_t brk_start;
     uint64_t brk_current;
     uint64_t brk_end;
+    uint64_t stack_start;
+    uint64_t stack_end;
     uint64_t membarrier_private_expedited_seq;
     bool membarrier_private_expedited_registered;
 } task_mm_info_t;
 
 void frame_init();
+
+uint64_t user_va_limit(void);
+uint64_t mm_default_mmap_top(void);
+void task_mm_init_aslr(task_mm_info_t *mm);
+uint64_t task_mm_mmap_top(task_mm_info_t *mm);
+uint64_t task_mm_signal_trampoline_start(task_mm_info_t *mm);
+uint64_t task_mm_signal_trampoline_end(task_mm_info_t *mm);
+uint64_t task_mm_pie_base(task_mm_info_t *mm);
+uint64_t task_mm_interpreter_base(task_mm_info_t *mm);
+uint64_t task_mm_stack_start(task_mm_info_t *mm);
+uint64_t task_mm_stack_end(task_mm_info_t *mm);
 
 // 分配/释放（高层接口）
 uintptr_t alloc_frames(size_t count);

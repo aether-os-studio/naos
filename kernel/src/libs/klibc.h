@@ -345,6 +345,9 @@ int kref_get(kref_t *ref);
 void kref_set(kref_t *ref, int value);
 
 extern uint64_t get_physical_memory_offset();
+void *phys_to_virt(uint64_t phys_addr);
+extern uint64_t virt_to_phys(const void *virt_addr);
+extern uint64_t kernel_virt_to_phys(const void *virt_addr);
 extern uint64_t *get_current_page_dir(bool user);
 extern uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr);
 
@@ -352,7 +355,7 @@ bool check_user_overflow(uint64_t addr, uint64_t size);
 bool check_unmapped(uint64_t addr, uint64_t len);
 
 static inline void *user_virt_from_paddr(uint64_t paddr) {
-    return (void *)(uintptr_t)(paddr | get_physical_memory_offset());
+    return phys_to_virt(paddr);
 }
 
 uint64_t user_translate_or_fault(uint64_t *pgdir, uint64_t uaddr, bool write);

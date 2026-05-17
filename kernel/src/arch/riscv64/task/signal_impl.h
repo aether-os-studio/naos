@@ -275,7 +275,7 @@ static bool signal_riscv64_setup_frame(task_t *task, struct pt_regs *regs,
 
     *regs = saved;
     regs->sepc = (uint64_t)action->sa_handler;
-    regs->ra = use_kernel_restorer ? USER_SIGNAL_TRAMPOLINE_START
+    regs->ra = use_kernel_restorer ? task_mm_signal_trampoline_start(task->mm)
                                    : (uint64_t)action->sa_restorer;
     regs->sp = frame_addr;
     regs->a0 = sig;

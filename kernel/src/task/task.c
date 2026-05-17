@@ -1200,9 +1200,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->mm->ref_count = 1;
     spin_init(&task->mm->lock);
     vma_manager_init(&task->mm->task_vma_mgr, false);
-    task->mm->brk_start = USER_BRK_START;
-    task->mm->brk_current = task->mm->brk_start;
-    task->mm->brk_end = USER_BRK_END;
+    task_mm_init_aslr(task->mm);
     task->arch_context = calloc(1, sizeof(arch_context_t));
     if (!task->arch_context)
         goto fail;

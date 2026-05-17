@@ -27,6 +27,14 @@ uint64_t arch_page_table_levels() {
     return riscv64_pt_levels;
 }
 
+uint64_t arch_user_va_limit(void) {
+    uint64_t levels = arch_page_table_levels();
+    uint64_t va_bits = ARCH_PT_OFFSET_BASE + levels * ARCH_PT_OFFSET_PER_LEVEL;
+    if (va_bits >= 64)
+        return UINT64_MAX;
+    return (1ULL << (va_bits - 1)) - 1;
+}
+
 static uint64_t riscv64_detect_satp_mode() {
     if (riscv64_satp_mode != 0)
         return riscv64_satp_mode;

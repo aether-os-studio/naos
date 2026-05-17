@@ -73,8 +73,11 @@ static void shm_try_free_locked(shm_t *shm) {
 }
 
 static void *find_free_region(vma_manager_t *mgr, size_t size) {
+    if (!current_task || !current_task->mm)
+        return NULL;
+
     uint64_t len = PAGE_ALIGN_UP(size);
-    uint64_t addr = find_unmapped_area(mgr, 0, len);
+    uint64_t addr = find_unmapped_area(current_task->mm, 0, len);
 
     if ((int64_t)addr < 0)
         return NULL;

@@ -1920,7 +1920,7 @@ static void usb_scan_hub(usb_hub_t *hub) {
             usbdev->port = port;
 
             if (!usb_hub_port_setup(usbdev)) {
-                free(usbdev);
+                usb_disconnect_device(usbdev);
                 continue;
             }
 

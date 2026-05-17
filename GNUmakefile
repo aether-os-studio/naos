@@ -274,7 +274,11 @@ ifeq ($(BOOT_PROTOCOL), limine)
 		-device usb-mouse \
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=$(IMAGE_NAME).img,format=raw,id=harddisk \
-		-device nvme,drive=harddisk,serial=1234 \
+		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
+		-device virtio-blk-pci,drive=harddisk \
+		-device virtio-blk-pci,drive=rootdisk \
+		-netdev user,id=net0 \
+		-device virtio-net-pci,netdev=net0 \
 		$(QEMUFLAGS)
 endif
 ifeq ($(BOOT_PROTOCOL), laboot)
@@ -283,7 +287,7 @@ ifeq ($(BOOT_PROTOCOL), laboot)
 		-nographic \
 		-kernel kernel/bin-$(ARCH)/kernel \
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
-		-device virtio-blk-pci,drive=rootdisk,serial=1234 \
+		-device virtio-blk-pci,drive=rootdisk \
 		-netdev user,id=net0 \
 		-device virtio-net-pci,netdev=net0 \
 		$(QEMUFLAGS)

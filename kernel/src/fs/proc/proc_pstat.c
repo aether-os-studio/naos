@@ -138,7 +138,7 @@ char *proc_gen_stat_file(task_t *task, size_t *content_len) {
         task->rlim[RLIMIT_RSS].rlim_cur, // 25. rsslim
         task->load_start,                // 26. startcode
         task->load_end,                  // 27. endcode
-        USER_STACK_START,                // 28. startstack
+        task_mm_stack_start(task->mm),   // 28. startstack
         0UL,                             // 29. kstkesp
         0UL,                             // 30. kstkeip
         (unsigned long)sigset_kernel_to_user(task->signal->signal),  // 31

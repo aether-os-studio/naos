@@ -4,6 +4,7 @@
 #include <mm/buddy.h>
 #include <mm/mm.h>
 #include <mm/page.h>
+#include <task/task.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -15,6 +16,140 @@ Bitmap usable_regions;
 uint64_t memory_size = 0;
 
 static size_t early_last_alloc_pos = 0;
+
+#define USER_LAYOUT_ASLR_BITS 18
+
+static uint64_t mmap_aslr_state;
+
+uint64_t arch_user_va_limit(void) __attribute__((weak));
+
+uint64_t arch_user_va_limit(void) { return 0; }
+
+uint64_t user_va_limit(void) {
+    uint64_t limit = arch_user_va_limit();
+    if (limit == 0) {
+        limit = get_physical_memory_offset();
+        if (limit == 0)
+            return UINT64_MAX;
+        limit--;
+    }
+    return limit;
+}
+
+uint64_t mm_default_mmap_top(void) {
+    uint64_t va_limit = user_va_limit();
+    uint64_t limit = va_limit == UINT64_MAX
+                         ? PADDING_DOWN(UINT64_MAX, PAGE_SIZE)
+                         : PADDING_DOWN(va_limit + 1, PAGE_SIZE);
+    if (limit <= USER_STACK_END - USER_MMAP_BASE_END)
+        return USER_MMAP_START;
+    limit =
+        PADDING_DOWN(limit - (USER_STACK_END - USER_MMAP_BASE_END), PAGE_SIZE);
+    if (limit <= USER_MMAP_START)
+        return USER_MMAP_START;
+    return limit;
+}
+
+static uint64_t mmap_aslr_next(void) {
+    uint64_t seed = mmap_aslr_state;
+    if (seed == 0) {
+        seed = nano_time() ^ (boot_get_boottime() << 32) ^
+               (uint64_t)(uintptr_t)&seed ^
+               (uint64_t)(uintptr_t)get_kernel_page_dir();
+    }
+
+    seed ^= seed << 13;
+    seed ^= seed >> 7;
+    seed ^= seed << 17;
+    if (seed == 0)
+        seed = 0x9e3779b97f4a7c15ULL;
+    mmap_aslr_state = seed;
+    return seed;
+}
+
+void task_mm_init_aslr(task_mm_info_t *mm) {
+    if (!mm)
+        return;
+
+    uint64_t default_layout_top =
+        task_mm_mmap_top(NULL) + (USER_STACK_END - USER_MMAP_BASE_END);
+    uint64_t layout_top = default_layout_top;
+    uint64_t template_top = USER_STACK_END;
+    uint64_t slide = 0;
+
+    if (layout_top > template_top) {
+        uint64_t max_slide = layout_top - template_top;
+        uint64_t window = (1ULL << USER_LAYOUT_ASLR_BITS) * PAGE_SIZE;
+        uint64_t min_layout_top =
+            max_slide > window ? layout_top - window : template_top;
+        uint64_t span_pages = (layout_top - min_layout_top) / PAGE_SIZE;
+        if (span_pages)
+            layout_top -= (mmap_aslr_next() % (span_pages + 1)) * PAGE_SIZE;
+        slide = layout_top - template_top;
+    }
+
+    mm->mmap_top = USER_MMAP_BASE_END + slide;
+    mm->signal_trampoline_start = USER_SIGNAL_TRAMPOLINE_START + slide;
+    mm->pie_base = PIE_BASE_ADDR + slide;
+    mm->interpreter_base = INTERPRETER_BASE_ADDR + slide;
+    mm->brk_start = USER_BRK_START + slide;
+    mm->brk_current = mm->brk_start;
+    mm->brk_end = USER_BRK_END + slide;
+    mm->stack_start = USER_STACK_START + slide;
+    mm->stack_end = USER_STACK_END + slide;
+}
+
+uint64_t task_mm_mmap_top(task_mm_info_t *mm) {
+    if (!mm)
+        return mm_default_mmap_top();
+    if (mm->mmap_top < USER_MMAP_START)
+        task_mm_init_aslr(mm);
+    return mm->mmap_top;
+}
+
+uint64_t task_mm_signal_trampoline_start(task_mm_info_t *mm) {
+    if (!mm)
+        return USER_SIGNAL_TRAMPOLINE_START;
+    if (!mm->signal_trampoline_start)
+        task_mm_init_aslr(mm);
+    return mm->signal_trampoline_start;
+}
+
+uint64_t task_mm_signal_trampoline_end(task_mm_info_t *mm) {
+    return task_mm_signal_trampoline_start(mm) + PAGE_SIZE;
+}
+
+uint64_t task_mm_pie_base(task_mm_info_t *mm) {
+    if (!mm)
+        return PIE_BASE_ADDR;
+    if (!mm->pie_base)
+        task_mm_init_aslr(mm);
+    return mm->pie_base;
+}
+
+uint64_t task_mm_interpreter_base(task_mm_info_t *mm) {
+    if (!mm)
+        return INTERPRETER_BASE_ADDR;
+    if (!mm->interpreter_base)
+        task_mm_init_aslr(mm);
+    return mm->interpreter_base;
+}
+
+uint64_t task_mm_stack_start(task_mm_info_t *mm) {
+    if (!mm)
+        return USER_STACK_START;
+    if (!mm->stack_start)
+        task_mm_init_aslr(mm);
+    return mm->stack_start;
+}
+
+uint64_t task_mm_stack_end(task_mm_info_t *mm) {
+    if (!mm)
+        return USER_STACK_END;
+    if (!mm->stack_end)
+        task_mm_init_aslr(mm);
+    return mm->stack_end;
+}
 
 uint64_t alloc_frames_early(size_t count) {
     if (count == 0)

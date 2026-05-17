@@ -328,20 +328,21 @@ static bool signal_ensure_user_trampoline(task_t *task) {
         return false;
 
     vma_manager_t *mgr = &task->mm->task_vma_mgr;
+    uint64_t trampoline_start = task_mm_signal_trampoline_start(task->mm);
+    uint64_t trampoline_end = task_mm_signal_trampoline_end(task->mm);
     spin_lock(&mgr->lock);
-    vma_t *vma = vma_find(mgr, USER_SIGNAL_TRAMPOLINE_START);
+    vma_t *vma = vma_find(mgr, trampoline_start);
     if (vma) {
         bool ok =
-            vma->vm_start == USER_SIGNAL_TRAMPOLINE_START &&
-            vma->vm_end == USER_SIGNAL_TRAMPOLINE_END &&
+            vma->vm_start == trampoline_start &&
+            vma->vm_end == trampoline_end &&
             (vma->vm_flags & (VMA_READ | VMA_EXEC)) == (VMA_READ | VMA_EXEC) &&
             !(vma->vm_flags & VMA_WRITE);
         spin_unlock(&mgr->lock);
         return ok;
     }
 
-    if (vma_find_intersection(mgr, USER_SIGNAL_TRAMPOLINE_START,
-                              USER_SIGNAL_TRAMPOLINE_END)) {
+    if (vma_find_intersection(mgr, trampoline_start, trampoline_end)) {
         spin_unlock(&mgr->lock);
         return false;
     }
@@ -362,8 +363,8 @@ static bool signal_ensure_user_trampoline(task_t *task) {
         return false;
     }
 
-    new_vma->vm_start = USER_SIGNAL_TRAMPOLINE_START;
-    new_vma->vm_end = USER_SIGNAL_TRAMPOLINE_END;
+    new_vma->vm_start = trampoline_start;
+    new_vma->vm_end = trampoline_end;
     new_vma->vm_flags = VMA_ANON | VMA_READ | VMA_EXEC;
     new_vma->vm_type = VMA_TYPE_ANON;
     new_vma->vm_name = strdup("[sigreturn]");
@@ -378,11 +379,11 @@ static bool signal_ensure_user_trampoline(task_t *task) {
     bool raced_ok = false;
 
     spin_lock(&mgr->lock);
-    vma = vma_find(mgr, USER_SIGNAL_TRAMPOLINE_START);
+    vma = vma_find(mgr, trampoline_start);
     if (vma) {
         raced_ok =
-            vma->vm_start == USER_SIGNAL_TRAMPOLINE_START &&
-            vma->vm_end == USER_SIGNAL_TRAMPOLINE_END &&
+            vma->vm_start == trampoline_start &&
+            vma->vm_end == trampoline_end &&
             (vma->vm_flags & (VMA_READ | VMA_EXEC)) == (VMA_READ | VMA_EXEC) &&
             !(vma->vm_flags & VMA_WRITE);
         spin_unlock(&mgr->lock);
@@ -391,8 +392,7 @@ static bool signal_ensure_user_trampoline(task_t *task) {
         return raced_ok;
     }
 
-    if (vma_find_intersection(mgr, USER_SIGNAL_TRAMPOLINE_START,
-                              USER_SIGNAL_TRAMPOLINE_END)) {
+    if (vma_find_intersection(mgr, trampoline_start, trampoline_end)) {
         spin_unlock(&mgr->lock);
         vma_free(new_vma);
         address_release(page_paddr);
@@ -401,8 +401,8 @@ static bool signal_ensure_user_trampoline(task_t *task) {
 
     spin_lock(&task->mm->lock);
     uint64_t map_ret =
-        map_page_range_mm(task->mm, USER_SIGNAL_TRAMPOLINE_START, page_paddr,
-                          PAGE_SIZE, PT_FLAG_U | PT_FLAG_R | PT_FLAG_X);
+        map_page_range_mm(task->mm, trampoline_start, page_paddr, PAGE_SIZE,
+                          PT_FLAG_U | PT_FLAG_R | PT_FLAG_X);
     spin_unlock(&task->mm->lock);
     mapped = map_ret == 0;
 
@@ -414,7 +414,7 @@ static bool signal_ensure_user_trampoline(task_t *task) {
 
     if (!inserted && mapped) {
         spin_lock(&task->mm->lock);
-        unmap_page_range_mm(task->mm, USER_SIGNAL_TRAMPOLINE_START, PAGE_SIZE);
+        unmap_page_range_mm(task->mm, trampoline_start, PAGE_SIZE);
         spin_unlock(&task->mm->lock);
     }
 

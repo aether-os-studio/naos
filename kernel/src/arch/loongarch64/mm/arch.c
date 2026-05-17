@@ -4,6 +4,8 @@
 
 uint64_t arch_page_table_levels() { return ARCH_MAX_PT_LEVEL; }
 
+uint64_t arch_user_va_limit(void) { return 0x00000007ffffffffULL; }
+
 uint64_t *get_current_page_dir(bool user) {
     uint64_t pgd =
         user ? csr_read(LOONGARCH_CSR_PGDL) : csr_read(LOONGARCH_CSR_PGDH);

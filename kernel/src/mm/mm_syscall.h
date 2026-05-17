@@ -77,7 +77,7 @@
 #define MPOL_F_ADDR (1U << 1)
 #define MPOL_F_MEMS_ALLOWED (1U << 2)
 
-uint64_t find_unmapped_area(vma_manager_t *mgr, uint64_t hint, uint64_t len);
+uint64_t find_unmapped_area(task_mm_info_t *mm, uint64_t hint, uint64_t len);
 /**
  * Linux contract: create a new user mapping that follows Linux mmap(2) flag,
  * permission, and file-vs-anonymous rules.

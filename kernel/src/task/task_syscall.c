@@ -1123,48 +1123,57 @@ static uint64_t simple_rand() {
     return ((uint64_t)seed << 32) | seed;
 }
 
-#define PUSH_TO_STACK(a, b, c)                                                 \
-    a -= sizeof(b);                                                            \
-    *((b *)(a)) = c
-
-#define PUSH_BYTES_TO_STACK(stack_ptr, data, len)                              \
-    do {                                                                       \
-        stack_ptr -= (len);                                                    \
-        memcpy((void *)(stack_ptr), (data), (len));                            \
-    } while (0)
-
 #define ALIGN_STACK_DOWN(stack_ptr, alignment)                                 \
     stack_ptr = (stack_ptr) & ~((alignment) - 1)
 
-uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
-                    int argv_count, char *envp[], int envp_count,
-                    uint64_t e_entry, uint64_t phdr, uint64_t phnum,
-                    uint64_t at_base, const char *execfn,
-                    const task_execve_creds_t *creds) {
+static bool push_user_bytes(uint64_t *stack_ptr, const void *data, size_t len) {
+    *stack_ptr -= len;
+    return copy_to_user((void *)(uintptr_t)*stack_ptr, data, len);
+}
+
+static bool push_user_u64(uint64_t *stack_ptr, uint64_t value) {
+    return push_user_bytes(stack_ptr, &value, sizeof(value));
+}
+
+bool push_infos(task_t *task, uint64_t current_stack, char *argv[],
+                int argv_count, char *envp[], int envp_count, uint64_t e_entry,
+                uint64_t phdr, uint64_t phnum, uint64_t at_base,
+                const char *execfn, const task_execve_creds_t *creds,
+                uint64_t *stack_out) {
     uint64_t tmp_stack = current_stack;
     uint64_t arg_low = UINT64_MAX;
     uint64_t arg_high = 0;
     uint64_t env_low = UINT64_MAX;
     uint64_t env_high = 0;
+    uint64_t *envp_addrs = NULL;
+    uint64_t *argv_addrs = NULL;
+    bool failed = true;
+
+    if (!stack_out)
+        return false;
 
     arch_enable_user_access();
 
     const char *execfn_name = execfn ? execfn : task->name;
     size_t name_len = strlen(execfn_name) + 1;
-    PUSH_BYTES_TO_STACK(tmp_stack, execfn_name, name_len);
+    if (push_user_bytes(&tmp_stack, execfn_name, name_len))
+        goto out;
     uint64_t execfn_ptr = tmp_stack;
 
     uint64_t random_values[2] = {simple_rand(), simple_rand()};
-    PUSH_BYTES_TO_STACK(tmp_stack, random_values, 16);
+    if (push_user_bytes(&tmp_stack, random_values, sizeof(random_values)))
+        goto out;
     uint64_t random_ptr = tmp_stack;
 
-    uint64_t *envp_addrs = NULL;
     if (envp_count > 0 && envp != NULL) {
         envp_addrs = (uint64_t *)malloc(envp_count * sizeof(uint64_t));
+        if (!envp_addrs)
+            goto out;
 
         for (int i = envp_count - 1; i >= 0; i--) {
             size_t len = strlen(envp[i]) + 1;
-            PUSH_BYTES_TO_STACK(tmp_stack, envp[i], len);
+            if (push_user_bytes(&tmp_stack, envp[i], len))
+                goto out;
             envp_addrs[i] = tmp_stack;
             if (tmp_stack < env_low)
                 env_low = tmp_stack;
@@ -1173,14 +1182,16 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
         }
     }
 
-    uint64_t *argv_addrs = NULL;
     if (argv_count > 0 && argv != NULL) {
         argv_addrs = (uint64_t *)malloc(argv_count * sizeof(uint64_t));
+        if (!argv_addrs)
+            goto out;
 
         // 从后向前推送
         for (int i = argv_count - 1; i >= 0; i--) {
             size_t len = strlen(argv[i]) + 1;
-            PUSH_BYTES_TO_STACK(tmp_stack, argv[i], len);
+            if (push_user_bytes(&tmp_stack, argv[i], len))
+                goto out;
             argv_addrs[i] = tmp_stack;
             if (tmp_stack < arg_low)
                 arg_low = tmp_stack;
@@ -1212,74 +1223,81 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
     if (qwords_to_push & 1)
         tmp_stack -= sizeof(uint64_t);
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, 0);
-    PUSH_TO_STACK(tmp_stack, uint64_t, AT_NULL);
+    if (push_user_u64(&tmp_stack, 0) || push_user_u64(&tmp_stack, AT_NULL) ||
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, execfn_ptr);
-    PUSH_TO_STACK(tmp_stack, uint64_t, AT_EXECFN);
+        push_user_u64(&tmp_stack, execfn_ptr) ||
+        push_user_u64(&tmp_stack, AT_EXECFN) ||
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, random_ptr);
-    PUSH_TO_STACK(tmp_stack, uint64_t, AT_RANDOM);
+        push_user_u64(&tmp_stack, random_ptr) ||
+        push_user_u64(&tmp_stack, AT_RANDOM) ||
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, creds ? creds->egid : task->egid);
-    PUSH_TO_STACK(tmp_stack, uint64_t, AT_EGID);
+        push_user_u64(&tmp_stack, creds ? creds->egid : task->egid) ||
+        push_user_u64(&tmp_stack, AT_EGID) ||
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, creds ? creds->gid : task->gid);
-    PUSH_TO_STACK(tmp_stack, uint64_t, AT_GID);
+        push_user_u64(&tmp_stack, creds ? creds->gid : task->gid) ||
+        push_user_u64(&tmp_stack, AT_GID) ||
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, creds ? creds->euid : task->euid);
-    PUSH_TO_STACK(tmp_stack, uint64_t, AT_EUID);
+        push_user_u64(&tmp_stack, creds ? creds->euid : task->euid) ||
+        push_user_u64(&tmp_stack, AT_EUID) ||
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, creds ? creds->uid : task->uid);
-    PUSH_TO_STACK(tmp_stack, uint64_t, AT_UID);
+        push_user_u64(&tmp_stack, creds ? creds->uid : task->uid) ||
+        push_user_u64(&tmp_stack, AT_UID) ||
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, e_entry);
-    PUSH_TO_STACK(tmp_stack, uint64_t, AT_ENTRY);
+        push_user_u64(&tmp_stack, e_entry) ||
+        push_user_u64(&tmp_stack, AT_ENTRY) ||
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, 0);
-    PUSH_TO_STACK(tmp_stack, uint64_t, AT_FLAGS);
+        push_user_u64(&tmp_stack, 0) || push_user_u64(&tmp_stack, AT_FLAGS) ||
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, creds && creds->secure_exec ? 1 : 0);
-    PUSH_TO_STACK(tmp_stack, uint64_t, AT_SECURE);
+        push_user_u64(&tmp_stack, creds && creds->secure_exec ? 1 : 0) ||
+        push_user_u64(&tmp_stack, AT_SECURE) ||
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, phnum);
-    PUSH_TO_STACK(tmp_stack, uint64_t, AT_PHNUM);
+        push_user_u64(&tmp_stack, phnum) ||
+        push_user_u64(&tmp_stack, AT_PHNUM) ||
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, sizeof(Elf64_Phdr));
-    PUSH_TO_STACK(tmp_stack, uint64_t, AT_PHENT);
+        push_user_u64(&tmp_stack, sizeof(Elf64_Phdr)) ||
+        push_user_u64(&tmp_stack, AT_PHENT) ||
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, phdr);
-    PUSH_TO_STACK(tmp_stack, uint64_t, AT_PHDR);
+        push_user_u64(&tmp_stack, phdr) || push_user_u64(&tmp_stack, AT_PHDR) ||
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, PAGE_SIZE);
-    PUSH_TO_STACK(tmp_stack, uint64_t, AT_PAGESZ);
+        push_user_u64(&tmp_stack, PAGE_SIZE) ||
+        push_user_u64(&tmp_stack, AT_PAGESZ) ||
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, SCHED_HZ);
-    PUSH_TO_STACK(tmp_stack, uint64_t, AT_CLKTCK);
+        push_user_u64(&tmp_stack, SCHED_HZ) ||
+        push_user_u64(&tmp_stack, AT_CLKTCK) ||
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, at_base);
-    PUSH_TO_STACK(tmp_stack, uint64_t, AT_BASE);
+        push_user_u64(&tmp_stack, at_base) ||
+        push_user_u64(&tmp_stack, AT_BASE))
+        goto out;
 
     // NULL 结束标记
-    PUSH_TO_STACK(tmp_stack, uint64_t, 0);
+    if (push_user_u64(&tmp_stack, 0))
+        goto out;
 
     if (envp_count > 0 && envp_addrs != NULL) {
         for (int i = envp_count - 1; i >= 0; i--) {
-            PUSH_TO_STACK(tmp_stack, uint64_t, envp_addrs[i]);
+            if (push_user_u64(&tmp_stack, envp_addrs[i]))
+                goto out;
         }
     }
 
     // NULL 结束标记
-    PUSH_TO_STACK(tmp_stack, uint64_t, 0);
+    if (push_user_u64(&tmp_stack, 0))
+        goto out;
 
     if (argv_count > 0 && argv_addrs != NULL) {
         for (int i = argv_count - 1; i >= 0; i--) {
-            PUSH_TO_STACK(tmp_stack, uint64_t, argv_addrs[i]);
+            if (push_user_u64(&tmp_stack, argv_addrs[i]))
+                goto out;
         }
     }
 
-    PUSH_TO_STACK(tmp_stack, uint64_t, argv_count);
+    if (push_user_u64(&tmp_stack, argv_count))
+        goto out;
 
+    *stack_out = tmp_stack;
+    failed = false;
+
+out:
     if (argv_addrs)
         free(argv_addrs);
     if (envp_addrs)
@@ -1287,7 +1305,7 @@ uint64_t push_infos(task_t *task, uint64_t current_stack, char *argv[],
 
     arch_disable_user_access();
 
-    return tmp_stack;
+    return !failed;
 }
 
 static int register_elf_load_vma(task_t *task, vfs_node_t *node,
@@ -1787,19 +1805,6 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
         return (uint64_t)dethread_ret;
     }
 
-    uint64_t real_load_start = 0;
-    if (ehdr->e_type == ET_DYN) {
-        real_load_start = PIE_BASE_ADDR;
-    }
-
-    uint64_t e_entry = real_load_start + ehdr->e_entry;
-    if (e_entry == 0) {
-        task_execve_free_string_array(new_argv, argv_count);
-        task_execve_free_string_array(new_envp, envp_count);
-        vfs_close_file(exec_file);
-        return (uint64_t)-EINVAL;
-    }
-
     if (!arch_check_elf(ehdr)) {
         task_execve_free_string_array(new_argv, argv_count);
         task_execve_free_string_array(new_envp, envp_count);
@@ -1846,14 +1851,26 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
         (uint64_t *)phys_to_virt(new_mm->page_table_addr));
     new_mm->ref_count = 1;
     vma_manager_init(&new_mm->task_vma_mgr, true);
-
-    new_mm->brk_start = USER_BRK_START;
-    new_mm->brk_current = new_mm->brk_start;
-    new_mm->brk_end = USER_BRK_END;
+    task_mm_init_aslr(new_mm);
 
     set_current_page_dir(true, new_mm->page_table_addr);
 
     self->mm = new_mm;
+
+    uint64_t real_load_start = 0;
+    if (ehdr->e_type == ET_DYN) {
+        real_load_start = task_mm_pie_base(new_mm);
+    }
+
+    uint64_t e_entry = real_load_start + ehdr->e_entry;
+    if (e_entry == 0) {
+        exec_fail_ret = (uint64_t)-EINVAL;
+        goto exec_fail_restore_mm;
+    }
+
+    uint64_t interpreter_base = task_mm_interpreter_base(new_mm);
+    uint64_t stack_start = task_mm_stack_start(new_mm);
+    uint64_t stack_end = task_mm_stack_end(new_mm);
 
     uint64_t load_start = UINT64_MAX;
     uint64_t load_end = 0;
@@ -1929,14 +1946,14 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
                 if (interp_phdr[j].p_type != PT_LOAD)
                     continue;
 
-                if (register_elf_load_vma(
-                        self, interpreter_file->f_inode, interpreter_path,
-                        INTERPRETER_BASE_ADDR, &interp_phdr[j]) != 0) {
+                if (register_elf_load_vma(self, interpreter_file->f_inode,
+                                          interpreter_path, interpreter_base,
+                                          &interp_phdr[j]) != 0) {
                     printk("Failed to register interpreter PT_LOAD VMA\n");
                 }
             }
 
-            interpreter_entry = INTERPRETER_BASE_ADDR + interp_ehdr.e_entry;
+            interpreter_entry = interpreter_base + interp_ehdr.e_entry;
             free(interp_phdr);
             vfs_close_file(interpreter_file);
 
@@ -1966,15 +1983,15 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
 
     if (phdr_allocated) {
         free(phdr);
+        phdr_allocated = false;
     }
 
     vma_t *stack_guard_vma = vma_alloc();
-    vma_t *region =
-        vma_find_intersection(&self->mm->task_vma_mgr,
-                              USER_STACK_START - PAGE_SIZE, USER_STACK_START);
+    vma_t *region = vma_find_intersection(&self->mm->task_vma_mgr,
+                                          stack_start - PAGE_SIZE, stack_start);
     if (stack_guard_vma) {
-        stack_guard_vma->vm_start = USER_STACK_START - PAGE_SIZE;
-        stack_guard_vma->vm_end = USER_STACK_START;
+        stack_guard_vma->vm_start = stack_start - PAGE_SIZE;
+        stack_guard_vma->vm_end = stack_start;
         stack_guard_vma->vm_flags |= VMA_ANON | VMA_STACK;
         stack_guard_vma->vm_type = VMA_TYPE_ANON;
         stack_guard_vma->vm_name = NULL;
@@ -1988,11 +2005,11 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
     }
 
     vma_t *stack_vma = vma_alloc();
-    region = vma_find_intersection(&self->mm->task_vma_mgr, USER_STACK_START,
-                                   USER_STACK_END);
+    region =
+        vma_find_intersection(&self->mm->task_vma_mgr, stack_start, stack_end);
     if (stack_vma) {
-        stack_vma->vm_start = USER_STACK_START;
-        stack_vma->vm_end = USER_STACK_END;
+        stack_vma->vm_start = stack_start;
+        stack_vma->vm_end = stack_end;
         stack_vma->vm_flags |= VMA_ANON | VMA_READ | VMA_WRITE | VMA_STACK;
         stack_vma->vm_type = VMA_TYPE_ANON;
         stack_vma->vm_name = strdup("[stack]");
@@ -2005,10 +2022,14 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
         }
     }
 
-    uint64_t stack = push_infos(
-        self, USER_STACK_END, (char **)new_argv, argv_count, (char **)new_envp,
-        envp_count, e_entry, phdr_vaddr, ehdr->e_phnum,
-        interpreter_entry ? INTERPRETER_BASE_ADDR : 0, path, &exec_creds);
+    uint64_t stack = 0;
+    if (!push_infos(self, stack_end, (char **)new_argv, argv_count,
+                    (char **)new_envp, envp_count, e_entry, phdr_vaddr,
+                    ehdr->e_phnum, interpreter_entry ? interpreter_base : 0,
+                    path, &exec_creds, &stack)) {
+        exec_fail_ret = (uint64_t)-EFAULT;
+        goto exec_fail_restore_mm;
+    }
 
     if (self->clone_flags & CLONE_FILES) {
         fd_info_t *old = task_fd_info_get(self);

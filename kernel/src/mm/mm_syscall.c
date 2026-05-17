@@ -60,10 +60,13 @@ static bool user_range_valid(uint64_t addr, uint64_t len) {
     return true;
 }
 
-static bool user_mmap_range_valid(uint64_t addr, uint64_t len) {
+static bool user_mmap_range_valid(task_mm_info_t *mm, uint64_t addr,
+                                  uint64_t len) {
     if (!user_range_valid(addr, len))
         return false;
     if (addr < USER_MMAP_START)
+        return false;
+    if (addr + len > task_mm_mmap_top(mm))
         return false;
     return true;
 }
@@ -396,38 +399,42 @@ static uint64_t find_unmapped_area_in_window(vma_manager_t *mgr,
     return best;
 }
 
-uint64_t find_unmapped_area(vma_manager_t *mgr, uint64_t hint, uint64_t len) {
+uint64_t find_unmapped_area(task_mm_info_t *mm, uint64_t hint, uint64_t len) {
+    if (!mm)
+        return (uint64_t)-ENOMEM;
+
+    vma_manager_t *mgr = &mm->task_vma_mgr;
+    uint64_t mmap_top = task_mm_mmap_top(mm);
     if (len == 0)
         return (uint64_t)-ENOMEM;
 
     len = PADDING_UP(len, PAGE_SIZE);
     if (len == 0)
         return (uint64_t)-ENOMEM;
-    if (len > USER_MMAP_END - USER_MMAP_START)
+    if (mmap_top <= USER_MMAP_START || len > mmap_top - USER_MMAP_START)
         return (uint64_t)-ENOMEM;
 
     if (hint) {
         hint = PADDING_DOWN(hint, PAGE_SIZE);
-        if (hint >= USER_MMAP_START && hint <= USER_MMAP_END - len) {
+        if (hint >= USER_MMAP_START && hint <= mmap_top - len) {
             if (!vma_find_intersection(mgr, hint, hint + len))
                 return hint;
 
-            uint64_t downward = find_unmapped_area_in_window(
-                mgr, USER_MMAP_START, hint + len, len);
-            if ((int64_t)downward >= 0)
-                return downward;
-
-            if (hint + len < USER_MMAP_END) {
-                uint64_t wrapped = find_unmapped_area_in_window(
-                    mgr, hint + len, USER_MMAP_END, len);
+            if (hint + len < mmap_top) {
+                uint64_t wrapped = find_unmapped_area_in_window(mgr, hint + len,
+                                                                mmap_top, len);
                 if ((int64_t)wrapped >= 0)
                     return wrapped;
             }
+
+            uint64_t downward =
+                find_unmapped_area_in_window(mgr, USER_MMAP_START, hint, len);
+            if ((int64_t)downward >= 0)
+                return downward;
         }
     }
 
-    return find_unmapped_area_in_window(mgr, USER_MMAP_START, USER_MMAP_END,
-                                        len);
+    return find_unmapped_area_in_window(mgr, USER_MMAP_START, mmap_top, len);
 }
 
 static bool range_fully_covered_locked(vma_manager_t *mgr, uint64_t start,
@@ -690,10 +697,11 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         return (uint64_t)-EINVAL;
     if ((flags & MAP_SYNC) && anonymous)
         return (uint64_t)-EINVAL;
-    if (aligned_len > USER_MMAP_END - USER_MMAP_START)
+    task_mm_info_t *mm_info = current_task->mm;
+    uint64_t mmap_top = task_mm_mmap_top(mm_info);
+    if (mmap_top <= USER_MMAP_START || aligned_len > mmap_top - USER_MMAP_START)
         return (uint64_t)-ENOMEM;
 
-    task_mm_info_t *mm_info = current_task->mm;
     fd_t *map_fd_ref = NULL;
     vfs_node_t *map_node = NULL;
     int access_ret = 0;
@@ -733,7 +741,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
             mmap_put_fd_ref(map_fd_ref);
             return (uint64_t)-EINVAL;
         }
-        if (!user_mmap_range_valid(addr, aligned_len)) {
+        if (!user_mmap_range_valid(mm_info, addr, aligned_len)) {
             spin_unlock(&mgr->lock);
             mmap_put_fd_ref(map_fd_ref);
             return (uint64_t)-ENOMEM;
@@ -756,10 +764,10 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         }
     } else {
         uint64_t hint = 0;
-        if (addr >= USER_MMAP_START && addr < USER_MMAP_END)
+        if (addr >= USER_MMAP_START && addr < mmap_top)
             hint = PADDING_DOWN(addr, PAGE_SIZE);
 
-        start_addr = find_unmapped_area(mgr, hint, aligned_len);
+        start_addr = find_unmapped_area(mm_info, hint, aligned_len);
         if ((int64_t)start_addr < 0) {
             spin_unlock(&mgr->lock);
             mmap_put_fd_ref(map_fd_ref);
@@ -1300,7 +1308,8 @@ static uint64_t mremap_shrink_locked(uint64_t old_addr, uint64_t old_size,
     return (int64_t)ret < 0 ? ret : old_addr;
 }
 
-static uint64_t mremap_expand_inplace_locked(vma_manager_t *mgr, vma_t *vma,
+static uint64_t mremap_expand_inplace_locked(task_mm_info_t *mm,
+                                             vma_manager_t *mgr, vma_t *vma,
                                              uint64_t old_addr,
                                              uint64_t old_size,
                                              uint64_t new_size) {
@@ -1310,7 +1319,7 @@ static uint64_t mremap_expand_inplace_locked(vma_manager_t *mgr, vma_t *vma,
 
     if (grow == 0)
         return old_addr;
-    if (!user_mmap_range_valid(old_addr, new_size))
+    if (!user_mmap_range_valid(mm, old_addr, new_size))
         return (uint64_t)-ENOMEM;
     if (check_address_space_limit(mgr, grow) != 0)
         return (uint64_t)-ENOMEM;
@@ -1344,14 +1353,14 @@ static uint64_t mremap_expand_inplace_locked(vma_manager_t *mgr, vma_t *vma,
     return old_addr;
 }
 
-static uint64_t mremap_move_locked(vma_manager_t *mgr, vma_t *old_vma,
-                                   uint64_t old_addr, uint64_t old_size,
-                                   uint64_t new_size, uint64_t flags,
-                                   uint64_t new_addr) {
+static uint64_t mremap_move_locked(task_mm_info_t *mm, vma_manager_t *mgr,
+                                   vma_t *old_vma, uint64_t old_addr,
+                                   uint64_t old_size, uint64_t new_size,
+                                   uint64_t flags, uint64_t new_addr) {
     uint64_t target = new_addr;
 
     if (flags & MREMAP_FIXED) {
-        if (!user_mmap_range_valid(target, new_size))
+        if (!user_mmap_range_valid(mm, target, new_size))
             return (uint64_t)-ENOMEM;
         if (ranges_overlap(old_addr, old_addr + old_size, target,
                            target + new_size))
@@ -1361,7 +1370,7 @@ static uint64_t mremap_move_locked(vma_manager_t *mgr, vma_t *old_vma,
         if ((int64_t)ret < 0)
             return ret;
     } else {
-        target = find_unmapped_area(mgr, 0, new_size);
+        target = find_unmapped_area(mm, 0, new_size);
         if ((int64_t)target < 0)
             return target;
     }
@@ -1384,7 +1393,6 @@ static uint64_t mremap_move_locked(vma_manager_t *mgr, vma_t *old_vma,
 
     uint64_t map_ret = mremap_map_new_region(new_vma, target, new_size);
     if ((int64_t)map_ret < 0) {
-        task_mm_info_t *mm = current_task->mm;
         spin_lock(&mm->lock);
         unmap_page_range_mm(mm, target, new_size);
         spin_unlock(&mm->lock);
@@ -1398,7 +1406,6 @@ static uint64_t mremap_move_locked(vma_manager_t *mgr, vma_t *old_vma,
         if (copy_len > 0) {
             prepare_copy_target(new_vma, target, copy_len);
             if (copy_user_range_mapped(target, old_addr, copy_len) != 0) {
-                task_mm_info_t *mm = current_task->mm;
                 spin_lock(&mm->lock);
                 unmap_page_range_mm(mm, target, new_size);
                 spin_unlock(&mm->lock);
@@ -1440,20 +1447,23 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
     if (!user_range_valid(old_addr_aligned, old_size_aligned) ||
         !user_range_valid(old_addr_aligned, new_size_aligned))
         return (uint64_t)-EFAULT;
-    if (new_size_aligned > USER_MMAP_END - USER_MMAP_START)
+    task_mm_info_t *mm = current_task->mm;
+    uint64_t mmap_top = task_mm_mmap_top(mm);
+    if (mmap_top <= USER_MMAP_START ||
+        new_size_aligned > mmap_top - USER_MMAP_START)
         return (uint64_t)-ENOMEM;
     if ((flags & MREMAP_FIXED) && (!(flags & MREMAP_MAYMOVE) || new_addr == 0 ||
                                    new_addr != new_addr_aligned))
         return (uint64_t)-EINVAL;
     if ((flags & MREMAP_FIXED) &&
-        !user_mmap_range_valid(new_addr_aligned, new_size_aligned))
+        !user_mmap_range_valid(mm, new_addr_aligned, new_size_aligned))
         return (uint64_t)-ENOMEM;
     if ((flags & MREMAP_DONTUNMAP) && !(flags & MREMAP_MAYMOVE))
         return (uint64_t)-EINVAL;
     if ((flags & MREMAP_DONTUNMAP) && old_size_aligned != new_size_aligned)
         return (uint64_t)-EINVAL;
 
-    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+    vma_manager_t *mgr = &mm->task_vma_mgr;
     bool shrink_inplace = !(flags & MREMAP_FIXED) &&
                           !(flags & MREMAP_DONTUNMAP) &&
                           new_size_aligned < old_size_aligned;
@@ -1497,10 +1507,11 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
 
         if (!(flags & MREMAP_FIXED) && new_size_aligned > old_size_aligned &&
             !(flags & MREMAP_DONTUNMAP)) {
-            ret = mremap_expand_inplace_locked(
-                mgr, vma, old_addr_aligned, old_size_aligned, new_size_aligned);
+            ret = mremap_expand_inplace_locked(mm, mgr, vma, old_addr_aligned,
+                                               old_size_aligned,
+                                               new_size_aligned);
             if ((int64_t)ret == -ENOMEM && (flags & MREMAP_MAYMOVE)) {
-                ret = mremap_move_locked(mgr, vma, old_addr_aligned,
+                ret = mremap_move_locked(mm, mgr, vma, old_addr_aligned,
                                          old_size_aligned, new_size_aligned,
                                          flags, new_addr_aligned);
             }
@@ -1509,9 +1520,9 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
                 spin_unlock(&mgr->lock);
                 return (uint64_t)-ENOMEM;
             }
-            ret =
-                mremap_move_locked(mgr, vma, old_addr_aligned, old_size_aligned,
-                                   new_size_aligned, flags, new_addr_aligned);
+            ret = mremap_move_locked(mm, mgr, vma, old_addr_aligned,
+                                     old_size_aligned, new_size_aligned, flags,
+                                     new_addr_aligned);
         }
     }
 

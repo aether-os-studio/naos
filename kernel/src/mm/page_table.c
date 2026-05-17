@@ -447,9 +447,15 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
     spin_unlock(&mgr->lock);
 
     new_mm->task_vma_mgr.initialized = mgr->initialized;
+    new_mm->mmap_top = old->mmap_top;
+    new_mm->signal_trampoline_start = old->signal_trampoline_start;
+    new_mm->pie_base = old->pie_base;
+    new_mm->interpreter_base = old->interpreter_base;
     new_mm->brk_start = old->brk_start;
     new_mm->brk_current = old->brk_current;
     new_mm->brk_end = old->brk_end;
+    new_mm->stack_start = old->stack_start;
+    new_mm->stack_end = old->stack_end;
 
     return new_mm;
 }

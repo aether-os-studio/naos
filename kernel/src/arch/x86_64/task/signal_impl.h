@@ -317,7 +317,7 @@ static bool signal_x64_setup_frame(task_t *task, struct pt_regs *regs, int sig,
 
     void *frame_restorer = (void *)action->sa_restorer;
     if (use_kernel_restorer)
-        frame_restorer = (void *)USER_SIGNAL_TRAMPOLINE_START;
+        frame_restorer = (void *)task_mm_signal_trampoline_start(task->mm);
     if (!signal_x64_copy_fpstate_to_user(task, layout.fpstate_addr,
                                          layout.fpstate_bytes)) {
         return false;
@@ -396,8 +396,6 @@ static uint64_t signal_arch_sigreturn(struct pt_regs *regs) {
     spin_unlock(&self->signal->sighand->siglock);
 
     regs->rflags |= (1ULL << 9);
-    regs->r11 = regs->rflags;
-    regs->rcx = regs->rip;
 
     return regs->rax;
 }

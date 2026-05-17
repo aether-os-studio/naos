@@ -341,13 +341,13 @@ void syscall_handler_init() {
     //     (syscall_handle_t)sys_sched_get_priority_min;
     // syscall_handlers[SYS_SCHED_RR_GET_INTERVAL] =
     //     (syscall_handle_t)sys_sched_rr_get_interval;
-    // syscall_handlers[SYS_MLOCK] = (syscall_handle_t)sys_mlock;
-    // syscall_handlers[SYS_MUNLOCK] = (syscall_handle_t)sys_munlock;
-    // syscall_handlers[SYS_MLOCKALL] = (syscall_handle_t)sys_mlockall;
-    // syscall_handlers[SYS_MUNLOCKALL] = (syscall_handle_t)sys_munlockall;
+    syscall_handlers[SYS_MLOCK] = (syscall_handle_t)sys_mlock;
+    syscall_handlers[SYS_MUNLOCK] = (syscall_handle_t)sys_munlock;
+    syscall_handlers[SYS_MLOCKALL] = (syscall_handle_t)sys_mlockall;
+    syscall_handlers[SYS_MUNLOCKALL] = (syscall_handle_t)sys_munlockall;
     // syscall_handlers[SYS_VHANGUP] = (syscall_handle_t)sys_vhangup;
     // syscall_handlers[SYS_MODIFY_LDT] = (syscall_handle_t)sys_modify_ldt;
-    // syscall_handlers[SYS_PIVOT_ROOT] = (syscall_handle_t)sys_pivot_root;
+    syscall_handlers[SYS_PIVOT_ROOT] = (syscall_handle_t)sys_pivot_root;
     // syscall_handlers[SYS__SYSCTL] = (syscall_handle_t)sys__sysctl;
     syscall_handlers[SYS_PRCTL] = (syscall_handle_t)sys_prctl;
     // syscall_handlers[SYS_ADJTIMEX] = (syscall_handle_t)sys_adjtimex;

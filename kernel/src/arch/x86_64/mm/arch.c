@@ -7,6 +7,8 @@
 
 uint64_t arch_page_table_levels() { return ARCH_MAX_PT_LEVEL; }
 
+uint64_t arch_user_va_limit(void) { return 0x00007fffffffffffULL; }
+
 uint64_t *get_current_page_dir(bool user) {
     uint64_t page_table_base = 0;
     (void)user;

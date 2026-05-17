@@ -990,6 +990,8 @@ done:
     if (self && self->signal && self->signal->signal != 0)
         task_signal(regs);
 
-    regs->rcx = regs->rip;
-    regs->r11 = regs->rflags;
+    if (idx != SYS_RT_SIGRETURN) {
+        regs->rcx = regs->rip;
+        regs->r11 = regs->rflags;
+    }
 }

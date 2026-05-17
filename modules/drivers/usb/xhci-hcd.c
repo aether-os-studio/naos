@@ -289,7 +289,7 @@ static uint32_t xhci_trb_status(uint32_t xferlen, uint16_t intr_target) {
 }
 
 static uint64_t xhci_virt_to_phys(const void *ptr) {
-    return translate_address(get_current_page_dir(false), (uint64_t)ptr);
+    return kernel_virt_to_phys(ptr);
 }
 
 static int xhci_alloc_ring(struct xhci_ring *ring) {
@@ -871,7 +871,7 @@ xhci_alloc_pipe(usb_device_t *usbdev, usb_endpoint_descriptor_t *epdesc,
     ep->deq_low = deq;
     ep->deq_high = deq >> 32;
     ep->deq_low |= 1;
-    ep->length = pipe->pipe.maxpacket;
+    uint16_t max_esit_payload = 0;
     uint16_t avg_trb_length = 3072;
     if (eptype == USB_ENDPOINT_XFER_CONTROL)
         avg_trb_length = 8;
@@ -879,7 +879,9 @@ xhci_alloc_pipe(usb_device_t *usbdev, usb_endpoint_descriptor_t *epdesc,
         avg_trb_length = pipe->pipe.maxpacket;
     else if (eptype == USB_ENDPOINT_XFER_INT)
         avg_trb_length = 1024;
-    ep->length |= avg_trb_length;
+    if (eptype == USB_ENDPOINT_XFER_ISOC || eptype == USB_ENDPOINT_XFER_INT)
+        max_esit_payload = pipe->pipe.maxpacket;
+    ep->length = avg_trb_length | ((uint32_t)max_esit_payload << 16);
 
     if (pipe->epid == 1) {
         if (usbdev->hub->usbdev && !usbdev->hub->usbdev->is_root_hub &&

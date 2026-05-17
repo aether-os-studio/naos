@@ -6,11 +6,21 @@
 
 #define FIONBIO_INTERNAL_DISABLE ((ssize_t) - 1)
 #define FIONBIO_INTERNAL_ENABLE ((ssize_t) - 2)
+#define SIOCGIFCONF 0x8912
+#define SIOCGIFFLAGS 0x8913
+#define SIOCGIFBRDADDR 0x8919
+#define SIOCGIFNETMASK 0x891B
+#define SIOCGIFMTU 0x8921
+#define SIOCGIFHWADDR 0x8927
 #define SIOCGIFINDEX 0x8933
 #define SIOCGIWNAME 0x8B01
 #define SIOCGIWMODE 0x8B07
 #define SIOCGIWAP 0x8B15
 #define SIOCGIWESSID 0x8B1B
+#define IFF_UP 0x1
+#define IFF_BROADCAST 0x2
+#define IFF_RUNNING 0x40
+#define IFF_MULTICAST 0x1000
 #define IW_MODE_INFRA 2
 #ifndef ARPHRD_ETHER
 #define ARPHRD_ETHER 1
@@ -34,20 +44,46 @@ typedef struct naos_iwreq {
     } u;
 } naos_iwreq_t;
 
+typedef struct naos_ifmap {
+    unsigned long mem_start;
+    unsigned long mem_end;
+    unsigned short base_addr;
+    unsigned char irq;
+    unsigned char dma;
+    unsigned char port;
+} naos_ifmap_t;
+
 typedef struct naos_ifreq {
     char ifr_name[IFNAMSIZ];
     union {
         struct sockaddr ifru_addr;
+        struct sockaddr ifru_dstaddr;
+        struct sockaddr ifru_broadaddr;
+        struct sockaddr ifru_netmask;
         struct sockaddr ifru_hwaddr;
         short ifru_flags;
         int ifru_ifindex;
         int ifru_metric;
         int ifru_mtu;
+        naos_ifmap_t ifru_map;
         char ifru_slave[IFNAMSIZ];
         char ifru_newname[IFNAMSIZ];
         void *ifru_data;
     } ifr_ifru;
 } naos_ifreq_t;
+
+typedef struct naos_ifconf {
+    int ifc_len;
+    union {
+        void *ifcu_buf;
+        naos_ifreq_t *ifcu_req;
+    } ifc_ifcu;
+} naos_ifconf_t;
+
+_Static_assert(sizeof(naos_ifreq_t) == 40,
+               "x86_64 Linux ifreq ABI size must be 40 bytes");
+_Static_assert(sizeof(naos_ifconf_t) == 16,
+               "x86_64 Linux ifconf ABI size must be 16 bytes");
 
 extern int err_to_errno(err_t err);
 
@@ -64,6 +100,159 @@ static int lwip_errno_from_err(err_t err) {
         return 0;
     }
     return -err_to_errno(err);
+}
+
+static void lwip_socket_netif_name(const struct netif *netif, char *name) {
+    if (!name) {
+        return;
+    }
+
+    memset(name, 0, IFNAMSIZ);
+    if (!netif) {
+        return;
+    }
+
+    snprintf(name, IFNAMSIZ, "%c%c%u", netif->name[0], netif->name[1],
+             (unsigned int)netif->num);
+}
+
+static void lwip_socket_fill_ipv4_ifreq(naos_ifreq_t *req,
+                                        const struct netif *netif) {
+    struct sockaddr_in *addr = NULL;
+
+    if (!req || !netif) {
+        return;
+    }
+
+    memset(req, 0, sizeof(*req));
+    lwip_socket_netif_name(netif, req->ifr_name);
+
+    addr = (struct sockaddr_in *)&req->ifr_ifru.ifru_addr;
+    addr->sin_family = AF_INET;
+    addr->sin_addr.s_addr = ip4_addr_get_u32(netif_ip4_addr(netif));
+}
+
+static int lwip_socket_ioctl_ifconf(ssize_t arg) {
+    naos_ifconf_t ifc;
+    naos_ifreq_t entries[MAX_NETDEV_NUM];
+    int out_len = 0;
+    struct netif *netif = NULL;
+    size_t capacity = 0;
+    size_t needed = 0;
+    size_t copied = 0;
+    size_t count = 0;
+    void *user_buf = NULL;
+
+    if (!arg || copy_from_user(&ifc, (const void *)arg, sizeof(ifc))) {
+        return -EFAULT;
+    }
+
+    user_buf = ifc.ifc_ifcu.ifcu_buf;
+    if (user_buf) {
+        if (ifc.ifc_len < 0) {
+            return -EINVAL;
+        }
+        capacity = (size_t)ifc.ifc_len;
+    }
+
+    LOCK_TCPIP_CORE();
+    NETIF_FOREACH(netif) {
+#if LWIP_IPV4
+        if (ip4_addr_isany_val(*netif_ip4_addr(netif))) {
+            continue;
+        }
+
+        needed += sizeof(naos_ifreq_t);
+        if (count < MAX_NETDEV_NUM) {
+            lwip_socket_fill_ipv4_ifreq(&entries[count], netif);
+            count++;
+        }
+#endif
+    }
+    UNLOCK_TCPIP_CORE();
+
+    if (!user_buf) {
+        out_len = (int)needed;
+        return copy_to_user((void *)arg, &out_len, sizeof(out_len)) ? -EFAULT
+                                                                    : 0;
+    }
+
+    while (copied + sizeof(naos_ifreq_t) <= capacity &&
+           copied / sizeof(naos_ifreq_t) < count) {
+        naos_ifreq_t *req = &entries[copied / sizeof(naos_ifreq_t)];
+        if (copy_to_user((uint8_t *)user_buf + copied, req, sizeof(*req))) {
+            return -EFAULT;
+        }
+        copied += sizeof(*req);
+    }
+
+    out_len = (int)copied;
+    if (copy_to_user((void *)arg, &out_len, sizeof(out_len))) {
+        return -EFAULT;
+    }
+
+    return 0;
+}
+
+static int lwip_socket_ioctl_ifreq(ssize_t cmd, ssize_t arg) {
+    naos_ifreq_t req;
+    netdev_t *dev = NULL;
+    netdev_ipv4_info_t ipv4;
+
+    if (!arg || copy_from_user(&req, (const void *)arg, sizeof(req))) {
+        return -EFAULT;
+    }
+
+    req.ifr_name[IFNAMSIZ - 1] = '\0';
+    dev = netdev_get_by_name(req.ifr_name);
+    if (!dev) {
+        return -ENODEV;
+    }
+
+    memset(&ipv4, 0, sizeof(ipv4));
+    netdev_get_ipv4_info(dev, &ipv4);
+
+    if (cmd == SIOCGIFFLAGS) {
+        short flags = IFF_BROADCAST | IFF_MULTICAST;
+        if (netdev_admin_is_up(dev)) {
+            flags |= IFF_UP;
+        }
+        if (netdev_link_is_up(dev)) {
+            flags |= IFF_RUNNING;
+        }
+        req.ifr_ifru.ifru_flags = flags;
+    } else if (cmd == SIOCGIFNETMASK) {
+        struct sockaddr_in *addr =
+            (struct sockaddr_in *)&req.ifr_ifru.ifru_addr;
+        memset(addr, 0, sizeof(*addr));
+        addr->sin_family = AF_INET;
+        addr->sin_addr.s_addr = ipv4.present ? ipv4.netmask : 0;
+    } else if (cmd == SIOCGIFBRDADDR) {
+        struct sockaddr_in *addr =
+            (struct sockaddr_in *)&req.ifr_ifru.ifru_addr;
+        memset(addr, 0, sizeof(*addr));
+        addr->sin_family = AF_INET;
+        if (ipv4.present) {
+            addr->sin_addr.s_addr = ipv4.address | ~ipv4.netmask;
+        }
+    } else if (cmd == SIOCGIFMTU) {
+        req.ifr_ifru.ifru_mtu = (int)dev->mtu;
+    } else if (cmd == SIOCGIFHWADDR) {
+        memset(&req.ifr_ifru.ifru_hwaddr, 0, sizeof(req.ifr_ifru.ifru_hwaddr));
+        req.ifr_ifru.ifru_hwaddr.sa_family = ARPHRD_ETHER;
+        memcpy(req.ifr_ifru.ifru_hwaddr.sa_data, dev->mac, sizeof(dev->mac));
+    } else {
+        netdev_put(dev);
+        return -ENOTTY;
+    }
+
+    netdev_put(dev);
+
+    if (copy_to_user((void *)arg, &req, sizeof(req))) {
+        return -EFAULT;
+    }
+
+    return 0;
 }
 
 static inline bool lwip_socket_is_tcp(const lwip_socket_state_t *sock) {
@@ -2115,6 +2304,15 @@ static int lwip_socket_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
 
         netconn_set_nonblocking(sock->conn, value ? 1 : 0);
         return 0;
+    }
+
+    if (cmd == SIOCGIFCONF) {
+        return lwip_socket_ioctl_ifconf(arg);
+    }
+
+    if (cmd == SIOCGIFFLAGS || cmd == SIOCGIFBRDADDR || cmd == SIOCGIFNETMASK ||
+        cmd == SIOCGIFMTU || cmd == SIOCGIFHWADDR) {
+        return lwip_socket_ioctl_ifreq(cmd, arg);
     }
 
     if (cmd == SIOCGIFINDEX) {

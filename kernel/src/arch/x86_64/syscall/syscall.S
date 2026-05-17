@@ -36,6 +36,9 @@ ENTRY(syscall_handler_asm)
 
     call syscall_handler
 
+    cmpq $15, 0x78(%rsp)
+    je ret_from_exception
+
 ENTRY(ret_from_syscall)
     cli
 

@@ -266,11 +266,12 @@ static void memfd_zap_mappings(vfs_node_t *node, uint64_t file_start,
 
         task_mm_info_t *mm = task->mm;
         vma_manager_t *mgr = &mm->task_vma_mgr;
+        uint64_t mmap_top = task_mm_mmap_top(mm);
 
         spin_lock(&mgr->lock);
         uint64_t cursor = USER_MMAP_START;
-        while (cursor < USER_MMAP_END) {
-            vma_t *vma = vma_find_intersection(mgr, cursor, USER_MMAP_END);
+        while (cursor < mmap_top) {
+            vma_t *vma = vma_find_intersection(mgr, cursor, mmap_top);
             if (!vma)
                 break;
 

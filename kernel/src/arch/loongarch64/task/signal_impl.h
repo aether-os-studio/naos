@@ -333,7 +333,7 @@ static bool signal_loongarch64_setup_frame(task_t *task, struct pt_regs *regs,
 
     *regs = saved;
     regs->pc = (uint64_t)action->sa_handler;
-    regs->ra = USER_SIGNAL_TRAMPOLINE_START;
+    regs->ra = task_mm_signal_trampoline_start(task->mm);
     regs->sp = frame_addr;
     regs->usp = frame_addr;
     regs->a0 = sig;

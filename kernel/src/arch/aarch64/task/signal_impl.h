@@ -328,7 +328,7 @@ static bool signal_aarch64_setup_frame(task_t *task, struct pt_regs *regs,
         regs->x2 = frame_addr + offsetof(signal_aarch64_frame_t, ucontext);
     }
     regs->x29 = frame_record_addr;
-    regs->x30 = use_kernel_restorer ? USER_SIGNAL_TRAMPOLINE_START
+    regs->x30 = use_kernel_restorer ? task_mm_signal_trampoline_start(task->mm)
                                     : (uint64_t)action->sa_restorer;
     regs->cpsr = 0x80000300;
 
