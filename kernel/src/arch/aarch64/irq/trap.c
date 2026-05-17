@@ -109,6 +109,28 @@ static int aarch64_fault_si_code(uint32_t iss) {
     }
 }
 
+static bool aarch64_should_deliver_user_sigsegv(task_t *task) {
+    return task && task->signal && task->signal->sighand &&
+           task->signal->sighand->actions[SIGSEGV].sa_handler != NULL &&
+           ((task->signal->blocked & SIGMASK(SIGSEGV)) == 0);
+}
+
+static bool aarch64_deliver_user_sigsegv(struct pt_regs *frame,
+                                         uint64_t fault_addr, int si_code) {
+    if (!aarch64_user_mode_frame(frame) || !current_task)
+        return false;
+
+    siginfo_t info;
+    memset(&info, 0, sizeof(info));
+    info.si_signo = SIGSEGV;
+    info.si_code = si_code;
+    info._sifields._sigfault._addr = (void *)fault_addr;
+
+    task_commit_signal(current_task, SIGSEGV, &info);
+    task_signal(frame);
+    return true;
+}
+
 int lookup_kallsyms(uint64_t addr, int level) {
     printk("function:<unknown>() \t(+) 0000 address:%#018lx\n", addr);
     return 0;
@@ -535,16 +557,11 @@ void handle_exception(struct pt_regs *frame) {
             aarch64_handle_signal_on_user_return(frame);
             return;
         } else if (result == PF_RES_SEGF) {
-            // if (aarch64_user_mode_frame(frame) && current_task) {
-            //     siginfo_t info;
-            //     memset(&info, 0, sizeof(info));
-            //     info.si_signo = SIGSEGV;
-            //     info.si_code = aarch64_fault_si_code((uint32_t)esr);
-            //     info._sifields._sigfault._addr = (void *)fault_addr;
-            //     task_commit_signal(current_task, SIGSEGV, &info);
-            //     task_signal(frame);
-            //     return;
-            // }
+            if (aarch64_should_deliver_user_sigsegv(current_task) &&
+                aarch64_deliver_user_sigsegv(frame, fault_addr,
+                                             aarch64_fault_si_code(iss))) {
+                return;
+            }
 
             printk("fault_addr = %p, fault_flags = %#018x\n", fault_addr,
                    fault_flags);

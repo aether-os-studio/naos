@@ -1,3 +1,4 @@
+#include <limine.h>
 #include <arch/arch.h>
 #include <boot/boot.h>
 #include <mm/mm.h>
@@ -21,7 +22,18 @@ extern bool task_initialized;
 
 void loongarch64_ap_entry(uint64_t physid);
 
-void smp_init() { boot_smp_init((uintptr_t)loongarch64_ap_entry); }
+void limine_loongarch64_ap_stub(struct limine_mp_info *mp_info) {
+    loongarch64_ap_entry(mp_info->phys_id);
+}
+
+void smp_init() {
+#ifdef CONFIG_BOOT_LABOOT
+    boot_smp_init((uintptr_t)loongarch64_ap_entry);
+#endif
+#ifdef CONFIG_BOOT_LIMINE
+    boot_smp_init((uintptr_t)limine_loongarch64_ap_stub);
+#endif
+}
 
 void loongarch64_ap_entry(uint64_t physid) {
     arch_disable_interrupt();

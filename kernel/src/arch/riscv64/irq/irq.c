@@ -4,6 +4,7 @@
 #include <mod/dlinker.h>
 #include <irq/irq_manager.h>
 #include <mm/fault.h>
+#include <mm/vma.h>
 #include <task/signal.h>
 #include <task/task.h>
 
@@ -26,6 +27,8 @@ extern void do_irq(struct pt_regs *regs, uint64_t irq_num);
 #define RISCV_TRACEBACK_MAX_DEPTH 32
 #define RISCV_SSTATUS_SPP (1UL << 8)
 #define RISCV_SSTATUS_SUM (1UL << 18)
+#define SEGV_MAPERR 1
+#define SEGV_ACCERR 2
 
 void arch_enable_interrupt() {
     asm volatile("csrsi sstatus, 0x2" ::: "memory");
@@ -84,6 +87,41 @@ static uint64_t riscv_fault_flags(const struct pt_regs *regs) {
     default:
         return flags | PF_ACCESS_READ;
     }
+}
+
+static int riscv_fault_si_code(uint64_t fault_addr) {
+    if (current_task && current_task->mm) {
+        vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+        spin_lock(&mgr->lock);
+        vma_t *vma = vma_find(mgr, fault_addr);
+        spin_unlock(&mgr->lock);
+        if (vma)
+            return SEGV_ACCERR;
+    }
+
+    return SEGV_MAPERR;
+}
+
+static bool riscv_should_deliver_user_sigsegv(task_t *task) {
+    return task && task->signal && task->signal->sighand &&
+           task->signal->sighand->actions[SIGSEGV].sa_handler != NULL &&
+           ((task->signal->blocked & SIGMASK(SIGSEGV)) == 0);
+}
+
+static bool riscv_deliver_user_sigsegv(struct pt_regs *regs,
+                                       uint64_t fault_addr, int si_code) {
+    if (!riscv_user_mode_frame(regs) || !current_task)
+        return false;
+
+    siginfo_t info;
+    memset(&info, 0, sizeof(info));
+    info.si_signo = SIGSEGV;
+    info.si_code = si_code;
+    info._sifields._sigfault._addr = (void *)fault_addr;
+
+    task_commit_signal(current_task, SIGSEGV, &info);
+    task_signal(regs);
+    return true;
 }
 
 static int riscv_lookup_kallsyms(uint64_t addr, int level) {
@@ -267,6 +305,13 @@ static void riscv_handle_page_fault(struct pt_regs *regs) {
         current_task, regs->stval, riscv_fault_flags(regs));
     if (result == PF_RES_OK)
         return;
+
+    if (result == PF_RES_SEGF &&
+        riscv_should_deliver_user_sigsegv(current_task) &&
+        riscv_deliver_user_sigsegv(regs, regs->stval,
+                                   riscv_fault_si_code(regs->stval))) {
+        return;
+    }
 
     printk(
         "RISC-V page fault unresolved: result=%d stval=%#018lx flags=%#018lx\n",

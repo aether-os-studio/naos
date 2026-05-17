@@ -12,6 +12,9 @@
 extern void loongarch64_trap_entry();
 extern void do_irq(struct pt_regs *regs, uint64_t irq_num);
 
+#define SEGV_MAPERR 1
+#define SEGV_ACCERR 2
+
 void arch_enable_interrupt() { csr_set(LOONGARCH_CSR_CRMD, LOONGARCH_CRMD_IE); }
 void arch_disable_interrupt() {
     csr_clear(LOONGARCH_CSR_CRMD, LOONGARCH_CRMD_IE);
@@ -124,6 +127,41 @@ static uint64_t loongarch64_fault_flags(const struct pt_regs *regs,
     }
 }
 
+static int loongarch64_fault_si_code(uint64_t fault_addr) {
+    if (current_task && current_task->mm) {
+        vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+        spin_lock(&mgr->lock);
+        vma_t *vma = vma_find(mgr, fault_addr);
+        spin_unlock(&mgr->lock);
+        if (vma)
+            return SEGV_ACCERR;
+    }
+
+    return SEGV_MAPERR;
+}
+
+static bool loongarch64_should_deliver_user_sigsegv(task_t *task) {
+    return task && task->signal && task->signal->sighand &&
+           task->signal->sighand->actions[SIGSEGV].sa_handler != NULL &&
+           ((task->signal->blocked & SIGMASK(SIGSEGV)) == 0);
+}
+
+static bool loongarch64_deliver_user_sigsegv(struct pt_regs *regs,
+                                             uint64_t fault_addr, int si_code) {
+    if (!loongarch64_user_mode_frame(regs) || !current_task)
+        return false;
+
+    siginfo_t info;
+    memset(&info, 0, sizeof(info));
+    info.si_signo = SIGSEGV;
+    info.si_code = si_code;
+    info._sifields._sigfault._addr = (void *)fault_addr;
+
+    task_commit_signal(current_task, SIGSEGV, &info);
+    task_signal(regs);
+    return true;
+}
+
 static void loongarch64_handle_page_fault(struct pt_regs *regs,
                                           uint64_t ecode) {
     if (!current_task) {
@@ -137,6 +175,13 @@ static void loongarch64_handle_page_fault(struct pt_regs *regs,
 
     if (result == PF_RES_OK)
         return;
+
+    if (result == PF_RES_SEGF &&
+        loongarch64_should_deliver_user_sigsegv(current_task) &&
+        loongarch64_deliver_user_sigsegv(
+            regs, fault_addr, loongarch64_fault_si_code(fault_addr))) {
+        return;
+    }
 
     printk("LoongArch page fault unresolved: result=%d ecode=%#lx "
            "badv=%#018lx era=%#018lx flags=%#018lx\n",
