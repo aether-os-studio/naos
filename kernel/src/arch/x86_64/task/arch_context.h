@@ -171,7 +171,6 @@ void arch_context_save_interrupt_state(arch_context_t *context, bool enabled);
 task_t *arch_get_current();
 void arch_set_current(task_t *current);
 
-void arch_task_switch_to(struct pt_regs *ctx, task_t *prev, task_t *next);
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
                                uint64_t stack);
 void arch_to_user_mode(arch_context_t *context, uint64_t entry, uint64_t stack);

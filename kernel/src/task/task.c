@@ -1842,7 +1842,7 @@ int task_kill_process_group(int pgid, int sig) {
     return sent;
 }
 
-void schedule(uint64_t sched_flags) {
+NO_OPT void schedule(uint64_t sched_flags) {
     jiffies = (unsigned long)(nano_time() / (1000000000ULL / SCHED_HZ));
 
     bool state = arch_interrupt_enabled();

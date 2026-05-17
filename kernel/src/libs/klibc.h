@@ -11,6 +11,14 @@
 
 #include "endian.h"
 
+#if defined(__clang__)
+#define NO_OPT __attribute__((optnone))
+#elif defined(__GNUC__)
+#define NO_OPT __attribute__((optimize("O0")))
+#else
+#define NO_OPT
+#endif
+
 #define _IOC_NRBITS 8
 #define _IOC_TYPEBITS 8
 
