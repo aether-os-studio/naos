@@ -464,74 +464,6 @@ static inline int rw_validate_user_buffer(const void *buf, uint64_t len) {
     return 0;
 }
 
-static uint64_t vfs_read_to_user(struct vfs_file *file, void *buf, uint64_t len,
-                                 loff_t *pos) {
-    uint8_t bounce[PAGE_SIZE];
-    uint64_t copied = 0;
-
-    while (copied < len) {
-        size_t chunk = MIN(len - copied, sizeof(bounce));
-        loff_t local_pos;
-        loff_t *read_pos = NULL;
-        ssize_t ret;
-
-        if (pos) {
-            local_pos = *pos;
-            read_pos = &local_pos;
-        }
-
-        ret = vfs_read_file(file, bounce, chunk, read_pos);
-        if (ret <= 0)
-            return copied ? copied : (uint64_t)ret;
-
-        if (copy_to_user((uint8_t *)buf + copied, bounce, (size_t)ret))
-            return copied ? copied : (uint64_t)-EFAULT;
-
-        if (pos)
-            *pos = local_pos;
-        copied += (uint64_t)ret;
-
-        if ((size_t)ret < chunk)
-            break;
-    }
-
-    return copied;
-}
-
-static uint64_t vfs_write_from_user(struct vfs_file *file, const void *buf,
-                                    uint64_t len, loff_t *pos) {
-    uint8_t bounce[PAGE_SIZE];
-    uint64_t copied = 0;
-
-    while (copied < len) {
-        size_t chunk = MIN(len - copied, sizeof(bounce));
-        loff_t local_pos;
-        loff_t *write_pos = NULL;
-        ssize_t ret;
-
-        if (copy_from_user(bounce, (const uint8_t *)buf + copied, chunk))
-            return copied ? copied : (uint64_t)-EFAULT;
-
-        if (pos) {
-            local_pos = *pos;
-            write_pos = &local_pos;
-        }
-
-        ret = vfs_write_file(file, bounce, chunk, write_pos);
-        if (ret <= 0)
-            return copied ? copied : (uint64_t)ret;
-
-        if (pos)
-            *pos = local_pos;
-        copied += (uint64_t)ret;
-
-        if ((size_t)ret < chunk)
-            break;
-    }
-
-    return copied;
-}
-
 static uint64_t rw_validate_iovecs(const struct iovec *kiov, uint64_t count) {
     if (!kiov && count)
         return (uint64_t)-EFAULT;
@@ -1727,7 +1659,7 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {
         vfs_file_put(file);
         return (uint64_t)-EISDIR;
     }
-    ret = (ssize_t)vfs_read_to_user(file, buf, len, NULL);
+    ret = (ssize_t)vfs_read_file(file, buf, len, NULL);
     vfs_file_put(file);
     return ret;
 }
@@ -1747,7 +1679,7 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
         vfs_file_put(file);
         return (uint64_t)-EISDIR;
     }
-    ret = (ssize_t)vfs_write_from_user(file, buf, len, NULL);
+    ret = (ssize_t)vfs_write_file(file, buf, len, NULL);
     vfs_file_put(file);
     return ret;
 }
@@ -1771,7 +1703,7 @@ uint64_t sys_pread64(int fd, void *buf, size_t len, uint64_t offset) {
         vfs_file_put(file);
         return (uint64_t)-EISDIR;
     }
-    ret = (ssize_t)vfs_read_to_user(file, buf, len, &pos);
+    ret = (ssize_t)vfs_read_file(file, buf, len, &pos);
     vfs_file_put(file);
     return (uint64_t)ret;
 }
@@ -1795,7 +1727,7 @@ uint64_t sys_pwrite64(int fd, const void *buf, size_t len, uint64_t offset) {
         vfs_file_put(file);
         return (uint64_t)-EISDIR;
     }
-    ret = (ssize_t)vfs_write_from_user(file, buf, len, &pos);
+    ret = (ssize_t)vfs_write_file(file, buf, len, &pos);
     vfs_file_put(file);
     return (uint64_t)ret;
 }
@@ -2071,8 +2003,8 @@ uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
         if (kiov[i].iov_base == NULL)
             continue;
 
-        ssize_t ret = (ssize_t)vfs_read_to_user(file, kiov[i].iov_base,
-                                                kiov[i].len, NULL);
+        ssize_t ret =
+            (ssize_t)vfs_read_file(file, kiov[i].iov_base, kiov[i].len, NULL);
         if (ret < 0) {
             if (total_read > 0 &&
                 (ret == -EAGAIN || ret == -EWOULDBLOCK || ret == -EINTR)) {
@@ -2135,8 +2067,8 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count) {
         if (kiov[i].iov_base == NULL)
             continue;
 
-        ssize_t ret = (ssize_t)vfs_write_from_user(file, kiov[i].iov_base,
-                                                   kiov[i].len, NULL);
+        ssize_t ret =
+            (ssize_t)vfs_write_file(file, kiov[i].iov_base, kiov[i].len, NULL);
         if (ret < 0) {
             if (total_written > 0 &&
                 (ret == -EAGAIN || ret == -EWOULDBLOCK || ret == -EINTR)) {
