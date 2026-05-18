@@ -8,6 +8,7 @@
 #include <mm/page_table.h>
 
 #define ARCH_PT_FLAG_VALID ((uint64_t)1 << 0)
+#define ARCH_PT_FLAG_PRESENT ARCH_PT_FLAG_VALID
 #define ARCH_PT_FLAG_TABLE ((uint64_t)1 << 1)
 #define ARCH_PT_FLAG_4K_PAGE ((uint64_t)1 << 1)
 #define ARCH_PT_FLAG_BLOCK ((uint64_t)0 << 1)

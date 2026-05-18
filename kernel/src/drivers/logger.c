@@ -215,8 +215,7 @@ ssize_t logger_kmsg_poll(int events) {
     return revents;
 }
 
-ssize_t logger_kmsg_read(fd_t *file, void *buf_user, size_t len,
-                         uint64_t flags) {
+ssize_t logger_kmsg_read(fd_t *file, void *buf, size_t len, uint64_t flags) {
     kmsg_record_t record;
     char text[KMSG_MAX_RECORD_TEXT + 1];
     char header[96];
@@ -226,7 +225,7 @@ ssize_t logger_kmsg_read(fd_t *file, void *buf_user, size_t len,
     uint64_t seq;
     uint64_t oldest;
 
-    if (!file || !buf_user)
+    if (!file || !buf)
         return -EINVAL;
 
     logger_kmsg_bind_node(file->f_inode);
@@ -263,24 +262,22 @@ ssize_t logger_kmsg_read(fd_t *file, void *buf_user, size_t len,
     total = (size_t)header_len + text_len + 1;
     if (len < total)
         return -EINVAL;
-    if (copy_to_user(buf_user, header, (size_t)header_len))
-        return -EFAULT;
-    if (text_len && copy_to_user((char *)buf_user + header_len, text, text_len))
-        return -EFAULT;
-    if (copy_to_user((char *)buf_user + header_len + text_len, "\n", 1))
-        return -EFAULT;
+    memcpy(buf, header, (size_t)header_len);
+    if (text_len)
+        memcpy((char *)buf + header_len, text, text_len);
+    ((char *)buf)[header_len + text_len] = '\n';
 
     kmsg_file_seq_set(file, record.seq + 1);
     return (ssize_t)total;
 }
 
-ssize_t logger_kmsg_write(const void *buf_user, size_t len) {
+ssize_t logger_kmsg_write(const void *buf, size_t len) {
     char chunk[KMSG_MAX_RECORD_TEXT];
     size_t offset = 0;
     ssize_t written = 0;
     bool notify = false;
 
-    if (!buf_user)
+    if (!buf)
         return -EINVAL;
     if (len == 0)
         return 0;
@@ -288,8 +285,7 @@ ssize_t logger_kmsg_write(const void *buf_user, size_t len) {
     while (offset < len) {
         size_t part = MIN(sizeof(chunk), len - offset);
 
-        if (copy_from_user(chunk, (const char *)buf_user + offset, part))
-            return written > 0 ? written : -EFAULT;
+        memcpy(chunk, (const char *)buf + offset, part);
 
         spin_lock(&printk_lock);
         notify |= kmsg_append_record_locked(chunk, part, 6);

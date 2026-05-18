@@ -16,12 +16,6 @@ void *phys_to_virt(uint64_t phys_addr) {
 }
 
 uint64_t virt_to_phys(const void *virt_addr) {
-    if (virt_addr == NULL)
-        return 0;
-    return (uint64_t)virt_addr - physical_memory_offset;
-}
-
-uint64_t kernel_virt_to_phys(const void *virt_addr) {
     uintptr_t virt = (uintptr_t)virt_addr;
 
     if (virt_addr == NULL)

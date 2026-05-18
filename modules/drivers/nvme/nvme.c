@@ -7,7 +7,7 @@ void *naos_dma_alloc(size_t size, uint64_t *phys_addr) {
     void *addr = alloc_frames_bytes(size);
     if (addr) {
         if (phys_addr)
-            *phys_addr = kernel_virt_to_phys(addr);
+            *phys_addr = virt_to_phys((const void *)addr);
         memset(addr, 0, size);
     }
     return addr;
@@ -630,7 +630,7 @@ static int nvme_prepare_prp_list(nvme_request_t *req) {
 }
 
 static inline uint64_t nvme_translate_page_phys(uint64_t page_va) {
-    return kernel_virt_to_phys((const void *)(uintptr_t)page_va);
+    return virt_to_phys((const void *)(uintptr_t)page_va);
 }
 
 static int nvme_setup_prp(nvme_controller_t *ctrl, nvme_request_t *req,

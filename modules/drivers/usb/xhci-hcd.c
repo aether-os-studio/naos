@@ -288,9 +288,7 @@ static uint32_t xhci_trb_status(uint32_t xferlen, uint16_t intr_target) {
            (((uint32_t)intr_target & TRB_INTR_MASK) << TRB_INTR_SHIFT);
 }
 
-static uint64_t xhci_virt_to_phys(const void *ptr) {
-    return kernel_virt_to_phys(ptr);
-}
+static uint64_t xhci_virt_to_phys(const void *ptr) { return virt_to_phys(ptr); }
 
 static int xhci_alloc_ring(struct xhci_ring *ring) {
     memset(ring, 0, sizeof(*ring));

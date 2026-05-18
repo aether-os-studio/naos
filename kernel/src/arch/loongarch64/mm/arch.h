@@ -9,8 +9,8 @@
 
 /* LoongArch64 leaf PTE layout. Upper-level directory entries are raw,
  * page-aligned child-table physical addresses. */
-#define ARCH_PT_FLAG_HW_VALID ((uint64_t)1 << 0)
-#define ARCH_PT_FLAG_ACCESS ARCH_PT_FLAG_HW_VALID
+#define ARCH_PT_FLAG_VALID ((uint64_t)1 << 0)
+#define ARCH_PT_FLAG_ACCESS ARCH_PT_FLAG_VALID
 #define ARCH_PT_FLAG_DIRTY ((uint64_t)1 << 1)
 #define ARCH_PT_FLAG_PLV_MASK ((uint64_t)3 << 2)
 #define ARCH_PT_FLAG_USER ((uint64_t)3 << 2)
@@ -18,7 +18,7 @@
 #define ARCH_PT_FLAG_GLOBAL ((uint64_t)1 << 6)
 #define ARCH_PT_FLAG_HUGE ((uint64_t)1 << 6)
 #define ARCH_PT_FLAG_PRESENT ((uint64_t)1 << 7)
-#define ARCH_PT_FLAG_VALID ARCH_PT_FLAG_PRESENT
+#define ARCH_PT_FLAG_SW_VALID ARCH_PT_FLAG_PRESENT
 #define ARCH_PT_FLAG_WRITE ((uint64_t)1 << 8)
 #define ARCH_PT_FLAG_WRITEABLE ARCH_PT_FLAG_WRITE
 #define ARCH_PT_FLAG_MODIFIED ((uint64_t)1 << 9)
@@ -50,5 +50,6 @@ uint64_t get_arch_page_table_flags(uint64_t flags);
 uint64_t arch_page_table_levels();
 uint64_t *get_current_page_dir(bool user);
 void loongarch64_set_user_page_table_root(uint64_t root_paddr);
+void loongarch64_init_mmu(void);
 void arch_flush_tlb(uint64_t vaddr);
 void arch_flush_tlb_all();

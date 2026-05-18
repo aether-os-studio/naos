@@ -347,7 +347,6 @@ void kref_set(kref_t *ref, int value);
 extern uint64_t get_physical_memory_offset();
 void *phys_to_virt(uint64_t phys_addr);
 extern uint64_t virt_to_phys(const void *virt_addr);
-extern uint64_t kernel_virt_to_phys(const void *virt_addr);
 extern uint64_t *get_current_page_dir(bool user);
 extern uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr);
 

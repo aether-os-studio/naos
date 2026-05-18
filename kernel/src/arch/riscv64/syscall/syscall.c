@@ -442,6 +442,8 @@ void syscall_handler_init() {
     syscall_handlers[SYS_CLOCK_GETRES_TIME32] =
         (syscall_handle_t)sys_clock_getres;
     syscall_handlers[SYS_CLOCK_GETRES] = (syscall_handle_t)sys_clock_getres;
+    syscall_handlers[SYS_CLOCK_NANOSLEEP_TIME32] =
+        (syscall_handle_t)sys_clock_nanosleep;
     syscall_handlers[SYS_CLOCK_NANOSLEEP] =
         (syscall_handle_t)sys_clock_nanosleep;
     syscall_handlers[SYS_EXIT_GROUP] = (syscall_handle_t)task_exit;

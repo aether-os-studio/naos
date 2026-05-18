@@ -81,6 +81,7 @@ static inline void iocsr_write64(uint32_t reg, uint64_t value) {
 #define LOONGARCH_CSR_KS4 0x34
 #define LOONGARCH_CSR_EUEN 0x2
 #define LOONGARCH_CSR_TLBRENTRY 0x88
+#define LOONGARCH_CSR_TLBRSAVE 0x8b
 #define LOONGARCH_CSR_DMWIN0 0x180
 #define LOONGARCH_CSR_DMWIN1 0x181
 #define LOONGARCH_CSR_DMWIN2 0x182
@@ -90,6 +91,18 @@ static inline void iocsr_write64(uint32_t reg, uint64_t value) {
 #define LOONGARCH_CRMD_IE (1UL << 2)
 #define LOONGARCH_CRMD_DA (1UL << 3)
 #define LOONGARCH_CRMD_PG (1UL << 4)
+
+#define LOONGARCH_PWCTL0_4LEVEL                                                \
+    ((9UL << 25) | (30UL << 20) | (9UL << 15) | (21UL << 10) | (9UL << 5) |    \
+     12UL)
+#define LOONGARCH_PWCTL1_4LEVEL (39UL | (9UL << 6))
+#define LOONGARCH_STLBPGSIZE_4K 12UL
+
+#define LOONGARCH_DMW_PLV0 (1UL << 0)
+#define LOONGARCH_DMW_MAT_CC (1UL << 4)
+#define LOONGARCH_DMW0_BASE 0x8000000000000000ULL
+#define LOONGARCH_DMW0_CONFIG                                                  \
+    (LOONGARCH_DMW0_BASE | LOONGARCH_DMW_MAT_CC | LOONGARCH_DMW_PLV0)
 
 #define LOONGARCH_EUEN_FPE (1UL << 0)
 #define LOONGARCH_EUEN_SXE (1UL << 1)

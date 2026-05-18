@@ -2,9 +2,15 @@
 #include <arch/loongarch64/csr.h>
 #include <mm/mm.h>
 
+extern void loongarch64_tlb_refill_entry(void);
+
 uint64_t arch_page_table_levels() { return ARCH_MAX_PT_LEVEL; }
 
-uint64_t arch_user_va_limit(void) { return 0x00000007ffffffffULL; }
+uint64_t arch_user_va_limit(void) {
+    uint64_t va_bits = ARCH_PT_OFFSET_BASE +
+                       arch_page_table_levels() * ARCH_PT_OFFSET_PER_LEVEL;
+    return (1ULL << (va_bits - 1)) - 1;
+}
 
 uint64_t *get_current_page_dir(bool user) {
     uint64_t pgd =
@@ -22,6 +28,24 @@ void set_current_page_dir(bool user, uint64_t pgdir) {
         csr_write(LOONGARCH_CSR_PGDL, pgdir & ARCH_PTE_ADDR_MASK);
     else
         csr_write(LOONGARCH_CSR_PGDH, pgdir & ARCH_PTE_ADDR_MASK);
+    arch_flush_tlb_all();
+}
+
+void loongarch64_init_mmu(void) {
+    uint64_t handler_phys = virt_to_phys(loongarch64_tlb_refill_entry);
+    uint64_t old_dmwin1 = csr_read(LOONGARCH_CSR_DMWIN1);
+
+    csr_write(LOONGARCH_CSR_DMWIN1, LOONGARCH_DMW0_CONFIG);
+    asm volatile("ibar 0\n\t"
+                 "dbar 0" ::
+                     : "memory");
+
+    csr_write(LOONGARCH_CSR_TLBRENTRY, LOONGARCH_DMW0_BASE | handler_phys);
+    csr_write(LOONGARCH_CSR_PWCTL0, LOONGARCH_PWCTL0_4LEVEL);
+    csr_write(LOONGARCH_CSR_PWCTL1, LOONGARCH_PWCTL1_4LEVEL);
+    csr_write(LOONGARCH_CSR_STLBPGSIZE, LOONGARCH_STLBPGSIZE_4K);
+    csr_write(LOONGARCH_CSR_DMWIN0, LOONGARCH_DMW0_CONFIG);
+    csr_write(LOONGARCH_CSR_DMWIN1, old_dmwin1);
     arch_flush_tlb_all();
 }
 
@@ -58,7 +82,7 @@ uint64_t arch_page_table_flags_make_writable(uint64_t flags) {
 }
 
 uint64_t get_arch_page_table_flags(uint64_t flags) {
-    uint64_t attr = ARCH_PT_FLAG_PRESENT | ARCH_PT_FLAG_HW_VALID |
+    uint64_t attr = ARCH_PT_FLAG_PRESENT | ARCH_PT_FLAG_VALID |
                     ARCH_PT_FLAG_CACHE_CC | ARCH_PT_FLAG_MODIFIED;
 
     if ((flags & PT_FLAG_U) == 0)

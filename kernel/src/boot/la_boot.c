@@ -721,6 +721,8 @@ void boot_smp_init(uintptr_t entry) {
             break;
 
         uint64_t stack_phys = alloc_frames(STACK_SIZE / PAGE_SIZE);
+        raw_spin_lock(&ap_startup_lock);
+
         laboot_ap_startup_data_t *data =
             (laboot_ap_startup_data_t *)&__ap_startup_info_virt;
         laboot_fill_ap_startup_data(
@@ -731,8 +733,6 @@ void boot_smp_init(uintptr_t entry) {
         cpuid_to_physid[cpu_id] = phys_id;
         cpu_count = cpu_id + 1;
         memory_barrier();
-
-        raw_spin_lock(&ap_startup_lock);
 
         loongarch_iocsr_send_mbuf64((uint32_t)phys_id, 0,
                                     (uint64_t)laboot_ap_entry);

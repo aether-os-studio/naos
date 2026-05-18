@@ -8,6 +8,7 @@
 #include <mm/page_table.h>
 
 #define ARCH_PT_FLAG_VALID (0x1UL << 0)
+#define ARCH_PT_FLAG_PRESENT ARCH_PT_FLAG_VALID
 #define ARCH_PT_FLAG_WRITEABLE (0x1UL << 1)
 #define ARCH_PT_FLAG_USER (0x1UL << 2)
 #define ARCH_PT_FLAG_PWT (0x1UL << 3)

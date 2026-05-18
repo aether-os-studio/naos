@@ -43,6 +43,8 @@ void loongarch64_ap_entry(uint64_t physid) {
 
     raw_spin_unlock(&ap_startup_lock);
 
+    loongarch64_init_mmu();
+
     irq_init();
 
     while (!__atomic_load_n(&task_initialized, __ATOMIC_ACQUIRE)) {

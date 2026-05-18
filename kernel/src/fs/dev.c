@@ -1465,8 +1465,7 @@ ssize_t urandom_read(void *data, void *buf, uint64_t offset, uint64_t len,
     for (uint64_t i = 0; i < len; i++) {
         uint64_t rand = simple_rand();
         uint8_t byte = (rand >> 5) & 0xFF;
-        if (copy_to_user((char *)buf + i, &byte, 1))
-            return -EFAULT;
+        ((uint8_t *)buf)[i] = byte;
     }
     return len;
 }
@@ -1621,11 +1620,7 @@ ssize_t rfkill_read(void *data, void *buf, uint64_t offset, uint64_t len,
                 .hard = 0,
             };
 
-            if (copy_to_user(buf, &event, sizeof(event))) {
-                for (size_t j = 0; j < count; j++)
-                    netdev_put(devs[j]);
-                return -EFAULT;
-            }
+            memcpy(buf, &event, sizeof(event));
             for (size_t j = 0; j < count; j++)
                 netdev_put(devs[j]);
             return sizeof(event);

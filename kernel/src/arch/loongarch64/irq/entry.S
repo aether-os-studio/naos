@@ -44,11 +44,13 @@
 .equ CSR_ESTAT,    0x5
 .equ CSR_ERA,      0x6
 .equ CSR_BADV,     0x7
+.equ CSR_PGD,      0x1b
 .equ CSR_KS0,      0x30
 .equ CSR_KS1,      0x31
 .equ CSR_KS2,      0x32
 .equ CSR_KS3,      0x33
 .equ CSR_KS4,      0x34
+.equ CSR_TLBRSAVE, 0x8b
 
 .equ CPU_LOCAL_SYSCALL_STACK, 8
 
@@ -64,6 +66,20 @@
 .equ CTX_S6,       72
 .equ CTX_S7,       80
 .equ CTX_S8,       88
+
+.global loongarch64_tlb_refill_entry
+.align 12
+loongarch64_tlb_refill_entry:
+    csrwr $t0, CSR_TLBRSAVE
+    csrrd $t0, CSR_PGD
+    lddir $t0, $t0, 3
+    lddir $t0, $t0, 2
+    lddir $t0, $t0, 1
+    ldpte $t0, 0
+    ldpte $t0, 1
+    tlbfill
+    csrrd $t0, CSR_TLBRSAVE
+    ertn
 
 .global loongarch64_trap_entry
 .align 12

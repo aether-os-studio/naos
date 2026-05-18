@@ -24,7 +24,7 @@ static inline void
 virtio_descriptor_set_buf(virtio_descriptor_t *desc, void *addr, uint32_t len,
                           virtio_descriptor_buffer_direction_t dir,
                           uint16_t extra_flags) {
-    desc->addr = kernel_virt_to_phys(addr);
+    desc->addr = virt_to_phys((const void *)addr);
     desc->len = len;
 
     // Set flags based on direction
