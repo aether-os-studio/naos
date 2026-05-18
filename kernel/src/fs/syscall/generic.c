@@ -1963,20 +1963,22 @@ ret:
 
 uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
     struct vfs_file *file;
+    size_t iov_bytes;
 
     if (count == 0) {
         return 0;
     }
-    if (!iovec || count > SIZE_MAX / sizeof(struct iovec) ||
-        check_user_overflow((uint64_t)iovec, count * sizeof(struct iovec))) {
+    if (!iovec || count > SIZE_MAX ||
+        check_user_array_overflow((uint64_t)iovec, (size_t)count,
+                                  sizeof(struct iovec), &iov_bytes)) {
         return (uint64_t)-EFAULT;
     }
 
-    struct iovec *kiov = malloc(count * sizeof(struct iovec));
+    struct iovec *kiov = malloc(iov_bytes);
     if (!kiov) {
         return (uint64_t)-ENOMEM;
     }
-    if (copy_from_user(kiov, iovec, count * sizeof(struct iovec))) {
+    if (copy_from_user(kiov, iovec, iov_bytes)) {
         free(kiov);
         return (uint64_t)-EFAULT;
     }
@@ -2027,20 +2029,22 @@ uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
 
 uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count) {
     struct vfs_file *file;
+    size_t iov_bytes;
 
     if (count == 0) {
         return 0;
     }
-    if (!iovec || count > SIZE_MAX / sizeof(struct iovec) ||
-        check_user_overflow((uint64_t)iovec, count * sizeof(struct iovec))) {
+    if (!iovec || count > SIZE_MAX ||
+        check_user_array_overflow((uint64_t)iovec, (size_t)count,
+                                  sizeof(struct iovec), &iov_bytes)) {
         return (uint64_t)-EFAULT;
     }
 
-    struct iovec *kiov = malloc(count * sizeof(struct iovec));
+    struct iovec *kiov = malloc(iov_bytes);
     if (!kiov) {
         return (uint64_t)-ENOMEM;
     }
-    if (copy_from_user(kiov, iovec, count * sizeof(struct iovec))) {
+    if (copy_from_user(kiov, iovec, iov_bytes)) {
         free(kiov);
         return (uint64_t)-EFAULT;
     }

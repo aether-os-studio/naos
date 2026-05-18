@@ -10,6 +10,7 @@
 
 #define SOCKET_MMSG_VLEN_MAX 1024U
 #define SOCKET_IOV_MAX 1024U
+#define SOCKET_OPT_MAX_LEN (1U << 20)
 
 typedef struct socket_msghdr_copy {
     struct msghdr user_shadow;
@@ -530,6 +531,9 @@ uint64_t sys_getsockname(int sockfd, struct sockaddr_un *addr,
 
 uint64_t sys_setsockopt(int fd, int level, int optname, const void *optval,
                         socklen_t optlen) {
+    if (optlen > SOCKET_OPT_MAX_LEN)
+        return -ENOMEM;
+
     fd_t *node = task_get_file(current_task, fd);
     if (fd < 0 || !node)
         return -EBADF;
@@ -577,6 +581,10 @@ uint64_t sys_getsockopt(int fd, int level, int optname, void *optval,
         if (copy_from_user(&user_len, optlen, sizeof(user_len))) {
             vfs_file_put(node);
             return -EFAULT;
+        }
+        if (user_len > SOCKET_OPT_MAX_LEN) {
+            vfs_file_put(node);
+            return -ENOMEM;
         }
         if (user_len && !optval) {
             vfs_file_put(node);

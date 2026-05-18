@@ -202,19 +202,22 @@ static size_t do_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
 }
 
 size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
+    size_t fds_bytes = 0;
+
     if (nfds < 0)
         return (size_t)-EINVAL;
-    if (nfds > 0 && (!fds || check_user_overflow(
-                                 (uint64_t)fds, (size_t)nfds * sizeof(*fds)))) {
+    if (nfds > 0 &&
+        (!fds || check_user_array_overflow((uint64_t)fds, (size_t)nfds,
+                                           sizeof(*fds), &fds_bytes))) {
         return (size_t)-EFAULT;
     }
 
     struct pollfd *kfds = NULL;
     if (nfds > 0) {
-        kfds = malloc((size_t)nfds * sizeof(*kfds));
+        kfds = malloc(fds_bytes);
         if (!kfds)
             return (size_t)-ENOMEM;
-        if (copy_from_user(kfds, fds, (size_t)nfds * sizeof(*kfds))) {
+        if (copy_from_user(kfds, fds, fds_bytes)) {
             free(kfds);
             return (size_t)-EFAULT;
         }
@@ -223,8 +226,7 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
     size_t ret = do_poll(kfds, nfds, timeout);
 
     if (kfds) {
-        if ((int64_t)ret >= 0 &&
-            copy_to_user(fds, kfds, (size_t)nfds * sizeof(*kfds))) {
+        if ((int64_t)ret >= 0 && copy_to_user(fds, kfds, fds_bytes)) {
             free(kfds);
             return (size_t)-EFAULT;
         }
@@ -237,11 +239,13 @@ size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
 uint64_t sys_ppoll(struct pollfd *fds, uint64_t nfds,
                    const struct timespec *timeout_ts, const sigset_t *sigmask,
                    size_t sigsetsize) {
+    size_t fds_bytes = 0;
+
     if (nfds > INT32_MAX)
         return (uint64_t)-EINVAL;
-    if (nfds > 0 &&
-        (!fds || check_user_overflow((uint64_t)fds,
-                                     (size_t)nfds * sizeof(struct pollfd)))) {
+    if (nfds > 0 && (!fds || check_user_array_overflow(
+                                 (uint64_t)fds, (size_t)nfds,
+                                 sizeof(struct pollfd), &fds_bytes))) {
         return (uint64_t)-EFAULT;
     }
     if (sigmask && sigsetsize < sizeof(sigset_t)) {
@@ -250,10 +254,10 @@ uint64_t sys_ppoll(struct pollfd *fds, uint64_t nfds,
 
     struct pollfd *kfds = NULL;
     if (nfds > 0) {
-        kfds = malloc((size_t)nfds * sizeof(*kfds));
+        kfds = malloc(fds_bytes);
         if (!kfds)
             return (uint64_t)-ENOMEM;
-        if (copy_from_user(kfds, fds, (size_t)nfds * sizeof(*kfds))) {
+        if (copy_from_user(kfds, fds, fds_bytes)) {
             free(kfds);
             return (uint64_t)-EFAULT;
         }
@@ -290,8 +294,7 @@ uint64_t sys_ppoll(struct pollfd *fds, uint64_t nfds,
     }
 
     if (kfds) {
-        if ((int64_t)ret >= 0 &&
-            copy_to_user(fds, kfds, (size_t)nfds * sizeof(*kfds))) {
+        if ((int64_t)ret >= 0 && copy_to_user(fds, kfds, fds_bytes)) {
             free(kfds);
             return (uint64_t)-EFAULT;
         }

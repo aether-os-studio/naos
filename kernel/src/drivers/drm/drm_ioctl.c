@@ -663,6 +663,18 @@ static void drm_syncfd_ctx_get(drm_syncfd_ctx_t *ctx) {
     __atomic_add_fetch(&ctx->refs, 1, __ATOMIC_ACQ_REL);
 }
 
+static void drm_syncfd_ctx_unlink(drm_syncfd_ctx_t *ctx) {
+    if (!ctx) {
+        return;
+    }
+
+    spin_lock(&drm_syncfd_contexts_lock);
+    if (!llist_empty(&ctx->link)) {
+        llist_delete(&ctx->link);
+    }
+    spin_unlock(&drm_syncfd_contexts_lock);
+}
+
 static void drm_syncfd_ctx_put(drm_syncfd_ctx_t *ctx) {
     if (!ctx) {
         return;
@@ -674,6 +686,10 @@ static void drm_syncfd_ctx_put(drm_syncfd_ctx_t *ctx) {
     if (ctx->kind == DRM_SYNCFD_KIND_MERGE) {
         drm_syncfd_ctx_put(ctx->u.merge.left);
         drm_syncfd_ctx_put(ctx->u.merge.right);
+    }
+    if (ctx->node) {
+        vfs_iput(ctx->node);
+        ctx->node = NULL;
     }
     free(ctx);
 }
@@ -736,17 +752,20 @@ static bool drm_syncfd_update_state(drm_syncfd_ctx_t *ctx) {
     }
 
     bool notify = false;
+    vfs_node_t *notify_node = NULL;
     spin_lock(&ctx->lock);
     if (!ctx->signaled) {
         ctx->signaled = true;
         ctx->status = 1;
         ctx->timestamp_ns = nano_time();
         notify = true;
+        notify_node = vfs_igrab(ctx->node);
     }
     spin_unlock(&ctx->lock);
 
-    if (notify && ctx->node) {
-        vfs_poll_notify(ctx->node, EPOLLIN);
+    if (notify && notify_node) {
+        vfs_poll_notify(notify_node, EPOLLIN);
+        vfs_iput(notify_node);
     }
     return true;
 }
@@ -894,16 +913,19 @@ static __poll_t drm_syncfdfs_poll(struct vfs_file *file,
 static int drm_syncfdfs_release(struct vfs_inode *inode,
                                 struct vfs_file *file) {
     drm_syncfd_ctx_t *ctx = drm_syncfd_file_ctx(file);
+    vfs_node_t *node = NULL;
     (void)inode;
     if (!ctx) {
         return 0;
     }
 
-    spin_lock(&drm_syncfd_contexts_lock);
-    if (!llist_empty(&ctx->link)) {
-        llist_delete(&ctx->link);
-    }
-    spin_unlock(&drm_syncfd_contexts_lock);
+    drm_syncfd_ctx_unlink(ctx);
+
+    spin_lock(&ctx->lock);
+    node = ctx->node;
+    ctx->node = NULL;
+    spin_unlock(&ctx->lock);
+    vfs_iput(node);
 
     drm_syncfd_ctx_put(ctx);
     if (!drm_syncfd_contexts_initialized) {
@@ -1167,6 +1189,12 @@ static int drm_leasefd_create(drm_device_t *dev, drm_file_t *owner,
                             (flags & DRM_CLOEXEC) ? FD_CLOEXEC : 0, 0);
     vfs_file_put(file);
     if (ret < 0) {
+        spin_lock(&dev->lease_lock);
+        if (slot >= 0 && dev->leases[slot].file == lease_file) {
+            dev->leases[slot].active = false;
+            dev->leases[slot].file = NULL;
+        }
+        spin_unlock(&dev->lease_lock);
         return ret;
     }
 
@@ -1195,10 +1223,12 @@ static ssize_t drm_syncfd_create_fd(drm_syncfd_ctx_t *ctx, uint32_t flags) {
     int ret = drmfdfs_create_file("drmsync", &drmfdfs_sync_file_ops, ctx,
                                   S_IFCHR | 0600, O_RDWR, &file, &inode);
     if (ret < 0) {
+        drm_syncfd_ctx_unlink(ctx);
         drm_syncfd_ctx_put(ctx);
         return ret;
     }
     ctx->node = inode;
+    vfs_igrab(ctx->node);
 
     ret = task_install_file(current_task, file,
                             (flags & DRM_CLOEXEC) ? FD_CLOEXEC : 0, 0);
@@ -1308,6 +1338,10 @@ ssize_t drm_primefd_create(drm_device_t *dev, uint32_t handle, uint64_t phys,
     ret = task_install_file(current_task, file,
                             (flags & DRM_CLOEXEC) ? FD_CLOEXEC : 0, 0);
     vfs_file_put(file);
+    if (ret < 0) {
+        return ret;
+    }
+
     return ret;
 }
 

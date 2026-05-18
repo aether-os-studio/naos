@@ -461,6 +461,8 @@ static uint64_t process_vm_rw(uint64_t pid, const struct iovec *lvec,
     uint64_t ri = 0;
     size_t loff = 0;
     size_t roff = 0;
+    size_t local_iov_bytes;
+    size_t remote_iov_bytes;
 
     if (flags != 0)
         return (uint64_t)-EINVAL;
@@ -468,8 +470,10 @@ static uint64_t process_vm_rw(uint64_t pid, const struct iovec *lvec,
         return (uint64_t)-EINVAL;
     if (liovcnt > 1024 || riovcnt > 1024)
         return (uint64_t)-EINVAL;
-    if (check_user_overflow((uint64_t)lvec, liovcnt * sizeof(*lvec)) ||
-        check_user_overflow((uint64_t)rvec, riovcnt * sizeof(*rvec))) {
+    if (check_user_array_overflow((uint64_t)lvec, (size_t)liovcnt,
+                                  sizeof(*lvec), &local_iov_bytes) ||
+        check_user_array_overflow((uint64_t)rvec, (size_t)riovcnt,
+                                  sizeof(*rvec), &remote_iov_bytes)) {
         return (uint64_t)-EFAULT;
     }
 
@@ -477,16 +481,16 @@ static uint64_t process_vm_rw(uint64_t pid, const struct iovec *lvec,
     if (!target || !target->mm)
         return (uint64_t)-ESRCH;
 
-    local_iov = malloc(liovcnt * sizeof(*local_iov));
-    remote_iov = malloc(riovcnt * sizeof(*remote_iov));
+    local_iov = malloc(local_iov_bytes);
+    remote_iov = malloc(remote_iov_bytes);
     if (!local_iov || !remote_iov) {
         free(local_iov);
         free(remote_iov);
         return (uint64_t)-ENOMEM;
     }
 
-    if (copy_from_user(local_iov, lvec, liovcnt * sizeof(*local_iov)) ||
-        copy_from_user(remote_iov, rvec, riovcnt * sizeof(*remote_iov))) {
+    if (copy_from_user(local_iov, lvec, local_iov_bytes) ||
+        copy_from_user(remote_iov, rvec, remote_iov_bytes)) {
         free(local_iov);
         free(remote_iov);
         return (uint64_t)-EFAULT;

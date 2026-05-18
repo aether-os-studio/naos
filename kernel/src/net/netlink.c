@@ -34,6 +34,13 @@ static struct netlink_msg_pool_entry
 static uint32_t netlink_msg_pool_next = 0;
 static spinlock_t netlink_msg_pool_lock = SPIN_INIT;
 
+static void netlink_filter_free(struct sock_fprog *filter) {
+    if (!filter)
+        return;
+    free(filter->filter);
+    free(filter);
+}
+
 static void netlink_handle_release(socket_handle_t *handle);
 static ssize_t netlink_read_op(fd_t *fd, void *buf, size_t offset,
                                size_t count);
@@ -2639,13 +2646,17 @@ size_t netlink_buffer_write_packet(struct netlink_sock *sock, const char *data,
         return 0;
     }
 
+    spin_lock(&sock->lock);
     if (sock->filter) {
         uint32_t accept_bytes = bpf_run(sock->filter->filter, sock->filter->len,
                                         (const uint8_t *)data, (uint32_t)len);
-        if (!accept_bytes)
+        if (!accept_bytes) {
+            spin_unlock(&sock->lock);
             return 0;
+        }
         len = MIN(len, accept_bytes);
     }
+    spin_unlock(&sock->lock);
 
     if (len > buf->max_size)
         return 0;
@@ -2677,14 +2688,18 @@ static size_t netlink_defer_to_socket(struct netlink_sock *target,
     if (!target || !data || len == 0 || len > NETLINK_BUFFER_MAX_SIZE)
         return 0;
 
+    spin_lock(&target->lock);
     if (target->filter) {
         uint32_t accept_bytes =
             bpf_run(target->filter->filter, target->filter->len,
                     (const uint8_t *)data, (uint32_t)len);
-        if (!accept_bytes)
+        if (!accept_bytes) {
+            spin_unlock(&target->lock);
             return 0;
+        }
         len = MIN(len, accept_bytes);
     }
+    spin_unlock(&target->lock);
 
     skb = netlink_packet_build_skb(data, len, sender_pid, sender_groups);
     if (!skb)
@@ -2932,13 +2947,14 @@ void netlink_broadcast_to_group(const char *buf, size_t len,
             continue;
 
         spin_lock(&sock->lock);
+        bool subscribed =
+            netlink_group_mask_matches(sock->groups, target_groups);
+        spin_unlock(&sock->lock);
 
-        if (netlink_group_mask_matches(sock->groups, target_groups)) {
+        if (subscribed) {
             netlink_buffer_write_packet(sock, buf, len, sender_pid,
                                         target_groups);
         }
-
-        spin_unlock(&sock->lock);
     }
 
     spin_unlock(&netlink_sockets_lock);
@@ -3087,32 +3103,61 @@ size_t netlink_setsockopt(uint64_t fd, int level, int optname,
 
     if (level == SOL_SOCKET) {
         switch (optname) {
-        case SO_ATTACH_FILTER:
-            const struct sock_fprog *fprog = optval;
-            if (!fprog->len) {
+        case SO_ATTACH_FILTER: {
+            struct sock_fprog fprog;
+            struct sock_fprog *new_filter = NULL;
+            struct sock_fprog *old_filter = NULL;
+            size_t filter_bytes;
+
+            if (!optval || optlen < sizeof(fprog))
                 NETLINK_SETSOCKOPT_RETURN((size_t)-EINVAL);
-            }
-            nl_sk->filter = malloc(sizeof(struct sock_fprog));
-            nl_sk->filter->len = fprog->len;
-            nl_sk->filter->filter =
-                malloc(nl_sk->filter->len * sizeof(struct sock_filter));
-            memset(nl_sk->filter->filter, 0,
-                   nl_sk->filter->len * sizeof(struct sock_filter));
-            if (copy_from_user(nl_sk->filter->filter, fprog->filter,
-                               nl_sk->filter->len *
-                                   sizeof(struct sock_filter))) {
-                free(nl_sk->filter->filter);
-                free(nl_sk->filter);
+            memcpy(&fprog, optval, sizeof(fprog));
+            if (!fprog.len || !fprog.filter)
+                NETLINK_SETSOCKOPT_RETURN((size_t)-EINVAL);
+            if (check_user_array_overflow((uint64_t)fprog.filter, fprog.len,
+                                          sizeof(struct sock_filter),
+                                          &filter_bytes)) {
                 NETLINK_SETSOCKOPT_RETURN((size_t)-EFAULT);
             }
+
+            new_filter = calloc(1, sizeof(*new_filter));
+            if (!new_filter)
+                NETLINK_SETSOCKOPT_RETURN((size_t)-ENOMEM);
+            new_filter->filter = malloc(filter_bytes);
+            if (!new_filter->filter) {
+                netlink_filter_free(new_filter);
+                NETLINK_SETSOCKOPT_RETURN((size_t)-ENOMEM);
+            }
+            new_filter->len = fprog.len;
+
+            if (copy_from_user(new_filter->filter, fprog.filter,
+                               filter_bytes)) {
+                netlink_filter_free(new_filter);
+                NETLINK_SETSOCKOPT_RETURN((size_t)-EFAULT);
+            }
+            if (bpf_validate(new_filter->filter, new_filter->len) < 0) {
+                netlink_filter_free(new_filter);
+                NETLINK_SETSOCKOPT_RETURN((size_t)-EINVAL);
+            }
+
+            spin_lock(&nl_sk->lock);
+            old_filter = nl_sk->filter;
+            nl_sk->filter = new_filter;
+            spin_unlock(&nl_sk->lock);
+            netlink_filter_free(old_filter);
             break;
-        case SO_DETACH_FILTER:
+        }
+        case SO_DETACH_FILTER: {
+            struct sock_fprog *old_filter = NULL;
+            spin_lock(&nl_sk->lock);
             if (nl_sk->filter) {
-                free(nl_sk->filter->filter);
-                free(nl_sk->filter);
+                old_filter = nl_sk->filter;
                 nl_sk->filter = NULL;
             }
+            spin_unlock(&nl_sk->lock);
+            netlink_filter_free(old_filter);
             break;
+        }
         case SO_REUSEADDR:
             break;
         case SO_PASSCRED:
@@ -3360,10 +3405,8 @@ size_t netlink_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
         struct netlink_sock *sock =
             netlink_lookup_sock_by_portid_locked(nl_sk->protocol, addr->nl_pid);
         if (sock) {
-            spin_lock(&sock->lock);
             delivered = netlink_deliver_to_socket(sock, buffer, total_len,
                                                   sender_pid, 0);
-            spin_unlock(&sock->lock);
         }
         spin_unlock(&netlink_sockets_lock);
         NETLINK_SENDMSG_RETURN(delivered ? (size_t)total_len
@@ -3423,10 +3466,8 @@ size_t netlink_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
         struct netlink_sock *sock = netlink_lookup_sock_by_portid_locked(
             nl_sk->protocol, nl_addr->nl_pid);
         if (sock) {
-            spin_lock(&sock->lock);
             delivered = netlink_deliver_to_socket(sock, (char *)in, limit,
                                                   sender_pid, 0);
-            spin_unlock(&sock->lock);
         }
         spin_unlock(&netlink_sockets_lock);
         NETLINK_SENDTO_RETURN(delivered ? limit : (size_t)-ECONNREFUSED);
@@ -3755,6 +3796,7 @@ static void netlink_handle_release(socket_handle_t *handle) {
         if (nl_sk->bind_addr != NULL) {
             free(nl_sk->bind_addr);
         }
+        netlink_filter_free(nl_sk->filter);
         skb_queue_purge(&nl_sk->deferred_queue);
         free(nl_sk);
     }

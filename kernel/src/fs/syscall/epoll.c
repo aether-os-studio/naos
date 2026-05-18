@@ -629,11 +629,13 @@ uint64_t sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents,
     struct vfs_file *epoll_file;
     struct epoll_event *kevents;
     uint64_t ret;
+    size_t events_bytes;
 
     if (maxevents < 1)
         return (uint64_t)-EINVAL;
-    if (check_user_overflow((uint64_t)events,
-                            (size_t)maxevents * sizeof(*events))) {
+    if (!events ||
+        check_user_array_overflow((uint64_t)events, (size_t)maxevents,
+                                  sizeof(*events), &events_bytes)) {
         return (uint64_t)-EFAULT;
     }
 
@@ -649,8 +651,7 @@ uint64_t sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents,
 
     ret = do_epoll_wait(epoll_file, kevents, maxevents,
                         timeout < 0 ? -1 : (int64_t)timeout * 1000000LL);
-    if ((int64_t)ret >= 0 &&
-        copy_to_user(events, kevents, (size_t)maxevents * sizeof(*kevents))) {
+    if ((int64_t)ret >= 0 && copy_to_user(events, kevents, events_bytes)) {
         ret = (uint64_t)-EFAULT;
     }
 
@@ -694,11 +695,13 @@ uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
     sigset_t newmask = 0;
     const sigset_t *sigmask_ptr = NULL;
     uint64_t ret;
+    size_t events_bytes;
 
     if (maxevents < 1)
         return (uint64_t)-EINVAL;
-    if (check_user_overflow((uint64_t)events,
-                            (size_t)maxevents * sizeof(*events))) {
+    if (!events ||
+        check_user_array_overflow((uint64_t)events, (size_t)maxevents,
+                                  sizeof(*events), &events_bytes)) {
         return (uint64_t)-EFAULT;
     }
     if (sigmask && sigsetsize < sizeof(sigset_t))
@@ -725,8 +728,7 @@ uint64_t sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
     ret = do_epoll_pwait(epoll_file, kevents, maxevents,
                          timeout < 0 ? -1 : (int64_t)timeout * 1000000LL,
                          sigmask_ptr, sigsetsize);
-    if ((int64_t)ret >= 0 &&
-        copy_to_user(events, kevents, (size_t)maxevents * sizeof(*kevents))) {
+    if ((int64_t)ret >= 0 && copy_to_user(events, kevents, events_bytes)) {
         ret = (uint64_t)-EFAULT;
     }
 
@@ -744,11 +746,13 @@ uint64_t sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
     const sigset_t *sigmask_ptr = NULL;
     int64_t timeout_ns = -1;
     uint64_t ret;
+    size_t events_bytes;
 
     if (maxevents < 1)
         return (uint64_t)-EINVAL;
-    if (check_user_overflow((uint64_t)events,
-                            (size_t)maxevents * sizeof(*events))) {
+    if (!events ||
+        check_user_array_overflow((uint64_t)events, (size_t)maxevents,
+                                  sizeof(*events), &events_bytes)) {
         return (uint64_t)-EFAULT;
     }
     if (sigmask && sigsetsize < sizeof(sigset_t))
@@ -787,8 +791,7 @@ uint64_t sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
 
     ret = do_epoll_pwait(epoll_file, kevents, maxevents, timeout_ns,
                          sigmask_ptr, sigsetsize);
-    if ((int64_t)ret >= 0 &&
-        copy_to_user(events, kevents, (size_t)maxevents * sizeof(*kevents))) {
+    if ((int64_t)ret >= 0 && copy_to_user(events, kevents, events_bytes)) {
         ret = (uint64_t)-EFAULT;
     }
 

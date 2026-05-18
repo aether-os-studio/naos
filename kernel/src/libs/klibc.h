@@ -353,6 +353,25 @@ extern uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr);
 bool check_user_overflow(uint64_t addr, uint64_t size);
 bool check_unmapped(uint64_t addr, uint64_t len);
 
+static inline bool checked_mul_size(size_t a, size_t b, size_t *out) {
+    if (a != 0 && b > SIZE_MAX / a)
+        return true;
+    if (out)
+        *out = a * b;
+    return false;
+}
+
+static inline bool check_user_array_overflow(uint64_t addr, size_t count,
+                                             size_t elem_size, size_t *bytes) {
+    size_t total;
+
+    if (checked_mul_size(count, elem_size, &total))
+        return true;
+    if (bytes)
+        *bytes = total;
+    return check_user_overflow(addr, total);
+}
+
 static inline void *user_virt_from_paddr(uint64_t paddr) {
     return phys_to_virt(paddr);
 }
