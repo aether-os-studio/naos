@@ -363,6 +363,8 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_EVENTFD2, (syscall_handle_t)sys_eventfd2);
     regist_syscall_handler(SYS_DUP3, (syscall_handle_t)sys_dup3);
     regist_syscall_handler(SYS_PIPE2, (syscall_handle_t)sys_pipe);
+    regist_syscall_handler(SYS_PREADV, (syscall_handle_t)sys_preadv);
+    regist_syscall_handler(SYS_PWRITEV, (syscall_handle_t)sys_pwritev);
     regist_syscall_handler(SYS_RECVMMSG, (syscall_handle_t)sys_recvmmsg);
     regist_syscall_handler(SYS_PRLIMIT64, (syscall_handle_t)sys_prlimit64);
     regist_syscall_handler(SYS_SENDMMSG, (syscall_handle_t)sys_sendmmsg);
@@ -384,6 +386,8 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_MEMBARRIER, (syscall_handle_t)sys_membarrier);
     regist_syscall_handler(SYS_COPY_FILE_RANGE,
                            (syscall_handle_t)sys_copy_file_range);
+    regist_syscall_handler(SYS_PREADV2, (syscall_handle_t)sys_preadv2);
+    regist_syscall_handler(SYS_PWRITEV2, (syscall_handle_t)sys_pwritev2);
     regist_syscall_handler(SYS_STATX, (syscall_handle_t)sys_statx);
     regist_syscall_handler(SYS_RSEQ, (syscall_handle_t)sys_rseq);
     regist_syscall_handler(SYS_OPEN_TREE, (syscall_handle_t)sys_open_tree);

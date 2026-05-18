@@ -596,6 +596,30 @@ uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count);
  * until a short write or error occurs.
  */
 uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count);
+/**
+ * Linux contract: vectored positioned read without changing the file offset.
+ * Raw Linux syscall ABI passes the 64-bit offset split into low/high words.
+ */
+uint64_t sys_preadv(uint64_t fd, struct iovec *iovec, uint64_t count,
+                    uint64_t pos_l, uint64_t pos_h);
+/**
+ * Linux contract: vectored positioned write without changing the file offset,
+ * except Linux O_APPEND/RWF_APPEND semantics still append to EOF.
+ */
+uint64_t sys_pwritev(uint64_t fd, struct iovec *iovec, uint64_t count,
+                     uint64_t pos_l, uint64_t pos_h);
+/**
+ * Linux contract: preadv with RWF_* flags. Unsupported flag bits fail with
+ * -EOPNOTSUPP.
+ */
+uint64_t sys_preadv2(uint64_t fd, struct iovec *iovec, uint64_t count,
+                     uint64_t pos_l, uint64_t pos_h, uint64_t flags);
+/**
+ * Linux contract: pwritev with RWF_* flags. Unsupported flag bits fail with
+ * -EOPNOTSUPP.
+ */
+uint64_t sys_pwritev2(uint64_t fd, struct iovec *iovec, uint64_t count,
+                      uint64_t pos_l, uint64_t pos_h, uint64_t flags);
 
 /**
  * Linux contract: read directory entries in legacy getdents layout.

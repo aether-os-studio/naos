@@ -721,8 +721,8 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_PIPE2, (syscall_handle_t)sys_pipe);
     regist_syscall_handler(SYS_INOTIFY_INIT1,
                            (syscall_handle_t)sys_inotify_init1);
-    // regist_syscall_handler(SYS_PREADV, (syscall_handle_t)sys_preadv);
-    // regist_syscall_handler(SYS_PWRITEV, (syscall_handle_t)sys_pwritev);
+    regist_syscall_handler(SYS_PREADV, (syscall_handle_t)sys_preadv);
+    regist_syscall_handler(SYS_PWRITEV, (syscall_handle_t)sys_pwritev);
     // regist_syscall_handler(SYS_RT_TGSIGQUEUEINFO,
     // (syscall_handle_t)sys_rt_tgsigqueueinfo);
     // regist_syscall_handler(SYS_PERF_EVENT_OPEN,
@@ -779,8 +779,8 @@ void syscall_handler_init() {
     // regist_syscall_handler(SYS_MLOCK2, (syscall_handle_t)sys_mlock2);
     regist_syscall_handler(SYS_COPY_FILE_RANGE,
                            (syscall_handle_t)sys_copy_file_range);
-    // regist_syscall_handler(SYS_PREADV2, (syscall_handle_t)sys_preadv2);
-    // regist_syscall_handler(SYS_PWRITEV2, (syscall_handle_t)sys_pwritev2);
+    regist_syscall_handler(SYS_PREADV2, (syscall_handle_t)sys_preadv2);
+    regist_syscall_handler(SYS_PWRITEV2, (syscall_handle_t)sys_pwritev2);
     // regist_syscall_handler(SYS_PKEY_MPROTECT,
     // (syscall_handle_t)sys_pkey_mprotect);
     // regist_syscall_handler(SYS_PKEY_ALLOC,

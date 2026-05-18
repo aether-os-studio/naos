@@ -18,6 +18,16 @@
 #define UTIME_OMIT ((1L << 30) - 2L)
 #endif
 
+#define UIO_MAXIOV 1024
+#define MAX_RW_COUNT ((INT64_MAX) & ~(4096 - 1))
+#define RWF_HIPRI 0x00000001
+#define RWF_DSYNC 0x00000002
+#define RWF_SYNC 0x00000004
+#define RWF_NOWAIT 0x00000008
+#define RWF_APPEND 0x00000010
+#define RWF_SUPPORTED                                                          \
+    (RWF_HIPRI | RWF_DSYNC | RWF_SYNC | RWF_NOWAIT | RWF_APPEND)
+
 static uint64_t do_unlink(const char *name);
 static volatile uint64_t tmpfile_seq = 1;
 
@@ -464,7 +474,10 @@ static inline int rw_validate_user_buffer(const void *buf, uint64_t len) {
     return 0;
 }
 
-static uint64_t rw_validate_iovecs(const struct iovec *kiov, uint64_t count) {
+static uint64_t rw_validate_iovecs(const struct iovec *kiov, uint64_t count,
+                                   size_t *total_len) {
+    size_t total = 0;
+
     if (!kiov && count)
         return (uint64_t)-EFAULT;
 
@@ -473,9 +486,19 @@ static uint64_t rw_validate_iovecs(const struct iovec *kiov, uint64_t count) {
             continue;
         if (rw_validate_user_buffer(kiov[i].iov_base, kiov[i].len) < 0)
             return (uint64_t)-EFAULT;
+        if (kiov[i].len > (uint64_t)MAX_RW_COUNT - total)
+            total = MAX_RW_COUNT;
+        else
+            total += kiov[i].len;
     }
 
+    if (total_len)
+        *total_len = total;
     return 0;
+}
+
+static inline loff_t rw_pos_from_hilo(uint64_t pos_l, uint64_t pos_h) {
+    return (loff_t)((pos_l & 0xffffffffULL) | (pos_h << 32));
 }
 
 static void generic_fill_stat_from_kstat(struct stat *buf,
@@ -1961,32 +1984,64 @@ ret:
     return ret;
 }
 
-uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
-    struct vfs_file *file;
+static uint64_t generic_rw_copy_iovecs(struct iovec *iovec, uint64_t count,
+                                       struct iovec **out_iov,
+                                       size_t *out_total) {
     size_t iov_bytes;
+    struct iovec *kiov;
+    uint64_t ret;
 
-    if (count == 0) {
+    if (!out_iov || !out_total)
+        return (uint64_t)-EINVAL;
+    *out_iov = NULL;
+    *out_total = 0;
+
+    if (count == 0)
         return 0;
-    }
-    if (!iovec || count > SIZE_MAX ||
-        check_user_array_overflow((uint64_t)iovec, (size_t)count,
-                                  sizeof(struct iovec), &iov_bytes)) {
+    if (count > UIO_MAXIOV)
+        return (uint64_t)-EINVAL;
+    if (!iovec || check_user_array_overflow((uint64_t)iovec, (size_t)count,
+                                            sizeof(struct iovec), &iov_bytes))
         return (uint64_t)-EFAULT;
-    }
 
-    struct iovec *kiov = malloc(iov_bytes);
-    if (!kiov) {
+    kiov = malloc(iov_bytes);
+    if (!kiov)
         return (uint64_t)-ENOMEM;
-    }
     if (copy_from_user(kiov, iovec, iov_bytes)) {
         free(kiov);
         return (uint64_t)-EFAULT;
     }
 
-    uint64_t validate_ret = rw_validate_iovecs(kiov, count);
-    if ((int64_t)validate_ret < 0) {
+    ret = rw_validate_iovecs(kiov, count, out_total);
+    if ((int64_t)ret < 0) {
         free(kiov);
-        return validate_ret;
+        return ret;
+    }
+
+    *out_iov = kiov;
+    return 0;
+}
+
+static uint64_t generic_do_preadv(uint64_t fd, struct iovec *iovec,
+                                  uint64_t count, loff_t pos, bool use_f_pos,
+                                  uint64_t flags) {
+    struct vfs_file *file;
+    struct iovec *kiov;
+    size_t total_len;
+    ssize_t total_read = 0;
+    uint64_t ret;
+
+    if (flags & ~RWF_SUPPORTED)
+        return (uint64_t)-EOPNOTSUPP;
+    if (count == 0)
+        return 0;
+
+    ret = generic_rw_copy_iovecs(iovec, count, &kiov, &total_len);
+    if ((int64_t)ret < 0)
+        return ret;
+    if (!total_len) {
+        free(kiov);
+        return 0;
     }
 
     file = task_get_file(current_task, (int)fd);
@@ -2000,26 +2055,30 @@ uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
         return (uint64_t)-EISDIR;
     }
 
-    ssize_t total_read = 0;
     for (uint64_t i = 0; i < count; i++) {
+        size_t len = kiov[i].len;
+
+        if (len > MAX_RW_COUNT - (size_t)total_read)
+            len = MAX_RW_COUNT - (size_t)total_read;
         if (kiov[i].iov_base == NULL)
             continue;
 
-        ssize_t ret =
-            (ssize_t)vfs_read_file(file, kiov[i].iov_base, kiov[i].len, NULL);
-        if (ret < 0) {
+        ssize_t io_ret = (ssize_t)vfs_read_file(file, kiov[i].iov_base, len,
+                                                use_f_pos ? NULL : &pos);
+        if (io_ret < 0) {
             if (total_read > 0 &&
-                (ret == -EAGAIN || ret == -EWOULDBLOCK || ret == -EINTR)) {
+                (io_ret == -EAGAIN || io_ret == -EWOULDBLOCK ||
+                 io_ret == -EINTR)) {
                 vfs_file_put(file);
                 free(kiov);
                 return total_read;
             }
             vfs_file_put(file);
             free(kiov);
-            return (uint64_t)ret;
+            return (uint64_t)io_ret;
         }
-        total_read += ret;
-        if ((size_t)ret < kiov[i].len)
+        total_read += io_ret;
+        if ((size_t)io_ret < len || (size_t)total_read >= MAX_RW_COUNT)
             break;
     }
     vfs_file_put(file);
@@ -2027,32 +2086,28 @@ uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
     return total_read;
 }
 
-uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count) {
+static uint64_t generic_do_pwritev(uint64_t fd, struct iovec *iovec,
+                                   uint64_t count, loff_t pos, bool use_f_pos,
+                                   uint64_t flags) {
     struct vfs_file *file;
-    size_t iov_bytes;
+    struct iovec *kiov;
+    size_t total_len;
+    ssize_t total_written = 0;
+    uint64_t ret;
+    bool append;
+    bool update_f_pos = false;
 
-    if (count == 0) {
+    if (flags & ~RWF_SUPPORTED)
+        return (uint64_t)-EOPNOTSUPP;
+    if (count == 0)
         return 0;
-    }
-    if (!iovec || count > SIZE_MAX ||
-        check_user_array_overflow((uint64_t)iovec, (size_t)count,
-                                  sizeof(struct iovec), &iov_bytes)) {
-        return (uint64_t)-EFAULT;
-    }
 
-    struct iovec *kiov = malloc(iov_bytes);
-    if (!kiov) {
-        return (uint64_t)-ENOMEM;
-    }
-    if (copy_from_user(kiov, iovec, iov_bytes)) {
+    ret = generic_rw_copy_iovecs(iovec, count, &kiov, &total_len);
+    if ((int64_t)ret < 0)
+        return ret;
+    if (!total_len) {
         free(kiov);
-        return (uint64_t)-EFAULT;
-    }
-
-    uint64_t validate_ret = rw_validate_iovecs(kiov, count);
-    if ((int64_t)validate_ret < 0) {
-        free(kiov);
-        return validate_ret;
+        return 0;
     }
 
     file = task_get_file(current_task, (int)fd);
@@ -2066,31 +2121,89 @@ uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count) {
         return (uint64_t)-EISDIR;
     }
 
-    ssize_t total_written = 0;
+    append = (flags & RWF_APPEND) || (file->f_flags & O_APPEND);
+    update_f_pos = use_f_pos && append;
+    if (append)
+        mutex_lock(&file->f_pos_lock);
     for (uint64_t i = 0; i < count; i++) {
+        size_t len = kiov[i].len;
+        loff_t *ppos = use_f_pos ? NULL : &pos;
+
+        if (len > MAX_RW_COUNT - (size_t)total_written)
+            len = MAX_RW_COUNT - (size_t)total_written;
         if (kiov[i].iov_base == NULL)
             continue;
-
-        ssize_t ret =
-            (ssize_t)vfs_write_file(file, kiov[i].iov_base, kiov[i].len, NULL);
-        if (ret < 0) {
-            if (total_written > 0 &&
-                (ret == -EAGAIN || ret == -EWOULDBLOCK || ret == -EINTR)) {
-                vfs_file_put(file);
-                free(kiov);
-                return total_written;
-            }
-            vfs_file_put(file);
-            free(kiov);
-            return (uint64_t)ret;
+        if (append) {
+            pos = (loff_t)file->f_inode->i_size;
+            ppos = &pos;
         }
-        total_written += ret;
-        if ((size_t)ret < kiov[i].len)
+
+        ssize_t io_ret =
+            (ssize_t)vfs_write_file(file, kiov[i].iov_base, len, ppos);
+        if (io_ret < 0) {
+            if (total_written > 0 &&
+                (io_ret == -EAGAIN || io_ret == -EWOULDBLOCK ||
+                 io_ret == -EINTR)) {
+                break;
+            }
+            total_written = io_ret;
+            break;
+        }
+        total_written += io_ret;
+        if ((size_t)io_ret < len || (size_t)total_written >= MAX_RW_COUNT)
             break;
     }
+    if (update_f_pos && total_written > 0)
+        file->f_pos = pos;
+    if (append)
+        mutex_unlock(&file->f_pos_lock);
     vfs_file_put(file);
     free(kiov);
     return total_written;
+}
+
+uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count) {
+    return generic_do_preadv(fd, iovec, count, 0, true, 0);
+}
+
+uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count) {
+    return generic_do_pwritev(fd, iovec, count, 0, true, 0);
+}
+
+uint64_t sys_preadv(uint64_t fd, struct iovec *iovec, uint64_t count,
+                    uint64_t pos_l, uint64_t pos_h) {
+    loff_t pos = rw_pos_from_hilo(pos_l, pos_h);
+
+    if (pos < 0)
+        return (uint64_t)-EINVAL;
+    return generic_do_preadv(fd, iovec, count, pos, false, 0);
+}
+
+uint64_t sys_pwritev(uint64_t fd, struct iovec *iovec, uint64_t count,
+                     uint64_t pos_l, uint64_t pos_h) {
+    loff_t pos = rw_pos_from_hilo(pos_l, pos_h);
+
+    if (pos < 0)
+        return (uint64_t)-EINVAL;
+    return generic_do_pwritev(fd, iovec, count, pos, false, 0);
+}
+
+uint64_t sys_preadv2(uint64_t fd, struct iovec *iovec, uint64_t count,
+                     uint64_t pos_l, uint64_t pos_h, uint64_t flags) {
+    loff_t pos = rw_pos_from_hilo(pos_l, pos_h);
+
+    if (pos < -1)
+        return (uint64_t)-EINVAL;
+    return generic_do_preadv(fd, iovec, count, pos, pos == -1, flags);
+}
+
+uint64_t sys_pwritev2(uint64_t fd, struct iovec *iovec, uint64_t count,
+                      uint64_t pos_l, uint64_t pos_h, uint64_t flags) {
+    loff_t pos = rw_pos_from_hilo(pos_l, pos_h);
+
+    if (pos < -1)
+        return (uint64_t)-EINVAL;
+    return generic_do_pwritev(fd, iovec, count, pos, pos == -1, flags);
 }
 
 #define DIRENT_HEADER_SIZE offsetof(struct dirent, d_name)

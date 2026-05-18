@@ -522,8 +522,8 @@ void syscall_handler_init() {
     syscall_handlers[SYS_EPOLL_CREATE1] = (syscall_handle_t)sys_epoll_create1;
     syscall_handlers[SYS_DUP3] = (syscall_handle_t)sys_dup3;
     syscall_handlers[SYS_PIPE2] = (syscall_handle_t)sys_pipe;
-    // syscall_handlers[SYS_PREADV] = (syscall_handle_t)sys_preadv;
-    // syscall_handlers[SYS_PWRITEV] = (syscall_handle_t)sys_pwritev;
+    syscall_handlers[SYS_PREADV] = (syscall_handle_t)sys_preadv;
+    syscall_handlers[SYS_PWRITEV] = (syscall_handle_t)sys_pwritev;
     syscall_handlers[SYS_PPOLL_TIME32] = (syscall_handle_t)sys_ppoll;
     syscall_handlers[SYS_PSELECT6_TIME32] = (syscall_handle_t)sys_pselect6;
     // syscall_handlers[SYS_RT_TGSIGQUEUEINFO] =
@@ -568,8 +568,8 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_MLOCK2] = (syscall_handle_t)sys_mlock2;
     syscall_handlers[SYS_COPY_FILE_RANGE] =
         (syscall_handle_t)sys_copy_file_range;
-    // syscall_handlers[SYS_PREADV2] = (syscall_handle_t)sys_preadv2;
-    // syscall_handlers[SYS_PWRITEV2] = (syscall_handle_t)sys_pwritev2;
+    syscall_handlers[SYS_PREADV2] = (syscall_handle_t)sys_preadv2;
+    syscall_handlers[SYS_PWRITEV2] = (syscall_handle_t)sys_pwritev2;
     // syscall_handlers[SYS_PKEY_MPROTECT] =
     // (syscall_handle_t)sys_pkey_mprotect; syscall_handlers[SYS_PKEY_ALLOC] =
     // (syscall_handle_t)sys_pkey_alloc; syscall_handlers[SYS_PKEY_FREE] =
