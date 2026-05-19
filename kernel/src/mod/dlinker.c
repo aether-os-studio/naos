@@ -642,7 +642,7 @@ static size_t count_symbol_providers(module_plan_t *plans, size_t module_count,
 static void resolve_module_dependencies(module_t *modules, module_plan_t *plans,
                                         size_t module_count) {
     for (size_t i = 0; i < module_count; i++) {
-        if (!plans[i].scan_ok) {
+        if (!plans[i].scan_ok || !modules[i].is_verify) {
             continue;
         }
 
@@ -1010,8 +1010,14 @@ bool dlinker_load(module_t *module) {
 
     register_module_symbols(module, ehdr, module->load_base);
 
-    serial_fprintk("Loaded module %s at %#018lx\n", module->module_name,
-                   module->load_base);
+    serial_fprintk("Loaded %smodule %s at %#018lx\n",
+#ifdef CONFIG_MODULE_VERIFY
+                   "[verify] "
+#else
+                   ""
+#endif
+                   ,
+                   module->module_name, module->load_base);
 
     dlinit();
     module->is_use = true;
@@ -1144,6 +1150,13 @@ void dlinker_init() {
 
     if (plans != NULL && loaded_flags != NULL) {
         for (size_t i = 0; i < module_count; i++) {
+            if (!module_verify_signature(&modules[i])) {
+                modules[i].is_verify = false;
+                continue;
+            }
+
+            modules[i].is_verify = true;
+
             if (!scan_module_symbols(&modules[i], &plans[i])) {
                 serial_fprintk("Skipping dependency scan for module %s\n",
                                modules[i].module_name);
@@ -1160,7 +1173,8 @@ void dlinker_init() {
 
             for (size_t i = 0; i < module_count; i++) {
                 if (loaded_flags[i] ||
-                    !module_dependencies_ready(&plans[i], loaded_flags)) {
+                    !module_dependencies_ready(&plans[i], loaded_flags) ||
+                    !modules[i].is_verify) {
                     continue;
                 }
 
@@ -1179,6 +1193,12 @@ void dlinker_init() {
 
         for (size_t i = 0; i < module_count; i++) {
             if (modules[i].is_use) {
+                continue;
+            }
+
+            if (!modules[i].is_verify) {
+                serial_fprintk("Module %s was not loaded: verify failed\n",
+                               modules[i].module_name);
                 continue;
             }
 

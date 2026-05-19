@@ -26,6 +26,10 @@ else
     $(error Boot protocol $(BOOT_PROTOCOL) not supported)
 endif
 
+ifneq ($(MODULE_VERIFY), 0)
+	GLOBAL_CFLAGS += -DCONFIG_MODULE_VERIFY
+endif
+
 # User controllable C flags.
 ifeq ($(BUILD_MODE), debug)
 CFLAGS := -g3 -O0 $(GLOBAL_CFLAGS) -DDEBUG
@@ -35,6 +39,11 @@ endif
 
 # User controllable C preprocessor flags. We set none by default.
 CPPFLAGS :=
+
+ifeq ($(MODULE_VERIFY),0)
+else
+override CPPFLAGS += -include $(MODULE_SIGN_PUB_HEADER)
+endif
 
 ifeq ($(ARCH),x86_64)
     # User controllable nasm flags.
@@ -290,6 +299,16 @@ obj-$(ARCH)/src/%.S.o: src/%.S GNUmakefile
 	$(call PRINT_STEP,AS,$<)
 	$(Q)mkdir -p "$$(dirname $@)"
 	$(Q)$(CC) $(CFLAGS) $(CPPFLAGS) -DASM_FILE -c $< -o $@
+
+ifeq ($(MODULE_VERIFY),0)
+else
+$(MODULE_SIGN_PUB_HEADER): scripts/gen_module_signing_keys.sh scripts/convert_ecc_pubkey.sh
+	$(call PRINT_STEP,GEN,$@)
+	$(Q)./scripts/gen_module_signing_keys.sh "$(MODULE_SIGN_KEY_DIR)" naos_signing_key_pub
+	$(Q)touch "$@"
+
+$(OBJ): $(MODULE_SIGN_PUB_HEADER)
+endif
 
 # Remove object files and the final executable.
 .PHONY: clean

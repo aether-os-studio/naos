@@ -52,6 +52,12 @@ override QEMUFLAGS := $(QEMUFLAGS) $(EXTRA)
 
 override IMAGE_NAME := naos-$(ARCH)
 
+ifeq ($(MODULE_VERIFY),0)
+MODULES_TARGET := modules
+else
+MODULES_TARGET := sign-modules
+endif
+
 # Toolchain for building the 'limine' executable for the host.
 HOST_CC := cc
 HOST_CFLAGS := -g -O2 -pipe
@@ -131,7 +137,7 @@ else ifeq ($(ARCH),loongarch64)
 EFI_FILE_SINGLE = assets/limine/BOOTLOONGARCH64.EFI
 endif
 
-$(IMAGE_NAME).img: assets/limine modules kernel initramfs-$(ARCH).img
+$(IMAGE_NAME).img: assets/limine $(MODULES_TARGET) kernel initramfs-$(ARCH).img
 	dd if=/dev/zero of=$(IMAGE_NAME).img bs=1M seek=0 count=256
 	sgdisk --new=1:1M:255M $(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 $(IMAGE_NAME).img
@@ -143,7 +149,7 @@ $(IMAGE_NAME).img: assets/limine modules kernel initramfs-$(ARCH).img
 
 TOTAL_IMG_SIZE=$$(( $(ROOTFS_IMG_SIZE) + 256 ))
 
-single-$(IMAGE_NAME).img: assets/limine modules kernel initramfs-$(ARCH).img rootfs-$(ARCH).img
+single-$(IMAGE_NAME).img: assets/limine $(MODULES_TARGET) kernel initramfs-$(ARCH).img rootfs-$(ARCH).img
 	dd if=/dev/zero of=single-$(IMAGE_NAME).img bs=1M count=$(TOTAL_IMG_SIZE)
 	sgdisk --new=1:1M:255M --new=2:256M:0 single-$(IMAGE_NAME).img
 	mkfs.vfat -F 32 --offset 2048 -S 512 single-$(IMAGE_NAME).img
@@ -319,6 +325,20 @@ assets/ovmf-code-$(ARCH).fd:
 modules:
 	$(MAKE) -C modules
 
+.PHONY: module-signing-keys
+module-signing-keys:
+	$(call PRINT_STEP,GEN,$(MODULE_SIGN_KEY_DIR))
+	$(Q)./kernel/scripts/gen_module_signing_keys.sh "$(MODULE_SIGN_KEY_DIR)" naos_signing_key_pub
+
+ifneq ($(MODULE_VERIFY),0)
+kernel: module-signing-keys
+endif
+
+.PHONY: sign-modules
+sign-modules: modules module-signing-keys
+	$(call PRINT_STEP,SIGN,modules-$(ARCH))
+	$(Q)find modules-$(ARCH) -type f -name '*.ko' -exec ./kernel/scripts/sign_module.py {} "$(MODULE_SIGN_PRIV)" \;
+
 .PHONY: initramfs-$(ARCH).img
-initramfs-$(ARCH).img: rootfs-$(ARCH).img modules
+initramfs-$(ARCH).img: rootfs-$(ARCH).img $(MODULES_TARGET)
 	sh mkinitcpio.sh
