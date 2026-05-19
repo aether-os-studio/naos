@@ -467,6 +467,12 @@ static int generic_get_fd_path(int fd, struct vfs_path *path) {
 }
 
 static inline int rw_validate_user_buffer(const void *buf, uint64_t len) {
+    /*
+     * Leave zero-length requests alone here. For Linux ABI compatibility, a
+     * 0-byte read/write should still be able to reach the underlying object,
+     * so this helper only validates the user buffer when the call would
+     * actually dereference it.
+     */
     if (!len)
         return 0;
     if (!buf || check_user_overflow((uint64_t)buf, len))
@@ -1682,6 +1688,11 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {
         vfs_file_put(file);
         return (uint64_t)-EISDIR;
     }
+    /*
+     * Do not short-circuit len == 0 here. The call still needs to flow through
+     * VFS so the final behavior comes from the real file/socket backend, which
+     * matters for Linux userspace compatibility.
+     */
     ret = (ssize_t)vfs_read_file(file, buf, len, NULL);
     vfs_file_put(file);
     return ret;
@@ -1702,6 +1713,10 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
         vfs_file_put(file);
         return (uint64_t)-EISDIR;
     }
+    /*
+     * Same rule as read: a zero-length write is still forwarded so the backend
+     * keeps control over the exact ABI-visible result.
+     */
     ret = (ssize_t)vfs_write_file(file, buf, len, NULL);
     vfs_file_put(file);
     return ret;
@@ -1712,9 +1727,6 @@ uint64_t sys_pread64(int fd, void *buf, size_t len, uint64_t offset) {
     loff_t pos = (loff_t)offset;
     ssize_t ret;
 
-    if (!len) {
-        return 0;
-    }
     if (rw_validate_user_buffer(buf, len) < 0) {
         return (uint64_t)-EFAULT;
     }
@@ -1726,6 +1738,10 @@ uint64_t sys_pread64(int fd, void *buf, size_t len, uint64_t offset) {
         vfs_file_put(file);
         return (uint64_t)-EISDIR;
     }
+    /*
+     * pread/pwrite follow the same rule. The explicit offset does not change
+     * the ABI detail that a 0-byte request should still reach the backend.
+     */
     ret = (ssize_t)vfs_read_file(file, buf, len, &pos);
     vfs_file_put(file);
     return (uint64_t)ret;
@@ -1736,9 +1752,6 @@ uint64_t sys_pwrite64(int fd, const void *buf, size_t len, uint64_t offset) {
     loff_t pos = (loff_t)offset;
     ssize_t ret;
 
-    if (!len) {
-        return 0;
-    }
     if (rw_validate_user_buffer(buf, len) < 0) {
         return (uint64_t)-EFAULT;
     }
@@ -1750,6 +1763,10 @@ uint64_t sys_pwrite64(int fd, const void *buf, size_t len, uint64_t offset) {
         vfs_file_put(file);
         return (uint64_t)-EISDIR;
     }
+    /*
+     * Same as pread64: do not short-circuit 0-byte requests here, otherwise
+     * positioned writes can drift away from plain write semantics.
+     */
     ret = (ssize_t)vfs_write_file(file, buf, len, &pos);
     vfs_file_put(file);
     return (uint64_t)ret;
@@ -1865,7 +1882,8 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
         vfs_file_put(file);
         return (uint64_t)-EBADF;
     }
-    if (S_ISSOCK(node->i_mode) || S_ISFIFO(node->i_mode) || S_ISCHR(node->i_mode)) {
+    if (S_ISSOCK(node->i_mode) || S_ISFIFO(node->i_mode) ||
+        S_ISCHR(node->i_mode)) {
         vfs_file_put(file);
         return (uint64_t)-ESPIPE;
     }

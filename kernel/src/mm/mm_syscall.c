@@ -400,6 +400,11 @@ static uint64_t find_unmapped_area_in_window(vma_manager_t *mgr,
 }
 
 uint64_t find_unmapped_area(task_mm_info_t *mm, uint64_t hint, uint64_t len) {
+    /*
+     * This helper just needs to find a valid gap without colliding with an
+     * existing VMA. Use the hint when it fits, otherwise prefer a stable free
+     * region over forcing the mapping near the hinted address.
+     */
     if (!mm)
         return (uint64_t)-ENOMEM;
 
@@ -601,6 +606,11 @@ uint64_t sys_brk(uint64_t brk) {
     uint64_t old_brk = mm->brk_current;
     uint64_t heap_base = PADDING_DOWN(mm->brk_start, PAGE_SIZE);
 
+    /*
+     * brk has a simple userspace contract: return the new break on success and
+     * the old break on failure. Keep partial address-space changes from leaking
+     * across failure paths.
+     */
     if (brk == 0)
         return old_brk;
     if (brk < mm->brk_start || brk > mm->brk_end)
@@ -681,6 +691,12 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
     bool fixed = (flags & (MAP_FIXED | MAP_FIXED_NOREPLACE)) != 0;
     bool no_replace = (flags & MAP_FIXED_NOREPLACE) != 0;
 
+    /*
+     * mmap is intentionally strict here. MAP_FIXED and MAP_FIXED_NOREPLACE
+     * have different replacement rules, anonymous and file-backed mappings do
+     * not share the same setup path, and the VMA is recorded before optional
+     * eager population so failure handling stays predictable.
+     */
     if (len == 0 || aligned_len == 0 || aligned_len < len)
         return (uint64_t)-EINVAL;
     if (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC))

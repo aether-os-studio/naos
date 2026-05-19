@@ -99,18 +99,27 @@ uint64_t sys_brk(uint64_t brk);
 /**
  * Linux contract: change protection bits on an existing mapped range.
  * Current kernel: updates VMA/page-table permissions for covered mappings.
+ * Notes: the range is page-granular in practice, so callers that hand in
+ * unaligned addresses are usually asking for EINVAL rather than a partial
+ * fixup.
  */
 uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot);
 /**
  * Linux contract: unmap the given address range.
  * Current kernel: removes the covered VMA range and tears down page-table
  * mappings for the calling task.
+ * Notes: Linux allows munmap() to punch holes through a larger mapping, so
+ * userspace may rely on this for allocators and JITs instead of only removing
+ * whole VMAs.
  */
 uint64_t sys_munmap(uint64_t addr, uint64_t size);
 /**
  * Linux contract: resize or move an existing mapping while preserving contents
  * according to mremap(2) flags.
  * Current kernel: supports in-place growth/shrink and selected move cases.
+ * Notes: callers often use mremap() as a realloc for virtual memory. That
+ * means address stability matters, and failure must leave the old mapping
+ * usable unless Linux explicitly allows otherwise.
  * Gaps: growing shared/device-backed file mappings still depends on the file's
  * ->mmap callback; unsupported backends fail with -ENOSYS.
  */
@@ -120,6 +129,9 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
  * Linux contract: flush dirty file-backed pages to stable storage.
  * Current kernel: forwards to the backing object when the VFS/file backend
  * exposes sync support and otherwise treats missing sync hooks as a no-op.
+ * Notes: this is only meaningful for mappings that can actually carry shared
+ * dirty file state; private anonymous mappings may call it, but callers should
+ * not expect durable writeback from that.
  * Gaps: only shared file mappings are written back; anonymous, private, device,
  * and unsupported file mappings effectively succeed without Linux-grade flush
  * semantics.
@@ -129,6 +141,9 @@ uint64_t sys_msync(uint64_t addr, uint64_t size, uint64_t flags);
  * Linux contract: report page residency for the supplied mapping.
  * Current kernel: walks the local VMA/page tables and fills the user vector
  * with `1` for mapped pages and `0` otherwise.
+ * Notes: mincore() is often used as a hinting or observability tool rather
+ * than a correctness primitive. Callers should not assume that residency
+ * answers stay true after the syscall returns.
  * Gaps: the returned residency bytes do not expose richer Linux mincore()
  * state beyond this mapped/not-mapped distinction.
  */
@@ -137,6 +152,10 @@ uint64_t sys_mincore(uint64_t addr, uint64_t size, uint64_t vec);
  * Linux contract: apply advisory memory-management hints to a range.
  * Current kernel: implements populate, dontneed, free-as-dontneed, and guard
  * operations; many other advice values are accepted as no-ops.
+ * Notes: callers frequently treat madvise() as opportunistic. A successful
+ * return does not necessarily mean that every advice value had a deep effect;
+ * on Linux, many modes are best-effort and this interface should remain usable
+ * in that style.
  * Gaps: MADV_FREE is stricter than Linux, and MADV_REMOVE is not implemented.
  */
 uint64_t sys_madvise(uint64_t addr, uint64_t len, int behavior);
@@ -144,17 +163,26 @@ uint64_t sys_madvise(uint64_t addr, uint64_t len, int behavior);
  * Linux contract: pin the supplied pages in memory.
  * Current kernel: faults the range in and validates coverage, but does not
  * maintain a separate long-term mlock accounting model yet.
+ * Notes: userspace often uses this to reduce latency or avoid swap-like
+ * behavior. It is not a permission to access unmapped memory; the range still
+ * needs to exist first.
  */
 uint64_t sys_mlock(uint64_t addr, uint64_t len);
 /**
  * Linux contract: undo mlock() for the supplied range.
  * Current kernel: validates the range and returns success without tracking a
  * persistent locked-page state.
+ * Notes: munlock() is expected to be idempotent from userspace's point of
+ * view, so repeated unlock attempts should not turn into surprising hard
+ * failures once the mapping itself is otherwise valid.
  */
 uint64_t sys_munlock(uint64_t addr, uint64_t len);
 /**
  * Linux contract: lock current and/or future mappings according to flags.
  * Current kernel: validates MCL_CURRENT/MCL_FUTURE and returns success.
+ * Notes: callers usually treat this as process policy, not as an operation on
+ * a single VMA. Invalid flag mixes should therefore fail early rather than
+ * being silently ignored.
  * Gaps: future mappings are not tracked as separately locked yet, and existing
  * mappings are not tagged with persistent mlock state.
  */
@@ -169,6 +197,9 @@ uint64_t sys_munlockall(void);
  * ordering between threads sharing an mm.
  * Current kernel: supports QUERY, REGISTER_PRIVATE_EXPEDITED, and
  * PRIVATE_EXPEDITED only.
+ * Notes: this is a coordination primitive for runtimes and lock-free code, not
+ * a generic memory-management syscall. Callers usually expect precise command
+ * rejection rather than loose best-effort behavior.
  * Gaps: global and sync-core variants are not implemented.
  */
 uint64_t sys_membarrier(int cmd, unsigned int flags, int cpu_id);
@@ -176,6 +207,9 @@ uint64_t sys_membarrier(int cmd, unsigned int flags, int cpu_id);
  * Linux contract: install a NUMA policy for a virtual address range.
  * Current kernel: validates arguments and returns success without storing a
  * per-range NUMA policy.
+ * Notes: userspace libraries often probe these interfaces even on single-node
+ * systems, so argument validation still matters even when the implementation is
+ * effectively a compatibility stub.
  * Gaps: this is effectively a compatibility stub until real NUMA policy state
  * exists.
  */
@@ -186,6 +220,8 @@ uint64_t sys_mbind(uint64_t start, uint64_t len, int mode,
  * Linux contract: set the calling task's default NUMA policy.
  * Current kernel: validates the requested mode but does not persist a real
  * NUMA policy yet.
+ * Notes: this is usually used as process-wide placement policy, so callers may
+ * invoke it very early during runtime startup simply to check kernel support.
  * Gaps: this is effectively a compatibility stub until real NUMA policy state
  * exists.
  */
@@ -195,6 +231,9 @@ uint64_t sys_set_mempolicy(int mode, const unsigned long *nmask,
  * Linux contract: report the current NUMA policy or allowed node mask.
  * Current kernel: reports a synthetic MPOL_DEFAULT policy and a generated node
  * mask for the supported query flags.
+ * Notes: get_mempolicy() has several flag-dependent calling conventions, so
+ * userspace may deliberately pass NULL for either policy or nodemask depending
+ * on what it is trying to query.
  * Gaps: there is no real NUMA placement state behind the returned values.
  */
 uint64_t sys_get_mempolicy(int *policy, unsigned long *nmask, uint64_t maxnode,

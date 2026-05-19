@@ -469,6 +469,10 @@ ssize_t vfs_read_file(struct vfs_file *file, void *buf, size_t count,
     loff_t pos;
     loff_t new_pos;
 
+    /*
+     * This is one of the final read forwarding points. Keep count == 0 on the
+     * normal path and let file->read decide what the call means.
+     */
     if (!file || !file->f_op || !file->f_op->read)
         return -EINVAL;
 
@@ -497,6 +501,10 @@ ssize_t vfs_write_file(struct vfs_file *file, const void *buf, size_t count,
     loff_t pos;
     loff_t new_pos;
 
+    /*
+     * Same policy for writes. A 0-byte request usually does not modify data,
+     * but the backend still owns the exact observable behavior.
+     */
     if (!file || !file->f_op || !file->f_op->write)
         return -EINVAL;
 

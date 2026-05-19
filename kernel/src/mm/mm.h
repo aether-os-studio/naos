@@ -54,7 +54,12 @@ uint64_t task_mm_interpreter_base(task_mm_info_t *mm);
 uint64_t task_mm_stack_start(task_mm_info_t *mm);
 uint64_t task_mm_stack_end(task_mm_info_t *mm);
 
-// 分配/释放（高层接口）
+/*
+ * High-level frame allocator entry points.
+ * Notes: these operate on whole physical pages tracked by the buddy/page layer.
+ * They are not interchangeable with malloc()/free(); mixing the two ownership
+ * models will usually end in silent corruption rather than an immediate crash.
+ */
 uintptr_t alloc_frames(size_t count);
 void free_frames(uintptr_t addr, size_t count);
 void free_frames_released(uintptr_t addr, size_t count);
@@ -100,6 +105,11 @@ void unmap_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t size);
 uint64_t map_change_attribute_range_mm(task_mm_info_t *mm, uint64_t vaddr,
                                        uint64_t len, uint64_t flags);
 
+/*
+ * Byte-sized wrappers around the frame allocator.
+ * Notes: these still allocate and free page-granular backing; the byte count
+ * is convenience for callers, not a promise of sub-page accounting precision.
+ */
 void *alloc_frames_bytes(uint64_t bytes);
 void free_frames_bytes(void *ptr, uint64_t bytes);
 
@@ -121,16 +131,28 @@ static inline void dma_rmb(void) { read_barrier(); }
 static inline void dma_mb(void) { memory_barrier(); }
 
 static inline void dma_sync_cpu_to_device(void *addr, size_t size) {
+    /*
+     * Use before handing CPU-written memory to a DMA device. The barrier alone
+     * is not enough on non-coherent systems; cache maintenance is the point.
+     */
     dma_wmb();
     dcache_clean_range(addr, size);
 }
 
 static inline void dma_sync_device_to_cpu(void *addr, size_t size) {
+    /*
+     * Use after device DMA into memory and before CPU reads. Skipping the cache
+     * invalidation is a common bug that leaves drivers reading stale lines.
+     */
     dcache_invalidate_range(addr, size);
     dma_rmb();
 }
 
 static inline void dma_sync_bidirectional(void *addr, size_t size) {
+    /*
+     * Use when ownership can move in both directions or when the safer answer
+     * is to flush both ways. This is heavier than one-way sync on purpose.
+     */
     dma_mb();
     dcache_flush_range(addr, size);
 }

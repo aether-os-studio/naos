@@ -839,6 +839,10 @@ unix_socket_stream_read_locked(socket_t *sock, uint8_t *out, size_t len,
     size_t copied = 0;
     skb_buff_t *skb = NULL;
 
+    /*
+     * STREAM is a byte stream. Do not treat skb boundaries in recv_queue as
+     * message boundaries; userspace must only observe byte ordering here.
+     */
     if (!sock || !len)
         return 0;
 
@@ -936,6 +940,10 @@ static size_t unix_socket_packet_readv_locked(
     size_t packet_len = 0;
     size_t copied = 0;
 
+    /*
+     * DGRAM and SEQPACKET keep packet boundaries. One read consumes the head
+     * packet only; short buffers truncate the payload and report MSG_TRUNC.
+     */
     if (!sock || !iov || !iovlen)
         return 0;
 
@@ -2453,6 +2461,10 @@ done:
     }
 
     if (unix_socket_is_message_type(sock->type)) {
+        /*
+         * For DGRAM/SEQPACKET, the full iov describes one logical message, so
+         * it is packed into a single skb before queueing.
+         */
         ancillary_ret = unix_socket_ensure_sender_cred(&ancillary, false);
         if (ancillary_ret < 0) {
             if (ancillary)
@@ -2485,6 +2497,10 @@ done:
     bool noblock = !!(flags & MSG_DONTWAIT);
     unix_socket_ancillary_t *ancillary_to_attach = ancillary;
 
+    /*
+     * STREAM deliberately does not preserve sendmsg boundaries. Data may be
+     * pushed in pieces, but the receiver still observes one continuous stream.
+     */
     for (int i = 0; i < msg->msg_iovlen; i++) {
         struct iovec *curr = &((struct iovec *)msg->msg_iov)[i];
         size_t sent = 0;
@@ -2542,6 +2558,10 @@ size_t unix_socket_recvmsg(uint64_t fd, struct msghdr *msg, int flags) {
 
     msg->msg_flags = 0;
     unix_socket_ancillary_t *ancillary_list = NULL;
+    /*
+     * The recv path splits by socket type in unix_socket_recvmsg_from_self():
+     * STREAM has no message boundary, while DGRAM/SEQPACKET do.
+     */
     size_t cnt = unix_socket_recvmsg_from_self(sock, NULL, msg, flags,
                                                caller_fd, &ancillary_list);
     if ((int64_t)cnt < 0) {

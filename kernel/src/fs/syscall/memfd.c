@@ -402,6 +402,12 @@ static int memfdfs_resize(struct vfs_inode *node, uint64_t size) {
     new_pages = memfd_pages_for_size(size);
 
     if (size > old_len) {
+        /*
+         * Growing a memfd only extends the logical length and slot capacity.
+         * Linux does not require eagerly materializing every new page here;
+         * reads from unwritten holes still observe zeroes, and actual storage
+         * can appear lazily on write or shared-fault/mmap paths.
+         */
         int ret = memfd_ensure_page_slots_locked(ctx, new_pages);
         if (ret < 0) {
             spin_unlock(&ctx->lock);
@@ -419,6 +425,14 @@ static int memfdfs_resize(struct vfs_inode *node, uint64_t size) {
         uint64_t paddr = 0;
         if (memfd_resolve_page_locked(ctx, tail_page, false, &paddr) == 0 &&
             paddr) {
+            /*
+             * Shrinking into the middle of a page must zero the now-invisible
+             * tail. If the file is grown again later, Linux-style behavior is
+             * that the reopened range reads back as zero rather than leaking
+             * the stale bytes that used to live past EOF. This showed up in
+             * practice when userspace resized memfd-backed objects and expected
+             * ordinary tmpfs semantics.
+             */
             memset((uint8_t *)phys_to_virt(paddr) + (size % PAGE_SIZE), 0,
                    PAGE_SIZE - (size % PAGE_SIZE));
         }
@@ -432,6 +446,11 @@ static int memfdfs_resize(struct vfs_inode *node, uint64_t size) {
     uint64_t zap_start = PADDING_UP(size, PAGE_SIZE);
     uint64_t zap_end = PADDING_UP(old_len, PAGE_SIZE);
     if (zap_start < zap_end)
+        /*
+         * Shared mappings of the truncated region must lose their page-table
+         * translations. Truncation is not just metadata; userspace expects the
+         * old pages past EOF to stop being a valid shared view of the file.
+         */
         memfd_zap_mappings(node, zap_start, zap_end);
 
     for (size_t i = new_pages; i < old_pages; i++) {
@@ -534,6 +553,12 @@ static void *memfdfs_mmap(struct vfs_file *file, void *addr, size_t offset,
             return (void *)(int64_t)ret;
         }
 
+        /*
+         * Shared memfd mappings are backed directly by the memfd page array, so
+         * writes through the mapping and writes through the file descriptor
+         * stay coherent at the page level. That is the whole reason this path
+         * does not go through the private-copy helper above.
+         */
         if (map_page_range(pgdir, ptr, paddr, PAGE_SIZE, pt_flags) != 0) {
             spin_unlock(&ctx->lock);
             return (void *)(int64_t)-ENOMEM;
@@ -626,6 +651,11 @@ static int memfd_create_file(struct vfs_file **out_file, const char *name,
         return -ENOMEM;
     }
 
+    /*
+     * The stored memfd name is descriptive only. Linux exposes it for procfs
+     * style reporting and debugging, but it is not a pathname and does not
+     * participate in lookup once the fd exists.
+     */
     if (name)
         strncpy(ctx->name, name, sizeof(ctx->name) - 1);
     ctx->flags = (int)flags;

@@ -421,6 +421,9 @@ struct sysinfo {
  * Linux contract: mount a filesystem or perform bind/remount operations.
  * Current kernel: routes to the local VFS mount API and supports the flags
  * that are translated by generic.c.
+ * Notes: mount() is overloaded on Linux. The same entry point covers fresh
+ * mounts, bind mounts, remounts, and propagation-like changes, so callers often
+ * leave some parameters unused depending on the flag mix.
  * Gaps: only filesystems and mount flags implemented in the in-kernel VFS are
  * available.
  */
@@ -455,6 +458,9 @@ uint64_t sys_quotactl(uint32_t cmd, const char *special, uint32_t id,
 /**
  * Linux contract: create or truncate a file with O_CREAT|O_WRONLY|O_TRUNC.
  * Current kernel: translates directly into openat on AT_FDCWD.
+ * Notes: creat() is basically a fixed open() recipe kept for ABI reasons.
+ * Callers that expect read access afterwards usually need an extra reopen or a
+ * different entry point.
  * Gaps: O_TMPFILE is explicitly rejected in the generic open helper.
  */
 uint64_t sys_creat(const char *path, uint64_t mode);
@@ -477,6 +483,9 @@ uint64_t sys_openat(uint64_t dirfd, const char *name, uint64_t flags,
  * Linux contract: open a path using openat2(2) resolution semantics.
  * Current kernel: consumes the supplied vfs_open_how structure through the
  * local VFS open path.
+ * Notes: userspace may pass a larger structure size to probe for newer kernel
+ * support, so size validation and unknown-field handling are part of the ABI,
+ * not just input hygiene.
  * Gaps: only resolve flags implemented by the in-kernel VFS are honored.
  */
 uint64_t sys_openat2(uint64_t dirfd, const char *name,
@@ -556,12 +565,16 @@ uint64_t sys_copy_file_range(uint64_t fd_in, int *offset_in, uint64_t fd_out,
  * Linux contract: read from a file descriptor into a user buffer.
  * Current kernel: rejects directory inodes with -EISDIR and otherwise
  * delegates to vfs_read_file().
+ * Notes: a zero-length request still goes through the normal file path instead
+ * of being short-circuited in the syscall wrapper.
  */
 uint64_t sys_read(uint64_t fd, void *buf, uint64_t len);
 /**
  * Linux contract: write to a file descriptor from a user buffer.
  * Current kernel: rejects directory inodes with -EISDIR and otherwise
  * delegates to vfs_write_file().
+ * Notes: len == 0 is still forwarded to the underlying file object for the
+ * same ABI reason as sys_read().
  */
 uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len);
 /**
@@ -588,12 +601,16 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg);
  * Linux contract: vectored read using an iovec array.
  * Current kernel: validates all iovecs, then performs sequential VFS reads
  * until a short read or error occurs.
+ * Notes: zero-length iovec entries are skipped for copying purposes, but the
+ * call may still collapse to a real zero-byte read.
  */
 uint64_t sys_readv(uint64_t fd, struct iovec *iovec, uint64_t count);
 /**
  * Linux contract: vectored write using an iovec array.
  * Current kernel: validates all iovecs, then performs sequential VFS writes
  * until a short write or error occurs.
+ * Notes: as with readv, empty iovecs are tolerated and do not by themselves
+ * turn the call into an error.
  */
 uint64_t sys_writev(uint64_t fd, struct iovec *iovec, uint64_t count);
 /**
@@ -711,6 +728,9 @@ typedef struct pidfd_info {
  * Linux contract: open a pidfd referring to a live task.
  * Current kernel: creates a pollable pidfd that becomes readable when the task
  * exits.
+ * Notes: pidfds are usually used to avoid pid reuse races. Callers expect the
+ * fd handle to stay tied to one concrete task lifetime rather than to a numeric
+ * pid slot.
  */
 uint64_t sys_pidfd_open(int pid, uint64_t flags);
 /**
@@ -730,6 +750,9 @@ void pidfd_on_task_exit(task_t *task);
  * Linux contract: multiplex fd control commands such as dup, fd flags, status
  * flags, and locks.
  * Current kernel: implements the commands wired in generic.c.
+ * Notes: fcntl() is one of those interfaces where unsupported commands matter.
+ * Userspace libraries often probe feature support by trying a command and
+ * inspecting the exact error code.
  * Gaps: many Linux fcntl commands are still missing or simplified; for example
  * pipe sizing and file seals currently behave as compatibility stubs.
  */
@@ -738,6 +761,9 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg);
  * Linux contract: create a pipe pair with optional flags.
  * Current kernel: depends on the local pipefs backend for actual pipe object
  * creation and flag handling.
+ * Notes: callers usually assume pipe ends are ordered as read end first, write
+ * end second, and that O_NONBLOCK/O_CLOEXEC apply immediately to the returned
+ * descriptors.
  */
 uint64_t sys_pipe(int fd[2], uint64_t flags);
 /**
@@ -750,6 +776,9 @@ uint64_t sys_stat(const char *fd, struct stat *buf);
 uint64_t sys_fstat(uint64_t fd, struct stat *buf);
 /**
  * Linux contract: stat a path relative to dirfd with AT_* flags.
+ * Notes: this entry point is widely used for metadata-only probes, often with
+ * AT_SYMLINK_NOFOLLOW or AT_EMPTY_PATH, so path resolution flags are part of
+ * the behavior rather than an optional extra.
  */
 uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname, struct stat *buf,
                         uint64_t flags);
@@ -785,10 +814,15 @@ uint64_t sys_prlimit64(uint64_t pid, int resource,
 /**
  * Linux contract: wait for fd readiness using poll(2).
  * Current kernel: uses the VFS poll-wait infrastructure.
+ * Notes: poll() reports readiness, not guaranteed progress. Callers still need
+ * to handle short I/O, EAGAIN, and races with peer shutdown after wakeup.
  */
 size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout);
 /**
  * Linux contract: poll(2) with an optional signal mask and timespec timeout.
+ * Notes: ppoll() is commonly used to atomically swap a temporary signal mask
+ * around the sleep window. Callers expect that to be tighter than composing
+ * sigprocmask() with poll() in userspace.
  */
 uint64_t sys_ppoll(struct pollfd *fds, uint64_t nfds,
                    const struct timespec *timeout_ts, const sigset_t *sigmask,
@@ -820,11 +854,16 @@ uint64_t sys_faccessat2(uint64_t dirfd, const char *pathname, uint64_t mode,
                         uint64_t flags);
 /**
  * Linux contract: wait for readiness using select(2).
+ * Notes: select() keeps the historical in/out fd-set ABI, so the input sets
+ * are overwritten with the ready subset. Callers that need the originals must
+ * preserve them in userspace.
  */
 size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
                   struct timeval *timeout);
 /**
  * Linux contract: select(2) with pselect6 signal-mask ABI.
+ * Notes: like ppoll(), this is usually chosen for its signal-mask atomicity
+ * rather than because fd_set is a pleasant API.
  */
 uint64_t sys_pselect6(uint64_t nfds, fd_set *readfds, fd_set *writefds,
                       fd_set *exceptfds, struct timespec *timeout,
@@ -860,6 +899,9 @@ uint64_t sys_epoll_create(int size);
  * Linux contract: wait for epoll events.
  * Current kernel: depends on the local epoll watch bookkeeping and poll
  * notification paths.
+ * Notes: readiness returned from epoll is level- or edge-triggered according
+ * to the watch state, so userspace often relies on subtle rearm and drain
+ * patterns here.
  */
 uint64_t sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents,
                         int timeout);
@@ -867,6 +909,9 @@ uint64_t sys_epoll_wait(int epfd, struct epoll_event *events, int maxevents,
  * Linux contract: add, modify, or delete an epoll watch.
  * Current kernel: supports the watch lifecycle implemented by
  * fs/syscall/epoll.c.
+ * Notes: an epoll watch attaches to the underlying file object plus user data,
+ * not merely to an integer fd slot, so dup/close behavior tends to surprise
+ * people the first time they debug it.
  */
 uint64_t sys_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
 /**
@@ -900,6 +945,9 @@ uint64_t sys_eventfd(uint64_t arg1);
  * Linux contract: create or reconfigure a signalfd.
  * Current kernel: supports creating a new signalfd or updating an existing one
  * when `ufd >= 0`.
+ * Notes: signalfd only observes signals that are blocked from normal delivery
+ * to the thread or process in the expected Linux style, so mask handling is a
+ * real part of the interface, not just configuration metadata.
  * Gaps: behavior is limited to the local signal queue model and mask handling
  * implemented by signalfd.c.
  */
@@ -942,6 +990,9 @@ uint64_t sys_link(const char *name, const char *target_name);
  * Linux contract: create a symbolic link.
  * Current kernel: delegates to vfs_symlinkat() and stores the supplied target
  * string verbatim.
+ * Notes: the target path is not resolved at symlink creation time. Callers are
+ * writing raw link text, which may be relative and may intentionally point at
+ * something nonexistent for now.
  */
 uint64_t sys_symlink(const char *name, const char *target_name);
 /**
@@ -1009,6 +1060,9 @@ uint64_t sys_renameat(uint64_t oldfd, const char *old, uint64_t newfd,
 /**
  * Linux contract: renameat2(2) with Linux rename flags.
  * Current kernel: supports the flags implemented by vfs_renameat2().
+ * Notes: rename is widely used as the publication step for atomic file
+ * replacement. That means overwrite, exchange, and no-replace semantics matter
+ * a lot more than the name suggests.
  * Gaps: only the rename flag subset implemented by the local VFS is available.
  */
 uint64_t sys_renameat2(uint64_t oldfd, const char *old, uint64_t newfd,
@@ -1029,6 +1083,9 @@ uint64_t sys_rmdir(const char *name);
 uint64_t sys_unlink(const char *name);
 /**
  * Linux contract: unlink relative to dirfd with AT_REMOVEDIR support.
+ * Notes: the meaning of the target changes with flags. AT_REMOVEDIR makes this
+ * the directory-removal path, so callers often funnel both unlink and rmdir
+ * behavior through this one entry point.
  */
 uint64_t sys_unlinkat(uint64_t dirfd, const char *name, uint64_t flags);
 
@@ -1036,6 +1093,8 @@ uint64_t sys_unlinkat(uint64_t dirfd, const char *name, uint64_t flags);
  * Linux contract: create a timerfd.
  * Current kernel: supports only CLOCK_REALTIME and CLOCK_MONOTONIC plus
  * TFD_NONBLOCK/TFD_CLOEXEC.
+ * Notes: timerfd is usually consumed through poll/epoll loops, so its readable
+ * state and counter semantics matter at least as much as the timer source.
  */
 uint64_t sys_timerfd_create(int clockid, int flags);
 /**
@@ -1055,6 +1114,9 @@ void timerfd_softirq(void);
  * Linux contract: create an anonymous in-memory file.
  * Current kernel: creates a memfd-backed file and installs it in the caller's
  * fd table.
+ * Notes: memfd is commonly used for shared memory objects, executable image
+ * staging, and file-seal workflows. Callers therefore tend to care about both
+ * ordinary file I/O and fcntl()-driven behavior on the returned fd.
  * Gaps: MFD_HUGETLB, MFD_NOEXEC_SEAL, and MFD_EXEC are rejected.
  */
 uint64_t sys_memfd_create(const char *name, unsigned int flags);
@@ -1089,6 +1151,9 @@ uint64_t sys_fstatfs(int fd, struct statfs *buf);
  * Linux contract: push parameters into an fsopen-created context.
  * Current kernel: supports only commands and keys understood by the local mount
  * implementation.
+ * Notes: fsconfig() is stateful. Callers usually build a mount in multiple
+ * steps and expect some errors to depend on whether the context has already
+ * advanced too far.
  * Gaps: unsupported command/key combinations fail with -EOPNOTSUPP or are
  * silently limited to the small option vocabulary in fsfd.c.
  */
@@ -1106,6 +1171,9 @@ uint64_t sys_fsmount(int fd, uint32_t flags, uint32_t attr_flags);
  * Linux contract: move or attach mount objects via the new mount API.
  * Current kernel: supports mount-handle sources and path-based sources through
  * the mountfd/VFS helpers.
+ * Notes: callers use this to compose mount trees without exposing half-built
+ * state to the live namespace, so source-vs-target resolution mistakes here are
+ * usually quite visible.
  * Gaps: only the MOVE_MOUNT flag combinations implemented by fsfd.c are
  * available.
  */
@@ -1124,6 +1192,9 @@ uint64_t sys_ftruncate(int fd, uint64_t length);
 /**
  * Linux contract: preallocate or punch space in a file.
  * Current kernel: supports the modes implemented by the underlying VFS helper.
+ * Notes: userspace often calls fallocate() to avoid ENOSPC at write time or to
+ * punch holes in sparse files, so mode handling is a real semantic switch here,
+ * not a cosmetic extension field.
  * Gaps: generic.c currently accepts only mode == 0 and maps everything else to
  * -EOPNOTSUPP.
  */
@@ -1140,6 +1211,9 @@ uint64_t sys_fadvise64(int fd, uint64_t offset, uint64_t len, int advice);
  * Linux contract: update path timestamps with nanosecond resolution.
  * Current kernel: supports UTIME_NOW, UTIME_OMIT, AT_EMPTY_PATH,
  * AT_SYMLINK_NOFOLLOW, and NULL pathname fd targeting.
+ * Notes: UTIME_NOW and UTIME_OMIT intentionally mix explicit and implicit
+ * timestamp updates in one call, so callers may pass partially meaningful input
+ * arrays instead of a pair of ordinary concrete timestamps.
  * Gaps: timestamp changes are applied through generic inode metadata;
  * filesystems that keep separate persistent timestamp state are not yet
  * integrated here.

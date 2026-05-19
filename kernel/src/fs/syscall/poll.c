@@ -47,6 +47,11 @@ uint32_t poll_to_epoll_comp(uint32_t poll_events) {
 static int poll_scan_ready(struct pollfd *fds, int nfds) {
     int ready = 0;
 
+    /*
+     * poll() is a readiness snapshot, not a promise that the subsequent I/O
+     * will make forward progress. Callers still need to tolerate races with
+     * peer shutdown, short I/O, and state changes after this scan completes.
+     */
     for (int i = 0; i < nfds; i++) {
         struct vfs_file *file;
 
@@ -82,6 +87,11 @@ static int poll_scan_ready(struct pollfd *fds, int nfds) {
 
 static void poll_arm_waiters(struct pollfd *fds, int nfds,
                              vfs_poll_wait_t *waits) {
+    /*
+     * The expected pattern is scan -> arm -> scan again -> sleep. Arming the
+     * waiters without the second scan leaves a classic lost-wakeup window where
+     * an event can arrive after the first scan but before the task blocks.
+     */
     for (int i = 0; i < nfds; i++) {
         struct vfs_file *file;
         vfs_node_t *node;
@@ -324,7 +334,12 @@ static inline struct pollfd *select_add(struct pollfd **comp, size_t *compIndex,
     return &(*comp)[(*compIndex)++];
 }
 
-// i hate this obsolete system call and do not plan on making it efficient
+/*
+ * select() keeps the old bitmap ABI, so the implementation is intentionally a
+ * translation layer around poll(). Efficiency is not the main goal here; the
+ * important part is preserving the in/out fd-set behavior that legacy userspace
+ * still expects.
+ */
 static inline bool select_bitmap(uint8_t *map, int index) {
     int div = index / 8;
     int mod = index % 8;
@@ -408,6 +423,11 @@ size_t sys_select(int nfds, uint8_t *read, uint8_t *write, uint8_t *except,
     if (kexcept)
         memset(kexcept, 0, bitmap_bytes);
 
+    /*
+     * The userspace bitmaps are in/out state. Once we have captured the input
+     * interest set into `comp`, the kernel-side bitmaps are cleared and later
+     * rebuilt from the ready result, matching the historical select() contract.
+     */
     size_t res = do_poll(
         comp, compIndex,
         timeout ? (timeout->tv_sec * 1000 + (timeout->tv_usec + 1000) / 1000)

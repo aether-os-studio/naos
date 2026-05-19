@@ -19,6 +19,9 @@
 /**
  * Encode segment/bus/device/function into the implementation-defined address
  * form used by the current PCI host-controller backend.
+ * Notes: this is a host-controller-facing encoding helper, not a stable device
+ * identity format for drivers or userspace. Use structured B/D/F fields when
+ * storing device identity in long-lived state.
  */
 uint32_t segment_bus_device_functon_to_pci_address(uint16_t segment,
                                                    uint8_t bus, uint8_t device,
@@ -101,6 +104,9 @@ extern uint32_t pci_device_number;
 
 /**
  * Search a device's PCI capability list for a capability ID.
+ * Notes: this walks the linked capability chain exposed by the device itself.
+ * Callers still need to validate per-capability layout before reading deeper
+ * fields; finding the capability header is only the first step.
  */
 uint32_t pci_enumerate_capability_list(pci_device_t *pci_dev,
                                        uint32_t cap_type);
@@ -115,36 +121,58 @@ uint64_t get_mmio_address(uint32_t pci_address, uint16_t offset);
 const char *pci_classname(uint32_t classcode);
 /**
  * Collect all enumerated devices with the requested vendor ID.
+ * Notes: this is a snapshot over the current enumeration result table, not a
+ * live subscription. Callers should size `result` conservatively and inspect
+ * `*n` as the actual number of returned entries.
  */
 void pci_find_vid(pci_device_t **result, uint32_t *n, uint32_t vid);
 /**
  * Collect all enumerated devices with the requested class code.
+ * Notes: class matches are broad by design. Drivers that care about interface
+ * quirks usually need another layer of filtering after this helper returns.
  */
 void pci_find_class(pci_device_t **result, uint32_t *n, uint32_t class_code);
 /**
  * Look up a previously enumerated device by bus/device/function/segment.
+ * Notes: this only finds devices that have already been discovered by the PCI
+ * core. It is not an implicit enumeration trigger.
  */
 pci_device_t *pci_find_bdfs(uint8_t bus, uint8_t slot, uint8_t func,
                             uint16_t segment);
 /**
  * Enumerate all buses reachable from one PCI segment group.
+ * Notes: segment scanning is a topology walk plus device-object creation. It
+ * should run before driver probing for that segment, otherwise probe code ends
+ * up depending on partially populated global state.
  */
 void pci_scan_segment(pci_device_op_t *op, uint16_t segment_group);
 /**
  * Enumerate one PCI bus and the functions reachable beneath it.
+ * Notes: bridge recursion lives under this path. Bus scanning is not just a
+ * flat loop over slots; callers should assume it may discover subordinate buses
+ * and therefore more devices than are directly visible on the input bus.
  */
 void pci_scan_bus(pci_device_op_t *op, uint16_t segment_group, uint8_t bus);
 /**
  * Enumerate one concrete PCI function and populate pci_device_t state.
+ * Notes: this is the point where BAR sizing, capability discovery, and driver
+ * matchable identity all become concrete. A partially initialized pci_device_t
+ * should not escape from here as if probing had already succeeded.
  */
 void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
                        uint8_t device, uint8_t function);
 /**
  * Initialize host-controller access before bus enumeration starts.
+ * Notes: architecture or firmware glue should finish ECAM/PIO setup before
+ * this runs. Driver code should not treat pci_controller_init() as a late
+ * "make PCI usable now" escape hatch.
  */
 void pci_controller_init();
 /**
  * Enumerate PCI devices and probe registered PCI drivers.
+ * Notes: this is the ownership boundary between discovery and driver binding.
+ * Code that only needs the device list should prefer the find/scan helpers
+ * rather than calling pci_init() a second time.
  */
 void pci_init();
 
@@ -173,6 +201,8 @@ typedef struct pci_driver {
 
 /**
  * Register a PCI driver with the PCI core.
+ * Notes: registration does not just store metadata; it participates in future
+ * probe decisions, so the driver object must remain valid after this call.
  */
 int regist_pci_driver(pci_driver_t *driver);
 pci_driver_t *pci_get_current_probe_driver(void);

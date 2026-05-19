@@ -425,23 +425,34 @@ struct usb_device_id {
 
 /**
  * Submit a prepared transfer to the controller that owns xfer->pipe.
+ * Notes: ownership of the transfer buffer still belongs to the caller. For
+ * asynchronous use, that means both the xfer object and its backing buffers
+ * must outlive completion.
  */
 int usb_submit_xfer(usb_xfer_t *xfer);
 /**
  * Send one generic transfer through a prepared pipe.
+ * Notes: this is the synchronous convenience path. Callers that need overlap or
+ * completion callbacks should build a usb_xfer and use usb_submit_xfer().
  */
 int usb_send_pipe(usb_pipe_t *pipe, int dir, const void *cmd, void *data,
                   int datasize, uint64_t timeout_ns);
 /**
  * Send a synchronous bulk transfer.
+ * Notes: bulk transfers may legitimately complete short. Treating every short
+ * packet as a hard fault is a higher-level protocol decision, not a USB rule.
  */
 int usb_send_bulk(usb_pipe_t *pipe, int dir, void *data, int datasize);
 /**
  * Queue a non-blocking bulk transfer.
+ * Notes: once queued, the caller must keep the payload buffer stable until the
+ * controller has consumed it or reported completion through its own path.
  */
 int usb_send_bulk_nonblock(usb_pipe_t *pipe, int dir, void *data, int datasize);
 /**
  * Queue an interrupt transfer with a completion callback.
+ * Notes: the callback runs from the USB completion path, so it should stay
+ * short and avoid assuming process context.
  */
 int usb_send_intr_pipe(usb_pipe_t *pipe, void *data_ptr, int len,
                        intr_xfer_cb cb, void *user_data);
@@ -451,16 +462,24 @@ int usb_send_intr_pipe(usb_pipe_t *pipe, void *data_ptr, int len,
 int usb_32bit_pipe(usb_pipe_t *pipe);
 /**
  * Allocate or reconfigure a pipe for one endpoint descriptor.
+ * Notes: a pipe is controller-owned transport state, not just a parsed copy of
+ * the endpoint descriptor. Reusing a pipe across devices or alternate settings
+ * without reallocation is usually wrong.
  */
 usb_pipe_t *usb_alloc_pipe(usb_device_t *usbdev,
                            usb_endpoint_descriptor_t *epdesc,
                            usb_super_speed_endpoint_descriptor_t *ss_epdesc);
 /**
  * Release a previously allocated pipe.
+ * Notes: do not free a pipe while transfers are still in flight on it unless
+ * the controller-specific teardown path explicitly supports that.
  */
 void usb_free_pipe(usb_device_t *usbdev, usb_pipe_t *pipe);
 /**
  * Send a control request over endpoint zero.
+ * Notes: this is the path for standard enumeration traffic as well as many
+ * class/vendor requests, so callers need to fill bmRequestType/wIndex/wValue
+ * carefully; the helper does not reinterpret malformed control packets.
  */
 int usb_send_default_control(usb_pipe_t *pipe, const usb_ctrl_request_t *req,
                              void *data);
@@ -470,6 +489,8 @@ int usb_send_default_control(usb_pipe_t *pipe, const usb_ctrl_request_t *req,
 int usb_is_freelist(usb_controller_t *cntl, usb_pipe_t *pipe);
 /**
  * Populate pipe metadata directly from an endpoint descriptor.
+ * Notes: this copies transport parameters only. It does not allocate schedule
+ * state or register the pipe with the controller by itself.
  */
 void usb_desc2pipe(usb_pipe_t *pipe, usb_device_t *usbdev,
                    usb_endpoint_descriptor_t *epdesc);
@@ -483,41 +504,61 @@ int usb_get_period(usb_device_t *usbdev, usb_endpoint_descriptor_t *epdesc);
 int usb_xfer_time(usb_pipe_t *pipe, int datalen);
 /**
  * Find an endpoint descriptor inside one parsed interface block.
+ * Notes: this is a descriptor scan over one interface view, not over the whole
+ * device. Drivers that bind by interface should stay at that granularity.
  */
 usb_endpoint_descriptor_t *usb_find_desc(usb_device_interface_t *iface,
                                          int type, int dir);
 /**
  * Find the SuperSpeed companion descriptor associated with an interface.
+ * Notes: not every endpoint has one. Full-/high-speed paths should be prepared
+ * for a NULL result rather than treating it as descriptor corruption.
  */
 usb_super_speed_endpoint_descriptor_t *
 usb_find_ss_desc(usb_device_interface_t *iface);
 /**
  * Select an alternate setting for one interface number.
+ * Notes: alternate-setting changes can invalidate endpoint assumptions that a
+ * driver cached earlier, so callers usually need to rebuild pipes afterwards.
  */
 int usb_set_interface(usb_device_t *usbdev, uint8_t iface_num,
                       uint8_t alt_setting);
 /**
  * Enumerate devices hanging off one hub.
+ * Notes: this is the generic USB discovery engine. It is expected to cope with
+ * hotplug churn, debounce, and partial failures; callers should not assume one
+ * clean pass means the topology is forever settled.
  */
 void usb_enumerate(usb_hub_t *hub);
 /**
  * Register a controller and its root hub with the USB core.
+ * Notes: root-hub wiring is part of controller registration, not a separate
+ * optional convenience feature. Enumeration and driver binding depend on it.
  */
 void usb_register_controller(usb_controller_t *cntl, usb_hub_t *hub);
 /**
  * Remove a controller from the USB core and tear down attached state.
+ * Notes: this is the disruptive path. Callers should expect device removal and
+ * callback activity, not just silent list deletion.
  */
 void usb_unregister_controller(usb_controller_t *cntl);
 /**
  * Mark one hub port dirty so the enumeration worker rescans it.
+ * Notes: use this for change notification, not as a direct substitute for
+ * immediate re-enumeration in random contexts.
  */
 void usb_hub_mark_port_changed(usb_hub_t *hub, uint32_t port);
 /**
  * Register callbacks for USB bus add/remove notifications.
+ * Notes: notifier callbacks observe controller/device lifetime edges. They are
+ * best suited for bookkeeping, not for doing the heavy work of a function
+ * driver probe path.
  */
 void usb_register_bus_notifier(usb_bus_notifier_ops_t *ops);
 /**
  * Remove previously registered USB bus notification callbacks.
+ * Notes: callers must ensure the notifier object itself stays alive until after
+ * unregistration completes.
  */
 void usb_unregister_bus_notifier(usb_bus_notifier_ops_t *ops);
 /**
@@ -537,8 +578,15 @@ struct usb_driver {
 
 /**
  * Register a USB function driver with the USB core.
+ * Notes: like PCI registration, the driver descriptor must remain valid after
+ * registration because future hotplug events may still match against it.
  */
 void regist_usb_driver(usb_driver_t *driver);
+/**
+ * Unregister a USB function driver.
+ * Notes: this stops future matches, but callers should still think about
+ * already-bound devices and teardown ordering around remove() callbacks.
+ */
 void unregist_usb_driver(usb_driver_t *driver);
 usb_driver_t *usb_get_current_probe_driver(void);
 usb_driver_t *usb_get_current_remove_driver(void);

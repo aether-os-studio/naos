@@ -136,6 +136,11 @@ static bool timerfd_update_due_locked(timerfd_t *tfd, uint64_t now) {
     if (!tfd || !tfd->timer.expires || now < tfd->timer.expires)
         return false;
 
+    /*
+     * timerfd readiness is a counter, not a boolean latch. Periodic timers may
+     * accumulate multiple expirations before userspace consumes them, and the
+     * read side is supposed to observe that count.
+     */
     if (tfd->timer.interval) {
         uint64_t delta = now - tfd->timer.expires;
         uint64_t periods = delta / tfd->timer.interval + 1;
@@ -697,6 +702,11 @@ static ssize_t timerfdfs_read(struct vfs_file *file, void *addr, size_t size,
     tfd->count = 0;
     spin_unlock(&tfd->lock);
 
+    /*
+     * The read side is where the counter is consumed. That division of labor is
+     * important: settime()/poll paths may inspect or update timing state, but
+     * they should not steal already-delivered expirations from readers.
+     */
     *(uint64_t *)addr = count;
     vfs_poll_notify(tfd->node, EPOLLOUT);
     return sizeof(uint64_t);

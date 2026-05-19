@@ -746,10 +746,25 @@ bool vfs_path_equal(const struct vfs_path *a, const struct vfs_path *b);
 
 /**
  * Allocate an open file description for the resolved path.
+ * Notes: this creates a new open file description, not just a borrowed alias
+ * to an existing fd slot. Callers own one reference on success and need to
+ * release it with vfs_file_put() or pass ownership into a higher-level helper.
  */
 struct vfs_file *vfs_alloc_file(const struct vfs_path *path,
                                 unsigned int open_flags);
+/**
+ * Acquire an extra reference to an open file description.
+ * Notes: this is the normal helper when the same struct vfs_file must survive
+ * across another layer's lifetime boundary. Do not use it as a substitute for
+ * fd-table lookups; it only manages object lifetime.
+ */
 struct vfs_file *vfs_file_get(struct vfs_file *file);
+/**
+ * Drop one reference to an open file description and run final cleanup on the
+ * last put.
+ * Notes: the final put can trigger release callbacks and inode/path teardown,
+ * so callers must not touch `file` again after handing it to vfs_file_put().
+ */
 void vfs_file_put(struct vfs_file *file);
 int mountfd_get_path(struct vfs_file *file, struct vfs_path *path);
 
@@ -763,15 +778,27 @@ bool vfs_path_is_ancestor(const struct vfs_path *ancestor,
 /**
  * Resolve a pathname into a referenced VFS path using Linux-style lookup
  * flags.
+ * Notes: successful lookup returns a referenced path that the caller must drop
+ * with vfs_path_put(). This helper resolves names only; it does not open the
+ * object or pin a file description.
  */
 int vfs_filename_lookup(int dfd, const char *name, unsigned int lookup_flags,
                         struct vfs_path *path);
+/**
+ * Resolve the parent path plus final pathname component.
+ * Notes: this is the helper for create/unlink/rename-style operations where
+ * callers need both the parent directory and the final qstr. The returned
+ * parent path is referenced and must be released by the caller.
+ */
 int vfs_path_parent_lookup(int dfd, const char *name, unsigned int lookup_flags,
                            struct vfs_path *parent, struct vfs_qstr *last,
                            unsigned int *type);
 
 /**
  * Open a path relative to dfd and return a referenced open file description.
+ * Notes: ownership of the returned file object goes to the caller on success.
+ * `kernel` changes pathname-buffer assumptions; it is not a generic
+ * permission-bypass flag and should not be used casually by internal callers.
  */
 int vfs_openat(int dfd, const char *name, const struct vfs_open_how *how,
                struct vfs_file **out, bool kernel);
@@ -804,6 +831,9 @@ int vfs_statx(int dfd, const char *pathname, int flags, uint32_t mask,
 /**
  * Internal mount helper used by kernel subsystems to mount a filesystem by
  * name.
+ * Notes: this returns a mount object, not a path in the caller's namespace.
+ * It is the right helper for internal pseudo-filesystems and bootstrap mounts,
+ * but namespace-visible attachment still needs a separate mount-tree step.
  */
 int vfs_kern_mount(const char *fs_name, unsigned long mnt_flags,
                    const char *source, void *data, struct vfs_mount **out);
@@ -818,6 +848,9 @@ int vfs_do_umount(int dfd, const char *pathname, int flags);
 
 /**
  * Initialize a poll-wait entry before arming it against a node.
+ * Notes: poll wait state is edge-sensitive bookkeeping around a sleep window.
+ * The expected pattern is init -> arm -> recheck condition -> sleep -> disarm.
+ * Skipping the recheck after arming is a classic lost-wakeup mistake.
  */
 void vfs_poll_wait_init(vfs_poll_wait_t *wait, struct task *task,
                         uint32_t events);
@@ -829,6 +862,9 @@ void vfs_poll_notify(vfs_node_t *node, uint32_t events);
 
 /**
  * Syscall-facing helpers that translate fd numbers into VFS file operations.
+ * Notes: these are convenience shims for syscall glue. Internal kernel code
+ * that already holds a struct vfs_file should usually call the file-oriented
+ * helpers above instead of round-tripping through integer fd semantics.
  */
 int vfs_sys_openat(int dfd, const char *pathname,
                    const struct vfs_open_how *how);

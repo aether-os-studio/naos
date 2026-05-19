@@ -83,6 +83,12 @@ static int epoll_collect_ready_locked(epoll_t *epoll,
     int ready = 0;
     epoll_watch_t *browse, *tmp;
 
+    /*
+     * epoll readiness is collected from the watched file objects, not from fd
+     * numbers in the abstract. That detail matters because dup()/close() can
+     * move integer descriptors around while the underlying open file
+     * description being watched stays the same.
+     */
     llist_for_each(browse, tmp, &epoll->watches, node) {
         if (browse->disabled)
             continue;
@@ -104,6 +110,13 @@ static int epoll_collect_ready_locked(epoll_t *epoll,
                 uint32_t raised = state_events & ~browse->last_events;
                 bool seq_update =
                     epoll_watch_has_seq_update(browse, state_events);
+                /*
+                 * Edge-triggered delivery is the easy place to regress. Merely
+                 * seeing the same readiness bits twice is not enough to
+                 * suppress a new event if the underlying producer has advanced
+                 * and the node sequence counters say something changed
+                 * underneath.
+                 */
                 emit = !!(raised || seq_update ||
                           (ready_events & EPOLL_ALWAYS_EVENTS));
                 browse->last_events = state_events;
@@ -147,6 +160,11 @@ static int epoll_arm_waiters_locked(epoll_t *epoll, vfs_poll_wait_t **waits_out,
     if (!count)
         return 0;
 
+    /*
+     * Just like poll(), epoll has to arm waiters and then recheck readiness
+     * before actually sleeping. The helper here only builds the wait set; the
+     * caller still has to close the lost-wakeup window explicitly.
+     */
     vfs_poll_wait_t *waits = calloc(count, sizeof(vfs_poll_wait_t));
     if (!waits)
         return -ENOMEM;
@@ -560,6 +578,12 @@ static size_t epoll_ctl_file(struct vfs_file *epoll_file, int op, int fd,
             ret = -EEXIST;
             break;
         }
+        /*
+         * One watch per underlying file object is the important rule here.
+         * Comparing integer fd values would be wrong because duplicated fds can
+         * refer to the same open file description and Linux epoll semantics key
+         * off that lower-level object.
+         */
         new_watch = calloc(1, sizeof(*new_watch));
         if (!new_watch) {
             ret = -ENOMEM;
