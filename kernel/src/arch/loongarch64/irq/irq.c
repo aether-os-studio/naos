@@ -127,6 +127,60 @@ static uint64_t loongarch64_fault_flags(const struct pt_regs *regs,
     }
 }
 
+static bool loongarch64_fault_access_allowed_now(task_t *task, uint64_t vaddr,
+                                                 uint64_t fault_flags) {
+    if (!task || !task->mm)
+        return false;
+
+    spin_lock(&task->mm->lock);
+    uint64_t *table = (fault_flags & PF_ACCESS_USER)
+                          ? (uint64_t *)phys_to_virt(task->mm->page_table_addr)
+                          : get_current_page_dir(false);
+    uint64_t entry = 0;
+
+    for (uint64_t level = 0; level < ARCH_MAX_PT_LEVEL; level++) {
+        uint64_t index = PAGE_CALC_PAGE_TABLE_INDEX(vaddr, level + 1);
+        entry = table[index];
+
+        if (level == ARCH_MAX_PT_LEVEL - 1 || ARCH_PT_IS_LARGE(entry))
+            break;
+
+        if (!ARCH_PT_IS_TABLE(entry)) {
+            spin_unlock(&task->mm->lock);
+            return false;
+        }
+
+        table = (uint64_t *)phys_to_virt(ARCH_READ_PTE(entry));
+    }
+
+    if (!(entry & ARCH_PT_FLAG_VALID)) {
+        spin_unlock(&task->mm->lock);
+        return false;
+    }
+
+    uint64_t flags = ARCH_READ_PTE_FLAG(entry);
+
+    if ((fault_flags & PF_ACCESS_USER) && !(flags & ARCH_PT_FLAG_USER)) {
+        spin_unlock(&task->mm->lock);
+        return false;
+    }
+    if ((fault_flags & PF_ACCESS_WRITE) && !(flags & ARCH_PT_FLAG_WRITEABLE)) {
+        spin_unlock(&task->mm->lock);
+        return false;
+    }
+    if ((fault_flags & PF_ACCESS_READ) && (flags & ARCH_PT_FLAG_NO_READ)) {
+        spin_unlock(&task->mm->lock);
+        return false;
+    }
+    if ((fault_flags & PF_ACCESS_EXEC) && (flags & ARCH_PT_FLAG_NO_EXEC)) {
+        spin_unlock(&task->mm->lock);
+        return false;
+    }
+
+    spin_unlock(&task->mm->lock);
+    return true;
+}
+
 static int loongarch64_fault_si_code(uint64_t fault_addr) {
     if (current_task && current_task->mm) {
         vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
@@ -175,6 +229,12 @@ static void loongarch64_handle_page_fault(struct pt_regs *regs,
 
     if (result == PF_RES_OK)
         return;
+
+    if (loongarch64_fault_access_allowed_now(current_task, fault_addr,
+                                             fault_flags)) {
+        arch_flush_tlb(fault_addr);
+        return;
+    }
 
     if (result == PF_RES_SEGF &&
         loongarch64_should_deliver_user_sigsegv(current_task) &&

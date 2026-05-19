@@ -92,7 +92,7 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
         if (!ARCH_PT_IS_TABLE(addr)) {
             uint64_t a = alloc_frames(1);
             if (a == 0) {
-                return a;
+                return (uint64_t)-1;
             }
             memset((uint64_t *)phys_to_virt(a), 0, PAGE_SIZE);
             pgdir[index] = arch_make_page_table_entry(a, flags);

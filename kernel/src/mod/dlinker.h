@@ -2,6 +2,7 @@
 
 #include <libs/klibc.h>
 #include <mod/module.h>
+#include <mod/modchk.h>
 #include <libs/elf.h>
 
 #define KERNEL_MODULES_SPACE_START 0xffffffffd0000000
