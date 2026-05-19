@@ -511,7 +511,7 @@ static vma_t *alloc_mapping_vma(uint64_t start, uint64_t len, uint64_t prot,
     if (node)
         vfs_igrab(node);
 
-    if (node && ((node->type & file_stream) || (node->type & file_block)))
+    if (node && (S_ISCHR(node->i_mode) || S_ISBLK(node->i_mode)))
         vma->vm_flags |= VMA_DEVICE;
 
     return vma;
@@ -716,7 +716,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         }
 
         map_node = map_fd_ref->node;
-        if (map_node->type & file_dir)
+        if (S_ISDIR(map_node->i_mode))
             goto out_map_fd_eisdir;
         if (flags & MAP_SYNC)
             goto out_map_fd_eopnotsupp;

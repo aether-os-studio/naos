@@ -27,7 +27,6 @@ void vfs_sync_inode_compat(struct vfs_inode *inode) {
         return;
 
     inode->inode = inode->i_ino;
-    inode->type = vfs_mode_to_type(inode->i_mode);
 }
 
 struct vfs_inode *vfs_alloc_inode(struct vfs_super_block *sb) {
@@ -51,7 +50,6 @@ struct vfs_inode *vfs_alloc_inode(struct vfs_super_block *sb) {
     inode->i_mapping.host = inode;
     spin_init(&inode->i_mapping.lock);
     inode->inode = 0;
-    inode->type = file_none;
     inode->rw_hint = 0;
     spin_init(&inode->i_lock);
     mutex_init(&inode->i_rwsem);
@@ -116,7 +114,6 @@ void vfs_inode_init_owner(struct vfs_inode *inode, struct vfs_inode *dir,
     inode->i_mode = mode;
     inode->i_uid = uid;
     inode->i_gid = gid;
-    inode->type = vfs_mode_to_type(mode);
 }
 
 uid32_t vfs_current_fsuid(void) {

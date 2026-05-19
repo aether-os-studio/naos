@@ -314,7 +314,6 @@ static int pidfdfs_get_tree(struct vfs_fs_context *fc) {
     inode->i_ino = 1;
     inode->inode = 1;
     inode->i_mode = S_IFDIR | 0700;
-    inode->type = file_dir;
     inode->i_nlink = 2;
     inode->i_fop = &pidfdfs_dir_file_ops;
 
@@ -392,7 +391,6 @@ static int pidfd_create_handle_file(pidfd_ctx_t *ctx, unsigned int open_flags,
     spin_unlock(&fsi->lock);
     inode->inode = inode->i_ino;
     inode->i_mode = S_IFCHR | 0600;
-    inode->type = file_stream;
     inode->i_nlink = 1;
     inode->i_fop = &pidfdfs_file_ops;
     inode->i_private = ctx;

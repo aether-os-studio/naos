@@ -272,9 +272,6 @@ static vfs_node_t *sysfs_new_inode(struct vfs_super_block *sb,
     inode->i_ino = entry->ino;
     inode->inode = entry->ino;
     inode->i_mode = entry->mode;
-    inode->type = S_ISDIR(entry->mode)   ? file_dir
-                  : S_ISLNK(entry->mode) ? file_symlink
-                                         : file_none;
     inode->i_nlink = S_ISDIR(entry->mode) ? 2 : 1;
     inode->i_fop = S_ISDIR(entry->mode) ? &sysfs_dir_fops : &sysfs_file_fops;
     inode->i_size = entry->size;

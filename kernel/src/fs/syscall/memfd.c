@@ -114,7 +114,6 @@ static int memfdfs_get_tree(struct vfs_fs_context *fc) {
     inode->i_ino = 1;
     inode->inode = 1;
     inode->i_mode = S_IFDIR | 0700;
-    inode->type = file_dir;
     inode->i_nlink = 2;
     inode->i_op = &memfdfs_inode_ops;
     inode->i_fop = &memfdfs_dir_file_ops;
@@ -470,13 +469,6 @@ static int memfdfs_setattr(struct vfs_dentry *dentry,
         ret = memfdfs_resize(inode, stat->size);
 
     inode->inode = inode->i_ino;
-    inode->type = S_ISDIR(inode->i_mode)    ? file_dir
-                  : S_ISLNK(inode->i_mode)  ? file_symlink
-                  : S_ISBLK(inode->i_mode)  ? file_block
-                  : S_ISCHR(inode->i_mode)  ? file_stream
-                  : S_ISFIFO(inode->i_mode) ? file_fifo
-                  : S_ISSOCK(inode->i_mode) ? file_socket
-                                            : file_none;
     return ret;
 }
 
@@ -649,7 +641,6 @@ static int memfd_create_file(struct vfs_file **out_file, const char *name,
     inode->i_ino = memfdfs_next_ino(sb);
     inode->inode = inode->i_ino;
     inode->i_mode = S_IFREG | 0600;
-    inode->type = file_none;
     inode->i_nlink = 1;
     inode->i_op = &memfdfs_inode_ops;
     inode->i_fop = &memfdfs_file_ops;

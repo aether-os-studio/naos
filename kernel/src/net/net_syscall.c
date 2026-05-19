@@ -38,7 +38,7 @@ static size_t socket_iov_total_len(const struct iovec *iov, size_t iovlen) {
 }
 
 static bool is_socket(fd_t *fd) {
-    if (!(fd->node->type & file_socket))
+    if (!(S_ISSOCK(fd->node->i_mode)))
         return false;
     return true;
 }

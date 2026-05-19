@@ -802,7 +802,6 @@ static int notifyfs_get_tree(struct vfs_fs_context *fc) {
     root_inode->i_ino = fsi->next_ino++;
     root_inode->inode = root_inode->i_ino;
     root_inode->i_mode = S_IFDIR | 0700;
-    root_inode->type = file_dir;
     root_inode->i_nlink = 2;
     root_inode->i_op = &notifyfs_dir_inode_ops;
     root_inode->i_fop = &notifyfs_dir_file_ops;
@@ -910,7 +909,6 @@ int notifyfs_create_handle_file(struct vfs_file **out_file,
     spin_unlock(&fsi->lock);
     inode->inode = inode->i_ino;
     inode->i_mode = S_IFREG | 0600;
-    inode->type = file_none;
     inode->i_nlink = 1;
     inode->i_fop = &notifyfs_file_ops;
     inode->i_private = handle;

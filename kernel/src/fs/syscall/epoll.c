@@ -292,7 +292,6 @@ static int epollfs_get_tree(struct vfs_fs_context *fc) {
     inode->i_ino = 1;
     inode->inode = 1;
     inode->i_mode = S_IFDIR | 0700;
-    inode->type = file_dir;
     inode->i_nlink = 2;
     inode->i_fop = &epollfs_dir_file_ops;
 
@@ -370,7 +369,6 @@ static int epoll_create_handle_file(struct vfs_file **out_file,
     spin_unlock(&fsi->lock);
     inode->inode = inode->i_ino;
     inode->i_mode = S_IFREG | 0600;
-    inode->type = file_none;
     inode->i_nlink = 1;
     inode->i_fop = &epollfs_file_ops;
     inode->i_private = epoll;

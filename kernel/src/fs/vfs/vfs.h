@@ -434,7 +434,6 @@ struct vfs_inode {
     dev64_t i_rdev;
     ino64_t inode;
     uint32_t i_nlink;
-    uint32_t type;
     uint32_t rw_hint;
     uint64_t i_size;
     uint64_t i_blocks;

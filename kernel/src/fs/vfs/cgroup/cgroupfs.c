@@ -177,7 +177,6 @@ static struct vfs_inode *cgroupfs_new_inode(struct vfs_super_block *sb,
     inode->i_uid = 0;
     inode->i_gid = 0;
     inode->i_nlink = kind == CGROUPFS_INODE_DIR ? 2 : 1;
-    inode->type = kind == CGROUPFS_INODE_DIR ? file_dir : file_none;
     inode->i_ino = (ino64_t)(uintptr_t)inode;
     inode->inode = inode->i_ino;
     inode->i_blkbits = 12;
@@ -780,7 +779,6 @@ static int cgroupfs_setattr(struct vfs_dentry *dentry,
     inode->i_uid = stat->uid;
     inode->i_gid = stat->gid;
     inode->inode = inode->i_ino;
-    inode->type = S_ISDIR(inode->i_mode) ? file_dir : file_none;
     return 0;
 }
 

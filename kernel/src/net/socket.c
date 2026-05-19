@@ -206,7 +206,6 @@ static int sockfs_get_tree(struct vfs_fs_context *fc) {
     inode->i_ino = 1;
     inode->inode = 1;
     inode->i_mode = S_IFDIR | 0700;
-    inode->type = file_dir;
     inode->i_nlink = 2;
     inode->i_fop = &sockfs_dir_file_ops;
 
@@ -1196,7 +1195,6 @@ int sockfs_create_handle_file(socket_handle_t *handle, unsigned int open_flags,
     inode->i_ino = sockfs_next_ino(sb);
     inode->inode = inode->i_ino;
     inode->i_mode = S_IFSOCK | 0600;
-    inode->type = file_socket;
     inode->i_nlink = 1;
     inode->i_fop = &sockfs_file_ops;
     inode->i_private = handle;

@@ -61,7 +61,6 @@ static struct vfs_inode *configfs_new_inode(struct vfs_super_block *sb,
     inode->i_fop = &configfs_dir_file_ops;
     inode->i_mode = mode;
     inode->i_nlink = 2;
-    inode->type = file_dir;
     inode->i_ino = (ino64_t)(uintptr_t)inode;
     inode->inode = inode->i_ino;
     inode->i_blkbits = 12;

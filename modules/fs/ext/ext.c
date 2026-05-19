@@ -1009,8 +1009,7 @@ static void ext_sync_vfs_inode(struct vfs_inode *inode, ext_mount_ctx_t *fs,
     inode->i_ctime.sec = disk_inode->i_ctime;
     inode->i_mtime.sec = disk_inode->i_mtime;
     inode->inode = inode->i_ino;
-    inode->type = ext_mode_to_vfs_type(disk_inode->i_mode);
-    if ((inode->type & file_block) || (inode->type & file_stream))
+    if (S_ISBLK(inode->i_mode) || S_ISCHR(inode->i_mode))
         inode->i_rdev = ext_inode_rdev_get(disk_inode);
     else
         inode->i_rdev = fs->dev;
@@ -4249,8 +4248,7 @@ static ssize_t ext_read(struct vfs_file *file, void *buf, size_t count,
 
     if (!file || !file->f_inode || !buf || !ppos)
         return -EINVAL;
-    if ((file->f_inode->type & file_block) ||
-        (file->f_inode->type & file_stream))
+    if (S_ISBLK(file->f_inode->i_mode) || S_ISCHR(file->f_inode->i_mode))
         return device_read(file->f_inode->i_rdev, buf, (size_t)*ppos, count,
                            file);
     if (!S_ISREG(file->f_inode->i_mode))
@@ -4277,8 +4275,7 @@ static ssize_t ext_write(struct vfs_file *file, const void *buf, size_t count,
 
     if (!file || !file->f_inode || !buf || !ppos)
         return -EINVAL;
-    if ((file->f_inode->type & file_block) ||
-        (file->f_inode->type & file_stream))
+    if (S_ISBLK(file->f_inode->i_mode) || S_ISCHR(file->f_inode->i_mode))
         return device_write(file->f_inode->i_rdev, (void *)buf, (size_t)*ppos,
                             count, file);
     if (!S_ISREG(file->f_inode->i_mode))
@@ -4323,8 +4320,7 @@ static long ext_unlocked_ioctl(struct vfs_file *file, unsigned long cmd,
                                unsigned long arg) {
     if (!file || !file->f_inode)
         return -EBADF;
-    if ((file->f_inode->type & file_block) ||
-        (file->f_inode->type & file_stream))
+    if (S_ISBLK(file->f_inode->i_mode) || S_ISCHR(file->f_inode->i_mode))
         return device_ioctl(file->f_inode->i_rdev, (ssize_t)cmd, (void *)arg,
                             file);
     return -ENOTTY;
@@ -4334,8 +4330,7 @@ static __poll_t ext_poll(struct vfs_file *file, struct vfs_poll_table *pt) {
     (void)pt;
     if (!file || !file->f_inode)
         return EPOLLNVAL;
-    if ((file->f_inode->type & file_block) ||
-        (file->f_inode->type & file_stream))
+    if (S_ISBLK(file->f_inode->i_mode) || S_ISCHR(file->f_inode->i_mode))
         return device_poll(file->f_inode->i_rdev,
                            EPOLLIN | EPOLLOUT | EPOLLRDNORM | EPOLLWRNORM);
     return EPOLLIN | EPOLLOUT | EPOLLRDNORM | EPOLLWRNORM;
@@ -4345,7 +4340,7 @@ static int ext_open(struct vfs_inode *inode, struct vfs_file *file) {
     if (!inode || !file)
         return -EINVAL;
     file->f_op = inode->i_fop;
-    if ((inode->type & file_block) || (inode->type & file_stream))
+    if (S_ISBLK(inode->i_mode) || S_ISCHR(inode->i_mode))
         return device_open(inode->i_rdev, file);
     return 0;
 }
@@ -4354,7 +4349,7 @@ static int ext_release(struct vfs_inode *inode, struct vfs_file *file) {
     (void)file;
     if (!inode)
         return 0;
-    if ((inode->type & file_block) || (inode->type & file_stream))
+    if (S_ISBLK(inode->i_mode) || S_ISCHR(inode->i_mode))
         device_close(inode->i_rdev, file);
     return 0;
 }
@@ -4384,8 +4379,7 @@ static int ext_readpage(struct vfs_file *file,
 
     if (!file || !file->f_inode || !page)
         return -EINVAL;
-    if ((file->f_inode->type & file_block) ||
-        (file->f_inode->type & file_stream))
+    if (S_ISBLK(file->f_inode->i_mode) || S_ISCHR(file->f_inode->i_mode))
         return device_read(file->f_inode->i_rdev, page, index * PAGE_SIZE,
                            PAGE_SIZE, file);
     if (!S_ISREG(file->f_inode->i_mode))
@@ -4411,8 +4405,7 @@ static int ext_writepage(struct vfs_file *file,
 
     if (!file || !file->f_inode || !page)
         return -EINVAL;
-    if ((file->f_inode->type & file_block) ||
-        (file->f_inode->type & file_stream))
+    if (S_ISBLK(file->f_inode->i_mode) || S_ISCHR(file->f_inode->i_mode))
         return device_write(file->f_inode->i_rdev, (void *)page,
                             index * PAGE_SIZE, PAGE_SIZE, file);
     if (!S_ISREG(file->f_inode->i_mode))

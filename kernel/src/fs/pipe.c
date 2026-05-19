@@ -184,7 +184,6 @@ static int pipefs_get_tree(struct vfs_fs_context *fc) {
     inode->i_ino = 1;
     inode->inode = 1;
     inode->i_mode = S_IFDIR | 0700;
-    inode->type = file_dir;
     inode->i_nlink = 2;
     inode->i_fop = &pipefs_dir_file_ops;
 
@@ -635,7 +634,6 @@ static int pipefs_create_endpoint(struct vfs_file **out_file, pipe_info_t *pipe,
     inode->i_ino = pipefs_next_ino(sb);
     inode->inode = inode->i_ino;
     inode->i_mode = S_IFIFO | 0600;
-    inode->type = file_fifo;
     inode->i_nlink = 1;
     inode->i_fop = &pipefs_file_ops;
     inode->i_private = spec;

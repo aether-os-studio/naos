@@ -345,13 +345,6 @@ static struct vfs_inode *tmpfs_new_inode(struct vfs_super_block *sb,
     inode->i_ino = tmpfs_next_ino(sb);
     vfs_inode_init_owner(inode, dir, mode);
     inode->inode = inode->i_ino;
-    inode->type = S_ISDIR(mode)    ? file_dir
-                  : S_ISLNK(mode)  ? file_symlink
-                  : S_ISBLK(mode)  ? file_block
-                  : S_ISCHR(mode)  ? file_stream
-                  : S_ISFIFO(mode) ? file_fifo
-                  : S_ISSOCK(mode) ? file_socket
-                                   : file_none;
     inode->i_nlink = S_ISDIR(mode) ? 2 : 1;
     inode->i_size = 0;
     inode->i_blocks = 0;
@@ -642,13 +635,6 @@ static int tmpfs_setattr(struct vfs_dentry *dentry,
         stat->size != dentry->d_inode->i_size)
         ret = tmpfs_resize_inode(dentry->d_inode, stat->size);
     dentry->d_inode->inode = dentry->d_inode->i_ino;
-    dentry->d_inode->type = S_ISDIR(dentry->d_inode->i_mode)    ? file_dir
-                            : S_ISLNK(dentry->d_inode->i_mode)  ? file_symlink
-                            : S_ISBLK(dentry->d_inode->i_mode)  ? file_block
-                            : S_ISCHR(dentry->d_inode->i_mode)  ? file_stream
-                            : S_ISFIFO(dentry->d_inode->i_mode) ? file_fifo
-                            : S_ISSOCK(dentry->d_inode->i_mode) ? file_socket
-                                                                : file_none;
     return ret;
 }
 

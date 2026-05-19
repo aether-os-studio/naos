@@ -123,7 +123,6 @@ static int signalfdfs_get_tree(struct vfs_fs_context *fc) {
     inode->i_ino = 1;
     inode->inode = 1;
     inode->i_mode = S_IFDIR | 0700;
-    inode->type = file_dir;
     inode->i_nlink = 2;
     inode->i_fop = &signalfdfs_dir_file_ops;
 
@@ -349,7 +348,6 @@ static int signalfd_create_file(struct vfs_file **out_file, sigset_t sigmask,
     inode->i_ino = signalfdfs_next_ino(sb);
     inode->inode = inode->i_ino;
     inode->i_mode = S_IFCHR | 0600;
-    inode->type = file_stream;
     inode->i_nlink = 1;
     inode->i_fop = &signalfdfs_file_ops;
     inode->i_private = ctx;

@@ -341,13 +341,6 @@ static struct vfs_inode *devtmpfs_new_inode(struct vfs_super_block *sb,
     inode->i_blkbits = 12;
     inode->i_ino = (ino64_t)(uintptr_t)inode;
     inode->inode = inode->i_ino;
-    inode->type = S_ISDIR(mode)    ? file_dir
-                  : S_ISLNK(mode)  ? file_symlink
-                  : S_ISBLK(mode)  ? file_block
-                  : S_ISCHR(mode)  ? file_stream
-                  : S_ISFIFO(mode) ? file_fifo
-                  : S_ISSOCK(mode) ? file_socket
-                                   : file_none;
     inode->i_atime.sec = inode->i_btime.sec = inode->i_ctime.sec =
         inode->i_mtime.sec = (int64_t)(nano_time() / 1000000000ULL);
     return inode;
@@ -637,13 +630,6 @@ static int devtmpfs_setattr(struct vfs_dentry *dentry,
         ret = devtmpfs_resize_inode(dentry->d_inode, stat->size);
     }
     dentry->d_inode->inode = dentry->d_inode->i_ino;
-    dentry->d_inode->type = S_ISDIR(dentry->d_inode->i_mode)    ? file_dir
-                            : S_ISLNK(dentry->d_inode->i_mode)  ? file_symlink
-                            : S_ISBLK(dentry->d_inode->i_mode)  ? file_block
-                            : S_ISCHR(dentry->d_inode->i_mode)  ? file_stream
-                            : S_ISFIFO(dentry->d_inode->i_mode) ? file_fifo
-                            : S_ISSOCK(dentry->d_inode->i_mode) ? file_socket
-                                                                : file_none;
     return ret;
 }
 

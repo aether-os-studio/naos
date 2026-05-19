@@ -188,10 +188,6 @@ static vfs_node_t *procfs_new_inode(struct vfs_super_block *sb, umode_t mode,
     inode->i_uid = 0;
     inode->i_gid = 0;
     inode->i_nlink = S_ISDIR(mode) ? 2 : 1;
-    inode->type = S_ISDIR(mode)    ? file_dir
-                  : S_ISLNK(mode)  ? file_symlink
-                  : S_ISFIFO(mode) ? file_fifo
-                                   : file_none;
     inode->i_blkbits = 12;
     inode->i_ino = procfs_ino_for(kind, task, fd_num, dispatch_name);
     inode->inode = inode->i_ino;
@@ -349,10 +345,10 @@ static char *procfs_fd_target_path(task_t *task, fd_t *fd) {
     if (fd->f_inode->i_sb && fd->f_inode->i_sb->s_type)
         fs_name = fd->f_inode->i_sb->s_type->name;
 
-    if (fd->f_inode->type & file_socket) {
+    if (S_ISSOCK(fd->f_inode->i_mode)) {
         snprintf(buf, sizeof(buf), "socket:[%llu]",
                  (unsigned long long)fd->f_inode->i_ino);
-    } else if (fd->f_inode->type & file_fifo) {
+    } else if (S_ISFIFO(fd->f_inode->i_mode)) {
         snprintf(buf, sizeof(buf), "pipe:[%llu]",
                  (unsigned long long)fd->f_inode->i_ino);
     } else if (fs_name && !strcmp(fs_name, "epollfs")) {

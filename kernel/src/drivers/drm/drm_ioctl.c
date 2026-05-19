@@ -265,7 +265,6 @@ static int drmfdfs_get_tree(struct vfs_fs_context *fc) {
     inode->i_ino = 1;
     inode->inode = 1;
     inode->i_mode = S_IFDIR | 0700;
-    inode->type = file_dir;
     inode->i_nlink = 2;
     inode->i_fop = &drmfdfs_dir_file_ops;
 
@@ -381,9 +380,7 @@ drmfdfs_create_file(const char *prefix, const struct vfs_file_operations *ops,
     inode->i_ino = drmfdfs_next_ino(sb);
     inode->inode = inode->i_ino;
     inode->i_mode = mode;
-    inode->type = S_ISSOCK(mode) ? file_socket : file_stream;
     if (S_ISREG(mode))
-        inode->type = file_none;
     inode->i_nlink = 1;
     inode->i_fop = ops;
     inode->i_private = private_data;

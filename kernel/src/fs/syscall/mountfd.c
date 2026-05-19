@@ -202,7 +202,6 @@ static int mountfdfs_get_tree(struct vfs_fs_context *fc) {
     inode->i_ino = 1;
     inode->inode = 1;
     inode->i_mode = S_IFDIR | 0700;
-    inode->type = file_dir;
     inode->i_nlink = 2;
     inode->i_fop = &mountfdfs_dir_file_ops;
 
@@ -292,7 +291,6 @@ int mountfd_create_file(struct vfs_mount *mnt, struct vfs_dentry *root,
      * ENOTDIR.
      */
     inode->i_mode = S_IFDIR | 0500;
-    inode->type = file_dir;
     inode->i_nlink = 2;
     inode->i_fop = &mountfdfs_dir_file_ops;
     inode->i_private = ctx;

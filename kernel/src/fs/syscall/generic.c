@@ -1865,7 +1865,7 @@ uint64_t sys_lseek(uint64_t fd, uint64_t offset, uint64_t whence) {
         vfs_file_put(file);
         return (uint64_t)-EBADF;
     }
-    if (node->type & (file_socket | file_fifo | file_stream)) {
+    if (S_ISSOCK(node->i_mode) || S_ISFIFO(node->i_mode) || S_ISCHR(node->i_mode)) {
         vfs_file_put(file);
         return (uint64_t)-ESPIPE;
     }
@@ -1924,7 +1924,7 @@ uint64_t sys_ioctl(uint64_t fd, uint64_t cmd, uint64_t arg) {
             file_flags &= ~O_NONBLOCK;
         fd_set_flags(f, file_flags);
         ret = 0;
-        if (f->f_inode->type & file_socket) {
+        if (S_ISSOCK(f->f_inode->i_mode)) {
             ret = vfs_ioctl_file(f, cmd, arg);
             if (ret == -ENOTTY || ret == -ENOSYS)
                 ret = 0;
@@ -2740,7 +2740,7 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         file_flags = (file_flags & ~valid_flags) | (arg & valid_flags);
         fd_set_flags(file, file_flags);
         int ret = 0;
-        if (file->f_inode->type & file_socket) {
+        if (S_ISSOCK(file->f_inode->i_mode)) {
             int nonblock = !!(file_flags & O_NONBLOCK);
             ret = vfs_ioctl_file(file, FIONBIO,
                                  nonblock ? FIONBIO_INTERNAL_ENABLE

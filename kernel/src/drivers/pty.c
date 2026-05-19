@@ -291,7 +291,6 @@ static struct vfs_inode *devpts_new_inode(struct vfs_super_block *sb,
     inode->i_blkbits = 12;
     inode->i_ino = pair ? (ino64_t)pair->id + 3 : 1;
     inode->inode = inode->i_ino;
-    inode->type = S_ISDIR(mode) ? file_dir : file_stream;
     inode->i_fop = S_ISDIR(mode) ? &devpts_dir_file_ops : &pts_file_ops;
     inode->i_op = &devpts_inode_ops;
     inode->i_rdev = pair ? ((136U << 8) | (uint32_t)pair->id) : 0;
@@ -328,7 +327,6 @@ devpts_new_slave_inode_for_id(struct vfs_super_block *sb, int id) {
     inode->i_blkbits = 12;
     inode->i_ino = (ino64_t)id + 3;
     inode->inode = inode->i_ino;
-    inode->type = file_stream;
     inode->i_fop = &pts_file_ops;
     inode->i_op = &devpts_inode_ops;
     inode->i_rdev = (136U << 8) | (uint32_t)id;
@@ -1272,7 +1270,6 @@ void ptmx_init() {
     if (!ptmx)
         return;
     ptmx->i_fop = &ptmx_file_ops;
-    ptmx->type = file_stream;
     vfs_iput(ptmx);
 }
 
