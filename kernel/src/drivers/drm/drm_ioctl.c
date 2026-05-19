@@ -381,7 +381,7 @@ drmfdfs_create_file(const char *prefix, const struct vfs_file_operations *ops,
     inode->inode = inode->i_ino;
     inode->i_mode = mode;
     if (S_ISREG(mode))
-    inode->i_nlink = 1;
+        inode->i_nlink = 1;
     inode->i_fop = ops;
     inode->i_private = private_data;
 

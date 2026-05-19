@@ -1772,6 +1772,9 @@ uint64_t sys_pwrite64(int fd, const void *buf, size_t len, uint64_t offset) {
     return (uint64_t)ret;
 }
 
+// Use a large sendfile buffer to optimize the speed
+#define SENDFILE_BUFFER_SIZE (1 * 1024 * 1024)
+
 uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
                       size_t count) {
     fd_t *out_handle = task_get_file(current_task, (int)out_fd);
@@ -1810,7 +1813,7 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
         current_offset = (uint64_t)user_offset;
     }
 
-    char *buffer = (char *)alloc_frames_bytes(PAGE_SIZE);
+    char *buffer = (char *)alloc_frames_bytes(SENDFILE_BUFFER_SIZE);
     if (buffer == NULL) {
         vfs_file_put(out_handle);
         vfs_file_put(in_handle);
@@ -1818,14 +1821,14 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
     }
 
     while (remaining > 0) {
-        size_t bytes_to_read = remaining < PAGE_SIZE ? remaining : PAGE_SIZE;
+        size_t bytes_to_read = MIN(remaining, SENDFILE_BUFFER_SIZE);
         ssize_t bytes_read = 0;
         ssize_t bytes_written = 0;
         read_pos = (loff_t)current_offset;
         bytes_read = vfs_read_file(in_handle, buffer, bytes_to_read, &read_pos);
         if (bytes_read <= 0) {
             if (bytes_read < 0 && total_sent == 0) {
-                free_frames_bytes(buffer, PAGE_SIZE);
+                free_frames_bytes(buffer, SENDFILE_BUFFER_SIZE);
                 vfs_file_put(out_handle);
                 vfs_file_put(in_handle);
                 return (uint64_t)bytes_read;
@@ -1835,7 +1838,7 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
         bytes_written = vfs_write_file(out_handle, buffer, bytes_read, NULL);
         if (bytes_written <= 0) {
             if (total_sent == 0) {
-                free_frames_bytes(buffer, PAGE_SIZE);
+                free_frames_bytes(buffer, SENDFILE_BUFFER_SIZE);
                 vfs_file_put(out_handle);
                 vfs_file_put(in_handle);
                 return bytes_written < 0 ? (uint64_t)bytes_written : 0;
@@ -1849,7 +1852,7 @@ uint64_t sys_sendfile(uint64_t out_fd, uint64_t in_fd, int *offset_ptr,
         total_sent += bytes_read;
         remaining -= bytes_read;
     }
-    free_frames_bytes(buffer, PAGE_SIZE);
+    free_frames_bytes(buffer, SENDFILE_BUFFER_SIZE);
     if (offset_ptr != NULL) {
         int out_offset =
             current_offset > (uint64_t)INT_MAX ? INT_MAX : (int)current_offset;

@@ -5,6 +5,7 @@
 
 #include <stdint.h>
 #include <block/block.h>
+#include <libs/mutex.h>
 
 // Virtio block device configuration structure
 typedef struct virtio_blk_config {
@@ -58,12 +59,31 @@ typedef struct virtio_blk_req {
 #define VIRTIO_BLK_S_UNSUPP 2
 
 // Virtio block device structure
+typedef struct virtio_blk_req_slot {
+    virtio_blk_req_t *req_header;
+    uint8_t *status_byte;
+    void *bounce_buffer;
+    uint32_t bounce_capacity;
+    uint32_t data_len;
+    uint16_t desc_idx;
+    bool in_use;
+    bool use_bounce;
+    bool device_writes_data;
+    volatile bool completed;
+} virtio_blk_req_slot_t;
+
 typedef struct virtio_blk_device {
     virtio_driver_t *driver;
     uint64_t capacity;
     uint32_t block_size;
     virtqueue_t *request_queue;
     uint32_t sector_size;
+    uint32_t max_transfer_bytes;
+    uint32_t max_transfer_sectors;
+    uint16_t slot_count;
+    mutex_t request_lock;
+    virtio_blk_req_slot_t *slots;
+    int16_t pending_slot_by_desc[SIZE];
 } virtio_blk_device_t;
 
 // Maximum number of block devices
