@@ -52,7 +52,7 @@ override QEMUFLAGS := $(QEMUFLAGS) $(EXTRA)
 
 override IMAGE_NAME := naos-$(ARCH)
 
-ifeq ($(MODULE_VERIFY),0)
+ifeq ($(MODULE_VERIFY), 0)
 MODULES_TARGET := modules
 else
 MODULES_TARGET := sign-modules
@@ -330,7 +330,7 @@ module-signing-keys:
 	$(call PRINT_STEP,GEN,$(MODULE_SIGN_KEY_DIR))
 	$(Q)./kernel/scripts/gen_module_signing_keys.sh "$(MODULE_SIGN_KEY_DIR)" naos_signing_key_pub
 
-ifneq ($(MODULE_VERIFY),0)
+ifneq ($(MODULE_VERIFY), 0)
 kernel: module-signing-keys
 endif
 

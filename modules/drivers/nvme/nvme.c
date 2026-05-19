@@ -642,11 +642,9 @@ static int nvme_setup_prp(nvme_controller_t *ctrl, nvme_request_t *req,
         return -1;
 
     uint64_t vaddr = (uint64_t)buffer;
-    uint64_t page_base_va = vaddr & ~((uint64_t)NVME_PAGE_MASK);
-    uint32_t page_off = nvme_page_offset(vaddr);
     uint32_t num_pages = nvme_calc_num_pages(vaddr, size);
 
-    uint64_t first_page_phys = nvme_translate_page_phys(page_base_va);
+    uint64_t first_page_phys = nvme_translate_page_phys(vaddr);
     if (buffer_phys) {
         uint64_t hinted = buffer_phys & ~((uint64_t)NVME_PAGE_MASK);
         if (hinted == first_page_phys)
@@ -657,13 +655,13 @@ static int nvme_setup_prp(nvme_controller_t *ctrl, nvme_request_t *req,
         return -1;
     }
 
-    cmd->prp1 = first_page_phys + page_off;
+    cmd->prp1 = first_page_phys;
     cmd->prp2 = 0;
     if (num_pages == 1)
         return 0;
 
     uint64_t second_page_phys =
-        nvme_translate_page_phys(page_base_va + NVME_PAGE_SIZE);
+        nvme_translate_page_phys(vaddr + NVME_PAGE_SIZE);
     if (!second_page_phys) {
         printk("NVMe: second PRP page not mapped, vaddr=%#018lx\n", vaddr);
         return -1;
@@ -686,11 +684,11 @@ static int nvme_setup_prp(nvme_controller_t *ctrl, nvme_request_t *req,
     req->prp_list->prp[0] = second_page_phys;
 
     for (uint32_t i = 2; i < num_pages; i++) {
-        uint64_t pa = nvme_translate_page_phys(page_base_va +
-                                               ((uint64_t)i * NVME_PAGE_SIZE));
+        uint64_t pa =
+            nvme_translate_page_phys(vaddr + ((uint64_t)i * NVME_PAGE_SIZE));
         if (!pa) {
             printk("NVMe: PRP page %u not mapped, vaddr=%#018lx\n", i,
-                   page_base_va + ((uint64_t)i * NVME_PAGE_SIZE));
+                   vaddr + ((uint64_t)i * NVME_PAGE_SIZE));
             return -1;
         }
         req->prp_list->prp[i - 1] = pa;
