@@ -368,14 +368,14 @@ static void ext_inode_checksum_set(ext_mount_ctx_t *fs, uint32_t ino,
         inode->i_checksum_hi = (uint16_t)(crc >> 16);
 }
 
-static uint32_t ext_bitmap_checksum(ext_mount_ctx_t *fs, uint32_t group,
+static uint32_t ext_bitmap_checksum(ext_mount_ctx_t *fs, bool inode_bitmap,
                                     const void *buf) {
-    uint32_t crc;
-    uint32_t group_le = group;
+    size_t size;
 
-    crc = ext_crc32c_update(fs->checksum_seed, &group_le, sizeof(group_le));
-    crc = ext_crc32c_update(crc, buf, fs->block_size);
-    return crc;
+    size = inode_bitmap ? (size_t)fs->sb.s_inodes_per_group / 8
+                        : (size_t)fs->block_size;
+    /* Bitmap checksums are seeded by the filesystem UUID only. */
+    return ext_crc32c_update(fs->checksum_seed, buf, size);
 }
 
 static void ext_bitmap_checksum_set(ext_mount_ctx_t *fs, uint32_t group,
@@ -385,7 +385,7 @@ static void ext_bitmap_checksum_set(ext_mount_ctx_t *fs, uint32_t group,
     if (!fs || !buf || !fs->has_metadata_csum || group >= fs->group_count)
         return;
 
-    crc = ext_bitmap_checksum(fs, group, buf);
+    crc = ext_bitmap_checksum(fs, inode_bitmap, buf);
     if (inode_bitmap) {
         fs->groups[group].bg_inode_bitmap_csum_lo = (uint16_t)crc;
         fs->groups[group].bg_inode_bitmap_csum_hi = (uint16_t)(crc >> 16);
@@ -446,22 +446,13 @@ static uint32_t ext_dir_block_checksum(ext_mount_ctx_t *fs, uint32_t ino,
     uint32_t crc;
     uint32_t ino_le = ino;
     uint32_t gen = inode ? inode->i_generation : 0;
-    uint32_t lblock_le = logical_block;
 
+    (void)logical_block;
     crc = ext_crc32c_update(fs->checksum_seed, &ino_le, sizeof(ino_le));
     crc = ext_crc32c_update(crc, &gen, sizeof(gen));
-    crc = ext_crc32c_update(crc, &lblock_le, sizeof(lblock_le));
+    /* Directory block checksums cover dirents before the checksum tail. */
     crc = ext_crc32c_update(crc, buf, data_size);
-    if (has_tail) {
-        ext_dir_entry_tail_t tail = {0};
-
-        tail.det_reserved_zero1 = 0;
-        tail.det_rec_len = sizeof(tail);
-        tail.det_reserved_zero2 = 0;
-        tail.det_reserved_ft = EXT4_FT_DIR_CSUM;
-        crc = ext_crc32c_update(crc, &tail,
-                                offsetof(ext_dir_entry_tail_t, det_checksum));
-    }
+    (void)has_tail;
     return crc;
 }
 
