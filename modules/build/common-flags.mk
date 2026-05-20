@@ -54,14 +54,13 @@ ifeq ($(ARCH),riscv64)
         override CFLAGS += \
             -target riscv64-unknown-none
         override CFLAGS += \
-            -march=rv64imac
+            -march=rv64imac_zicsr_zifencei
     else
         override CFLAGS += \
             -march=rv64imac_zicsr_zifencei
     endif
     override CFLAGS += \
-        -march=rv64imafd \
-        -mabi=lp64d \
+        -mabi=lp64 \
         -mno-relax \
         -D__riscv__
     override LDFLAGS += \

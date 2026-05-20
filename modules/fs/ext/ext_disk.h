@@ -289,3 +289,7 @@ typedef struct ext_extent_header {
     uint16_t eh_depth;
     uint32_t eh_generation;
 } __attribute__((packed)) ext_extent_header_t;
+
+typedef struct ext_extent_tail {
+    uint32_t et_checksum;
+} __attribute__((packed)) ext_extent_tail_t;

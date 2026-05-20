@@ -77,9 +77,18 @@ prepare: libgcc_$(ARCH).a
 	$(call PRINT_STEP,PREPARE,kernel/get-deps)
 	$(Q)./kernel/get-deps
 
+SOFTFLOAT :=
+
+ifeq ($(ARCH), riscv64)
+override SOFTFLOAT := -softfloat
+endif
+ifeq ($(ARCH), loongarch64)
+override SOFTFLOAT := -softfloat
+endif
+
 libgcc_$(ARCH).a:
 	$(call PRINT_STEP,GET,libgcc_$(ARCH).a)
-	$(Q)wget https://github.com/osdev0/libgcc-binaries/releases/download/$(LIBGCC_VERSION)/libgcc-$(ARCH).a -O libgcc_$(ARCH).a
+	$(Q)curl -Lo libgcc_$(ARCH).a https://github.com/osdev0/libgcc-binaries/releases/download/$(LIBGCC_VERSION)/libgcc-$(ARCH)$(SOFTFLOAT).a
 
 .PHONY: kernel
 kernel:

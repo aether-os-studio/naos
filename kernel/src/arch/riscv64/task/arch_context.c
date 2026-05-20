@@ -51,7 +51,10 @@ void riscv64_fpu_save(fpu_context_t *fpu_ctx) {
 
     uint64_t sstatus = riscv64_fpu_enable_kernel();
 
-    asm volatile("fsd f0,   0(%0)\n\t"
+    asm volatile(".option push\n\t"
+                 ".option arch, +f\n\t"
+                 ".option arch, +d\n\t"
+                 "fsd f0,   0(%0)\n\t"
                  "fsd f1,   8(%0)\n\t"
                  "fsd f2,  16(%0)\n\t"
                  "fsd f3,  24(%0)\n\t"
@@ -83,12 +86,17 @@ void riscv64_fpu_save(fpu_context_t *fpu_ctx) {
                  "fsd f29, 232(%0)\n\t"
                  "fsd f30, 240(%0)\n\t"
                  "fsd f31, 248(%0)\n\t"
+                 ".option pop\n\t"
                  :
                  : "r"(fpu_ctx)
                  : "memory");
 
     uint64_t fcsr;
-    asm volatile("frcsr %0" : "=r"(fcsr));
+    asm volatile(".option push\n\t"
+                 ".option arch, +f\n\t"
+                 "frcsr %0\n\t"
+                 ".option pop"
+                 : "=r"(fcsr));
     fpu_ctx->fcsr = (uint32_t)fcsr;
 
     riscv64_fpu_restore_kernel_state(sstatus);
@@ -100,7 +108,10 @@ void riscv64_fpu_restore(fpu_context_t *fpu_ctx) {
 
     uint64_t sstatus = riscv64_fpu_enable_kernel();
 
-    asm volatile("fld f0,   0(%0)\n\t"
+    asm volatile(".option push\n\t"
+                 ".option arch, +f\n\t"
+                 ".option arch, +d\n\t"
+                 "fld f0,   0(%0)\n\t"
                  "fld f1,   8(%0)\n\t"
                  "fld f2,  16(%0)\n\t"
                  "fld f3,  24(%0)\n\t"
@@ -132,12 +143,19 @@ void riscv64_fpu_restore(fpu_context_t *fpu_ctx) {
                  "fld f29, 232(%0)\n\t"
                  "fld f30, 240(%0)\n\t"
                  "fld f31, 248(%0)\n\t"
+                 ".option pop\n\t"
                  :
                  : "r"(fpu_ctx)
                  : "memory");
 
     uint64_t fcsr = fpu_ctx->fcsr;
-    asm volatile("fscsr %0" : : "r"(fcsr) : "memory");
+    asm volatile(".option push\n\t"
+                 ".option arch, +f\n\t"
+                 "fscsr %0\n\t"
+                 ".option pop"
+                 :
+                 : "r"(fcsr)
+                 : "memory");
 
     riscv64_fpu_restore_kernel_state(sstatus);
 }
