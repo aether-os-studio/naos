@@ -263,7 +263,6 @@ bool arch_check_elf(const Elf64_Ehdr *ehdr) {
                "\x7F"
                "ELF",
                4) != 0) {
-        printk("Invalid ELF magic\n");
         return false;
     }
 

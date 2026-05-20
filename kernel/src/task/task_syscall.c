@@ -1621,6 +1621,7 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
     uint8_t header_buf[512];
     ssize_t header_read;
     int shebang_depth = 0;
+    bool shell_fallback_used = false;
 
     while (true) {
         loff_t header_pos = 0;
@@ -1792,6 +1793,93 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
         node = interpreter_file->f_inode;
     }
 
+    if (header_read < (ssize_t)sizeof(Elf64_Ehdr) ||
+        !arch_check_elf((const Elf64_Ehdr *)header_buf)) {
+        const char *shell_path = "/bin/sh";
+        char script_path[sizeof(path)];
+        int replaced_argc = 2;
+        int replaced_index = 0;
+        char **replaced_argv;
+        struct vfs_file *shell_file = NULL;
+
+        if (shell_fallback_used) {
+            task_execve_free_string_array(new_argv, argv_count);
+            task_execve_free_string_array(new_envp, envp_count);
+            vfs_close_file(exec_file);
+            return (uint64_t)-ENOEXEC;
+        }
+
+        if (argv_count > 1)
+            replaced_argc += argv_count - 1;
+
+        replaced_argv = (char **)calloc(replaced_argc + 1, sizeof(char *));
+        if (!replaced_argv) {
+            task_execve_free_string_array(new_argv, argv_count);
+            task_execve_free_string_array(new_envp, envp_count);
+            vfs_close_file(exec_file);
+            return (uint64_t)-ENOMEM;
+        }
+
+        strncpy(script_path, path, sizeof(script_path));
+        script_path[sizeof(script_path) - 1] = '\0';
+
+        replaced_argv[replaced_index++] = strdup(shell_path);
+        if (!replaced_argv[replaced_index - 1])
+            goto shell_fallback_nomem;
+
+        replaced_argv[replaced_index++] = strdup(script_path);
+        if (!replaced_argv[replaced_index - 1])
+            goto shell_fallback_nomem;
+
+        for (int i = 1; i < argv_count; i++) {
+            replaced_argv[replaced_index++] = strdup(new_argv[i]);
+            if (!replaced_argv[replaced_index - 1])
+                goto shell_fallback_nomem;
+        }
+
+        if (vfs_openat(AT_FDCWD, shell_path, &exec_how, &shell_file, true) <
+                0 ||
+            !shell_file) {
+            task_execve_free_string_array(replaced_argv, replaced_index);
+            task_execve_free_string_array(new_argv, argv_count);
+            task_execve_free_string_array(new_envp, envp_count);
+            vfs_close_file(exec_file);
+            return (uint64_t)-ENOENT;
+        }
+
+        task_execve_free_string_array(new_argv, argv_count);
+        new_argv = replaced_argv;
+        argv_count = replaced_argc;
+
+        strncpy(path, shell_path, sizeof(path));
+        path[sizeof(path) - 1] = '\0';
+        vfs_close_file(exec_file);
+        exec_file = shell_file;
+        node = shell_file->f_inode;
+        shell_fallback_used = true;
+
+        loff_t shell_header_pos = 0;
+        header_read = vfs_read_file(exec_file, header_buf, sizeof(header_buf),
+                                    &shell_header_pos);
+        if (header_read < (ssize_t)sizeof(Elf64_Ehdr) ||
+            !arch_check_elf((const Elf64_Ehdr *)header_buf)) {
+            task_execve_free_string_array(new_argv, argv_count);
+            task_execve_free_string_array(new_envp, envp_count);
+            vfs_close_file(exec_file);
+            return (uint64_t)-ENOEXEC;
+        }
+
+        goto shell_fallback_done;
+
+    shell_fallback_nomem:
+        task_execve_free_string_array(replaced_argv, replaced_index);
+        task_execve_free_string_array(new_argv, argv_count);
+        task_execve_free_string_array(new_envp, envp_count);
+        vfs_close_file(exec_file);
+        return (uint64_t)-ENOMEM;
+    }
+
+shell_fallback_done:
     if (header_read < sizeof(Elf64_Ehdr)) {
         task_execve_free_string_array(new_argv, argv_count);
         task_execve_free_string_array(new_envp, envp_count);
