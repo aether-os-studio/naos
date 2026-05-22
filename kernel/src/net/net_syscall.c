@@ -723,6 +723,10 @@ uint64_t sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen,
     fd_t *node = task_get_file(current_task, sockfd);
     if (!node)
         return -EBADF;
+    if (fd_get_flags(node) & O_PATH) {
+        vfs_file_put(node);
+        return -EBADF;
+    }
     if (!is_socket(node)) {
         vfs_file_put(node);
         return -ENOTSOCK;

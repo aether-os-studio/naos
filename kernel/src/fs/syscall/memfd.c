@@ -23,6 +23,7 @@ struct memfd_ctx {
     size_t page_slots;
     uint64_t len;
     int flags;
+    unsigned int seals;
     spinlock_t lock;
 };
 

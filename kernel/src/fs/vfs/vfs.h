@@ -121,6 +121,14 @@ typedef struct vfs_file_lock {
     bool ofd;
 } vfs_file_lock_t;
 
+typedef struct vfs_file_lock_waiter {
+    struct llist_header node;
+    uintptr_t owner;
+    uintptr_t blocking_owner;
+    struct task *task;
+    bool ofd;
+} vfs_file_lock_waiter_t;
+
 struct vfs_qstr {
     const char *name;
     uint32_t len;
@@ -449,6 +457,9 @@ struct vfs_inode {
     vfs_bsd_lock_t flock_lock;
     spinlock_t file_locks_lock;
     struct llist_header file_locks;
+    struct llist_header file_lock_waiters;
+    volatile int i_write_count;
+    volatile int i_exec_count;
     struct llist_header i_dentry_aliases;
     struct llist_header i_sb_list;
     vfs_ref_t i_ref;
@@ -458,6 +469,10 @@ struct vfs_inode {
     uint64_t poll_seq_out;
     uint64_t poll_seq_pri;
 };
+
+#define VFS_FMODE_WRITE_ACCESS (1U << 0)
+#define VFS_FMODE_EXEC_ACCESS (1U << 1)
+#define VFS_FMODE_NO_POS_LOCK (1U << 2)
 
 /**
  * Directory cache entry. Dentries name filesystem objects and may exist without
@@ -681,6 +696,9 @@ void vfs_put_super(struct vfs_super_block *sb);
 struct vfs_inode *vfs_alloc_inode(struct vfs_super_block *sb);
 struct vfs_inode *vfs_igrab(struct vfs_inode *inode);
 void vfs_iput(struct vfs_inode *inode);
+int vfs_inode_get_write_access(struct vfs_inode *inode);
+void vfs_inode_put_write_access(struct vfs_inode *inode);
+int vfs_file_get_exec_access(struct vfs_file *file);
 void vfs_inode_init_owner(struct vfs_inode *inode, struct vfs_inode *dir,
                           umode_t mode);
 uid32_t vfs_current_fsuid(void);
@@ -803,6 +821,7 @@ int vfs_path_parent_lookup(int dfd, const char *name, unsigned int lookup_flags,
 int vfs_openat(int dfd, const char *name, const struct vfs_open_how *how,
                struct vfs_file **out, bool kernel);
 int vfs_close_file(struct vfs_file *file);
+int vfs_close_file_for_task(struct vfs_file *file, struct task *task);
 ssize_t vfs_read_file(struct vfs_file *file, void *buf, size_t count,
                       loff_t *ppos);
 ssize_t vfs_write_file(struct vfs_file *file, const void *buf, size_t count,

@@ -646,6 +646,9 @@ uint64_t sys_sigaltstack(const stack_t *uss, stack_t *uoss) {
     if (has_new && copy_from_user(&new_stack, uss, sizeof(new_stack)))
         return (uint64_t)-EFAULT;
 
+    if (has_new && (new_stack.ss_flags & ~(SS_DISABLE | SS_AUTODISARM)) != 0)
+        return (uint64_t)-EINVAL;
+
     uint64_t user_sp = signal_current_user_sp(self);
     stack_t old_stack;
 
@@ -668,6 +671,26 @@ uint64_t sys_sigaltstack(const stack_t *uss, stack_t *uoss) {
     spin_unlock(&self->signal->sighand->siglock);
 
     if (uoss && copy_to_user(uoss, &old_stack, sizeof(old_stack)))
+        return (uint64_t)-EFAULT;
+
+    return 0;
+}
+
+uint64_t sys_rt_sigpending(sigset_t *set, size_t sigsetsize) {
+    sigset_t pending;
+
+    if (!signal_sigset_size_valid(sigsetsize))
+        return (uint64_t)-EINVAL;
+    if (!set)
+        return (uint64_t)-EFAULT;
+
+    spin_lock(&current_task->signal->sighand->siglock);
+    pending = signal_pending_mask_locked(current_task);
+    pending &= current_task->signal->blocked;
+    spin_unlock(&current_task->signal->sighand->siglock);
+
+    pending = sigset_kernel_to_user(pending);
+    if (copy_to_user(set, &pending, sigsetsize))
         return (uint64_t)-EFAULT;
 
     return 0;

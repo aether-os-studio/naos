@@ -36,6 +36,143 @@ static uint64_t copy_timeval_to_user(uint64_t user_addr, uint64_t sec,
                                                             : 0;
 }
 
+#define LINUX_CPUCLOCK_PERTHREAD_MASK 4
+#define LINUX_CPUCLOCK_CLOCK_MASK 3
+#define LINUX_CPUCLOCK_PROF 0
+#define LINUX_CPUCLOCK_VIRT 1
+#define LINUX_CPUCLOCK_SCHED 2
+#define LINUX_CLOCKFD 3
+
+static inline bool linux_clockid_is_cpu(clockid_t clock_id) {
+    return clock_id < 0 &&
+           (clock_id & LINUX_CPUCLOCK_CLOCK_MASK) != LINUX_CLOCKFD;
+}
+
+static inline int linux_clockid_pid(clockid_t clock_id) {
+    return ((uint32_t)(~clock_id)) >> 3;
+}
+
+static inline bool linux_clockid_perthread(clockid_t clock_id) {
+    return (clock_id & LINUX_CPUCLOCK_PERTHREAD_MASK) != 0;
+}
+
+static inline int linux_clockid_which(clockid_t clock_id) {
+    return clock_id & LINUX_CPUCLOCK_CLOCK_MASK;
+}
+
+static inline uint64_t linux_task_cpu_clock_sample(task_t *task, int which) {
+    if (!task)
+        return 0;
+
+    switch (which) {
+    case LINUX_CPUCLOCK_PROF:
+    case LINUX_CPUCLOCK_SCHED:
+        return task->user_time_ns;
+    case LINUX_CPUCLOCK_VIRT:
+        return task_self_user_ns(task);
+    default:
+        return (uint64_t)-EINVAL;
+    }
+}
+
+static bool linux_resolve_cpu_clock(clockid_t clock_id, uint64_t *target_id,
+                                    bool *perthread, int *which) {
+    if (!current_task)
+        return false;
+
+    if (clock_id == CLOCK_PROCESS_CPUTIME_ID) {
+        *target_id = task_effective_tgid(current_task);
+        *perthread = false;
+        *which = LINUX_CPUCLOCK_SCHED;
+        return true;
+    }
+
+    if (clock_id == CLOCK_THREAD_CPUTIME_ID) {
+        *target_id = current_task->pid;
+        *perthread = true;
+        *which = LINUX_CPUCLOCK_SCHED;
+        return true;
+    }
+
+    if (!linux_clockid_is_cpu(clock_id))
+        return false;
+
+    *perthread = linux_clockid_perthread(clock_id);
+    *which = linux_clockid_which(clock_id);
+    *target_id = linux_clockid_pid(clock_id);
+
+    if (*target_id == 0) {
+        *target_id =
+            *perthread ? current_task->pid : task_effective_tgid(current_task);
+    }
+
+    return *which <= LINUX_CPUCLOCK_SCHED;
+}
+
+static uint64_t linux_sample_cpu_clock(clockid_t clock_id,
+                                       uint64_t *sample_ns) {
+    uint64_t target_id = 0;
+    bool perthread = false;
+    int which = 0;
+
+    if (!linux_resolve_cpu_clock(clock_id, &target_id, &perthread, &which))
+        return (uint64_t)-EINVAL;
+
+    uint64_t sample = 0;
+    bool found = false;
+
+    spin_lock(&task_queue_lock);
+
+    if (perthread) {
+        task_t *task = task_lookup_by_pid_nolock(target_id);
+        if (task) {
+            sample = linux_task_cpu_clock_sample(task, which);
+            found = true;
+        }
+    } else if (task_pid_map.buckets) {
+        for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+            hashmap_entry_t *entry = &task_pid_map.buckets[i];
+            if (entry->state != HASHMAP_ENTRY_OCCUPIED)
+                continue;
+
+            task_t *task = (task_t *)entry->value;
+            if (!task || task_effective_tgid(task) != target_id)
+                continue;
+
+            sample += linux_task_cpu_clock_sample(task, which);
+            found = true;
+        }
+    }
+
+    spin_unlock(&task_queue_lock);
+
+    if (!found)
+        return (uint64_t)-EINVAL;
+
+    *sample_ns = sample;
+    return 0;
+}
+
+static uint64_t linux_clock_gettime_cpu(clockid_t clock_id,
+                                        uint64_t user_addr) {
+    uint64_t sample_ns = 0;
+    uint64_t ret = linux_sample_cpu_clock(clock_id, &sample_ns);
+    if (ret != 0)
+        return ret;
+
+    return copy_timespec_to_user(user_addr, sample_ns / 1000000000ULL,
+                                 sample_ns % 1000000000ULL);
+}
+
+static uint64_t linux_clock_getres_cpu(clockid_t clock_id, uint64_t user_addr) {
+    uint64_t sample_ns = 0;
+    uint64_t ret = linux_sample_cpu_clock(clock_id, &sample_ns);
+    if (ret != 0)
+        return ret;
+
+    return copy_timespec_to_user(user_addr, 0, 1);
+}
+
 static uint64_t sys_sched_yield(void) {
     schedule(SCHED_FLAG_YIELD);
     return 0;
@@ -118,8 +255,25 @@ uint64_t sys_clock_gettime(uint64_t arg1, uint64_t arg2, uint64_t arg3) {
 }
 
 uint64_t sys_clock_getres(uint64_t arg1, uint64_t arg2) {
-    (void)arg1;
-    return copy_timespec_to_user(arg2, 0, 1);
+    clockid_t clock_id = (clockid_t)arg1;
+
+    switch (clock_id) {
+    case 2: // CLOCK_PROCESS_CPUTIME_ID
+    case 3: // CLOCK_THREAD_CPUTIME_ID
+        return linux_clock_getres_cpu(clock_id, arg2);
+    default:
+        if (linux_clockid_is_cpu(clock_id))
+            return linux_clock_getres_cpu(clock_id, arg2);
+        break;
+    }
+
+    if (arg2) {
+        struct timespec ts = {.tv_sec = 0, .tv_nsec = 1};
+        if (copy_to_user((void *)arg2, &ts, sizeof(ts))) {
+            return (uint64_t)-EFAULT;
+        }
+    }
+    return 0;
 }
 
 uint64_t sys_gettimeofday(uint64_t arg1) {
@@ -224,7 +378,7 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_CLONE, (syscall_handle_t)sys_clone);
     regist_syscall_handler(SYS_EXECVE, (syscall_handle_t)task_execve);
     regist_syscall_handler(SYS_EXIT, (syscall_handle_t)task_exit_thread);
-    regist_syscall_handler(SYS_WAIT4, (syscall_handle_t)sys_waitpid);
+    regist_syscall_handler(SYS_WAIT4, (syscall_handle_t)sys_wait4);
     regist_syscall_handler(SYS_KILL, (syscall_handle_t)sys_kill);
     regist_syscall_handler(SYS_UNAME, (syscall_handle_t)sys_newuname);
     regist_syscall_handler(SYS_SHMDT, (syscall_handle_t)sys_shmdt);
@@ -258,6 +412,7 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_GETPPID, (syscall_handle_t)sys_getppid);
     regist_syscall_handler(SYS_SETSID, (syscall_handle_t)sys_setsid);
     regist_syscall_handler(SYS_GETGROUPS, (syscall_handle_t)sys_getgroups);
+    regist_syscall_handler(SYS_TIMES, (syscall_handle_t)sys_times);
     regist_syscall_handler(SYS_SETGROUPS,
                            (syscall_handle_t)dummy_syscall_handler);
     regist_syscall_handler(SYS_SETREUID, (syscall_handle_t)sys_setreuid);
@@ -270,10 +425,12 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_SETFSUID, (syscall_handle_t)sys_setfsuid);
     regist_syscall_handler(SYS_SETFSGID, (syscall_handle_t)sys_setfsgid);
     regist_syscall_handler(SYS_GETSID, (syscall_handle_t)sys_getsid);
-    regist_syscall_handler(SYS_CAPGET, (syscall_handle_t)dummy_syscall_handler);
-    regist_syscall_handler(SYS_CAPSET, (syscall_handle_t)dummy_syscall_handler);
+    regist_syscall_handler(SYS_CAPGET, (syscall_handle_t)sys_capget);
+    regist_syscall_handler(SYS_CAPSET, (syscall_handle_t)sys_capset);
     regist_syscall_handler(SYS_RT_SIGTIMEDWAIT,
                            (syscall_handle_t)sys_rt_sigtimedwait);
+    regist_syscall_handler(SYS_RT_SIGPENDING,
+                           (syscall_handle_t)sys_rt_sigpending);
     regist_syscall_handler(SYS_RT_SIGQUEUEINFO,
                            (syscall_handle_t)sys_rt_sigqueueinfo);
     regist_syscall_handler(SYS_RT_SIGSUSPEND, (syscall_handle_t)sys_sigsuspend);
@@ -293,7 +450,9 @@ void syscall_handler_init() {
                            (syscall_handle_t)sys_sched_getscheduler);
     regist_syscall_handler(SYS_PRCTL, (syscall_handle_t)sys_prctl);
     regist_syscall_handler(SYS_CHROOT, (syscall_handle_t)sys_chroot);
+    regist_syscall_handler(SYS_SYNC, (syscall_handle_t)dummy_syscall_handler);
     regist_syscall_handler(SYS_MOUNT, (syscall_handle_t)sys_mount);
+    regist_syscall_handler(SYS_UMOUNT2, (syscall_handle_t)sys_umount2);
     regist_syscall_handler(SYS_REBOOT, (syscall_handle_t)sys_reboot);
     regist_syscall_handler(SYS_GETTID, (syscall_handle_t)sys_gettid);
     regist_syscall_handler(SYS_TKILL, (syscall_handle_t)sys_tkill);
@@ -367,6 +526,10 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_PWRITEV, (syscall_handle_t)sys_pwritev);
     regist_syscall_handler(SYS_RECVMMSG, (syscall_handle_t)sys_recvmmsg);
     regist_syscall_handler(SYS_PRLIMIT64, (syscall_handle_t)sys_prlimit64);
+    regist_syscall_handler(SYS_NAME_TO_HANDLE_AT,
+                           (syscall_handle_t)sys_name_to_handle_at);
+    regist_syscall_handler(SYS_OPEN_BY_HANDLE_AT,
+                           (syscall_handle_t)sys_open_by_handle_at);
     regist_syscall_handler(SYS_SENDMMSG, (syscall_handle_t)sys_sendmmsg);
     regist_syscall_handler(SYS_SETNS, (syscall_handle_t)sys_setns);
     regist_syscall_handler(SYS_GETCPU, (syscall_handle_t)sys_getcpu);
@@ -400,6 +563,8 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_CLOSE_RANGE, (syscall_handle_t)sys_close_range);
     regist_syscall_handler(SYS_OPENAT2, (syscall_handle_t)sys_openat2);
     regist_syscall_handler(SYS_FACCESSAT2, (syscall_handle_t)sys_faccessat2);
+    regist_syscall_handler(SYS_EPOLL_PWAIT2,
+                           (syscall_handle_t)sys_epoll_pwait2);
     regist_syscall_handler(SYS_FCHMODAT2, (syscall_handle_t)sys_fchmodat2);
     regist_syscall_handler(SYS_RSEQ_SLICE_YIELD,
                            (syscall_handle_t)sys_ni_syscall);

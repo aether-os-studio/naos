@@ -454,7 +454,7 @@ uintptr_t alloc_frames(size_t count) {
         }
 
         if (attempt == 0) {
-            task_reap_deferred(16);
+            task_reap_deferred(512);
             continue;
         }
         break;

@@ -79,10 +79,12 @@ static void create_procfs_node(char *name, read_entry_t read_entry,
 void procfs_nodes_init() {
     create_procfs_node("filesystems", proc_filesystems_read,
                        proc_filesystems_stat, NULL);
+    create_procfs_node("cgroups", proc_cgroups_read, proc_cgroups_stat, NULL);
     create_procfs_node("cmdline", proc_cmdline_read, proc_cmdline_stat, NULL);
     create_procfs_node("mounts", proc_mounts_read, proc_mounts_stat, NULL);
     create_procfs_node("meminfo", proc_meminfo_read, proc_meminfo_stat, NULL);
     create_procfs_node("stat", proc_stat_read, proc_stat_stat, NULL);
+    create_procfs_node("cpuinfo", proc_cpuinfo_read, proc_cpuinfo_stat, NULL);
 
     create_procfs_handle("proc_cmdline", proc_pcmdline_read, NULL,
                          proc_pcmdline_stat, NULL, NULL);
@@ -112,6 +114,14 @@ void procfs_nodes_init() {
     create_procfs_handle("proc_sys_kernel_osrelease",
                          proc_sys_kernel_osrelease_read, NULL,
                          proc_sys_kernel_osrelease_stat, NULL, NULL);
+    create_procfs_handle("proc_sys_kernel_pid_max",
+                         proc_sys_kernel_pid_max_read, NULL,
+                         proc_sys_kernel_pid_max_stat, NULL, NULL);
+    create_procfs_handle("proc_sys_kernel_tainted",
+                         proc_sys_kernel_tainted_read, NULL,
+                         proc_sys_kernel_tainted_stat, NULL, NULL);
+    create_procfs_handle("proc_sys_kernel_printk", proc_sys_kernel_printk_read,
+                         NULL, proc_sys_kernel_printk_stat, NULL, NULL);
     create_procfs_handle("proc_sys_kernel_hostname",
                          proc_sys_kernel_hostname_read,
                          proc_sys_kernel_hostname_write,
@@ -122,6 +132,8 @@ void procfs_nodes_init() {
                          proc_sys_kernel_domainname_stat, NULL, NULL);
     create_procfs_handle("proc_pressure_memory", proc_pressure_memory_read,
                          NULL, proc_pressure_memory_stat, NULL, NULL);
+    create_procfs_handle("proc_sysvipc_shm", proc_sysvipc_shm_read, NULL,
+                         proc_sysvipc_shm_stat, NULL, NULL);
     create_procfs_handle("proc_root", NULL, NULL, NULL, proc_root_readlink,
                          NULL);
     create_procfs_handle("proc_exe", NULL, NULL, NULL, proc_exe_readlink, NULL);

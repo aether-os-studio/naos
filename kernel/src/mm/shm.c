@@ -11,6 +11,24 @@ static inline long shm_now_seconds(void) {
     return (long)(nano_time() / 1000000000ULL);
 }
 
+struct shminfo {
+    uint64_t shmmax;
+    uint64_t shmmin;
+    uint64_t shmmni;
+    uint64_t shmseg;
+    uint64_t shmall;
+    uint64_t __unused[4];
+};
+
+struct shm_info {
+    int used_ids;
+    uint64_t shm_tot;
+    uint64_t shm_rss;
+    uint64_t shm_swp;
+    uint64_t swap_attempts;
+    uint64_t swap_successes;
+};
+
 #define PAGE_ALIGN_UP(x) (((x) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1))
 
 static shm_t *shm_find_key_locked(int key) {
@@ -138,6 +156,27 @@ static void do_shmdt_one(task_t *task, shm_mapping_t *m) {
 }
 
 void shm_try_reap_by_vnode(struct vfs_inode *node) { (void)node; }
+
+size_t shm_snapshot(shm_snapshot_entry_t *entries, size_t max_entries) {
+    size_t count = 0;
+
+    spin_lock(&shm_op_lock);
+    for (shm_t *shm = shm_list; shm; shm = shm->next) {
+        if (entries && count < max_entries) {
+            entries[count].key = shm->key;
+            entries[count].shmid = shm->shmid;
+            entries[count].mode = shm->mode;
+            entries[count].size = shm->size;
+            entries[count].cpid = shm->cpid;
+            entries[count].lpid = shm->lpid;
+            entries[count].nattch = shm->nattch;
+        }
+        count++;
+    }
+    spin_unlock(&shm_op_lock);
+
+    return count;
+}
 
 uint64_t sys_shmget(int key, int size, int shmflg) {
     shm_t *shm;
@@ -342,6 +381,41 @@ uint64_t sys_shmdt(void *shmaddr) {
 uint64_t sys_shmctl(int shmid, int cmd, struct shmid_ds *buf) {
     shm_t *shm;
 
+    if (cmd == IPC_INFO || cmd == SHM_INFO) {
+        size_t count = 0;
+        size_t pages = 0;
+        struct shminfo info = {0};
+        struct shm_info dinfo = {0};
+
+        spin_lock(&shm_op_lock);
+        for (shm_t *s = shm_list; s; s = s->next) {
+            count++;
+            pages += s->size / PAGE_SIZE;
+        }
+        spin_unlock(&shm_op_lock);
+
+        if (!buf)
+            return -EFAULT;
+
+        if (cmd == IPC_INFO) {
+            info.shmmax = 1ULL << 30;
+            info.shmmin = 1;
+            info.shmmni = 4096;
+            info.shmseg = 4096;
+            info.shmall = pages ? pages : (1ULL << 18);
+            if (copy_to_user(buf, &info, sizeof(info)))
+                return -EFAULT;
+            return 0;
+        }
+
+        dinfo.used_ids = (int)count;
+        dinfo.shm_tot = pages;
+        dinfo.shm_rss = pages;
+        if (copy_to_user(buf, &dinfo, sizeof(dinfo)))
+            return -EFAULT;
+        return 0;
+    }
+
     spin_lock(&shm_op_lock);
     shm = shm_find_id_locked(shmid);
     if (!shm) {
@@ -379,6 +453,53 @@ uint64_t sys_shmctl(int shmid, int cmd, struct shmid_ds *buf) {
             return -EFAULT;
         return 0;
     }
+    case SHM_STAT: {
+        struct shmid_ds info = {0};
+        if (!buf) {
+            spin_unlock(&shm_op_lock);
+            return -EINVAL;
+        }
+        info.shm_perm.__ipc_perm_key = shm->key;
+        info.shm_perm.mode = shm->mode;
+        info.shm_perm.uid = shm->uid;
+        info.shm_perm.gid = shm->gid;
+        info.shm_perm.cuid = shm->cuid;
+        info.shm_perm.cgid = shm->cgid;
+        info.shm_segsz = shm->size;
+        info.shm_atime = shm->atime;
+        info.shm_dtime = shm->dtime;
+        info.shm_ctime = shm->ctime;
+        info.shm_cpid = shm->cpid;
+        info.shm_lpid = shm->lpid;
+        info.shm_nattch = shm->nattch;
+        spin_unlock(&shm_op_lock);
+        if (copy_to_user(buf, &info, sizeof(info)))
+            return -EFAULT;
+        return shm->shmid;
+    }
+    case IPC_SET:
+        if (!buf) {
+            spin_unlock(&shm_op_lock);
+            return -EINVAL;
+        }
+        {
+            struct shmid_ds user_info;
+            if (copy_from_user(&user_info, buf, sizeof(user_info))) {
+                spin_unlock(&shm_op_lock);
+                return -EFAULT;
+            }
+            shm->uid = user_info.shm_perm.uid;
+            shm->gid = user_info.shm_perm.gid;
+            shm->mode = user_info.shm_perm.mode & 0777;
+            shm->ctime = shm_now_seconds();
+        }
+        break;
+    case SHM_LOCK:
+        shm->mode |= 02000;
+        break;
+    case SHM_UNLOCK:
+        shm->mode &= ~02000;
+        break;
     default:
         spin_unlock(&shm_op_lock);
         return -ENOSYS;

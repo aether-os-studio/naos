@@ -472,7 +472,7 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_VFORK, (syscall_handle_t)sys_vfork);
     regist_syscall_handler(SYS_EXECVE, (syscall_handle_t)task_execve);
     regist_syscall_handler(SYS_EXIT, (syscall_handle_t)task_exit_thread);
-    regist_syscall_handler(SYS_WAIT4, (syscall_handle_t)sys_waitpid);
+    regist_syscall_handler(SYS_WAIT4, (syscall_handle_t)sys_wait4);
     regist_syscall_handler(SYS_KILL, (syscall_handle_t)sys_kill);
     regist_syscall_handler(SYS_UNAME, (syscall_handle_t)sys_uname);
     // regist_syscall_handler(SYS_SEMGET, (syscall_handle_t)sys_semget);
@@ -513,7 +513,7 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_GETRLIMIT, (syscall_handle_t)sys_get_rlimit);
     regist_syscall_handler(SYS_GETRUSAGE, (syscall_handle_t)sys_getrusage);
     regist_syscall_handler(SYS_SYSINFO, (syscall_handle_t)sys_sysinfo);
-    // regist_syscall_handler(SYS_TIMES, (syscall_handle_t)sys_times);
+    regist_syscall_handler(SYS_TIMES, (syscall_handle_t)sys_times);
     regist_syscall_handler(SYS_PTRACE, (syscall_handle_t)sys_ptrace);
     regist_syscall_handler(SYS_GETUID, (syscall_handle_t)sys_getuid);
     regist_syscall_handler(SYS_SYSLOG, (syscall_handle_t)sys_syslog);
@@ -539,8 +539,8 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_SETFSUID, (syscall_handle_t)sys_setfsuid);
     regist_syscall_handler(SYS_SETFSGID, (syscall_handle_t)sys_setfsgid);
     regist_syscall_handler(SYS_GETSID, (syscall_handle_t)sys_getsid);
-    regist_syscall_handler(SYS_CAPGET, (syscall_handle_t)dummy_syscall_handler);
-    regist_syscall_handler(SYS_CAPSET, (syscall_handle_t)dummy_syscall_handler);
+    regist_syscall_handler(SYS_CAPGET, (syscall_handle_t)sys_capget);
+    regist_syscall_handler(SYS_CAPSET, (syscall_handle_t)sys_capset);
     // regist_syscall_handler(SYS_RT_SIGPENDING,
     // (syscall_handle_t)sys_rt_sigpending);
     regist_syscall_handler(SYS_RT_SIGTIMEDWAIT,

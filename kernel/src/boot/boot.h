@@ -62,6 +62,7 @@ typedef struct boot_module {
 void boot_get_modules(boot_module_t **modules, size_t *count);
 
 uint64_t boot_get_firmware_type();
+uint64_t boot_get_system_table();
 
 #if !defined(__x86_64__)
 uint64_t boot_get_dtb();

@@ -77,6 +77,7 @@ uint64_t sys_sigaction(int sig, const void *action, void *oldaction,
 struct pt_regs;
 uint64_t sys_sigreturn(struct pt_regs *regs);
 uint64_t sys_sigaltstack(const stack_t *uss, stack_t *uoss);
+uint64_t sys_rt_sigpending(sigset_t *set, size_t sigsetsize);
 uint64_t sys_sigsuspend(const sigset_t *mask, size_t sigsetsize);
 uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
                              const struct timespec *uts, size_t sigsetsize);

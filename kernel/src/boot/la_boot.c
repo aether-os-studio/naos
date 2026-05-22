@@ -1,4 +1,5 @@
 #include <boot/boot.h>
+#include <boot/efi.h>
 #include <arch/loongarch64/csr.h>
 #include <drivers/fdt/fdt.h>
 #include <drivers/logger.h>
@@ -59,26 +60,6 @@ struct boot_info {
     uint64_t system_table_virt;
 };
 
-typedef uint64_t efi_status_t;
-typedef uint64_t efi_physical_address_t;
-typedef uint64_t efi_virtual_address_t;
-typedef void *efi_handle_t;
-
-typedef struct efi_table_header {
-    uint64_t signature;
-    uint32_t revision;
-    uint32_t header_size;
-    uint32_t crc32;
-    uint32_t reserved;
-} efi_table_header_t;
-
-typedef struct efi_guid {
-    uint32_t data1;
-    uint16_t data2;
-    uint16_t data3;
-    uint8_t data4[8];
-} efi_guid_t;
-
 static const efi_guid_t EFI_DTB_TABLE_GUID = {
     0xb1b621d5,
     0xf19c,
@@ -93,20 +74,6 @@ static const efi_guid_t LINUX_EFI_BOOT_MEMMAP_GUID = {
     {0xa2, 0x93, 0x96, 0x5c, 0x3c, 0x6f, 0xe2, 0xb4},
 };
 
-typedef struct efi_configuration_table {
-    efi_guid_t vendor_guid;
-    void *vendor_table;
-} efi_configuration_table_t;
-
-typedef struct efi_memory_descriptor {
-    uint32_t type;
-    uint32_t pad;
-    efi_physical_address_t physical_start;
-    efi_virtual_address_t virtual_start;
-    uint64_t number_of_pages;
-    uint64_t attribute;
-} efi_memory_descriptor_t;
-
 typedef struct efi_boot_memmap {
     size_t map_size;
     size_t desc_size;
@@ -115,32 +82,6 @@ typedef struct efi_boot_memmap {
     size_t buff_size;
     efi_memory_descriptor_t map[];
 } efi_boot_memmap_t;
-
-typedef efi_status_t (*efi_get_memory_map_t)(
-    size_t *memory_map_size, efi_memory_descriptor_t *memory_map,
-    size_t *map_key, size_t *descriptor_size, uint32_t *descriptor_version);
-
-typedef struct efi_boot_services {
-    efi_table_header_t hdr;
-    char _pad1[240 - sizeof(efi_table_header_t)];
-    efi_get_memory_map_t get_memory_map;
-} efi_boot_services_t;
-
-typedef struct efi_system_table {
-    efi_table_header_t hdr;
-    uint16_t *firmware_vendor;
-    uint32_t firmware_revision;
-    efi_handle_t console_in_handle;
-    void *con_in;
-    efi_handle_t console_out_handle;
-    void *con_out;
-    efi_handle_t standard_error_handle;
-    void *std_err;
-    void *runtime_services;
-    efi_boot_services_t *boot_services;
-    size_t number_of_table_entries;
-    efi_configuration_table_t *configuration_table;
-} efi_system_table_t;
 
 static struct boot_info laboot_boot_info;
 
@@ -304,6 +245,10 @@ char *boot_get_cmdline() {
 uint64_t boot_get_boottime() { return laboot_boottime; }
 
 uint64_t boot_get_firmware_type(void) { return LIMINE_FIRMWARE_TYPE_EFI64; }
+
+uint64_t boot_get_system_table(void) {
+    return laboot_boot_info.system_table_virt;
+}
 
 static void
 laboot_add_memory_entry(uintptr_t addr, size_t len,
@@ -745,7 +690,7 @@ extern void kmain();
 void laboot_main(uint64_t phys_id, void *dtb, const struct boot_info *boot) {
     (void)phys_id;
     (void)dtb;
-    laboot_boot_info = *boot;
+    memcpy(&laboot_boot_info, boot, sizeof(struct boot_info));
     laboot_valen = 65 - __builtin_clzll(~laboot_boot_info.hhdm_base);
     if (laboot_valen < 39)
         laboot_valen = 39;

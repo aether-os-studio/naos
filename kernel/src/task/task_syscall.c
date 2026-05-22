@@ -34,6 +34,22 @@ static bool waitpid_task_matches(const task_t *task, int64_t wait_pid,
     return wait_pid == -1;
 }
 
+static bool waitpid_has_specific_target(const task_t *waiter, int wait_pid) {
+    if (!waiter)
+        return false;
+    if (wait_pid <= 0)
+        return false;
+
+    task_t *task = task_find_by_pid((uint64_t)wait_pid);
+    if (!task)
+        return false;
+
+    if (task_parent_wait_key(task) ==
+        task_effective_wait_parent_pid((task_t *)waiter))
+        return true;
+    return ptrace_matches_waiter(task, waiter);
+}
+
 static bool waitid_task_matches(const task_t *task, int idtype,
                                 uint64_t match_id) {
     if (!task)
@@ -776,6 +792,14 @@ static inline struct timeval task_ns_to_timeval(uint64_t ns) {
     return tv;
 }
 
+static inline long task_ns_to_clock_ticks(uint64_t ns) {
+    /*
+     * Linux userspace commonly assumes _SC_CLK_TCK == 100 on modern systems.
+     * Report times() in that unit to match libc expectations.
+     */
+    return (long)(ns / 10000000ULL);
+}
+
 void task_fd_info_put(fd_info_t *fd_info, task_t *task) {
     if (!fd_info)
         return;
@@ -808,7 +832,7 @@ void task_fd_info_put(fd_info_t *fd_info, task_t *task) {
             if (!entry)
                 break;
             on_close_file_call(task, fd, entry);
-            vfs_close_file(entry);
+            vfs_close_file_for_task(entry, task);
         }
         task_fd_info_free(fd_info);
         return;
@@ -830,7 +854,7 @@ void task_fd_info_put(fd_info_t *fd_info, task_t *task) {
         if (!to_close[i])
             continue;
         on_close_file_call(task, i, to_close[i]);
-        vfs_close_file(to_close[i]);
+        vfs_close_file_for_task(to_close[i], task);
     }
 
     free(to_close);
@@ -1023,6 +1047,8 @@ size_t task_reap_deferred(size_t budget) {
 #define TASK_EXEC_MAX_ARGS 4096
 #define TASK_EXEC_MAX_ARG_STRLEN VFS_PATH_MAX
 #define TASK_EXEC_MAX_PHDRS 128
+#define TASK_EXEC_MAX_INTERP_DEPTH 8
+#define TASK_EXEC_INTERP_BASE_STEP (64ULL * 1024ULL * 1024ULL)
 
 static void task_execve_free_string_array(char **strings, int count) {
     if (!strings) {
@@ -1073,6 +1099,38 @@ typedef struct task_execve_creds {
     bool secure_exec;
 } task_execve_creds_t;
 
+typedef struct task_user_cap_header {
+    uint32_t version;
+    int32_t pid;
+} task_user_cap_header_t;
+
+typedef struct task_user_cap_data {
+    uint32_t effective;
+    uint32_t permitted;
+    uint32_t inheritable;
+} task_user_cap_data_t;
+
+#define LINUX_CAPABILITY_VERSION_1 0x19980330
+#define LINUX_CAPABILITY_VERSION_2 0x20071026
+#define LINUX_CAPABILITY_VERSION_3 0x20080522
+
+typedef struct task_execve_elf_image {
+    uint64_t load_base;
+    uint64_t entry;
+    uint64_t phdr_vaddr;
+    uint64_t phnum;
+} task_execve_elf_image_t;
+
+typedef struct task_execve_interp_result {
+    bool present;
+    uint64_t entry;
+    uint64_t at_base;
+    bool aux_override;
+    uint64_t aux_entry;
+    uint64_t aux_phdr;
+    uint64_t aux_phnum;
+} task_execve_interp_result_t;
+
 static task_execve_creds_t task_execve_prepare_creds(task_t *task,
                                                      struct vfs_file *file) {
     task_execve_creds_t creds = {
@@ -1119,6 +1177,77 @@ static void task_execve_commit_creds(task_t *task,
     task->sgid = creds->sgid;
     task->fsuid = creds->fsuid;
     task->fsgid = creds->fsgid;
+}
+
+static int task_capability_u32_count(uint32_t version) {
+    switch (version) {
+    case LINUX_CAPABILITY_VERSION_1:
+        return 1;
+    case LINUX_CAPABILITY_VERSION_2:
+    case LINUX_CAPABILITY_VERSION_3:
+        return 2;
+    default:
+        return -EINVAL;
+    }
+}
+
+static bool task_capability_pid_matches(int32_t pid) {
+    if (!current_task)
+        return false;
+    return pid == 0 || pid == (int32_t)current_task->pid;
+}
+
+uint64_t sys_capget(void *header_user, void *data_user) {
+    task_user_cap_header_t header;
+
+    if (!header_user || copy_from_user(&header, header_user, sizeof(header)))
+        return (uint64_t)-EFAULT;
+
+    int u32_count = task_capability_u32_count(header.version);
+    if (u32_count < 0) {
+        uint32_t preferred = LINUX_CAPABILITY_VERSION_3;
+        copy_to_user(&((task_user_cap_header_t *)header_user)->version,
+                     &preferred, sizeof(preferred));
+        return (uint64_t)-EINVAL;
+    }
+    if (!task_capability_pid_matches(header.pid))
+        return (uint64_t)-ESRCH;
+    if (!data_user)
+        return 0;
+
+    task_user_cap_data_t data[2] = {0};
+    if (copy_to_user(data_user, data, sizeof(data[0]) * (size_t)u32_count))
+        return (uint64_t)-EFAULT;
+    return 0;
+}
+
+uint64_t sys_capset(void *header_user, const void *data_user) {
+    task_user_cap_header_t header;
+
+    if (!header_user || !data_user ||
+        copy_from_user(&header, header_user, sizeof(header)))
+        return (uint64_t)-EFAULT;
+
+    int u32_count = task_capability_u32_count(header.version);
+    if (u32_count < 0) {
+        uint32_t preferred = LINUX_CAPABILITY_VERSION_3;
+        copy_to_user(&((task_user_cap_header_t *)header_user)->version,
+                     &preferred, sizeof(preferred));
+        return (uint64_t)-EINVAL;
+    }
+    if (!task_capability_pid_matches(header.pid))
+        return (uint64_t)-ESRCH;
+
+    task_user_cap_data_t data[2] = {0};
+    if (copy_from_user(data, data_user, sizeof(data[0]) * (size_t)u32_count))
+        return (uint64_t)-EFAULT;
+
+    for (int i = 0; i < u32_count; i++) {
+        if (data[i].effective || data[i].permitted || data[i].inheritable)
+            return (uint64_t)-EPERM;
+    }
+
+    return 0;
 }
 
 static uint64_t simple_rand() {
@@ -1358,6 +1487,221 @@ static int register_elf_load_vma(task_t *task, vfs_node_t *node,
     return 0;
 }
 
+static int task_execve_read_interp_path(struct vfs_file *file,
+                                        const Elf64_Phdr *phdr,
+                                        char **out_path) {
+    if (!file || !phdr || !out_path || phdr->p_type != PT_INTERP)
+        return -EINVAL;
+    if (phdr->p_filesz == 0 || phdr->p_filesz > VFS_PATH_MAX)
+        return -ENOEXEC;
+
+    char *path = (char *)calloc(1, (size_t)phdr->p_filesz + 1);
+    if (!path)
+        return -ENOMEM;
+
+    loff_t pos = (loff_t)phdr->p_offset;
+    if (vfs_read_file(file, path, phdr->p_filesz, &pos) !=
+        (ssize_t)phdr->p_filesz) {
+        free(path);
+        return -ENOEXEC;
+    }
+
+    path[phdr->p_filesz] = '\0';
+    if (path[0] == '\0') {
+        free(path);
+        return -ENOEXEC;
+    }
+
+    *out_path = path;
+    return 0;
+}
+
+static int task_execve_read_elf_phdrs(struct vfs_file *file,
+                                      const Elf64_Ehdr *ehdr,
+                                      Elf64_Phdr **out_phdr) {
+    if (!file || !ehdr || !out_phdr)
+        return -EINVAL;
+    if (!arch_check_elf(ehdr) || ehdr->e_phentsize != sizeof(Elf64_Phdr) ||
+        ehdr->e_phnum == 0 || ehdr->e_phnum > TASK_EXEC_MAX_PHDRS ||
+        ehdr->e_phoff >
+            UINT64_MAX - (uint64_t)ehdr->e_phnum * sizeof(Elf64_Phdr)) {
+        return -ENOEXEC;
+    }
+    if (ehdr->e_type != ET_DYN && ehdr->e_type != ET_EXEC)
+        return -ENOEXEC;
+
+    size_t phdr_size = (size_t)ehdr->e_phnum * sizeof(Elf64_Phdr);
+    Elf64_Phdr *phdr = (Elf64_Phdr *)malloc(phdr_size);
+    if (!phdr)
+        return -ENOMEM;
+
+    loff_t pos = (loff_t)ehdr->e_phoff;
+    if (vfs_read_file(file, phdr, phdr_size, &pos) != (ssize_t)phdr_size) {
+        free(phdr);
+        return -ENOEXEC;
+    }
+
+    *out_phdr = phdr;
+    return 0;
+}
+
+static int task_execve_load_elf_image(task_t *task, struct vfs_file *file,
+                                      const char *path, const Elf64_Ehdr *ehdr,
+                                      const Elf64_Phdr *phdr,
+                                      uint64_t requested_base,
+                                      task_execve_elf_image_t *image) {
+    if (!task || !file || !ehdr || !phdr || !image)
+        return -EINVAL;
+
+    uint64_t load_base = ehdr->e_type == ET_DYN ? requested_base : 0;
+    uint64_t load_start = UINT64_MAX;
+    uint64_t phdr_vaddr = 0;
+    bool has_load = false;
+
+    memset(image, 0, sizeof(*image));
+
+    for (int i = 0; i < ehdr->e_phnum; i++) {
+        if (phdr[i].p_type == PT_PHDR) {
+            phdr_vaddr = load_base + phdr[i].p_vaddr;
+            continue;
+        }
+        if (phdr[i].p_type != PT_LOAD)
+            continue;
+
+        uint64_t seg_addr = load_base + phdr[i].p_vaddr;
+        uint64_t aligned_addr = PADDING_DOWN(seg_addr, PAGE_SIZE);
+        if (aligned_addr < load_start)
+            load_start = aligned_addr;
+
+        int ret = register_elf_load_vma(task, file->f_inode, path, load_base,
+                                        &phdr[i]);
+        if (ret < 0)
+            return ret;
+        has_load = true;
+    }
+
+    if (!has_load)
+        return -ENOEXEC;
+    if (!phdr_vaddr)
+        phdr_vaddr = load_start + ehdr->e_phoff;
+
+    image->load_base = load_base;
+    image->entry = load_base + ehdr->e_entry;
+    image->phdr_vaddr = phdr_vaddr;
+    image->phnum = ehdr->e_phnum;
+    return 0;
+}
+
+static int task_execve_find_interp_path(struct vfs_file *file,
+                                        const Elf64_Phdr *phdr, int phnum,
+                                        char **out_path) {
+    char *path = NULL;
+
+    if (!file || !phdr || !out_path)
+        return -EINVAL;
+
+    for (int i = 0; i < phnum; i++) {
+        if (phdr[i].p_type != PT_INTERP)
+            continue;
+        if (path) {
+            free(path);
+            return -ENOEXEC;
+        }
+
+        int ret = task_execve_read_interp_path(file, &phdr[i], &path);
+        if (ret < 0)
+            return ret;
+    }
+
+    *out_path = path;
+    return 0;
+}
+
+static uint64_t task_execve_interp_base_at_depth(uint64_t first_base,
+                                                 int depth) {
+    uint64_t offset = (uint64_t)depth * TASK_EXEC_INTERP_BASE_STEP;
+
+    if (first_base > offset)
+        return first_base - offset;
+    return first_base;
+}
+
+static int
+task_execve_load_interpreter_chain(task_t *task, const char *interp_path,
+                                   uint64_t first_base, int depth,
+                                   task_execve_interp_result_t *result) {
+    if (!task || !interp_path || !result)
+        return -EINVAL;
+    if (depth >= TASK_EXEC_MAX_INTERP_DEPTH)
+        return -ELOOP;
+
+    struct vfs_open_how exec_how = {.flags = O_RDONLY};
+    struct vfs_file *file = NULL;
+    int ret = vfs_openat(AT_FDCWD, interp_path, &exec_how, &file, true);
+    if (ret < 0 || !file)
+        return ret < 0 ? ret : -ENOENT;
+
+    Elf64_Ehdr ehdr;
+    loff_t hdr_pos = 0;
+    if (vfs_read_file(file, &ehdr, sizeof(ehdr), &hdr_pos) !=
+        (ssize_t)sizeof(ehdr)) {
+        ret = -ENOEXEC;
+        goto out_close;
+    }
+
+    Elf64_Phdr *phdr = NULL;
+    ret = task_execve_read_elf_phdrs(file, &ehdr, &phdr);
+    if (ret < 0)
+        goto out_close;
+
+    task_execve_elf_image_t image;
+    uint64_t load_base = task_execve_interp_base_at_depth(first_base, depth);
+    ret = task_execve_load_elf_image(task, file, interp_path, &ehdr, phdr,
+                                     load_base, &image);
+    if (ret < 0)
+        goto out_free_phdr;
+
+    char *next_interp_path = NULL;
+    ret = task_execve_find_interp_path(file, phdr, ehdr.e_phnum,
+                                       &next_interp_path);
+    if (ret < 0)
+        goto out_free_phdr;
+
+    memset(result, 0, sizeof(*result));
+    result->present = true;
+
+    if (next_interp_path) {
+        task_execve_interp_result_t next_result;
+        ret = task_execve_load_interpreter_chain(
+            task, next_interp_path, first_base, depth + 1, &next_result);
+        free(next_interp_path);
+        if (ret < 0)
+            goto out_free_phdr;
+
+        result->entry = next_result.entry;
+        result->at_base = next_result.at_base;
+        result->aux_override = true;
+        if (next_result.aux_override) {
+            result->aux_entry = next_result.aux_entry;
+            result->aux_phdr = next_result.aux_phdr;
+            result->aux_phnum = next_result.aux_phnum;
+        } else {
+            result->aux_entry = image.entry;
+            result->aux_phdr = image.phdr_vaddr;
+            result->aux_phnum = image.phnum;
+        }
+    } else {
+        result->entry = image.entry;
+        result->at_base = image.load_base;
+    }
+
+out_free_phdr:
+    free(phdr);
+out_close:
+    vfs_close_file(file);
+    return ret;
+}
+
 static int task_execve_dethread(task_t *self) {
     if (!self)
         return -EINVAL;
@@ -1541,6 +1885,11 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
     open_ret = task_execve_open_exec_file(dirfd, lookup_path, flags, path,
                                           sizeof(path), &exec_file);
     if (open_ret < 0 || !exec_file) {
+        return (uint64_t)open_ret;
+    }
+    open_ret = vfs_file_get_exec_access(exec_file);
+    if (open_ret < 0) {
+        vfs_close_file(exec_file);
         return (uint64_t)open_ret;
     }
     struct vfs_open_how exec_how = {.flags = O_RDONLY};
@@ -1786,6 +2135,15 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
         new_argv = replaced_argv;
         argv_count = replaced_argc;
 
+        int exec_access_ret = vfs_file_get_exec_access(interpreter_file);
+        if (exec_access_ret < 0) {
+            task_execve_free_string_array(new_argv, argv_count);
+            task_execve_free_string_array(new_envp, envp_count);
+            vfs_close_file(interpreter_file);
+            vfs_close_file(exec_file);
+            return (uint64_t)exec_access_ret;
+        }
+
         strncpy(path, interpreter_name, sizeof(path));
         path[sizeof(path) - 1] = '\0';
         vfs_close_file(exec_file);
@@ -1850,6 +2208,15 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
         task_execve_free_string_array(new_argv, argv_count);
         new_argv = replaced_argv;
         argv_count = replaced_argc;
+
+        int exec_access_ret = vfs_file_get_exec_access(shell_file);
+        if (exec_access_ret < 0) {
+            task_execve_free_string_array(new_argv, argv_count);
+            task_execve_free_string_array(new_envp, envp_count);
+            vfs_close_file(shell_file);
+            vfs_close_file(exec_file);
+            return (uint64_t)exec_access_ret;
+        }
 
         strncpy(path, shell_path, sizeof(path));
         path[sizeof(path) - 1] = '\0';
@@ -1967,88 +2334,45 @@ shell_fallback_done:
     uint64_t load_start = UINT64_MAX;
     uint64_t load_end = 0;
     uint64_t interpreter_entry = 0;
+    uint64_t interpreter_at_base = 0;
+    uint64_t aux_entry = e_entry;
+    uint64_t aux_phdr = 0;
+    uint64_t aux_phnum = ehdr->e_phnum;
     char *interpreter_path = NULL;
 
     uint64_t phdr_vaddr = 0;
     for (int i = 0; i < ehdr->e_phnum; ++i) {
         if (phdr[i].p_type == PT_INTERP) {
-            char interp_name[128];
-            loff_t interp_pos = (loff_t)phdr[i].p_offset;
-            if (phdr[i].p_filesz == 0 ||
-                phdr[i].p_filesz >= sizeof(interp_name)) {
-                exec_fail_ret = (uint64_t)-ENOEXEC;
-                goto exec_fail_restore_mm;
-            }
-            if (vfs_read_file(exec_file, interp_name, phdr[i].p_filesz,
-                              &interp_pos) != (ssize_t)phdr[i].p_filesz) {
-                exec_fail_ret = (uint64_t)-ENOEXEC;
-                goto exec_fail_restore_mm;
-            }
-            interp_name[phdr[i].p_filesz] = '\0';
-
-            interpreter_path = strdup(interp_name);
-            if (!interpreter_path) {
-                exec_fail_ret = (uint64_t)-ENOMEM;
-                goto exec_fail_restore_mm;
-            }
-
-            struct vfs_file *interpreter_file = NULL;
-            if (vfs_openat(AT_FDCWD, interp_name, &exec_how, &interpreter_file,
-                           true) < 0 ||
-                !interpreter_file) {
-                exec_fail_ret = (uint64_t)-ENOENT;
-                goto exec_fail_restore_mm;
-            }
-
-            Elf64_Ehdr interp_ehdr;
-            loff_t interp_hdr_pos = 0;
-            if (vfs_read_file(interpreter_file, &interp_ehdr,
-                              sizeof(Elf64_Ehdr),
-                              &interp_hdr_pos) != (ssize_t)sizeof(Elf64_Ehdr) ||
-                !arch_check_elf(&interp_ehdr) ||
-                interp_ehdr.e_phentsize != sizeof(Elf64_Phdr) ||
-                interp_ehdr.e_phnum == 0 ||
-                interp_ehdr.e_phnum > TASK_EXEC_MAX_PHDRS ||
-                interp_ehdr.e_phoff >
-                    UINT64_MAX -
-                        (uint64_t)interp_ehdr.e_phnum * sizeof(Elf64_Phdr)) {
-                vfs_close_file(interpreter_file);
+            if (interpreter_path) {
                 exec_fail_ret = (uint64_t)-ENOEXEC;
                 goto exec_fail_restore_mm;
             }
 
-            size_t interp_phdr_size =
-                (size_t)interp_ehdr.e_phnum * sizeof(Elf64_Phdr);
-            Elf64_Phdr *interp_phdr = (Elf64_Phdr *)malloc(interp_phdr_size);
-            if (!interp_phdr) {
-                vfs_close_file(interpreter_file);
-                exec_fail_ret = (uint64_t)-ENOMEM;
-                goto exec_fail_restore_mm;
-            }
-            loff_t interp_phdr_pos = (loff_t)interp_ehdr.e_phoff;
-            if (vfs_read_file(interpreter_file, interp_phdr, interp_phdr_size,
-                              &interp_phdr_pos) != (ssize_t)interp_phdr_size) {
-                free(interp_phdr);
-                vfs_close_file(interpreter_file);
-                exec_fail_ret = (uint64_t)-ENOEXEC;
+            // Some interpreter like alpine g-compat uses a chain interpreter
+            // which passes the original executable's entry and phdr info
+            // through auxv, so we need to track it during execve processing.
+            int interp_ret = task_execve_read_interp_path(exec_file, &phdr[i],
+                                                          &interpreter_path);
+            if (interp_ret < 0) {
+                exec_fail_ret = (uint64_t)interp_ret;
                 goto exec_fail_restore_mm;
             }
 
-            for (int j = 0; j < interp_ehdr.e_phnum; j++) {
-                if (interp_phdr[j].p_type != PT_LOAD)
-                    continue;
-
-                if (register_elf_load_vma(self, interpreter_file->f_inode,
-                                          interpreter_path, interpreter_base,
-                                          &interp_phdr[j]) != 0) {
-                    printk("Failed to register interpreter PT_LOAD VMA\n");
-                }
+            task_execve_interp_result_t interp_result;
+            interp_ret = task_execve_load_interpreter_chain(
+                self, interpreter_path, interpreter_base, 0, &interp_result);
+            if (interp_ret < 0) {
+                exec_fail_ret = (uint64_t)interp_ret;
+                goto exec_fail_restore_mm;
             }
 
-            interpreter_entry = interpreter_base + interp_ehdr.e_entry;
-            free(interp_phdr);
-            vfs_close_file(interpreter_file);
-
+            interpreter_entry = interp_result.entry;
+            interpreter_at_base = interp_result.at_base;
+            if (interp_result.aux_override) {
+                aux_entry = interp_result.aux_entry;
+                aux_phdr = interp_result.aux_phdr;
+                aux_phnum = interp_result.aux_phnum;
+            }
         } else if (phdr[i].p_type == PT_LOAD) {
             uint64_t seg_addr = real_load_start + phdr[i].p_vaddr;
             uint64_t aligned_addr = PADDING_DOWN(seg_addr, PAGE_SIZE);
@@ -2072,6 +2396,8 @@ shell_fallback_done:
     if (!phdr_vaddr) {
         phdr_vaddr = (uint64_t)(load_start + ehdr->e_phoff);
     }
+    if (!aux_phdr)
+        aux_phdr = phdr_vaddr;
 
     if (phdr_allocated) {
         free(phdr);
@@ -2116,8 +2442,8 @@ shell_fallback_done:
 
     uint64_t stack = 0;
     if (!push_infos(self, stack_end, (char **)new_argv, argv_count,
-                    (char **)new_envp, envp_count, e_entry, phdr_vaddr,
-                    ehdr->e_phnum, interpreter_entry ? interpreter_base : 0,
+                    (char **)new_envp, envp_count, aux_entry, aux_phdr,
+                    aux_phnum, interpreter_entry ? interpreter_at_base : 0,
                     path, &exec_creds, &stack)) {
         exec_fail_ret = (uint64_t)-EFAULT;
         goto exec_fail_restore_mm;
@@ -2273,8 +2599,8 @@ uint64_t sys_execveat(uint64_t dirfd, const char *path_user, const char **argv,
     return task_do_execve((int)dirfd, path_user, argv, envp, flags);
 }
 
-uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
-                     struct rusage *rusage) {
+uint64_t sys_wait4(int pid, int *status, uint64_t options,
+                   struct rusage *rusage) {
     task_t *target = NULL;
     uint64_t ret = -ECHILD;
     int64_t wait_pid = (int64_t)pid;
@@ -2298,6 +2624,8 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
     has_ptraced = wait_has_ptraced_target_waitpid(current_task, wait_pid);
 
     if (!has_children && !has_ptraced) {
+        if (waitpid_has_specific_target(current_task, wait_pid))
+            return -ESRCH;
         return -ECHILD;
     }
 
@@ -2395,15 +2723,18 @@ uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
         }
 
         if (found_alive) {
-            task_block(current_task, TASK_BLOCKING, -1, "waitpid");
+            int reason = task_block(current_task, TASK_BLOCKING, -1, "waitpid");
             continue;
         }
 
         if (found_ptrace_alive) {
-            task_block(current_task, TASK_BLOCKING, -1, "waitpid-ptrace");
+            int reason =
+                task_block(current_task, TASK_BLOCKING, -1, "waitpid-ptrace");
             continue;
         }
 
+        if (waitpid_has_specific_target(current_task, wait_pid))
+            return -ESRCH;
         return -ECHILD;
     }
 
@@ -2586,12 +2917,13 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
         }
 
         if (found_alive) {
-            task_block(current_task, TASK_BLOCKING, -1, "waitid");
+            int reason = task_block(current_task, TASK_BLOCKING, -1, "waitid");
             continue;
         }
 
         if (found_ptrace_alive) {
-            task_block(current_task, TASK_BLOCKING, -1, "waitid-ptrace");
+            int reason =
+                task_block(current_task, TASK_BLOCKING, -1, "waitid-ptrace");
             continue;
         }
 
@@ -2669,6 +3001,26 @@ uint64_t sys_getrusage(int who, struct rusage *ru) {
     return 0;
 }
 
+uint64_t sys_times(struct tms *buf) {
+    struct tms value;
+
+    if (!buf)
+        return (uint64_t)-EFAULT;
+    if (check_user_overflow((uint64_t)buf, sizeof(value)))
+        return (uint64_t)-EFAULT;
+
+    value.tms_utime = task_ns_to_clock_ticks(current_task->user_time_ns);
+    value.tms_stime = task_ns_to_clock_ticks(current_task->system_time_ns);
+    value.tms_cutime = task_ns_to_clock_ticks(current_task->child_user_time_ns);
+    value.tms_cstime =
+        task_ns_to_clock_ticks(current_task->child_system_time_ns);
+
+    if (copy_to_user(buf, &value, sizeof(value)))
+        return (uint64_t)-EFAULT;
+
+    return (uint64_t)(nano_time() / 10000000ULL);
+}
+
 uint64_t sys_clone3(struct pt_regs *regs, clone_args_t *args_user,
                     uint64_t args_size) {
     if (args_size < 64)
@@ -2681,6 +3033,8 @@ uint64_t sys_clone3(struct pt_regs *regs, clone_args_t *args_user,
     if (args.flags & 0xFF)
         return (uint64_t)-EINVAL;
     if (args.exit_signal & ~0xFFULL)
+        return (uint64_t)-EINVAL;
+    if (args.stack_size == 0)
         return (uint64_t)-EINVAL;
 
     if ((args.flags & CLONE_PIDFD) &&
@@ -2873,6 +3227,7 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
     child->parent =
         (flags & (CLONE_THREAD | CLONE_PARENT)) ? self->parent : self;
     child->parent_pid = task_effective_tgid(child->parent);
+    child->orphaned_to_init = false;
     child->uid = self->uid;
     child->gid = self->gid;
     child->euid = self->euid;
@@ -3266,32 +3621,55 @@ uint64_t get_nanotime_by_clockid(int clock_id) {
 }
 
 uint64_t sys_clock_nanosleep(int clock_id, int flags,
-                             const struct timespec *request,
-                             struct timespec *remain) {
+                             const struct timespec *request_user,
+                             struct timespec *remain_user) {
     if (clock_id != CLOCK_REALTIME && clock_id != CLOCK_MONOTONIC) {
         return (uint64_t)-EINVAL;
     }
-    if (check_user_overflow((uint64_t)request, sizeof(struct timespec)) ||
-        check_unmapped((uint64_t)request, sizeof(struct timespec))) {
+    if (check_user_overflow((uint64_t)request_user, sizeof(struct timespec)) ||
+        check_unmapped((uint64_t)request_user, sizeof(struct timespec))) {
         return -EFAULT;
     }
+    struct timespec request;
+    if (copy_from_user(&request, request_user, sizeof(request)))
+        return (uint64_t)-EFAULT;
+    struct timespec remain;
+    memset(&remain, 0, sizeof(remain));
+    if (copy_to_user(remain_user, &remain, sizeof(remain)))
+        return (uint64_t)-EFAULT;
 
-    if (request->tv_sec < 0 || request->tv_nsec >= 1000000000L) {
+    if (request.tv_sec < 0 || request.tv_nsec >= 1000000000L) {
         return (uint64_t)-EINVAL;
     }
 
     uint64_t start = get_nanotime_by_clockid(clock_id);
     uint64_t target =
-        start + (request->tv_sec * 1000000000ULL) + request->tv_nsec;
+        start + (request.tv_sec * 1000000000ULL) + request.tv_nsec;
     current_task->force_wakeup_ns = target;
 
     do {
         arch_enable_interrupt();
 
         schedule(SCHED_FLAG_YIELD);
+
+        if (task_signal_has_deliverable(current_task)) {
+            arch_disable_interrupt();
+
+            uint64_t end = get_nanotime_by_clockid(clock_id);
+            uint64_t elapsed = end > start ? end - start : 0;
+            remain.tv_sec = elapsed / 1000000000ULL;
+            remain.tv_nsec = elapsed % 1000000000ULL;
+            if (copy_to_user(remain_user, &remain, sizeof(remain)))
+                return (uint64_t)-EFAULT;
+
+            return -EINTR;
+        }
     } while (target > get_nanotime_by_clockid(clock_id));
 
     arch_disable_interrupt();
+
+    if (copy_to_user(remain_user, &remain, sizeof(remain)))
+        return (uint64_t)-EFAULT;
 
     return 0;
 }
@@ -3734,6 +4112,148 @@ static task_t *task_sched_lookup_target(int pid) {
     return task_find_by_pid((uint64_t)pid);
 }
 
+static inline int task_clamp_nice(int niceval) {
+    if (niceval < -20)
+        return -20;
+    if (niceval > 19)
+        return 19;
+    return niceval;
+}
+
+static void task_set_nice_locked(task_t *task, int niceval) {
+    if (!task)
+        return;
+    task->nice = task_clamp_nice(niceval);
+    task->priority = task->nice;
+}
+
+static void task_sched_store_params(task_t *task, int policy,
+                                    int sched_priority) {
+    if (!task)
+        return;
+    task->sched_policy = policy;
+    task->sched_priority = sched_priority;
+}
+
+static int task_setpriority_apply_to_process(task_t *task, int niceval) {
+    if (!task)
+        return -ESRCH;
+    spin_lock(&task_queue_lock);
+    task_set_nice_locked(task, niceval);
+    spin_unlock(&task_queue_lock);
+    return 0;
+}
+
+static int task_setpriority_apply_to_pgrp(int64_t pgid, int niceval) {
+    bool found = false;
+
+    spin_lock(&task_queue_lock);
+    if (task_pid_map.buckets) {
+        for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+            hashmap_entry_t *entry = &task_pid_map.buckets[i];
+            if (!hashmap_entry_is_occupied(entry))
+                continue;
+            task_t *task = (task_t *)entry->value;
+            if (!task || task->state == TASK_DIED)
+                continue;
+            if (task->pgid != pgid)
+                continue;
+            task_set_nice_locked(task, niceval);
+            found = true;
+        }
+    }
+    spin_unlock(&task_queue_lock);
+
+    return found ? 0 : -ESRCH;
+}
+
+static int task_setpriority_apply_to_user(int64_t uid, int niceval) {
+    bool found = false;
+
+    spin_lock(&task_queue_lock);
+    if (task_pid_map.buckets) {
+        for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+            hashmap_entry_t *entry = &task_pid_map.buckets[i];
+            if (!hashmap_entry_is_occupied(entry))
+                continue;
+            task_t *task = (task_t *)entry->value;
+            if (!task || task->state == TASK_DIED)
+                continue;
+            if (task->uid != uid)
+                continue;
+            task_set_nice_locked(task, niceval);
+            found = true;
+        }
+    }
+    spin_unlock(&task_queue_lock);
+
+    return found ? 0 : -ESRCH;
+}
+
+static int task_getpriority_collect(int which, int who, int *out_nice) {
+    int best = 19;
+    bool found = false;
+
+    if (!out_nice)
+        return -EINVAL;
+
+    switch (which) {
+    case PRIO_PROCESS: {
+        task_t *task = who == 0 ? current_task : task_find_by_pid(who);
+        if (!task)
+            return -ESRCH;
+        *out_nice = task->nice;
+        return 0;
+    }
+    case PRIO_PGRP: {
+        int64_t pgid = who == 0 ? current_task->pgid : who;
+        spin_lock(&task_queue_lock);
+        if (task_pid_map.buckets) {
+            for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+                hashmap_entry_t *entry = &task_pid_map.buckets[i];
+                if (!hashmap_entry_is_occupied(entry))
+                    continue;
+                task_t *task = (task_t *)entry->value;
+                if (!task || task->state == TASK_DIED || task->pgid != pgid)
+                    continue;
+                if (!found || task->nice < best)
+                    best = task->nice;
+                found = true;
+            }
+        }
+        spin_unlock(&task_queue_lock);
+        if (!found)
+            return -ESRCH;
+        *out_nice = best;
+        return 0;
+    }
+    case PRIO_USER: {
+        int64_t uid = who == 0 ? current_task->uid : who;
+        spin_lock(&task_queue_lock);
+        if (task_pid_map.buckets) {
+            for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+                hashmap_entry_t *entry = &task_pid_map.buckets[i];
+                if (!hashmap_entry_is_occupied(entry))
+                    continue;
+                task_t *task = (task_t *)entry->value;
+                if (!task || task->state == TASK_DIED || task->uid != uid)
+                    continue;
+                if (!found || task->nice < best)
+                    best = task->nice;
+                found = true;
+            }
+        }
+        spin_unlock(&task_queue_lock);
+        if (!found)
+            return -ESRCH;
+        *out_nice = best;
+        return 0;
+    }
+    default:
+        return -EINVAL;
+    }
+}
+
 uint64_t sys_sched_setparam(int pid, const struct sched_param *param) {
     if (pid < 0) {
         return (uint64_t)-EINVAL;
@@ -3744,14 +4264,22 @@ uint64_t sys_sched_setparam(int pid, const struct sched_param *param) {
         return (uint64_t)-EFAULT;
     }
 
-    if (!task_sched_lookup_target(pid)) {
+    task_t *task = task_sched_lookup_target(pid);
+    if (!task) {
         return (uint64_t)-ESRCH;
     }
 
-    if (kparam.sched_priority < 0 || kparam.sched_priority > 99) {
+    int min_priority = 0;
+    int max_priority = 0;
+    int ret = task_sched_priority_bounds(task->sched_policy, &min_priority,
+                                         &max_priority);
+    if (ret < 0)
+        return (uint64_t)ret;
+    if (kparam.sched_priority < min_priority ||
+        kparam.sched_priority > max_priority)
         return (uint64_t)-EINVAL;
-    }
 
+    task->sched_priority = kparam.sched_priority;
     return 0;
 }
 
@@ -3764,12 +4292,13 @@ uint64_t sys_sched_getparam(int pid, struct sched_param *param) {
         return (uint64_t)-EFAULT;
     }
 
-    if (!task_sched_lookup_target(pid)) {
+    task_t *task = task_sched_lookup_target(pid);
+    if (!task) {
         return (uint64_t)-ESRCH;
     }
 
     struct sched_param kparam = {
-        .sched_priority = 0,
+        .sched_priority = task->sched_priority,
     };
 
     if (copy_to_user(param, &kparam, sizeof(kparam))) {
@@ -3790,7 +4319,8 @@ uint64_t sys_sched_setscheduler(int pid, int policy,
         return (uint64_t)-EFAULT;
     }
 
-    if (!task_sched_lookup_target(pid)) {
+    task_t *task = task_sched_lookup_target(pid);
+    if (!task) {
         return (uint64_t)-ESRCH;
     }
 
@@ -3806,6 +4336,7 @@ uint64_t sys_sched_setscheduler(int pid, int policy,
         return (uint64_t)-EINVAL;
     }
 
+    task_sched_store_params(task, policy, kparam.sched_priority);
     return 0;
 }
 
@@ -3814,11 +4345,12 @@ uint64_t sys_sched_getscheduler(int pid) {
         return (uint64_t)-EINVAL;
     }
 
-    if (!task_sched_lookup_target(pid)) {
+    task_t *task = task_sched_lookup_target(pid);
+    if (!task) {
         return (uint64_t)-ESRCH;
     }
 
-    return SCHED_OTHER;
+    return task->sched_policy;
 }
 
 uint64_t sys_sched_get_priority_max(int policy) {
@@ -3934,45 +4466,27 @@ uint64_t sys_sched_getaffinity(int pid, size_t len,
 }
 
 uint64_t sys_getpriority(int which, int who) {
-    task_t *task = NULL;
-    switch (which) {
-    case PRIO_PROCESS:
-        task = who == 0 ? current_task : task_find_by_pid(who);
-        if (!task)
-            return -ESRCH;
-
-        /*
-         * Linux returns 20 - nice from the raw syscall so libc can represent
-         * negative nice values without ambiguity. This kernel does not track
-         * nice yet, so expose the default nice value 0.
-         */
-        return 20;
-
-    default:
-        printk("sys_getpriority: Unsupported which: %d\n", which);
-        return (uint64_t)-EINVAL;
-    }
+    int niceval = 0;
+    int ret = task_getpriority_collect(which, who, &niceval);
+    if (ret < 0)
+        return (uint64_t)ret;
+    return (uint64_t)(20 - niceval);
 }
 
 uint64_t sys_setpriority(int which, int who, int niceval) {
-    task_t *task = NULL;
-
-    if (niceval < -20)
-        niceval = -20;
-    if (niceval > 19)
-        niceval = 19;
+    niceval = task_clamp_nice(niceval);
 
     switch (which) {
     case PRIO_PROCESS:
-        task = who == 0 ? current_task : task_find_by_pid(who);
-        if (!task)
-            return -ESRCH;
-
-        (void)niceval;
-        return 0;
-
+        return (uint64_t)task_setpriority_apply_to_process(
+            who == 0 ? current_task : task_find_by_pid(who), niceval);
+    case PRIO_PGRP:
+        return (uint64_t)task_setpriority_apply_to_pgrp(
+            who == 0 ? current_task->pgid : who, niceval);
+    case PRIO_USER:
+        return (uint64_t)task_setpriority_apply_to_user(
+            who == 0 ? current_task->uid : who, niceval);
     default:
-        printk("sys_setpriority: Unsupported which: %d\n", which);
         return (uint64_t)-EINVAL;
     }
 }

@@ -453,6 +453,48 @@ static int tmpfs_create(struct vfs_inode *dir, struct vfs_dentry *dentry,
     return tmpfs_create_common(dir, dentry, (mode & 07777) | S_IFREG, NULL, 0);
 }
 
+static int tmpfs_tmpfile(struct vfs_inode *dir, struct vfs_file *file,
+                         umode_t mode) {
+    struct vfs_inode *inode;
+    struct vfs_dentry *dentry;
+    struct vfs_qstr name = {.name = "", .len = 0, .hash = 0};
+    struct vfs_path old_path;
+    struct vfs_path new_path;
+
+    if (!dir || !file || !file->f_path.dentry || !S_ISDIR(dir->i_mode))
+        return -EINVAL;
+
+    inode = tmpfs_new_inode(dir->i_sb, dir, (mode & 07777) | S_IFREG);
+    if (!inode)
+        return -ENOMEM;
+
+    inode->i_op = dir->i_op;
+    inode->i_fop = &tmpfs_file_ops;
+    inode->i_nlink = 0;
+
+    dentry = vfs_d_alloc(dir->i_sb, file->f_path.dentry, &name);
+    if (!dentry) {
+        vfs_iput(inode);
+        return -ENOMEM;
+    }
+
+    vfs_d_instantiate(dentry, inode);
+    vfs_iput(inode);
+
+    old_path = file->f_path;
+    new_path.mnt = vfs_mntget(old_path.mnt);
+    new_path.dentry = dentry;
+    vfs_path_put(&old_path);
+
+    file->f_path = new_path;
+    if (file->f_inode)
+        vfs_iput(file->f_inode);
+    file->f_inode = vfs_igrab(dentry->d_inode);
+    file->node = file->f_inode;
+    file->f_op = file->f_inode->i_fop;
+    return 0;
+}
+
 static int tmpfs_mkdir(struct vfs_inode *dir, struct vfs_dentry *dentry,
                        umode_t mode) {
     return tmpfs_create_common(dir, dentry, (mode & 07777) | S_IFDIR, NULL, 0);
@@ -1006,6 +1048,7 @@ static const struct vfs_inode_operations tmpfs_inode_ops = {
     .permission = tmpfs_permission,
     .getattr = tmpfs_getattr,
     .setattr = tmpfs_setattr,
+    .tmpfile = tmpfs_tmpfile,
 };
 
 static struct vfs_file_system_type tmpfs_fs_type = {

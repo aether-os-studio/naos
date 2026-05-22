@@ -137,16 +137,16 @@ __sbi_setup_page_tables:
      */
     lla t0, sbi_boot_dtb_phys
     ld t1, 0(t0)
-    beqz t1, 2f
+    beqz t1, 2b
 
     li t2, 0xffffffc000000000
     add t2, t2, t1
     srli t3, t2, 30
     andi t3, t3, 511
     li t4, 256
-    bltu t3, t4, 2f
+    bltu t3, t4, 2b
     li t4, 510
-    bgeu t3, t4, 2f
+    bgeu t3, t4, 2b
 
     lla t0, __sbi_root_pt
     lla t4, __sbi_hhdm_l1_pts

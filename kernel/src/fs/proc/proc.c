@@ -9,6 +9,7 @@ typedef enum procfs_inode_kind {
     PROCFS_INO_ROOT,
     PROCFS_INO_SYS_DIR,
     PROCFS_INO_SYS_KERNEL_DIR,
+    PROCFS_INO_SYSVIPC_DIR,
     PROCFS_INO_PRESSURE_DIR,
     PROCFS_INO_TASK_DIR,
     PROCFS_INO_TASK_THREADS_DIR,
@@ -739,6 +740,9 @@ static int procfs_iterate_shared(struct vfs_file *file,
                               procfs_ino_for(PROCFS_INO_FILE, NULL, -1,
                                              "filesystems")) != 0 ||
             procfs_emit_entry(
+                ctx, &index, "cgroups", DT_REG,
+                procfs_ino_for(PROCFS_INO_FILE, NULL, -1, "cgroups")) != 0 ||
+            procfs_emit_entry(
                 ctx, &index, "cmdline", DT_REG,
                 procfs_ino_for(PROCFS_INO_FILE, NULL, -1, "cmdline")) != 0 ||
             procfs_emit_entry(
@@ -748,11 +752,17 @@ static int procfs_iterate_shared(struct vfs_file *file,
                 ctx, &index, "meminfo", DT_REG,
                 procfs_ino_for(PROCFS_INO_FILE, NULL, -1, "meminfo")) != 0 ||
             procfs_emit_entry(
+                ctx, &index, "cpuinfo", DT_REG,
+                procfs_ino_for(PROCFS_INO_FILE, NULL, -1, "cpuinfo")) != 0 ||
+            procfs_emit_entry(
                 ctx, &index, "stat", DT_REG,
                 procfs_ino_for(PROCFS_INO_FILE, NULL, -1, "stat")) != 0 ||
             procfs_emit_entry(
                 ctx, &index, "sys", DT_DIR,
                 procfs_ino_for(PROCFS_INO_SYS_DIR, NULL, -1, "sys")) != 0 ||
+            procfs_emit_entry(ctx, &index, "sysvipc", DT_DIR,
+                              procfs_ino_for(PROCFS_INO_SYSVIPC_DIR, NULL, -1,
+                                             "sysvipc")) != 0 ||
             procfs_emit_entry(ctx, &index, "pressure", DT_DIR,
                               procfs_ino_for(PROCFS_INO_PRESSURE_DIR, NULL, -1,
                                              "pressure")) != 0) {
@@ -800,9 +810,23 @@ static int procfs_iterate_shared(struct vfs_file *file,
             procfs_emit_entry(ctx, &index, "domainname", DT_REG,
                               procfs_ino_for(PROCFS_INO_FILE, NULL, -1,
                                              "proc_sys_kernel_domainname")) !=
-                0) {
+                0 ||
+            procfs_emit_entry(ctx, &index, "pid_max", DT_REG,
+                              procfs_ino_for(PROCFS_INO_FILE, NULL, -1,
+                                             "proc_sys_kernel_pid_max")) != 0 ||
+            procfs_emit_entry(ctx, &index, "tainted", DT_REG,
+                              procfs_ino_for(PROCFS_INO_FILE, NULL, -1,
+                                             "proc_sys_kernel_tainted")) != 0 ||
+            procfs_emit_entry(ctx, &index, "printk", DT_REG,
+                              procfs_ino_for(PROCFS_INO_FILE, NULL, -1,
+                                             "proc_sys_kernel_printk")) != 0) {
             break;
         }
+        break;
+    case PROCFS_INO_SYSVIPC_DIR:
+        procfs_emit_entry(
+            ctx, &index, "shm", DT_REG,
+            procfs_ino_for(PROCFS_INO_FILE, NULL, -1, "proc_sysvipc_shm"));
         break;
     case PROCFS_INO_PRESSURE_DIR:
         procfs_emit_entry(
@@ -947,6 +971,9 @@ static vfs_node_t *procfs_make_task_child(struct vfs_super_block *sb,
     if (!strcmp(name, "mountinfo"))
         return procfs_new_inode(sb, S_IFREG | 0444, PROCFS_INO_FILE, task, -1,
                                 "proc_mountinfo");
+    if (!strcmp(name, "mounts"))
+        return procfs_new_inode(sb, S_IFREG | 0444, PROCFS_INO_FILE, task, -1,
+                                "mounts");
     if (!strcmp(name, "uid_map"))
         return procfs_new_inode(sb, S_IFREG | 0644, PROCFS_INO_FILE, task, -1,
                                 "proc_uid_map");
@@ -999,6 +1026,9 @@ static struct vfs_dentry *procfs_lookup(struct vfs_inode *dir,
         } else if (!strcmp(dentry->d_name.name, "filesystems")) {
             inode = procfs_new_inode(dir->i_sb, S_IFREG | 0444, PROCFS_INO_FILE,
                                      NULL, -1, "filesystems");
+        } else if (!strcmp(dentry->d_name.name, "cgroups")) {
+            inode = procfs_new_inode(dir->i_sb, S_IFREG | 0444, PROCFS_INO_FILE,
+                                     NULL, -1, "cgroups");
         } else if (!strcmp(dentry->d_name.name, "cmdline")) {
             inode = procfs_new_inode(dir->i_sb, S_IFREG | 0444, PROCFS_INO_FILE,
                                      NULL, -1, "cmdline");
@@ -1008,12 +1038,18 @@ static struct vfs_dentry *procfs_lookup(struct vfs_inode *dir,
         } else if (!strcmp(dentry->d_name.name, "meminfo")) {
             inode = procfs_new_inode(dir->i_sb, S_IFREG | 0444, PROCFS_INO_FILE,
                                      NULL, -1, "meminfo");
+        } else if (!strcmp(dentry->d_name.name, "cpuinfo")) {
+            inode = procfs_new_inode(dir->i_sb, S_IFREG | 0444, PROCFS_INO_FILE,
+                                     NULL, -1, "cpuinfo");
         } else if (!strcmp(dentry->d_name.name, "stat")) {
             inode = procfs_new_inode(dir->i_sb, S_IFREG | 0444, PROCFS_INO_FILE,
                                      NULL, -1, "stat");
         } else if (!strcmp(dentry->d_name.name, "sys")) {
             inode = procfs_new_inode(dir->i_sb, S_IFDIR | 0555,
                                      PROCFS_INO_SYS_DIR, NULL, -1, NULL);
+        } else if (!strcmp(dentry->d_name.name, "sysvipc")) {
+            inode = procfs_new_inode(dir->i_sb, S_IFDIR | 0555,
+                                     PROCFS_INO_SYSVIPC_DIR, NULL, -1, NULL);
         } else if (!strcmp(dentry->d_name.name, "pressure")) {
             inode = procfs_new_inode(dir->i_sb, S_IFDIR | 0555,
                                      PROCFS_INO_PRESSURE_DIR, NULL, -1, NULL);
@@ -1051,6 +1087,21 @@ static struct vfs_dentry *procfs_lookup(struct vfs_inode *dir,
         } else if (!strcmp(dentry->d_name.name, "domainname")) {
             inode = procfs_new_inode(dir->i_sb, S_IFREG | 0644, PROCFS_INO_FILE,
                                      NULL, -1, "proc_sys_kernel_domainname");
+        } else if (!strcmp(dentry->d_name.name, "pid_max")) {
+            inode = procfs_new_inode(dir->i_sb, S_IFREG | 0444, PROCFS_INO_FILE,
+                                     NULL, -1, "proc_sys_kernel_pid_max");
+        } else if (!strcmp(dentry->d_name.name, "tainted")) {
+            inode = procfs_new_inode(dir->i_sb, S_IFREG | 0444, PROCFS_INO_FILE,
+                                     NULL, -1, "proc_sys_kernel_tainted");
+        } else if (!strcmp(dentry->d_name.name, "printk")) {
+            inode = procfs_new_inode(dir->i_sb, S_IFREG | 0444, PROCFS_INO_FILE,
+                                     NULL, -1, "proc_sys_kernel_printk");
+        }
+        break;
+    case PROCFS_INO_SYSVIPC_DIR:
+        if (!strcmp(dentry->d_name.name, "shm")) {
+            inode = procfs_new_inode(dir->i_sb, S_IFREG | 0444, PROCFS_INO_FILE,
+                                     NULL, -1, "proc_sysvipc_shm");
         }
         break;
     case PROCFS_INO_PRESSURE_DIR:

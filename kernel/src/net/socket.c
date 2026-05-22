@@ -1968,6 +1968,11 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
         return -EINVAL;
     }
 
+    if (!unix_socket_is_connected_type(listen_sock->type)) {
+        vfs_file_put(listener_fd);
+        return -EOPNOTSUPP;
+    }
+
     if (addr && !addrlen) {
         vfs_file_put(listener_fd);
         return -EFAULT;
@@ -3203,6 +3208,11 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
         break;
 
     case SO_PRIORITY:
+        break;
+
+    case SO_PEEK_OFF:
+        if (optlen < sizeof(int))
+            UNIX_SOCKET_SETSOCKOPT_RETURN(-EINVAL);
         break;
 
     case SO_PEERCRED:

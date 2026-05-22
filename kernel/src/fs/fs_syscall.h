@@ -271,6 +271,7 @@ typedef struct epoll_watch {
 typedef struct epoll {
     struct llist_header watches;
     mutex_t lock;
+    struct vfs_inode *inode;
 } epoll_t;
 
 #define EPOLL_CTL_ADD 1

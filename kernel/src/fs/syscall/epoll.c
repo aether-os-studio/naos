@@ -49,6 +49,40 @@ static __poll_t epoll_target_poll(struct vfs_file *file, uint32_t events) {
     return file->f_op->poll(file, NULL) & events;
 }
 
+static bool epoll_file_is_epoll(struct vfs_file *file) {
+    return epoll_file_handle(file) != NULL;
+}
+
+static bool epoll_contains_file(epoll_t *epoll, struct vfs_file *needle,
+                                unsigned int depth) {
+    epoll_watch_t *watch, *tmp;
+
+    if (!epoll || !needle)
+        return false;
+    if (depth > 32)
+        return true;
+
+    llist_for_each(watch, tmp, &epoll->watches, node) {
+        epoll_t *nested;
+
+        if (!watch->file)
+            continue;
+        if (watch->file == needle)
+            return true;
+
+        nested = epoll_file_handle(watch->file);
+        if (nested && epoll_contains_file(nested, needle, depth + 1))
+            return true;
+    }
+
+    return false;
+}
+
+static void epoll_notify_self(epoll_t *epoll) {
+    if (epoll && epoll->inode)
+        vfs_poll_notify(epoll->inode, EPOLLIN);
+}
+
 static void epoll_watch_sync_seq(epoll_watch_t *watch) {
     if (!watch || !watch->file || !watch->file->node)
         return;
@@ -224,7 +258,8 @@ static __poll_t epollfs_poll(struct vfs_file *file, struct vfs_poll_table *pt) {
     if (!epoll)
         return EPOLLNVAL;
 
-    mutex_lock(&epoll->lock);
+    if (!mutex_trylock(&epoll->lock))
+        return 0;
     int ready = epoll_collect_ready_locked(epoll, &event, 1);
     mutex_unlock(&epoll->lock);
     return ready > 0 ? EPOLLIN : 0;
@@ -390,6 +425,7 @@ static int epoll_create_handle_file(struct vfs_file **out_file,
     inode->i_nlink = 1;
     inode->i_fop = &epollfs_file_ops;
     inode->i_private = epoll;
+    epoll->inode = inode;
 
     snprintf(namebuf, sizeof(namebuf), "anon-%llu",
              (unsigned long long)inode->i_ino);
@@ -439,7 +475,8 @@ size_t epoll_create1(int flags) {
 }
 
 uint64_t sys_epoll_create(int size) {
-    (void)size;
+    if (size <= 0)
+        return (uint64_t)-EINVAL;
     return epoll_create1(0);
 }
 
@@ -562,7 +599,29 @@ static size_t epoll_ctl_file(struct vfs_file *epoll_file, int op, int fd,
     if (!target)
         return (uint64_t)-EBADF;
 
+    // Linux cannot watch an epoll fd from itself or another epoll fd, so we
+    // enforce that here by checking the target before taking the lock. This
+    // also prevents deadlock if the caller tries to add an epoll fd that's
+    // already in the same watch list.
+    if (target == epoll_file) {
+        vfs_file_put(target);
+        return (uint64_t)-EINVAL;
+    }
+    if (!target->f_op || !target->f_op->poll) {
+        vfs_file_put(target);
+        return (uint64_t)-EPERM;
+    }
+
     mutex_lock(&epoll->lock);
+    if (op == EPOLL_CTL_ADD && epoll_file_is_epoll(target)) {
+        epoll_t *target_epoll = epoll_file_handle(target);
+
+        if (epoll_contains_file(target_epoll, epoll_file, 0)) {
+            ret = -ELOOP;
+            goto out_unlock;
+        }
+    }
+
     llist_for_each(b, t, &epoll->watches, node) {
         if (b->file == target) {
             existing = b;
@@ -627,7 +686,10 @@ static size_t epoll_ctl_file(struct vfs_file *epoll_file, int op, int fd,
         break;
     }
 
+out_unlock:
     mutex_unlock(&epoll->lock);
+    if (ret == 0)
+        epoll_notify_self(epoll);
     vfs_file_put(target);
     return (uint64_t)ret;
 }

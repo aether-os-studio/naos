@@ -203,10 +203,14 @@ static loff_t eventfdfs_llseek(struct vfs_file *file, loff_t offset,
 static ssize_t eventfdfs_read(struct vfs_file *file, void *buf, size_t count,
                               loff_t *ppos) {
     eventfd_t *efd = eventfd_file_handle(file);
+    vfs_node_t *node;
     uint64_t value;
 
     (void)ppos;
     if (!efd || count < sizeof(uint64_t))
+        return -EINVAL;
+    node = efd->node ? efd->node : file->f_inode;
+    if (!node)
         return -EINVAL;
 
     while (true) {
@@ -219,8 +223,7 @@ static ssize_t eventfdfs_read(struct vfs_file *file, void *buf, size_t count,
                                             false, __ATOMIC_ACQ_REL,
                                             __ATOMIC_ACQUIRE)) {
                 memcpy(buf, &value, sizeof(uint64_t));
-                vfs_poll_notify(efd->node,
-                                EPOLLOUT | (new_count ? EPOLLIN : 0));
+                vfs_poll_notify(node, EPOLLOUT | (new_count ? EPOLLIN : 0));
                 return sizeof(uint64_t);
             }
             continue;
@@ -231,9 +234,14 @@ static ssize_t eventfdfs_read(struct vfs_file *file, void *buf, size_t count,
 
         vfs_poll_wait_t wait;
         vfs_poll_wait_init(&wait, current_task, EPOLLIN | EPOLLERR | EPOLLHUP);
-        vfs_poll_wait_arm(file->f_inode, &wait);
-        int reason =
-            vfs_poll_wait_sleep(file->f_inode, &wait, -1, "eventfd_read");
+        int ret = vfs_poll_wait_arm(node, &wait);
+        if (ret < 0)
+            return ret;
+        if (__atomic_load_n(&efd->count, __ATOMIC_ACQUIRE) != 0) {
+            vfs_poll_wait_disarm(&wait);
+            continue;
+        }
+        int reason = vfs_poll_wait_sleep(node, &wait, -1, "eventfd_read");
         vfs_poll_wait_disarm(&wait);
         if (reason != EOK)
             return -EINTR;
@@ -243,10 +251,14 @@ static ssize_t eventfdfs_read(struct vfs_file *file, void *buf, size_t count,
 static ssize_t eventfdfs_write(struct vfs_file *file, const void *buf,
                                size_t count, loff_t *ppos) {
     eventfd_t *efd = eventfd_file_handle(file);
+    vfs_node_t *node;
     uint64_t value;
 
     (void)ppos;
     if (!efd || count < sizeof(uint64_t))
+        return -EINVAL;
+    node = efd->node ? efd->node : file->f_inode;
+    if (!node)
         return -EINVAL;
 
     memcpy(&value, buf, sizeof(uint64_t));
@@ -262,9 +274,15 @@ static ssize_t eventfdfs_write(struct vfs_file *file, const void *buf,
             vfs_poll_wait_t wait;
             vfs_poll_wait_init(&wait, current_task,
                                EPOLLOUT | EPOLLERR | EPOLLHUP);
-            vfs_poll_wait_arm(file->f_inode, &wait);
-            int reason =
-                vfs_poll_wait_sleep(file->f_inode, &wait, -1, "eventfd_write");
+            int ret = vfs_poll_wait_arm(node, &wait);
+            if (ret < 0)
+                return ret;
+            if (__atomic_load_n(&efd->count, __ATOMIC_ACQUIRE) <=
+                UINT64_MAX - 1 - value) {
+                vfs_poll_wait_disarm(&wait);
+                continue;
+            }
+            int reason = vfs_poll_wait_sleep(node, &wait, -1, "eventfd_write");
             vfs_poll_wait_disarm(&wait);
             if (reason != EOK)
                 return -EINTR;
@@ -279,7 +297,7 @@ static ssize_t eventfdfs_write(struct vfs_file *file, const void *buf,
             break;
     }
 
-    vfs_poll_notify(file->f_inode, EPOLLIN | EPOLLOUT);
+    vfs_poll_notify(node, EPOLLIN | EPOLLOUT);
 
     return sizeof(uint64_t);
 }
@@ -401,6 +419,7 @@ int eventfd_create_file(struct vfs_file **out_file, uint64_t initial_val,
     }
 
     file->private_data = efd;
+    file->f_mode |= VFS_FMODE_NO_POS_LOCK;
     *out_file = file;
     if (out_efd)
         *out_efd = efd;

@@ -525,6 +525,8 @@ void boot_get_modules(boot_module_t **modules, size_t *count) {
 
 uint64_t boot_get_firmware_type(void) { return LIMINE_FIRMWARE_TYPE_SBI; }
 
+uint64_t boot_get_system_table(void) { return 0; }
+
 uint64_t boot_get_dtb(void) { return (uint64_t)sbi_dtb_early_ptr(); }
 
 uint64_t boot_get_bsp_hartid(void) { return sbi_bsp_hartid(); }

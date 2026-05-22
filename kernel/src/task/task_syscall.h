@@ -32,8 +32,9 @@ uint64_t task_fork(struct pt_regs *regs, bool vfork);
  * Gaps: the implementation is not yet a complete reproduction of every Linux
  * wait status corner case.
  */
-uint64_t sys_waitpid(uint64_t pid, int *status, uint64_t options,
-                     struct rusage *rusage);
+uint64_t sys_wait4(int pid, int *status, uint64_t options,
+                   struct rusage *rusage);
+uint64_t sys_times(struct tms *buf);
 /**
  * Linux contract: waitid(2) with siginfo reporting and optional WNOWAIT.
  * Current kernel: supports P_ALL, P_PID, P_PGID, and P_PIDFD selection plus
@@ -56,6 +57,8 @@ uint64_t sys_ptrace(uint64_t request, uint64_t pid, void *addr, void *data);
  * code are reported.
  */
 uint64_t sys_getrusage(int who, struct rusage *ru);
+uint64_t sys_capget(void *header_user, void *data_user);
+uint64_t sys_capset(void *header_user, const void *data_user);
 /**
  * Linux contract: create a task or thread according to clone(2) flags.
  * Current kernel: supports the common CLONE_VM/FILES/FS/SIGHAND/THREAD/VFORK
@@ -682,8 +685,14 @@ static inline uint64_t sys_getpgrp() { return current_task->pgid; }
  * Gaps: real supplementary group tracking is not implemented.
  */
 static inline uint64_t sys_getgroups(int gidsetsize, int *gids) {
-    if (!gidsetsize)
+    if (gidsetsize < 0)
+        return (uint64_t)-EINVAL;
+
+    if (gidsetsize == 0)
         return 1;
+
+    if (gidsetsize < 1)
+        return (uint64_t)-EINVAL;
 
     if (!gids)
         return (uint64_t)-EFAULT;

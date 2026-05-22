@@ -36,6 +36,13 @@ struct timeval {
     long tv_usec;
 };
 
+struct tms {
+    long tms_utime;
+    long tms_stime;
+    long tms_cutime;
+    long tms_cstime;
+};
+
 struct rusage {
     struct timeval ru_utime;
     struct timeval ru_stime;
@@ -99,7 +106,7 @@ typedef struct kernel_timer {
 
 #define MAX_TIMERS_NUM 8
 
-#define MAX_FD_NUM 256
+#define MAX_FD_NUM 512
 #define MAX_SHM_NUM 32
 
 typedef struct fd_entry {
@@ -333,6 +340,7 @@ typedef struct task {
     uint64_t waitpid;
     uint64_t status;
     rb_node_t timeout_node;
+    rb_node_t signal_timer_node;
     uint64_t last_sched_in_ns;
     uint64_t user_time_ns;
     uint64_t system_time_ns;
@@ -343,11 +351,15 @@ typedef struct task {
     char name[TASK_NAME_MAX];
     struct vfs_file *exec_file;
     int priority;
+    int nice;
+    int sched_policy;
+    int sched_priority;
     void *sched_info;
     volatile task_state_t state;
     volatile task_state_t current_state;
     const char *blocking_reason;
     uint64_t force_wakeup_ns;
+    uint64_t signal_timer_deadline_ns;
     uint64_t load_start;
     uint64_t load_end;
     task_mm_info_t *mm;
@@ -393,6 +405,7 @@ typedef struct task {
     bool is_kernel;
     bool is_clone;
     bool child_vfork_done;
+    bool orphaned_to_init;
     bool exit_reaped;
     bool on_cpu;
     bool wake_pending;
@@ -402,4 +415,5 @@ typedef struct task {
     bool tick_work_queued;
     uint32_t tick_work_queue_id;
     bool timeout_queued;
+    bool signal_timer_queued;
 } task_t;

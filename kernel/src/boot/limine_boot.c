@@ -48,6 +48,12 @@ LIMINE_REQUEST static volatile struct limine_firmware_type_request
         .revision = 0,
 };
 
+LIMINE_REQUEST static volatile struct limine_efi_system_table_request
+    efi_system_table_request = {
+        .id = LIMINE_EFI_SYSTEM_TABLE_REQUEST_ID,
+        .revision = 0,
+};
+
 __attribute__((used, section(".limine_requests_end"))) static volatile uint64_t
     requests_end_marker[4] = LIMINE_REQUESTS_END_MARKER;
 
@@ -282,6 +288,12 @@ uint64_t boot_get_paging_mode() {
 uint64_t boot_get_firmware_type() {
     return firmware_type_request.response
                ? firmware_type_request.response->firmware_type
+               : 0;
+}
+
+uint64_t boot_get_system_table() {
+    return efi_system_table_request.response
+               ? (uint64_t)efi_system_table_request.response->address
                : 0;
 }
 

@@ -39,10 +39,6 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num) {
     }
 
     if (irq_num == ARCH_TIMER_IRQ && self) {
-        if (system_initialized) {
-            sched_defer_tick();
-        }
-
         if (self->cpu_id == 0) {
             sched_check_wakeup();
             on_sched_update_call();

@@ -274,12 +274,68 @@ static vfs_file_lock_t *file_lock_find_conflict(vfs_node_t *node,
     return NULL;
 }
 
+static bool file_lock_waiter_reaches_owner(vfs_node_t *node, uintptr_t from,
+                                           bool ofd, uintptr_t target,
+                                           unsigned int depth) {
+    if (!node)
+        return false;
+    if (from == target)
+        return true;
+    if (depth > 64)
+        return false;
+
+    vfs_file_lock_waiter_t *waiter = NULL, *tmp = NULL;
+    llist_for_each(waiter, tmp, &node->file_lock_waiters, node) {
+        if (waiter->ofd != ofd || waiter->owner != from)
+            continue;
+        if (waiter->blocking_owner == target)
+            return true;
+        if (file_lock_waiter_reaches_owner(node, waiter->blocking_owner, ofd,
+                                           target, depth + 1))
+            return true;
+    }
+
+    return false;
+}
+
+static bool file_lock_would_deadlock(vfs_node_t *node, uintptr_t owner,
+                                     const vfs_file_lock_t *conflict,
+                                     bool ofd) {
+    if (!node || !conflict || ofd || conflict->ofd)
+        return false;
+    return file_lock_waiter_reaches_owner(node, conflict->owner, ofd, owner, 0);
+}
+
+static void file_lock_waiter_remove(vfs_node_t *node,
+                                    vfs_file_lock_waiter_t *waiter) {
+    if (!node || !waiter)
+        return;
+
+    spin_lock(&node->file_locks_lock);
+    if (!llist_empty(&waiter->node))
+        llist_delete(&waiter->node);
+    spin_unlock(&node->file_locks_lock);
+}
+
+static void file_lock_wake_waiters_locked(vfs_node_t *node) {
+    vfs_file_lock_waiter_t *waiter = NULL, *tmp = NULL;
+
+    if (!node)
+        return;
+
+    llist_for_each(waiter, tmp, &node->file_lock_waiters, node) {
+        if (waiter->task)
+            task_unblock(waiter->task, EOK);
+    }
+}
+
 static int file_lock_unlock_owner_range(vfs_node_t *node, uintptr_t owner,
                                         bool ofd, uint64_t start,
                                         uint64_t end) {
     if (!node)
         return -EINVAL;
 
+    bool changed = false;
     vfs_file_lock_t *lock = NULL, *tmp = NULL;
     llist_for_each(lock, tmp, &node->file_locks, node) {
         if (!file_lock_same_owner(lock, owner, ofd))
@@ -290,16 +346,19 @@ static int file_lock_unlock_owner_range(vfs_node_t *node, uintptr_t owner,
         if (start <= lock->start && (end == UINT64_MAX || end >= lock->end)) {
             llist_delete(&lock->node);
             free(lock);
+            changed = true;
             continue;
         }
 
         if (start <= lock->start) {
             lock->start = end;
+            changed = true;
             continue;
         }
 
         if (end == UINT64_MAX || end >= lock->end) {
             lock->end = start;
+            changed = true;
             continue;
         }
 
@@ -315,19 +374,12 @@ static int file_lock_unlock_owner_range(vfs_node_t *node, uintptr_t owner,
         split->ofd = lock->ofd;
         lock->end = start;
         llist_append(&node->file_locks, &split->node);
+        changed = true;
     }
 
+    if (changed)
+        file_lock_wake_waiters_locked(node);
     return 0;
-}
-
-static void file_lock_release_pid(vfs_node_t *node, int32_t pid) {
-    if (!node)
-        return;
-
-    spin_lock(&node->file_locks_lock);
-    (void)file_lock_unlock_owner_range(node, (uintptr_t)(uint32_t)pid, false, 0,
-                                       UINT64_MAX);
-    spin_unlock(&node->file_locks_lock);
 }
 
 static int file_lock_getlk(fd_t *fd, flock_t *lock, bool ofd) {
@@ -342,8 +394,8 @@ static int file_lock_getlk(fd_t *fd, flock_t *lock, bool ofd) {
         return ret;
 
     vfs_node_t *node = fd->f_inode;
-    uintptr_t owner =
-        ofd ? (uintptr_t)fd : (uintptr_t)(uint32_t)current_task->pid;
+    uint64_t tgid = task_effective_tgid(current_task);
+    uintptr_t owner = ofd ? (uintptr_t)fd : (uintptr_t)(uint32_t)tgid;
     spin_lock(&node->file_locks_lock);
     vfs_file_lock_t *conflict =
         file_lock_find_conflict(node, start, end, lock->l_type, owner, ofd);
@@ -374,8 +426,16 @@ static int file_lock_setlk(fd_t *fd, const flock_t *req, bool wait, bool ofd) {
         return -EINVAL;
 
     vfs_node_t *node = fd->f_inode;
-    int32_t pid = current_task->pid;
+    uint64_t tgid = task_effective_tgid(current_task);
+    int32_t pid = (int32_t)tgid;
     uintptr_t owner = ofd ? (uintptr_t)fd : (uintptr_t)(uint32_t)pid;
+    vfs_file_lock_waiter_t waiter;
+
+    memset(&waiter, 0, sizeof(waiter));
+    llist_init_head(&waiter.node);
+    waiter.owner = owner;
+    waiter.task = current_task;
+    waiter.ofd = ofd;
 
     for (;;) {
         spin_lock(&node->file_locks_lock);
@@ -392,8 +452,11 @@ static int file_lock_setlk(fd_t *fd, const flock_t *req, bool wait, bool ofd) {
             ret = file_lock_unlock_owner_range(node, owner, ofd, start, end);
             if (ret < 0) {
                 spin_unlock(&node->file_locks_lock);
+                file_lock_waiter_remove(node, &waiter);
                 return ret;
             }
+            if (!llist_empty(&waiter.node))
+                llist_delete(&waiter.node);
 
             uint64_t merged_start = start;
             uint64_t merged_end = end;
@@ -416,6 +479,7 @@ static int file_lock_setlk(fd_t *fd, const flock_t *req, bool wait, bool ofd) {
             vfs_file_lock_t *new_lock = calloc(1, sizeof(vfs_file_lock_t));
             if (!new_lock) {
                 spin_unlock(&node->file_locks_lock);
+                file_lock_waiter_remove(node, &waiter);
                 return -ENOMEM;
             }
 
@@ -431,13 +495,29 @@ static int file_lock_setlk(fd_t *fd, const flock_t *req, bool wait, bool ofd) {
             return 0;
         }
 
-        spin_unlock(&node->file_locks_lock);
-        if (!wait)
+        if (!wait) {
+            spin_unlock(&node->file_locks_lock);
             return -EAGAIN;
+        }
 
-        arch_enable_interrupt();
-        schedule(SCHED_FLAG_YIELD);
-        arch_disable_interrupt();
+        if (file_lock_would_deadlock(node, owner, conflict, ofd)) {
+            if (!llist_empty(&waiter.node))
+                llist_delete(&waiter.node);
+            spin_unlock(&node->file_locks_lock);
+            return -EDEADLK;
+        }
+
+        waiter.blocking_owner = conflict->owner;
+        if (llist_empty(&waiter.node))
+            llist_append(&node->file_lock_waiters, &waiter.node);
+
+        spin_unlock(&node->file_locks_lock);
+
+        ret = task_block(current_task, TASK_BLOCKING, 10000000LL, "fcntl_lock");
+        if (ret != EOK && ret != ETIMEDOUT) {
+            file_lock_waiter_remove(node, &waiter);
+            return ret;
+        }
     }
 }
 
@@ -490,6 +570,8 @@ static uint64_t rw_validate_iovecs(const struct iovec *kiov, uint64_t count,
     for (uint64_t i = 0; i < count; i++) {
         if (kiov[i].len == 0)
             continue;
+        if (kiov[i].len > MAX_RW_COUNT)
+            return (uint64_t)-EINVAL;
         if (rw_validate_user_buffer(kiov[i].iov_base, kiov[i].len) < 0)
             return (uint64_t)-EFAULT;
         if (kiov[i].len > (uint64_t)MAX_RW_COUNT - total)
@@ -1113,8 +1195,6 @@ uint64_t do_sys_open(const char *name, uint64_t flags, uint64_t mode) {
         .mode = mode,
     };
 
-    if ((flags & O_TMPFILE) == O_TMPFILE)
-        return -EINVAL;
     return (uint64_t)vfs_sys_openat(AT_FDCWD, name, &how);
 }
 
@@ -1196,8 +1276,6 @@ static int openat2_validate_how(const struct vfs_open_how *how) {
     if (how->resolve & ~allowed_resolve)
         return -EINVAL;
     if (how->mode != 0 && !(how->flags & (O_CREAT | O_TMPFILE)))
-        return -EINVAL;
-    if ((how->flags & O_TMPFILE) == O_TMPFILE)
         return -EINVAL;
     if (how->resolve & RESOLVE_CACHED)
         return -EAGAIN;
@@ -1474,10 +1552,9 @@ uint64_t sys_close(uint64_t fd) {
     if (ret)
         return ret;
 
-    file_lock_release_pid(entry->f_inode, self->pid);
     on_close_file_call(self, fd, entry);
 
-    vfs_close_file(entry);
+    vfs_close_file_for_task(entry, self);
 
     return 0;
 }
@@ -1575,9 +1652,8 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
         fd_t *entry = to_close[fd_];
         if (!entry)
             continue;
-        file_lock_release_pid(entry->f_inode, self->pid);
         on_close_file_call(self, fd_, entry);
-        vfs_close_file(entry);
+        vfs_close_file_for_task(entry, self);
     }
     free(to_close);
 
@@ -1674,8 +1750,11 @@ uint64_t sys_copy_file_range(uint64_t fd_in, int *offset_in_user,
     return copy_total;
 }
 
+#define RW_BOUNCE_CHUNK (64 * 1024)
+
 uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {
     struct vfs_file *file;
+    void *kbuf = NULL;
     ssize_t ret;
 
     if (rw_validate_user_buffer(buf, len) < 0) {
@@ -1693,16 +1772,55 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {
      * VFS so the final behavior comes from the real file/socket backend, which
      * matters for Linux userspace compatibility.
      */
-    ret = (ssize_t)vfs_read_file(file, buf, len, NULL);
+    if (len > 0) {
+        kbuf = malloc((size_t)MIN(len, (uint64_t)RW_BOUNCE_CHUNK));
+        if (!kbuf) {
+            vfs_file_put(file);
+            return (uint64_t)-ENOMEM;
+        }
+    }
+
+    if (len == 0) {
+        ret = (ssize_t)vfs_read_file(file, buf, len, NULL);
+    } else {
+        size_t done = 0;
+        ret = 0;
+        while (done < len) {
+            size_t chunk = (size_t)MIN((uint64_t)RW_BOUNCE_CHUNK, len - done);
+            ssize_t io_ret = (ssize_t)vfs_read_file(file, kbuf, chunk, NULL);
+            if (io_ret < 0) {
+                ret = done ? (ssize_t)done : io_ret;
+                break;
+            }
+            if (io_ret == 0) {
+                ret = (ssize_t)done;
+                break;
+            }
+            if (copy_to_user((uint8_t *)buf + done, kbuf, (size_t)io_ret)) {
+                ret = -EFAULT;
+                break;
+            }
+            done += (size_t)io_ret;
+            if ((size_t)io_ret < chunk) {
+                ret = (ssize_t)done;
+                break;
+            }
+        }
+        if (done == len)
+            ret = (ssize_t)done;
+    }
+
+    free(kbuf);
     vfs_file_put(file);
     return ret;
 }
 
 uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
     struct vfs_file *file;
+    void *kbuf = NULL;
     ssize_t ret;
 
-    if (rw_validate_user_buffer(buf, len) < 0) {
+    if (len != 0 && rw_validate_user_buffer(buf, len) < 0) {
         return (uint64_t)-EFAULT;
     }
 
@@ -1717,13 +1835,47 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
      * Same rule as read: a zero-length write is still forwarded so the backend
      * keeps control over the exact ABI-visible result.
      */
-    ret = (ssize_t)vfs_write_file(file, buf, len, NULL);
+    if (len > 0) {
+        kbuf = malloc((size_t)MIN(len, (uint64_t)RW_BOUNCE_CHUNK));
+        if (!kbuf) {
+            vfs_file_put(file);
+            return (uint64_t)-ENOMEM;
+        }
+    }
+
+    if (len == 0) {
+        ret = (ssize_t)vfs_write_file(file, buf, len, NULL);
+    } else {
+        size_t done = 0;
+        ret = 0;
+        while (done < len) {
+            size_t chunk = (size_t)MIN((uint64_t)RW_BOUNCE_CHUNK, len - done);
+            if (copy_from_user(kbuf, (const uint8_t *)buf + done, chunk)) {
+                ret = done ? (ssize_t)done : -EFAULT;
+                break;
+            }
+            ssize_t io_ret = (ssize_t)vfs_write_file(file, kbuf, chunk, NULL);
+            if (io_ret < 0) {
+                ret = done ? (ssize_t)done : io_ret;
+                break;
+            }
+            done += (size_t)io_ret;
+            if ((size_t)io_ret < chunk) {
+                ret = (ssize_t)done;
+                break;
+            }
+        }
+        if (done == len)
+            ret = (ssize_t)done;
+    }
+    free(kbuf);
     vfs_file_put(file);
     return ret;
 }
 
 uint64_t sys_pread64(int fd, void *buf, size_t len, uint64_t offset) {
     struct vfs_file *file;
+    void *kbuf = NULL;
     loff_t pos = (loff_t)offset;
     ssize_t ret;
 
@@ -1742,17 +1894,56 @@ uint64_t sys_pread64(int fd, void *buf, size_t len, uint64_t offset) {
      * pread/pwrite follow the same rule. The explicit offset does not change
      * the ABI detail that a 0-byte request should still reach the backend.
      */
-    ret = (ssize_t)vfs_read_file(file, buf, len, &pos);
+    if (len > 0) {
+        kbuf = malloc((size_t)MIN((uint64_t)len, (uint64_t)RW_BOUNCE_CHUNK));
+        if (!kbuf) {
+            vfs_file_put(file);
+            return (uint64_t)-ENOMEM;
+        }
+    }
+
+    if (len == 0) {
+        ret = (ssize_t)vfs_read_file(file, buf, len, &pos);
+    } else {
+        size_t done = 0;
+        ret = 0;
+        while (done < len) {
+            size_t chunk = (size_t)MIN((uint64_t)RW_BOUNCE_CHUNK, len - done);
+            ssize_t io_ret = (ssize_t)vfs_read_file(file, kbuf, chunk, &pos);
+            if (io_ret < 0) {
+                ret = done ? (ssize_t)done : io_ret;
+                break;
+            }
+            if (io_ret == 0) {
+                ret = (ssize_t)done;
+                break;
+            }
+            if (copy_to_user((uint8_t *)buf + done, kbuf, (size_t)io_ret)) {
+                ret = -EFAULT;
+                break;
+            }
+            done += (size_t)io_ret;
+            if ((size_t)io_ret < chunk) {
+                ret = (ssize_t)done;
+                break;
+            }
+        }
+        if (done == len)
+            ret = (ssize_t)done;
+    }
+
+    free(kbuf);
     vfs_file_put(file);
     return (uint64_t)ret;
 }
 
 uint64_t sys_pwrite64(int fd, const void *buf, size_t len, uint64_t offset) {
     struct vfs_file *file;
+    void *kbuf = NULL;
     loff_t pos = (loff_t)offset;
     ssize_t ret;
 
-    if (rw_validate_user_buffer(buf, len) < 0) {
+    if (len != 0 && rw_validate_user_buffer(buf, len) < 0) {
         return (uint64_t)-EFAULT;
     }
 
@@ -1767,7 +1958,40 @@ uint64_t sys_pwrite64(int fd, const void *buf, size_t len, uint64_t offset) {
      * Same as pread64: do not short-circuit 0-byte requests here, otherwise
      * positioned writes can drift away from plain write semantics.
      */
-    ret = (ssize_t)vfs_write_file(file, buf, len, &pos);
+    if (len > 0) {
+        kbuf = malloc((size_t)MIN((uint64_t)len, (uint64_t)RW_BOUNCE_CHUNK));
+        if (!kbuf) {
+            vfs_file_put(file);
+            return (uint64_t)-ENOMEM;
+        }
+    }
+
+    if (len == 0) {
+        ret = (ssize_t)vfs_write_file(file, buf, len, &pos);
+    } else {
+        size_t done = 0;
+        ret = 0;
+        while (done < len) {
+            size_t chunk = (size_t)MIN((uint64_t)RW_BOUNCE_CHUNK, len - done);
+            if (copy_from_user(kbuf, (const uint8_t *)buf + done, chunk)) {
+                ret = done ? (ssize_t)done : -EFAULT;
+                break;
+            }
+            ssize_t io_ret = (ssize_t)vfs_write_file(file, kbuf, chunk, &pos);
+            if (io_ret < 0) {
+                ret = done ? (ssize_t)done : io_ret;
+                break;
+            }
+            done += (size_t)io_ret;
+            if ((size_t)io_ret < chunk) {
+                ret = (ssize_t)done;
+                break;
+            }
+        }
+        if (done == len)
+            ret = (ssize_t)done;
+    }
+    free(kbuf);
     vfs_file_put(file);
     return (uint64_t)ret;
 }
@@ -2078,28 +2302,53 @@ static uint64_t generic_do_preadv(uint64_t fd, struct iovec *iovec,
 
     for (uint64_t i = 0; i < count; i++) {
         size_t len = kiov[i].len;
+        uint8_t *bounce = NULL;
+        size_t iov_done = 0;
 
         if (len > MAX_RW_COUNT - (size_t)total_read)
             len = MAX_RW_COUNT - (size_t)total_read;
         if (kiov[i].iov_base == NULL)
             continue;
-
-        ssize_t io_ret = (ssize_t)vfs_read_file(file, kiov[i].iov_base, len,
-                                                use_f_pos ? NULL : &pos);
-        if (io_ret < 0) {
-            if (total_read > 0 &&
-                (io_ret == -EAGAIN || io_ret == -EWOULDBLOCK ||
-                 io_ret == -EINTR)) {
-                vfs_file_put(file);
-                free(kiov);
-                return total_read;
-            }
+        bounce = malloc(MIN(len, (size_t)RW_BOUNCE_CHUNK));
+        if (!bounce) {
             vfs_file_put(file);
             free(kiov);
-            return (uint64_t)io_ret;
+            return total_read ? (uint64_t)total_read : (uint64_t)-ENOMEM;
         }
-        total_read += io_ret;
-        if ((size_t)io_ret < len || (size_t)total_read >= MAX_RW_COUNT)
+
+        while (iov_done < len) {
+            size_t chunk = MIN(len - iov_done, (size_t)RW_BOUNCE_CHUNK);
+            ssize_t io_ret = (ssize_t)vfs_read_file(file, bounce, chunk,
+                                                    use_f_pos ? NULL : &pos);
+            if (io_ret < 0) {
+                free(bounce);
+                if (total_read > 0 &&
+                    (io_ret == -EAGAIN || io_ret == -EWOULDBLOCK ||
+                     io_ret == -EINTR)) {
+                    vfs_file_put(file);
+                    free(kiov);
+                    return total_read;
+                }
+                vfs_file_put(file);
+                free(kiov);
+                return total_read ? (uint64_t)total_read : (uint64_t)io_ret;
+            }
+            if (io_ret == 0)
+                break;
+            if (copy_to_user((uint8_t *)kiov[i].iov_base + iov_done, bounce,
+                             (size_t)io_ret)) {
+                free(bounce);
+                vfs_file_put(file);
+                free(kiov);
+                return total_read ? (uint64_t)total_read : (uint64_t)-EFAULT;
+            }
+            iov_done += (size_t)io_ret;
+            total_read += io_ret;
+            if ((size_t)io_ret < chunk || (size_t)total_read >= MAX_RW_COUNT)
+                break;
+        }
+        free(bounce);
+        if (iov_done < len || (size_t)total_read >= MAX_RW_COUNT)
             break;
     }
     vfs_file_put(file);
@@ -2149,6 +2398,8 @@ static uint64_t generic_do_pwritev(uint64_t fd, struct iovec *iovec,
     for (uint64_t i = 0; i < count; i++) {
         size_t len = kiov[i].len;
         loff_t *ppos = use_f_pos ? NULL : &pos;
+        uint8_t *bounce = NULL;
+        size_t iov_done = 0;
 
         if (len > MAX_RW_COUNT - (size_t)total_written)
             len = MAX_RW_COUNT - (size_t)total_written;
@@ -2158,22 +2409,41 @@ static uint64_t generic_do_pwritev(uint64_t fd, struct iovec *iovec,
             pos = (loff_t)file->f_inode->i_size;
             ppos = &pos;
         }
-
-        ssize_t io_ret =
-            (ssize_t)vfs_write_file(file, kiov[i].iov_base, len, ppos);
-        if (io_ret < 0) {
-            if (total_written > 0 &&
-                (io_ret == -EAGAIN || io_ret == -EWOULDBLOCK ||
-                 io_ret == -EINTR)) {
-                break;
-            }
-            total_written = io_ret;
+        bounce = malloc(MIN(len, (size_t)RW_BOUNCE_CHUNK));
+        if (!bounce) {
+            total_written = total_written ? total_written : -ENOMEM;
             break;
         }
-        total_written += io_ret;
-        if ((size_t)io_ret < len || (size_t)total_written >= MAX_RW_COUNT)
+
+        while (iov_done < len) {
+            size_t chunk = MIN(len - iov_done, (size_t)RW_BOUNCE_CHUNK);
+            if (copy_from_user(bounce, (uint8_t *)kiov[i].iov_base + iov_done,
+                               chunk)) {
+                free(bounce);
+                total_written = total_written ? total_written : -EFAULT;
+                goto out_writev;
+            }
+            ssize_t io_ret = (ssize_t)vfs_write_file(file, bounce, chunk, ppos);
+            if (io_ret < 0) {
+                free(bounce);
+                if (total_written > 0 &&
+                    (io_ret == -EAGAIN || io_ret == -EWOULDBLOCK ||
+                     io_ret == -EINTR)) {
+                    goto out_writev;
+                }
+                total_written = total_written ? total_written : io_ret;
+                goto out_writev;
+            }
+            iov_done += (size_t)io_ret;
+            total_written += io_ret;
+            if ((size_t)io_ret < chunk || (size_t)total_written >= MAX_RW_COUNT)
+                break;
+        }
+        free(bounce);
+        if (iov_done < len || (size_t)total_written >= MAX_RW_COUNT)
             break;
     }
+out_writev:
     if (update_f_pos && total_written > 0)
         file->f_pos = pos;
     if (append)
@@ -2852,8 +3122,56 @@ uint64_t sys_fcntl(uint64_t fd, uint64_t command, uint64_t arg) {
         out = 0;
         break;
     case F_GET_SEALS:
+        if (file->private_data) {
+            struct memfd_ctx {
+                vfs_node_t *node;
+                char name[64];
+                uint64_t *pages;
+                size_t page_slots;
+                uint64_t len;
+                int flags;
+                unsigned int seals;
+                spinlock_t lock;
+            };
+            struct memfd_ctx *ctx = file->private_data;
+            out = ctx->seals;
+        } else {
+            out = -EINVAL;
+        }
+        break;
     case F_ADD_SEALS:
-        out = 0;
+        if (file->private_data) {
+            struct memfd_ctx {
+                vfs_node_t *node;
+                char name[64];
+                uint64_t *pages;
+                size_t page_slots;
+                uint64_t len;
+                int flags;
+                unsigned int seals;
+                spinlock_t lock;
+            };
+            struct memfd_ctx *ctx = file->private_data;
+            unsigned int seals = (unsigned int)arg;
+            unsigned int allowed =
+                F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE;
+            if (seals & ~allowed) {
+                out = -EINVAL;
+                break;
+            }
+            if (!(ctx->flags & 0x0002U)) {
+                out = -EPERM;
+                break;
+            }
+            if (ctx->seals & F_SEAL_SEAL) {
+                out = -EPERM;
+                break;
+            }
+            ctx->seals |= seals;
+            out = 0;
+        } else {
+            out = -EINVAL;
+        }
         break;
     case F_GET_RW_HINT:
         if (!file->f_inode->rw_hint) {
@@ -2938,8 +3256,12 @@ uint64_t sys_fstat(uint64_t fd, struct stat *user_buf) {
 uint64_t sys_newfstatat(uint64_t dirfd, const char *pathname_user,
                         struct stat *buf_user, uint64_t flags) {
     char pathname[512];
-    if (copy_from_user_str(pathname, pathname_user, sizeof(pathname)))
+    if (copy_from_user_str(pathname, pathname_user, sizeof(pathname))) {
+        if (pathname_user &&
+            !check_user_overflow((uint64_t)pathname_user, sizeof(pathname)))
+            return (uint64_t)-ENAMETOOLONG;
         return (uint64_t)-EFAULT;
+    }
 
     if ((flags & AT_EMPTY_PATH) && pathname[0] == '\0') {
         return sys_fstat(dirfd, buf_user);
@@ -2966,8 +3288,11 @@ uint64_t sys_statx(uint64_t dirfd, const char *pathname_user, uint64_t flags,
     struct vfs_kstat stat;
     char pathname[512] = {0};
     if (pathname_user &&
-        copy_from_user_str(pathname, pathname_user, sizeof(pathname)))
+        copy_from_user_str(pathname, pathname_user, sizeof(pathname))) {
+        if (!check_user_overflow((uint64_t)pathname_user, sizeof(pathname)))
+            return (uint64_t)-ENAMETOOLONG;
         return (uint64_t)-EFAULT;
+    }
 
     struct statx res;
     struct statx *buff = &res;

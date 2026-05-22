@@ -58,6 +58,9 @@ struct vfs_inode *vfs_alloc_inode(struct vfs_super_block *sb) {
     inode->flock_lock.owner = 0;
     spin_init(&inode->file_locks_lock);
     llist_init_head(&inode->file_locks);
+    llist_init_head(&inode->file_lock_waiters);
+    inode->i_write_count = 0;
+    inode->i_exec_count = 0;
     llist_init_head(&inode->i_dentry_aliases);
     llist_init_head(&inode->i_sb_list);
     spin_init(&inode->poll_waiters_lock);
@@ -101,6 +104,62 @@ void vfs_iput(struct vfs_inode *inode) {
         free(inode);
     if (sb)
         vfs_put_super(sb);
+}
+
+int vfs_inode_get_write_access(struct vfs_inode *inode) {
+    int exec_count;
+
+    if (!inode)
+        return -EINVAL;
+    if (!S_ISREG(inode->i_mode))
+        return 0;
+
+    spin_lock(&inode->i_lock);
+    exec_count = __atomic_load_n(&inode->i_exec_count, __ATOMIC_ACQUIRE);
+    if (exec_count > 0) {
+        spin_unlock(&inode->i_lock);
+        return -ETXTBSY;
+    }
+    __atomic_add_fetch(&inode->i_write_count, 1, __ATOMIC_ACQ_REL);
+    spin_unlock(&inode->i_lock);
+    return 0;
+}
+
+void vfs_inode_put_write_access(struct vfs_inode *inode) {
+    if (!inode || !S_ISREG(inode->i_mode))
+        return;
+
+    spin_lock(&inode->i_lock);
+    if (__atomic_load_n(&inode->i_write_count, __ATOMIC_ACQUIRE) > 0)
+        __atomic_sub_fetch(&inode->i_write_count, 1, __ATOMIC_ACQ_REL);
+    spin_unlock(&inode->i_lock);
+}
+
+int vfs_file_get_exec_access(struct vfs_file *file) {
+    struct vfs_inode *inode;
+    int write_count;
+
+    if (!file || !file->f_inode)
+        return -EINVAL;
+    if (file->f_mode & VFS_FMODE_EXEC_ACCESS)
+        return 0;
+
+    inode = file->f_inode;
+    if (!S_ISREG(inode->i_mode)) {
+        file->f_mode |= VFS_FMODE_EXEC_ACCESS;
+        return 0;
+    }
+
+    spin_lock(&inode->i_lock);
+    write_count = __atomic_load_n(&inode->i_write_count, __ATOMIC_ACQUIRE);
+    if (write_count > 0) {
+        spin_unlock(&inode->i_lock);
+        return -ETXTBSY;
+    }
+    __atomic_add_fetch(&inode->i_exec_count, 1, __ATOMIC_ACQ_REL);
+    file->f_mode |= VFS_FMODE_EXEC_ACCESS;
+    spin_unlock(&inode->i_lock);
+    return 0;
 }
 
 void vfs_inode_init_owner(struct vfs_inode *inode, struct vfs_inode *dir,

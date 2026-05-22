@@ -74,6 +74,10 @@ struct shmid_ds {
 #define IPC_SET 1  /* set ipc_perm options */
 #define IPC_STAT 2 /* get ipc_perm options */
 #define IPC_INFO 3 /* see ipcs */
+#define SHM_LOCK 11
+#define SHM_UNLOCK 12
+#define SHM_STAT 13
+#define SHM_INFO 14
 
 /**
  * Linux contract: create or look up a System V shared memory segment.
@@ -111,7 +115,18 @@ uint64_t sys_shmctl(int shmid, int cmd, struct shmid_ds *buf);
 struct task;
 struct vfs_inode;
 
+typedef struct shm_snapshot_entry {
+    int key;
+    int shmid;
+    uint16_t mode;
+    size_t size;
+    int cpid;
+    int lpid;
+    int nattch;
+} shm_snapshot_entry_t;
+
 void shm_fork(struct task *parent, struct task *child);
 void shm_exec(struct task *task);
 void shm_exit(struct task *task);
 void shm_try_reap_by_vnode(struct vfs_inode *node);
+size_t shm_snapshot(shm_snapshot_entry_t *entries, size_t max_entries);

@@ -69,6 +69,9 @@ ssize_t procfs_readlink_dispatch(proc_handle_t *handle, void *addr,
 size_t proc_filesystems_stat(proc_handle_t *handle);
 size_t proc_filesystems_read(proc_handle_t *handle, void *addr, size_t offset,
                              size_t size);
+size_t proc_cgroups_stat(proc_handle_t *handle);
+size_t proc_cgroups_read(proc_handle_t *handle, void *addr, size_t offset,
+                         size_t size);
 
 size_t proc_cmdline_stat(proc_handle_t *handle);
 size_t proc_cmdline_read(proc_handle_t *handle, void *addr, size_t offset,
@@ -106,6 +109,15 @@ size_t proc_stat_read(proc_handle_t *handle, void *addr, size_t offset,
 size_t proc_sys_kernel_osrelease_stat(proc_handle_t *handle);
 size_t proc_sys_kernel_osrelease_read(proc_handle_t *handle, void *addr,
                                       size_t offset, size_t size);
+size_t proc_sys_kernel_pid_max_stat(proc_handle_t *handle);
+size_t proc_sys_kernel_pid_max_read(proc_handle_t *handle, void *addr,
+                                    size_t offset, size_t size);
+size_t proc_sys_kernel_tainted_stat(proc_handle_t *handle);
+size_t proc_sys_kernel_tainted_read(proc_handle_t *handle, void *addr,
+                                    size_t offset, size_t size);
+size_t proc_sys_kernel_printk_stat(proc_handle_t *handle);
+size_t proc_sys_kernel_printk_read(proc_handle_t *handle, void *addr,
+                                   size_t offset, size_t size);
 size_t proc_sys_kernel_hostname_stat(proc_handle_t *handle);
 size_t proc_sys_kernel_hostname_read(proc_handle_t *handle, void *addr,
                                      size_t offset, size_t size);
@@ -120,6 +132,12 @@ ssize_t proc_sys_kernel_domainname_write(proc_handle_t *handle,
 size_t proc_pressure_memory_stat(proc_handle_t *handle);
 size_t proc_pressure_memory_read(proc_handle_t *handle, void *addr,
                                  size_t offset, size_t size);
+size_t proc_cpuinfo_stat(proc_handle_t *handle);
+size_t proc_cpuinfo_read(proc_handle_t *handle, void *addr, size_t offset,
+                         size_t size);
+size_t proc_sysvipc_shm_stat(proc_handle_t *handle);
+size_t proc_sysvipc_shm_read(proc_handle_t *handle, void *addr, size_t offset,
+                             size_t size);
 char *procfs_generate_mount_table(task_t *task, bool mountinfo,
                                   size_t *content_len);
 size_t proc_pmountinfo_stat(proc_handle_t *handle);

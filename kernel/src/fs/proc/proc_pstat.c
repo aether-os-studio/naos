@@ -128,8 +128,8 @@ char *proc_gen_stat_file(task_t *task, size_t *content_len) {
         proc_stat_ns_to_ticks(task->system_time_ns),             // 15. stime
         (long)proc_stat_ns_to_ticks(task->child_user_time_ns),   // 16
         (long)proc_stat_ns_to_ticks(task->child_system_time_ns), // 17
-        20L,                                                     // 18. priority
-        0L,                                                      // 19. nice
+        20L - task->nice,                                        // 18. priority
+        (long)task->nice,                                        // 19. nice
         (long)threads,                   // 20. num_threads
         0L,                              // 21. itrealvalue
         0ULL,                            // 22. starttime
@@ -150,8 +150,8 @@ char *proc_gen_stat_file(task_t *task, size_t *content_len) {
         0UL,                          // 37. cnswap
         task->is_clone ? 0 : SIGCHLD, // 38. exit_signal
         task->cpu_id,                 // 39. processor
-        0U,                           // 40. rt_priority
-        0U,                           // 41. policy
+        task->sched_priority > 0 ? (unsigned int)task->sched_priority : 0U, // 40
+        (unsigned int)task->sched_policy, // 41. policy
         0ULL,                         // 42. delayacct_blkio_ticks
         0UL,                          // 43. guest_time
         0L,                           // 44. cguest_time

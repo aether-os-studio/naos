@@ -75,6 +75,51 @@ size_t proc_sys_kernel_osrelease_read(proc_handle_t *handle, void *addr,
     return to_copy;
 }
 
+static size_t proc_sys_kernel_const_read(const char *content, void *addr,
+                                         size_t offset, size_t size) {
+    size_t len = strlen(content);
+
+    if (offset >= len)
+        return 0;
+
+    size_t to_copy = MIN(size, len - offset);
+    memcpy(addr, content + offset, to_copy);
+    return to_copy;
+}
+
+size_t proc_sys_kernel_pid_max_stat(proc_handle_t *handle) {
+    (void)handle;
+    return strlen("4194304\n");
+}
+
+size_t proc_sys_kernel_pid_max_read(proc_handle_t *handle, void *addr,
+                                    size_t offset, size_t size) {
+    (void)handle;
+    return proc_sys_kernel_const_read("4194304\n", addr, offset, size);
+}
+
+size_t proc_sys_kernel_tainted_stat(proc_handle_t *handle) {
+    (void)handle;
+    return strlen("0\n");
+}
+
+size_t proc_sys_kernel_tainted_read(proc_handle_t *handle, void *addr,
+                                    size_t offset, size_t size) {
+    (void)handle;
+    return proc_sys_kernel_const_read("0\n", addr, offset, size);
+}
+
+size_t proc_sys_kernel_printk_stat(proc_handle_t *handle) {
+    (void)handle;
+    return strlen("4\t4\t1\t7\n");
+}
+
+size_t proc_sys_kernel_printk_read(proc_handle_t *handle, void *addr,
+                                   size_t offset, size_t size) {
+    (void)handle;
+    return proc_sys_kernel_const_read("4\t4\t1\t7\n", addr, offset, size);
+}
+
 size_t proc_sys_kernel_hostname_stat(proc_handle_t *handle) {
     size_t len = 0;
 

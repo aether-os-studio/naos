@@ -23,6 +23,14 @@ static unsigned int vfs_open_lookup_flags(const struct vfs_open_how *how) {
     return flags;
 }
 
+static bool vfs_open_flags_want_write(unsigned int flags) {
+    unsigned int accmode = flags & O_ACCMODE_FLAGS;
+
+    if (flags & O_PATH)
+        return false;
+    return accmode == O_WRONLY || accmode == O_RDWR;
+}
+
 static int vfs_open_last_lookups(int dfd, const char *name,
                                  const struct vfs_open_how *how,
                                  struct vfs_path *parent, struct vfs_qstr *last,
@@ -135,11 +143,36 @@ struct vfs_file *vfs_file_get(struct vfs_file *file) {
     return file;
 }
 
+static void vfs_file_release_access_modes(struct vfs_file *file) {
+    struct vfs_inode *inode;
+
+    if (!file)
+        return;
+
+    inode = file->f_inode;
+    if ((file->f_mode & VFS_FMODE_WRITE_ACCESS) && inode) {
+        vfs_inode_put_write_access(inode);
+        file->f_mode &= ~VFS_FMODE_WRITE_ACCESS;
+    }
+    if ((file->f_mode & VFS_FMODE_EXEC_ACCESS) && inode) {
+        if (S_ISREG(inode->i_mode)) {
+            spin_lock(&inode->i_lock);
+            if (__atomic_load_n(&inode->i_exec_count, __ATOMIC_ACQUIRE) > 0) {
+                __atomic_sub_fetch(&inode->i_exec_count, 1, __ATOMIC_ACQ_REL);
+            }
+            spin_unlock(&inode->i_lock);
+        }
+        file->f_mode &= ~VFS_FMODE_EXEC_ACCESS;
+    }
+}
+
 void vfs_file_put(struct vfs_file *file) {
     if (!file)
         return;
     if (!vfs_ref_put(&file->f_ref))
         return;
+
+    vfs_file_release_access_modes(file);
 
     if (file->f_inode) {
         vfs_bsd_lock_t *flock = &file->f_inode->flock_lock;
@@ -302,8 +335,18 @@ int vfs_openat(int dfd, const char *name, const struct vfs_open_how *how,
     memset(&local_how, 0, sizeof(local_how));
     if (how)
         local_how = *how;
-    if ((local_how.flags & O_CREAT) && current_task && current_task->fs)
+    if ((local_how.flags & (O_CREAT | O_TMPFILE)) && current_task &&
+        current_task->fs)
         local_how.mode &= ~current_task->fs->umask;
+
+    if ((local_how.flags & O_TMPFILE) == O_TMPFILE) {
+        if ((local_how.flags & O_ACCMODE_FLAGS) == O_RDONLY) {
+            ret = -EINVAL;
+            goto out;
+        }
+        local_how.flags &= ~(O_TMPFILE | O_CREAT | O_EXCL | O_TRUNC);
+        local_how.flags |= O_DIRECTORY;
+    }
 
     ret = vfs_open_last_lookups(dfd, name, &local_how, &parent, &last, &dentry);
     if (ret < 0)
@@ -396,23 +439,57 @@ int vfs_openat(int dfd, const char *name, const struct vfs_open_how *how,
         ret = -ENOTDIR;
         goto out;
     }
+    if (vfs_open_flags_want_write((unsigned int)local_how.flags)) {
+        ret = vfs_inode_get_write_access(dentry->d_inode);
+        if (ret < 0)
+            goto out;
+    }
+
     if (!(local_how.flags & O_PATH) && (local_how.flags & O_TRUNC) &&
         ((local_how.flags & O_ACCMODE_FLAGS) == O_WRONLY ||
          (local_how.flags & O_ACCMODE_FLAGS) == O_RDWR) &&
         !S_ISDIR(dentry->d_inode->i_mode)) {
         ret = vfs_truncate_path(open_path, 0);
-        if (ret < 0)
+        if (ret < 0) {
+            if (vfs_open_flags_want_write((unsigned int)local_how.flags))
+                vfs_inode_put_write_access(dentry->d_inode);
             goto out;
+        }
     }
 
     file = vfs_alloc_file(open_path, (unsigned int)local_how.flags);
     if (!file) {
+        if (vfs_open_flags_want_write((unsigned int)local_how.flags))
+            vfs_inode_put_write_access(dentry->d_inode);
         ret = -ENOMEM;
         goto out;
     }
+    if (vfs_open_flags_want_write((unsigned int)local_how.flags))
+        file->f_mode |= VFS_FMODE_WRITE_ACCESS;
 
-    if (!(local_how.flags & O_PATH) && dentry->d_inode->i_op &&
-        dentry->d_inode->i_op->atomic_open) {
+    if (((how ? how->flags : 0) & O_TMPFILE) == O_TMPFILE) {
+        if (!dentry->d_inode->i_op || !dentry->d_inode->i_op->tmpfile) {
+            ret = -EOPNOTSUPP;
+            vfs_file_put(file);
+            goto out;
+        }
+        if (!kernel) {
+            ret = vfs_inode_permission(dentry->d_inode,
+                                       VFS_MAY_WRITE | VFS_MAY_EXEC);
+            if (ret < 0) {
+                vfs_file_put(file);
+                goto out;
+            }
+        }
+        ret = dentry->d_inode->i_op->tmpfile(dentry->d_inode, file,
+                                             (umode_t)(how ? how->mode : 0600));
+        if (ret < 0) {
+            vfs_file_put(file);
+            goto out;
+        }
+        file->f_flags &= ~O_DIRECTORY;
+    } else if (!(local_how.flags & O_PATH) && dentry->d_inode->i_op &&
+               dentry->d_inode->i_op->atomic_open) {
         ret = dentry->d_inode->i_op->atomic_open(dir, dentry, file,
                                                  (unsigned int)local_how.flags,
                                                  (umode_t)local_how.mode);
@@ -448,10 +525,37 @@ out:
 }
 
 int vfs_close_file(struct vfs_file *file) {
+    return vfs_close_file_for_task(file, NULL);
+}
+
+int vfs_close_file_for_task(struct vfs_file *file, struct task *task) {
     uint64_t close_mask;
 
     if (!file)
         return -EBADF;
+    if (task && file->f_inode) {
+        int32_t owner_pid = (int32_t)task_effective_tgid(task);
+        bool changed = false;
+
+        spin_lock(&file->f_inode->file_locks_lock);
+        vfs_file_lock_t *lock = NULL, *tmp = NULL;
+        llist_for_each(lock, tmp, &file->f_inode->file_locks, node) {
+            if (lock->ofd || lock->pid != owner_pid)
+                continue;
+            llist_delete(&lock->node);
+            free(lock);
+            changed = true;
+        }
+        if (changed) {
+            vfs_file_lock_waiter_t *waiter = NULL, *waiter_tmp = NULL;
+            llist_for_each(waiter, waiter_tmp,
+                           &file->f_inode->file_lock_waiters, node) {
+                if (waiter->task)
+                    task_unblock(waiter->task, EOK);
+            }
+        }
+        spin_unlock(&file->f_inode->file_locks_lock);
+    }
     if (file->f_op && file->f_op->flush)
         file->f_op->flush(file);
     close_mask = ((file->f_flags & O_ACCMODE_FLAGS) == O_RDONLY)
@@ -476,7 +580,9 @@ ssize_t vfs_read_file(struct vfs_file *file, void *buf, size_t count,
     if (!file || !file->f_op || !file->f_op->read)
         return -EINVAL;
 
-    if (!ppos)
+    bool lock_pos = !ppos && !(file->f_mode & VFS_FMODE_NO_POS_LOCK);
+
+    if (lock_pos)
         mutex_lock(&file->f_pos_lock);
     pos = ppos ? *ppos : file->f_pos;
 
@@ -490,7 +596,7 @@ ssize_t vfs_read_file(struct vfs_file *file, void *buf, size_t count,
             file->f_pos = new_pos;
     }
 
-    if (!ppos)
+    if (lock_pos)
         mutex_unlock(&file->f_pos_lock);
     return ret;
 }
@@ -508,7 +614,9 @@ ssize_t vfs_write_file(struct vfs_file *file, const void *buf, size_t count,
     if (!file || !file->f_op || !file->f_op->write)
         return -EINVAL;
 
-    if (!ppos)
+    bool lock_pos = !ppos && !(file->f_mode & VFS_FMODE_NO_POS_LOCK);
+
+    if (lock_pos)
         mutex_lock(&file->f_pos_lock);
     pos = ppos ? *ppos : file->f_pos;
     if (!ppos && (file->f_flags & O_APPEND))
@@ -527,7 +635,7 @@ ssize_t vfs_write_file(struct vfs_file *file, const void *buf, size_t count,
                                        IN_MODIFY, 0);
     }
 
-    if (!ppos)
+    if (lock_pos)
         mutex_unlock(&file->f_pos_lock);
     return ret;
 }

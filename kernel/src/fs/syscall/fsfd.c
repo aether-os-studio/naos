@@ -660,23 +660,34 @@ uint64_t sys_fsopen(const char *fsname_user, unsigned int flags) {
 
 uint64_t sys_statfs(const char *path, struct statfs *buf) {
     struct vfs_path vpath = {0};
+    char path_k[VFS_PATH_MAX];
+    struct statfs kbuf;
     int ret;
 
     if (!path || !buf)
         return -EINVAL;
 
-    ret = vfs_filename_lookup(AT_FDCWD, path, LOOKUP_FOLLOW, &vpath);
+    if (copy_from_user_str(path_k, path, sizeof(path_k))) {
+        if (!check_user_overflow((uint64_t)path, sizeof(path_k)))
+            return -ENAMETOOLONG;
+        return -EFAULT;
+    }
+
+    ret = vfs_filename_lookup(AT_FDCWD, path_k, LOOKUP_FOLLOW, &vpath);
     if (ret < 0)
         return ret;
 
-    ret = fsfd_fill_statfs(&vpath, buf);
+    ret = fsfd_fill_statfs(&vpath, &kbuf);
     vfs_path_put(&vpath);
-    return ret;
+    if (ret < 0)
+        return ret;
+    return copy_to_user(buf, &kbuf, sizeof(kbuf)) ? -EFAULT : 0;
 }
 
 uint64_t sys_fstatfs(int fd, struct statfs *buf) {
     struct vfs_file *file;
     struct vfs_path path = {0};
+    struct statfs kbuf;
     int ret;
 
     if (!buf)
@@ -690,9 +701,11 @@ uint64_t sys_fstatfs(int fd, struct statfs *buf) {
     vfs_path_get(&path);
     vfs_file_put(file);
 
-    ret = fsfd_fill_statfs(&path, buf);
+    ret = fsfd_fill_statfs(&path, &kbuf);
     vfs_path_put(&path);
-    return ret;
+    if (ret < 0)
+        return ret;
+    return copy_to_user(buf, &kbuf, sizeof(kbuf)) ? -EFAULT : 0;
 }
 
 uint64_t sys_fsconfig(int fd, uint32_t cmd, const char *key_user,

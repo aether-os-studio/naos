@@ -30,8 +30,11 @@ hashmap_t task_pid_map = HASHMAP_INIT;
 hashmap_t task_parent_map = HASHMAP_INIT;
 hashmap_t task_pgid_map = HASHMAP_INIT;
 rb_root_t task_timeout_root = RB_ROOT_INIT;
+rb_root_t task_signal_timer_root = RB_ROOT_INIT;
 spinlock_t task_timeout_lock = SPIN_INIT;
+spinlock_t task_signal_timer_lock = SPIN_INIT;
 static uint64_t task_timeout_next_ns = UINT64_MAX;
+static uint64_t task_signal_timer_next_ns = UINT64_MAX;
 spinlock_t should_free_lock = SPIN_INIT;
 DEFINE_LLIST(should_free_tasks);
 
@@ -353,6 +356,8 @@ int task_close_file_descriptor(task_t *task, int fd) {
 
 static void sched_update_itimer_task(task_t *task, uint64_t now_ms);
 static void task_reap_softirq(void);
+static void task_signal_timer_update(task_t *task);
+static void task_signal_timer_softirq(void);
 
 static inline uint64_t realtime_now_ns(void) {
     return boot_get_boottime() * 1000000000ULL + nano_time();
@@ -467,36 +472,12 @@ void task_signal_free(task_signal_info_t *signal) {
     free(signal);
 }
 
-static inline bool task_has_tick_work(task_t *task) {
-    if (!task || task->state == TASK_DIED) {
-        return false;
-    }
-
-    return task->tick_work_active;
-}
-
 void task_refresh_tick_work_state(task_t *task) {
-    bool active = false;
-
     if (!task)
         return;
 
-    if (task->itimer_real.at) {
-        active = true;
-        goto out;
-    }
-
-    for (int i = 0; i < MAX_TIMERS_NUM; i++) {
-        kernel_timer_t *kt = task->timers[i];
-
-        if (kt && kt->expires) {
-            active = true;
-            break;
-        }
-    }
-
-out:
-    task->tick_work_active = active;
+    task->tick_work_active = false;
+    task_signal_timer_update(task);
 }
 
 void task_membarrier_checkpoint(task_t *task) {
@@ -545,14 +526,6 @@ static bool sched_process_tick_work(uint32_t queue_id) {
         if (!task) {
             break;
         }
-
-        if (!task_has_tick_work(task)) {
-            continue;
-        }
-
-        uint64_t now_mono_ns = nano_time();
-        sched_update_itimer_task(task, now_mono_ns / 1000000);
-        did_work = true;
     }
 
     return did_work;
@@ -610,6 +583,24 @@ static inline int task_timeout_cmp_values(uint64_t left_deadline,
     return 0;
 }
 
+static inline uint64_t task_signal_timer_to_mono_deadline(clockid_t clock_type,
+                                                          uint64_t expires_ns) {
+    if (!expires_ns)
+        return UINT64_MAX;
+
+    if (clock_type == CLOCK_REALTIME) {
+        uint64_t now_real = realtime_now_ns();
+        uint64_t now_mono = nano_time();
+
+        if (expires_ns <= now_real)
+            return now_mono;
+
+        return now_mono + (expires_ns - now_real);
+    }
+
+    return expires_ns;
+}
+
 static inline task_t *task_timeout_first_locked(void) {
     rb_node_t *first = rb_first(&task_timeout_root);
     return first ? rb_entry(first, task_t, timeout_node) : NULL;
@@ -619,6 +610,120 @@ static inline void task_timeout_refresh_next_locked(void) {
     task_t *first = task_timeout_first_locked();
     uint64_t next = first ? first->force_wakeup_ns : UINT64_MAX;
     __atomic_store_n(&task_timeout_next_ns, next, __ATOMIC_RELEASE);
+}
+
+static inline uint64_t task_signal_timer_compute_deadline_locked(task_t *task) {
+    uint64_t next = UINT64_MAX;
+
+    if (!task || task->state == TASK_DIED)
+        return UINT64_MAX;
+
+    if (task->itimer_real.at) {
+        next = task->itimer_real.at * 1000000ULL;
+    }
+
+    for (int i = 0; i < MAX_TIMERS_NUM; i++) {
+        kernel_timer_t *kt = task->timers[i];
+
+        if (!kt || !kt->expires)
+            continue;
+
+        uint64_t expires =
+            task_signal_timer_to_mono_deadline(kt->clock_type, kt->expires);
+
+        if (expires < next)
+            next = expires;
+    }
+
+    return next;
+}
+
+static inline int task_signal_timer_cmp_values(uint64_t left_deadline,
+                                               uint64_t left_pid,
+                                               uint64_t right_deadline,
+                                               uint64_t right_pid) {
+    if (left_deadline < right_deadline)
+        return -1;
+    if (left_deadline > right_deadline)
+        return 1;
+    if (left_pid < right_pid)
+        return -1;
+    if (left_pid > right_pid)
+        return 1;
+    return 0;
+}
+
+static inline task_t *task_signal_timer_first_locked(void) {
+    rb_node_t *first = rb_first(&task_signal_timer_root);
+    return first ? rb_entry(first, task_t, signal_timer_node) : NULL;
+}
+
+static inline void task_signal_timer_refresh_next_locked(void) {
+    task_t *first = task_signal_timer_first_locked();
+    uint64_t next = first ? first->signal_timer_deadline_ns : UINT64_MAX;
+    __atomic_store_n(&task_signal_timer_next_ns, next, __ATOMIC_RELEASE);
+}
+
+static void task_signal_timer_remove_locked(task_t *task) {
+    if (!task || !task->signal_timer_queued)
+        return;
+
+    rb_erase(&task->signal_timer_node, &task_signal_timer_root);
+    memset(&task->signal_timer_node, 0, sizeof(task->signal_timer_node));
+    task->signal_timer_queued = false;
+}
+
+static void task_signal_timer_add_locked(task_t *task) {
+    if (!task || task->signal_timer_deadline_ns == UINT64_MAX ||
+        task->signal_timer_queued) {
+        return;
+    }
+
+    rb_node_t **slot = &task_signal_timer_root.rb_node;
+    rb_node_t *parent = NULL;
+
+    while (*slot) {
+        task_t *curr = rb_entry(*slot, task_t, signal_timer_node);
+        int cmp = task_signal_timer_cmp_values(
+            task->signal_timer_deadline_ns, task->pid,
+            curr->signal_timer_deadline_ns, curr->pid);
+        parent = *slot;
+        if (cmp < 0)
+            slot = &(*slot)->rb_left;
+        else
+            slot = &(*slot)->rb_right;
+    }
+
+    task->signal_timer_node.rb_left = NULL;
+    task->signal_timer_node.rb_right = NULL;
+    rb_set_parent(&task->signal_timer_node, parent);
+    rb_set_color(&task->signal_timer_node, KRB_RED);
+    *slot = &task->signal_timer_node;
+    rb_insert_color(&task->signal_timer_node, &task_signal_timer_root);
+    task->signal_timer_queued = true;
+}
+
+static void task_signal_timer_update(task_t *task) {
+    spin_lock(&task_signal_timer_lock);
+    task_signal_timer_remove_locked(task);
+    task->signal_timer_deadline_ns =
+        task_signal_timer_compute_deadline_locked(task);
+    task_signal_timer_add_locked(task);
+    task_signal_timer_refresh_next_locked();
+    spin_unlock(&task_signal_timer_lock);
+}
+
+static void task_signal_timer_cancel(task_t *task) {
+    spin_lock(&task_signal_timer_lock);
+    task_signal_timer_remove_locked(task);
+    if (task)
+        task->signal_timer_deadline_ns = UINT64_MAX;
+    task_signal_timer_refresh_next_locked();
+    spin_unlock(&task_signal_timer_lock);
+}
+
+static inline uint64_t task_signal_timer_next_deadline_ns(void) {
+    return __atomic_load_n(&task_signal_timer_next_ns, __ATOMIC_ACQUIRE);
 }
 
 static void task_timeout_remove_locked(task_t *task) {
@@ -729,6 +834,54 @@ static void task_timeout_softirq(void) {
         if (expired_count < (sizeof(expired) / sizeof(expired[0]))) {
             return;
         }
+    }
+}
+
+static void task_timer_softirq(void) {
+    task_timeout_softirq();
+    task_signal_timer_softirq();
+}
+
+static void task_signal_timer_softirq(void) {
+    task_t *expired[32];
+
+    while (true) {
+        size_t expired_count = 0;
+        uint64_t now = nano_time();
+        uint64_t now_ms = now / 1000000ULL;
+
+        bool irq_state = arch_interrupt_enabled();
+        arch_disable_interrupt();
+
+        spin_lock(&task_signal_timer_lock);
+        while (expired_count < (sizeof(expired) / sizeof(expired[0]))) {
+            task_t *task = task_signal_timer_first_locked();
+            if (!task || task->signal_timer_deadline_ns > now)
+                break;
+
+            task_signal_timer_remove_locked(task);
+            expired[expired_count++] = task;
+        }
+        task_signal_timer_refresh_next_locked();
+        spin_unlock(&task_signal_timer_lock);
+
+        if (irq_state)
+            arch_enable_interrupt();
+
+        if (!expired_count)
+            return;
+
+        for (size_t i = 0; i < expired_count; i++) {
+            task_t *task = expired[i];
+            if (!task || task->state == TASK_DIED)
+                continue;
+
+            /* Re-evaluate all task-owned timers from one monotonic snapshot. */
+            sched_update_itimer_task(task, now_ms);
+        }
+
+        if (expired_count < (sizeof(expired) / sizeof(expired[0])))
+            return;
     }
 }
 
@@ -968,6 +1121,7 @@ static void task_set_parent_locked(task_t *task, task_t *parent,
     task_parent_index_detach_locked(task, prune_old_bucket);
     task->parent = parent;
     task->parent_pid = new_parent_pid;
+    task->orphaned_to_init = parent && parent->pid == 1 && task->pid != 1;
     task_parent_index_attach_locked(task);
 }
 
@@ -1178,6 +1332,9 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->tgid = task->pid;
     task->sid = 0;
     task->priority = priority;
+    task->nice = 0;
+    task->sched_policy = 0;
+    task->sched_priority = 0;
 
     void *kernel_stack_base = alloc_frames_bytes(STACK_SIZE);
     if (!kernel_stack_base)
@@ -1327,11 +1484,14 @@ void task_init() {
     ASSERT(hashmap_init(&task_parent_map, 512) == 0);
     ASSERT(hashmap_init(&task_pgid_map, 512) == 0);
     task_timeout_root = RB_ROOT_INIT;
+    task_signal_timer_root = RB_ROOT_INIT;
     __atomic_store_n(&task_timeout_next_ns, UINT64_MAX, __ATOMIC_RELEASE);
+    __atomic_store_n(&task_signal_timer_next_ns, UINT64_MAX, __ATOMIC_RELEASE);
     spin_init(&task_timeout_lock);
+    spin_init(&task_signal_timer_lock);
     llist_init_head(&should_free_tasks);
     spin_init(&should_free_lock);
-    softirq_register(SOFTIRQ_TIMER, task_timeout_softirq);
+    softirq_register(SOFTIRQ_TIMER, task_timer_softirq);
     softirq_register(SOFTIRQ_TASK_REAP, task_reap_softirq);
     next_task_pid = 1;
 
@@ -1537,10 +1697,13 @@ void task_exit_inner(task_t *task, int64_t code) {
     }
 
     task_timeout_cancel(task);
+    task_signal_timer_cancel(task);
     task_tick_work_cancel(task);
 
-    if (task->exec_file)
+    if (task->exec_file) {
         vfs_close_file(task->exec_file);
+        task->exec_file = NULL;
+    }
 
     task_cleanup_fd_info(task);
     task_fs_put(task->fs);
@@ -1607,7 +1770,8 @@ void task_exit_inner(task_t *task, int64_t code) {
             task_commit_signal(parent, SIGCHLD, &sigchld_info);
         }
 
-        if (!parent || ignore_sigchld || (sa.sa_flags & SA_NOCLDWAIT)) {
+        if (!parent || task->orphaned_to_init || ignore_sigchld ||
+            (sa.sa_flags & SA_NOCLDWAIT)) {
             if (task_try_mark_reaped(task))
                 task_enqueue_should_free(task);
         }
@@ -1755,30 +1919,13 @@ void sched_wake_worker(uint32_t cpu_id) {
     }
 }
 
-void sched_defer_tick(void) {
-    task_t *task = current_task;
-    if (!task || !task_has_tick_work(task)) {
-        return;
-    }
-
-    bool expected = false;
-    if (!__atomic_compare_exchange_n(&task->tick_work_queued, &expected, true,
-                                     false, __ATOMIC_ACQ_REL,
-                                     __ATOMIC_ACQUIRE)) {
-        return;
-    }
-
-    uint32_t queue_id = sched_worker_slot_for_cpu(task->cpu_id);
-    task->tick_work_queue_id = queue_id;
-    spin_lock(&worker_tick_locks[queue_id]);
-    llist_append(&worker_tick_queues[queue_id], &task->tick_work_node);
-    spin_unlock(&worker_tick_locks[queue_id]);
-
-    sched_wake_worker(task->cpu_id);
-}
-
 void sched_check_wakeup() {
     uint64_t next = __atomic_load_n(&task_timeout_next_ns, __ATOMIC_ACQUIRE);
+    uint64_t signal_next = task_signal_timer_next_deadline_ns();
+
+    if (signal_next < next)
+        next = signal_next;
+
     if (next == UINT64_MAX)
         return;
 
@@ -1791,7 +1938,10 @@ void sched_check_wakeup() {
 }
 
 uint64_t sched_next_wakeup_ns(void) {
-    return __atomic_load_n(&task_timeout_next_ns, __ATOMIC_ACQUIRE);
+    uint64_t next = __atomic_load_n(&task_timeout_next_ns, __ATOMIC_ACQUIRE);
+    uint64_t signal_next = task_signal_timer_next_deadline_ns();
+
+    return signal_next < next ? signal_next : next;
 }
 
 static int task_kill_process_group_internal(int pgid, int sig,

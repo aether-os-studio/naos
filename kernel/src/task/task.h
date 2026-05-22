@@ -48,7 +48,7 @@ typedef struct task_index_bucket {
 #define AT_SYSINFO 32
 #define AT_SYSINFO_EHDR 33
 
-#define USER_MMAP_START PAGE_SIZE
+#define USER_MMAP_START 0x10000
 #define USER_MMAP_BASE_END 0x0000000060000000
 #define USER_MMAP_END USER_MMAP_BASE_END
 
@@ -233,7 +233,6 @@ static inline bool task_should_index_parent(task_t *task) {
            !task->is_clone && !(task->clone_flags & CLONE_THREAD);
 }
 
-void sched_defer_tick(void);
 void sched_wake_worker(uint32_t cpu_id);
 void sched_check_wakeup();
 uint64_t sched_next_wakeup_ns(void);
