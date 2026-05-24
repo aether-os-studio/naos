@@ -31,87 +31,9 @@ static bool vfs_open_flags_want_write(unsigned int flags) {
     return accmode == O_WRONLY || accmode == O_RDWR;
 }
 
-static int vfs_open_last_lookups(int dfd, const char *name,
-                                 const struct vfs_open_how *how,
-                                 struct vfs_path *parent, struct vfs_qstr *last,
-                                 struct vfs_dentry **res_dentry) {
-    struct vfs_dentry *dentry;
-    unsigned int parent_type = 0;
-    unsigned int lookup_flags = LOOKUP_PARENT | vfs_open_lookup_flags(how);
-    unsigned int component_flags = LOOKUP_CREATE | vfs_open_lookup_flags(how);
-    int ret;
-
-    ret = vfs_path_parent_lookup(dfd, name, lookup_flags, parent, last,
-                                 &parent_type);
-    if (ret < 0)
-        return ret;
-    if (!parent->dentry || !parent->dentry->d_inode) {
-        ret = -ENOENT;
-        goto err_parent;
-    }
-    if (!S_ISDIR(parent->dentry->d_inode->i_mode)) {
-        ret = -ENOTDIR;
-        goto err_parent;
-    }
-
-    dentry = vfs_d_lookup(parent->dentry, last);
-    if (dentry) {
-        if (dentry->d_op && dentry->d_op->d_revalidate) {
-            ret = dentry->d_op->d_revalidate(dentry, component_flags);
-            if (ret < 0) {
-                vfs_dput(dentry);
-                return ret;
-            }
-            if (ret == 0) {
-                vfs_dentry_unhash(dentry);
-                vfs_dput(dentry);
-                dentry = NULL;
-            }
-        }
-        if (dentry && !dentry->d_inode) {
-            vfs_dentry_unhash(dentry);
-            vfs_dput(dentry);
-            dentry = NULL;
-        }
-    }
-
-    if (!dentry) {
-        struct vfs_inode *dir = parent->dentry->d_inode;
-
-        if (dir->i_op && dir->i_op->lookup) {
-            dentry = vfs_d_alloc(parent->dentry->d_sb, parent->dentry, last);
-            if (!dentry)
-                return -ENOMEM;
-            {
-                struct vfs_dentry *lookup =
-                    dir->i_op->lookup(dir, dentry, component_flags);
-                if (IS_ERR(lookup)) {
-                    vfs_dput(dentry);
-                    return (int)PTR_ERR(lookup);
-                }
-                if (!lookup) {
-                    vfs_dput(dentry);
-                    dentry = NULL;
-                } else {
-                    if (lookup != dentry)
-                        vfs_dput(dentry);
-                    dentry = lookup;
-                }
-            }
-            if (dentry && !(dentry->d_flags & VFS_DENTRY_HASHED))
-                vfs_d_add(parent->dentry, dentry);
-        }
-    }
-
-    if (!dentry && !(how->flags & O_CREAT))
-        return -ENOENT;
-    *res_dentry = dentry;
-    return 0;
-
-err_parent:
-    vfs_path_put(parent);
-    return ret;
-}
+static int vfs_open_from_root(struct vfs_path *start, struct vfs_path *root,
+                              const char *name, const struct vfs_open_how *how,
+                              struct vfs_file **out, bool kernel);
 
 struct vfs_file *vfs_alloc_file(const struct vfs_path *path,
                                 unsigned int open_flags) {
@@ -317,6 +239,43 @@ void vfs_poll_notify(vfs_node_t *node, uint32_t events) {
 
 int vfs_openat(int dfd, const char *name, const struct vfs_open_how *how,
                struct vfs_file **out, bool kernel) {
+    struct vfs_path start = {0};
+    struct vfs_path root = {0};
+    int ret;
+
+    if (!name || !out)
+        return -EINVAL;
+
+    ret =
+        vfs_get_fs_start(dfd, name, vfs_open_lookup_flags(how), &start, &root);
+    if (ret < 0)
+        return ret;
+
+    ret = vfs_open_from_root(&start, &root, name, how, out, kernel);
+    vfs_path_put(&start);
+    vfs_path_put(&root);
+    return ret;
+}
+
+int vfs_open_from(struct vfs_path *start, const char *name,
+                  const struct vfs_open_how *how, struct vfs_file **out,
+                  bool kernel) {
+    struct vfs_path root = {0};
+    int ret;
+
+    if (!start)
+        return -EINVAL;
+
+    vfs_path_get(start);
+    root = *start;
+    ret = vfs_open_from_root(start, &root, name, how, out, kernel);
+    vfs_path_put(&root);
+    return ret;
+}
+
+static int vfs_open_from_root(struct vfs_path *start, struct vfs_path *root,
+                              const char *name, const struct vfs_open_how *how,
+                              struct vfs_file **out, bool kernel) {
     struct vfs_open_how local_how;
     struct vfs_path parent = {0};
     struct vfs_path target = {0};
@@ -328,8 +287,10 @@ int vfs_openat(int dfd, const char *name, const struct vfs_open_how *how,
     bool dentry_owned_by_target = false;
     bool created = false;
     int ret;
+    unsigned int lookup_flags;
+    unsigned int component_flags;
 
-    if (!name || !out)
+    if (!start || !root || !name || !out)
         return -EINVAL;
 
     memset(&local_how, 0, sizeof(local_how));
@@ -348,11 +309,30 @@ int vfs_openat(int dfd, const char *name, const struct vfs_open_how *how,
         local_how.flags |= O_DIRECTORY;
     }
 
-    ret = vfs_open_last_lookups(dfd, name, &local_how, &parent, &last, &dentry);
+    lookup_flags = LOOKUP_PARENT | vfs_open_lookup_flags(&local_how);
+    component_flags = LOOKUP_CREATE | vfs_open_lookup_flags(&local_how);
+    ret = vfs_path_parent_lookup_from(start, root, name, lookup_flags, &parent,
+                                      &last, NULL);
     if (ret < 0)
         goto out;
 
     dir = parent.dentry->d_inode;
+    if (!parent.dentry || !dir) {
+        ret = -ENOENT;
+        goto out;
+    }
+    if (!S_ISDIR(dir->i_mode)) {
+        ret = -ENOTDIR;
+        goto out;
+    }
+
+    dentry = vfs_lookup_component(&parent, last.name, component_flags);
+    if (IS_ERR(dentry)) {
+        ret = PTR_ERR(dentry);
+        dentry = NULL;
+        if (!(ret == -ENOENT && (local_how.flags & O_CREAT)))
+            goto out;
+    }
     if (!dentry || !dentry->d_inode) {
         if (!(local_how.flags & O_CREAT)) {
             ret = -ENOENT;
@@ -420,9 +400,9 @@ int vfs_openat(int dfd, const char *name, const struct vfs_open_how *how,
                 goto out;
             }
         } else {
-            ret = vfs_filename_lookup(
-                dfd, name, LOOKUP_FOLLOW | vfs_open_lookup_flags(&local_how),
-                &target);
+            ret = vfs_filename_lookup_from(
+                start, root, name,
+                LOOKUP_FOLLOW | vfs_open_lookup_flags(&local_how), &target);
             if (ret < 0)
                 goto out;
             if (!target.dentry || !target.dentry->d_inode) {

@@ -4,8 +4,6 @@ export ROOTFS_SYSROOT = $(CWD)/rootfs-$(ARCH)
 
 all:
 	sh build_initramfs.sh
-ifeq ($(ARCH), x86_64)
-endif
 	sh build_rootfs.sh
 
 .PHONY: clean

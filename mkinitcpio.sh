@@ -1,12 +1,12 @@
-sudo rm -rf ${PROJECT_ROOT}/initramfs-${ARCH}/
+rm -rf ${PROJECT_ROOT}/initramfs-${ARCH}/
 
 mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/bin/
 mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/dev/
 mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/sbin/
 mkdir -p ${PROJECT_ROOT}/initramfs-${ARCH}/lib/modules/
 
-sudo cp -r ${PROJECT_ROOT}/user/initramfs-${ARCH}/bin/busybox ${PROJECT_ROOT}/initramfs-${ARCH}/bin
-sudo cp -r ${PROJECT_ROOT}/user/initramfs-${ARCH}/lib/ld-musl-${ARCH}.so.1 ${PROJECT_ROOT}/initramfs-${ARCH}/lib
+cp -r ${PROJECT_ROOT}/user/initramfs-${ARCH}/bin/busybox ${PROJECT_ROOT}/initramfs-${ARCH}/bin
+cp -r ${PROJECT_ROOT}/user/initramfs-${ARCH}/lib/ld-musl-${ARCH}.so.1 ${PROJECT_ROOT}/initramfs-${ARCH}/lib
 
 # Create /bin/*
 ln -sf /bin/busybox "${PROJECT_ROOT}/initramfs-${ARCH}/bin/arch"

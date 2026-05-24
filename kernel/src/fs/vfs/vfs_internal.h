@@ -18,6 +18,16 @@ vfs_find_mount_child_by_source(struct vfs_mount *parent,
 struct vfs_mount *vfs_create_bind_mount(const struct vfs_path *from,
                                         bool recursive);
 
+int vfs_get_fs_start(int dfd, const char *name, unsigned int lookup_flags,
+                     struct vfs_path *start, struct vfs_path *root);
+int vfs_filename_lookup_from(const struct vfs_path *start,
+                             const struct vfs_path *root, const char *name,
+                             unsigned int lookup_flags, struct vfs_path *path);
+int vfs_path_parent_lookup_from(const struct vfs_path *start,
+                                const struct vfs_path *root, const char *name,
+                                unsigned int lookup_flags,
+                                struct vfs_path *parent, struct vfs_qstr *last,
+                                unsigned int *type);
 struct vfs_dentry *vfs_lookup_component(struct vfs_path *parent,
                                         const char *component,
                                         unsigned int flags);

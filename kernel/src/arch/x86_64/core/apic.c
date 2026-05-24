@@ -407,6 +407,7 @@ void apic_init() {
 void sse_init() {
     uint32_t eax, ebx, ecx, edx;
     uint32_t features_ecx = 0;
+    uint32_t ext7_ebx = 0;
     uint64_t cr0 = get_cr0();
     uint64_t cr4 = get_cr4();
     uint64_t xcr0_mask = X64_XSTATE_X87 | X64_XSTATE_SSE;
@@ -425,12 +426,22 @@ void sse_init() {
         cr4 |= (1ULL << 18);
         set_cr4(cr4);
 
+        cpuid_count(7, 0, &eax, &ebx, &ecx, &edx);
+        ext7_ebx = ebx;
+
         cpuid_count(0xD, 0, &eax, &ebx, &ecx, &edx);
         uint64_t supported_mask = ((uint64_t)edx << 32) | eax;
 
         xcr0_mask &= supported_mask;
         if ((features_ecx & (1U << 28)) && (supported_mask & X64_XSTATE_AVX))
             xcr0_mask |= X64_XSTATE_AVX;
+        if ((xcr0_mask & X64_XSTATE_AVX) && (ext7_ebx & (1U << 16)) &&
+            (supported_mask & X64_XSTATE_OPMASK) &&
+            (supported_mask & X64_XSTATE_ZMM_HI256) &&
+            (supported_mask & X64_XSTATE_HI16_ZMM)) {
+            xcr0_mask |=
+                X64_XSTATE_OPMASK | X64_XSTATE_ZMM_HI256 | X64_XSTATE_HI16_ZMM;
+        }
 
         xsetbv(0, xcr0_mask);
         cpuid_count(0xD, 0, &eax, &ebx, &ecx, &edx);

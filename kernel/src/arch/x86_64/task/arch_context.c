@@ -117,6 +117,7 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
                        uint64_t clone_flags) {
     (void)clone_flags;
 
+    memset(dst, 0, sizeof(*dst));
     dst->ctx = (struct pt_regs *)stack - 1;
     dst->rip = (uint64_t)ret_from_fork;
     dst->rsp = (uint64_t)dst->ctx;
@@ -125,6 +126,8 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
 
     dst->fpu_ctx = alloc_frames_bytes(x64_fpu_state_size());
     if (src->fpu_ctx) {
+        if (current_task && current_task->arch_context == src)
+            x64_fpu_save(src->fpu_ctx);
         memcpy(dst->fpu_ctx, src->fpu_ctx, x64_fpu_state_size());
     } else {
         x64_fpu_state_init(dst->fpu_ctx);

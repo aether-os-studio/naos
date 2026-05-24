@@ -89,6 +89,9 @@ typedef struct arch_context {
 #define X64_XSTATE_X87 (1ULL << 0)
 #define X64_XSTATE_SSE (1ULL << 1)
 #define X64_XSTATE_AVX (1ULL << 2)
+#define X64_XSTATE_OPMASK (1ULL << 5)
+#define X64_XSTATE_ZMM_HI256 (1ULL << 6)
+#define X64_XSTATE_HI16_ZMM (1ULL << 7)
 
 uint64_t x64_fpu_state_size(void);
 bool x64_fpu_xsave_enabled(void);

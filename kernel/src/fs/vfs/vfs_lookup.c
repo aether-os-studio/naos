@@ -144,9 +144,8 @@ static int vfs_get_scoped_start(struct vfs_process_fs *fs,
     return ret;
 }
 
-static int vfs_get_fs_start(int dfd, const char *name,
-                            unsigned int lookup_flags, struct vfs_path *start,
-                            struct vfs_path *root) {
+int vfs_get_fs_start(int dfd, const char *name, unsigned int lookup_flags,
+                     struct vfs_path *start, struct vfs_path *root) {
     struct vfs_process_fs *fs;
     struct vfs_file *file;
     struct vfs_mount *ns_root_mnt;
@@ -578,14 +577,49 @@ int vfs_filename_lookup(int dfd, const char *name, unsigned int lookup_flags,
     return ret;
 }
 
+int vfs_filename_lookup_from(const struct vfs_path *start,
+                             const struct vfs_path *root, const char *name,
+                             unsigned int lookup_flags, struct vfs_path *path) {
+    const struct vfs_path *lookup_start;
+
+    if (!start || !root || !name || !path)
+        return -EINVAL;
+
+    lookup_start = vfs_path_is_absolute(name) ? root : start;
+    return __vfs_filename_lookup((struct vfs_path *)lookup_start, root, name,
+                                 lookup_flags, 0, path);
+}
+
 int vfs_path_parent_lookup(int dfd, const char *name, unsigned int lookup_flags,
                            struct vfs_path *parent, struct vfs_qstr *last,
                            unsigned int *type) {
-    char *copy, *basename, *slash;
+    struct vfs_path start = {0};
     struct vfs_path root = {0};
     int ret;
 
     if (!name || !parent || !last)
+        return -EINVAL;
+
+    ret = vfs_get_fs_start(dfd, name, lookup_flags, &start, &root);
+    if (ret < 0)
+        return ret;
+
+    ret = vfs_path_parent_lookup_from(&start, &root, name, lookup_flags, parent,
+                                      last, type);
+    vfs_path_put(&start);
+    vfs_path_put(&root);
+    return ret;
+}
+
+int vfs_path_parent_lookup_from(const struct vfs_path *start,
+                                const struct vfs_path *root, const char *name,
+                                unsigned int lookup_flags,
+                                struct vfs_path *parent, struct vfs_qstr *last,
+                                unsigned int *type) {
+    char *copy, *basename, *slash;
+    int ret;
+
+    if (!start || !root || !name || !parent || !last)
         return -EINVAL;
 
     copy = strdup(name);
@@ -597,19 +631,14 @@ int vfs_path_parent_lookup(int dfd, const char *name, unsigned int lookup_flags,
 
     slash = strrchr(copy, '/');
     if (!slash) {
-        ret = vfs_get_fs_start(dfd, copy, lookup_flags, parent, &root);
-        if (ret < 0) {
-            free(copy);
-            return ret;
-        }
+        vfs_path_get((struct vfs_path *)start);
+        *parent = *start;
         ret = vfs_follow_mount_checked(parent, lookup_flags);
         if (ret < 0) {
             vfs_path_put(parent);
-            vfs_path_put(&root);
             free(copy);
             return ret;
         }
-        vfs_path_put(&root);
         vfs_qstr_dup(last, copy);
         if (type)
             *type = 0;
@@ -630,7 +659,8 @@ int vfs_path_parent_lookup(int dfd, const char *name, unsigned int lookup_flags,
         vfs_qstr_dup(last, basename[0] ? basename : ".");
         *slash = '\0';
     }
-    ret = vfs_filename_lookup(dfd, copy[0] ? copy : "/", lookup_flags, parent);
+    ret = vfs_filename_lookup_from(start, root, copy[0] ? copy : "/",
+                                   lookup_flags, parent);
     if (ret == 0)
         vfs_follow_mount(parent);
     if (type)

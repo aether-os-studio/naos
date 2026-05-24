@@ -1626,18 +1626,29 @@ static uint64_t task_execve_interp_base_at_depth(uint64_t first_base,
     return first_base;
 }
 
-static int
-task_execve_load_interpreter_chain(task_t *task, const char *interp_path,
-                                   uint64_t first_base, int depth,
-                                   task_execve_interp_result_t *result) {
-    if (!task || !interp_path || !result)
+static int task_execve_load_interpreter_chain(
+    task_t *task, const struct vfs_path *from_path, const char *interp_path,
+    uint64_t first_base, int depth, task_execve_interp_result_t *result) {
+    if (!task || !from_path || !interp_path || !result)
         return -EINVAL;
     if (depth >= TASK_EXEC_MAX_INTERP_DEPTH)
         return -ELOOP;
 
     struct vfs_open_how exec_how = {.flags = O_RDONLY};
     struct vfs_file *file = NULL;
-    int ret = vfs_openat(AT_FDCWD, interp_path, &exec_how, &file, true);
+    int ret;
+
+    if (interp_path[0] == '/') {
+        ret = vfs_openat(AT_FDCWD, interp_path, &exec_how, &file, true);
+    } else {
+        struct vfs_path start = {
+            .mnt = vfs_mntget(from_path->mnt),
+            .dentry = vfs_dget(from_path->dentry->d_parent),
+        };
+
+        ret = vfs_open_from(&start, interp_path, &exec_how, &file, true);
+        vfs_path_put(&start);
+    }
     if (ret < 0 || !file)
         return ret < 0 ? ret : -ENOENT;
 
@@ -1672,8 +1683,9 @@ task_execve_load_interpreter_chain(task_t *task, const char *interp_path,
 
     if (next_interp_path) {
         task_execve_interp_result_t next_result;
-        ret = task_execve_load_interpreter_chain(
-            task, next_interp_path, first_base, depth + 1, &next_result);
+        ret = task_execve_load_interpreter_chain(task, &file->f_path,
+                                                 next_interp_path, first_base,
+                                                 depth + 1, &next_result);
         free(next_interp_path);
         if (ret < 0)
             goto out_free_phdr;
@@ -2360,7 +2372,8 @@ shell_fallback_done:
 
             task_execve_interp_result_t interp_result;
             interp_ret = task_execve_load_interpreter_chain(
-                self, interpreter_path, interpreter_base, 0, &interp_result);
+                self, &exec_file->f_path, interpreter_path, interpreter_base, 0,
+                &interp_result);
             if (interp_ret < 0) {
                 exec_fail_ret = (uint64_t)interp_ret;
                 goto exec_fail_restore_mm;
@@ -2723,13 +2736,16 @@ uint64_t sys_wait4(int pid, int *status, uint64_t options,
         }
 
         if (found_alive) {
-            int reason = task_block(current_task, TASK_BLOCKING, -1, "waitpid");
+            if (task_signal_has_deliverable(current_task))
+                return -EINTR;
+            task_block(current_task, TASK_BLOCKING, -1, "waitpid");
             continue;
         }
 
         if (found_ptrace_alive) {
-            int reason =
-                task_block(current_task, TASK_BLOCKING, -1, "waitpid-ptrace");
+            if (task_signal_has_deliverable(current_task))
+                return -EINTR;
+            task_block(current_task, TASK_BLOCKING, -1, "waitpid-ptrace");
             continue;
         }
 

@@ -5,7 +5,6 @@
 typedef struct {
     bool is_use;
     bool mapped;
-    bool is_verify;
     char module_name[64];
     char *path;
     uint8_t *data;

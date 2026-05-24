@@ -811,6 +811,9 @@ int vfs_filename_lookup(int dfd, const char *name, unsigned int lookup_flags,
 int vfs_path_parent_lookup(int dfd, const char *name, unsigned int lookup_flags,
                            struct vfs_path *parent, struct vfs_qstr *last,
                            unsigned int *type);
+int vfs_open_from(struct vfs_path *start, const char *name,
+                  const struct vfs_open_how *how, struct vfs_file **out,
+                  bool kernel);
 
 /**
  * Open a path relative to dfd and return a referenced open file description.
