@@ -2579,6 +2579,7 @@ shell_fallback_done:
     self->exec_file = exec_file;
     task_execve_commit_creds(self, &exec_creds);
     ptrace_stop_for_exec(self);
+    ptrace_stop_for_exec_syscall_exit(self);
 
     arch_to_user_mode(self->arch_context,
                       interpreter_entry ? interpreter_entry : e_entry, stack);
@@ -3333,6 +3334,12 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
     child->clone_flags = flags;
     child->is_clone = !!(flags & CLONE_THREAD);
 
+    uint32_t ptrace_fork_event = 0;
+    bool ptrace_trace_fork =
+        ptrace_tracees_fork_enabled(self, flags, &ptrace_fork_event);
+    if (ptrace_trace_fork)
+        ptrace_attach_child(self, child);
+
     spin_lock(&task_queue_lock);
     task_parent_index_attach_locked(child);
     task_pgid_index_attach_locked(child);
@@ -3346,15 +3353,16 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
             goto fail;
     }
 
-    child->state = TASK_READY;
-    child->current_state = TASK_READY;
+    child->state = ptrace_trace_fork ? TASK_BLOCKING : TASK_READY;
+    child->current_state = ptrace_trace_fork ? TASK_BLOCKING : TASK_READY;
 
     child->sched_info = calloc(1, sizeof(struct sched_entity));
     if (!child->sched_info) {
         ret = (uint64_t)-ENOMEM;
         goto fail;
     }
-    add_sched_entity(child, &schedulers[child->cpu_id]);
+    if (!ptrace_trace_fork)
+        add_sched_entity(child, &schedulers[child->cpu_id]);
 
     on_new_task_call(child);
     for (size_t i = 0; child->fd_info && i < child->fd_info->max_fds; i++) {
@@ -3362,6 +3370,9 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
             on_open_file_call(child, i);
         }
     }
+
+    if (ptrace_trace_fork)
+        ptrace_stop_for_fork_event(self, ptrace_fork_event, child->pid);
 
     if ((flags & CLONE_VFORK)) {
         while (!self->child_vfork_done) {
@@ -3651,7 +3662,7 @@ uint64_t sys_clock_nanosleep(int clock_id, int flags,
         return (uint64_t)-EFAULT;
     struct timespec remain;
     memset(&remain, 0, sizeof(remain));
-    if (copy_to_user(remain_user, &remain, sizeof(remain)))
+    if (remain_user && copy_to_user(remain_user, &remain, sizeof(remain)))
         return (uint64_t)-EFAULT;
 
     if (request.tv_sec < 0 || request.tv_nsec >= 1000000000L) {
@@ -3675,7 +3686,8 @@ uint64_t sys_clock_nanosleep(int clock_id, int flags,
             uint64_t elapsed = end > start ? end - start : 0;
             remain.tv_sec = elapsed / 1000000000ULL;
             remain.tv_nsec = elapsed % 1000000000ULL;
-            if (copy_to_user(remain_user, &remain, sizeof(remain)))
+            if (remain_user &&
+                copy_to_user(remain_user, &remain, sizeof(remain)))
                 return (uint64_t)-EFAULT;
 
             return -EINTR;
@@ -3684,7 +3696,7 @@ uint64_t sys_clock_nanosleep(int clock_id, int flags,
 
     arch_disable_interrupt();
 
-    if (copy_to_user(remain_user, &remain, sizeof(remain)))
+    if (remain_user && copy_to_user(remain_user, &remain, sizeof(remain)))
         return (uint64_t)-EFAULT;
 
     return 0;

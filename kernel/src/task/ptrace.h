@@ -116,3 +116,8 @@ void ptrace_on_syscall_enter(struct pt_regs *regs);
 void ptrace_on_syscall_exit(struct pt_regs *regs);
 void ptrace_stop_for_signal(task_t *task, int sig, const siginfo_t *info);
 void ptrace_stop_for_exec(task_t *task);
+void ptrace_stop_for_exec_syscall_exit(task_t *task);
+bool ptrace_tracees_fork_enabled(task_t *task, uint64_t clone_flags,
+                                 uint32_t *event_out);
+void ptrace_attach_child(task_t *parent, task_t *child);
+void ptrace_stop_for_fork_event(task_t *task, uint32_t event, uint64_t message);

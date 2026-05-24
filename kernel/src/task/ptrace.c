@@ -133,6 +133,62 @@ static void ptrace_stop_event(task_t *task, uint32_t event, uint64_t message) {
     task_block(task, TASK_BLOCKING, -1, "ptrace-exec");
 }
 
+bool ptrace_tracees_fork_enabled(task_t *task, uint64_t clone_flags,
+                                 uint32_t *event_out) {
+    uint32_t event = 0;
+
+    if (!task || !ptrace_is_traced(task))
+        return false;
+
+    if (clone_flags & CLONE_VFORK) {
+        if (task->ptrace_opts & PTRACE_O_TRACEVFORK)
+            event = PTRACE_EVENT_VFORK;
+    } else if (clone_flags & CLONE_THREAD) {
+        if (task->ptrace_opts & PTRACE_O_TRACECLONE)
+            event = PTRACE_EVENT_CLONE;
+    } else {
+        if (task->ptrace_opts & PTRACE_O_TRACEFORK)
+            event = PTRACE_EVENT_FORK;
+    }
+
+    if (!event)
+        return false;
+
+    if (event_out)
+        *event_out = event;
+    return true;
+}
+
+void ptrace_attach_child(task_t *parent, task_t *child) {
+    if (!parent || !child || !ptrace_is_traced(parent))
+        return;
+
+    child->ptrace_tracer_pid = parent->ptrace_tracer_pid;
+    child->ptrace_resume_action = PTRACE_RESUME_CONT;
+    child->ptrace_opts = parent->ptrace_opts;
+    child->ptrace_wait_pending = true;
+    child->ptrace_stopped = true;
+    child->ptrace_wait_status = (uint32_t)((SIGSTOP << 8) | 0x7f);
+    child->ptrace_syscall_exit_pending = false;
+    child->ptrace_exec_event_pending = false;
+    child->ptrace_last_stop = PTRACE_STOP_SIGNAL;
+    child->ptrace_resume_sig = 0;
+    child->ptrace_message = 0;
+    ptrace_fill_default_siginfo(&child->ptrace_siginfo, SIGSTOP);
+}
+
+void ptrace_stop_for_fork_event(task_t *task, uint32_t event,
+                                uint64_t message) {
+    if (!task || !ptrace_is_traced(task))
+        return;
+    if (event != PTRACE_EVENT_FORK && event != PTRACE_EVENT_VFORK &&
+        event != PTRACE_EVENT_CLONE) {
+        return;
+    }
+
+    ptrace_stop_event(task, event, message);
+}
+
 static void ptrace_fill_syscall_info(struct ptrace_syscall_info *info,
                                      const struct pt_regs *regs,
                                      uint8_t last_stop) {
@@ -239,11 +295,15 @@ static uint64_t ptrace_resume(task_t *target, uint8_t action, uint64_t sig,
         target->ptrace_tracer_pid = 0;
         target->ptrace_resume_action = PTRACE_RESUME_NONE;
         target->ptrace_syscall_exit_pending = false;
+        target->ptrace_exec_event_pending = false;
         target->ptrace_last_stop = PTRACE_STOP_NONE;
     } else {
         target->ptrace_resume_action = action;
-        if (action != PTRACE_RESUME_SYSCALL ||
-            target->ptrace_last_stop != PTRACE_STOP_SYSCALL_ENTER) {
+        if (target->ptrace_exec_event_pending) {
+            if (action != PTRACE_RESUME_SYSCALL)
+                target->ptrace_exec_event_pending = false;
+        } else if (action != PTRACE_RESUME_SYSCALL ||
+                   target->ptrace_last_stop != PTRACE_STOP_SYSCALL_ENTER) {
             target->ptrace_syscall_exit_pending = false;
         }
     }
@@ -331,6 +391,7 @@ void ptrace_on_syscall_exit(struct pt_regs *regs) {
     if (self->ptrace_opts & PTRACE_O_TRACESYSGOOD)
         stop_sig |= 0x80;
 
+    self->ptrace_exec_event_pending = false;
     self->ptrace_syscall_exit_pending = false;
     ptrace_stop_current(self, regs, stop_sig, NULL, PTRACE_STOP_SYSCALL_EXIT);
 }
@@ -344,12 +405,40 @@ void ptrace_stop_for_signal(task_t *task, int sig, const siginfo_t *info) {
 }
 
 void ptrace_stop_for_exec(task_t *task) {
+    uint64_t old_pid;
+
     if (!task || !ptrace_is_traced(task))
         return;
     if ((task->ptrace_opts & PTRACE_O_TRACEEXEC) == 0)
         return;
 
-    ptrace_stop_event(task, PTRACE_EVENT_EXEC, 0);
+    old_pid = task->pid;
+    task->ptrace_exec_event_pending = task->ptrace_syscall_exit_pending;
+    ptrace_stop_event(task, PTRACE_EVENT_EXEC, old_pid);
+}
+
+void ptrace_stop_for_exec_syscall_exit(task_t *task) {
+    struct pt_regs *regs;
+    int stop_sig;
+
+    if (!task || !ptrace_is_traced(task))
+        return;
+    if (task->ptrace_resume_action != PTRACE_RESUME_SYSCALL ||
+        !task->ptrace_exec_event_pending) {
+        return;
+    }
+
+    regs = ptrace_task_regs(task);
+    if (!regs)
+        return;
+
+    stop_sig = SIGTRAP;
+    if (task->ptrace_opts & PTRACE_O_TRACESYSGOOD)
+        stop_sig |= 0x80;
+
+    task->ptrace_exec_event_pending = false;
+    task->ptrace_syscall_exit_pending = false;
+    ptrace_stop_current(task, regs, stop_sig, NULL, PTRACE_STOP_SYSCALL_EXIT);
 }
 
 uint64_t sys_ptrace(uint64_t request, uint64_t pid, void *addr, void *data) {
@@ -370,6 +459,7 @@ uint64_t sys_ptrace(uint64_t request, uint64_t pid, void *addr, void *data) {
         self->ptrace_stopped = false;
         self->ptrace_wait_status = 0;
         self->ptrace_syscall_exit_pending = false;
+        self->ptrace_exec_event_pending = false;
         self->ptrace_last_stop = PTRACE_STOP_NONE;
         self->ptrace_resume_sig = 0;
         return 0;
@@ -390,6 +480,7 @@ uint64_t sys_ptrace(uint64_t request, uint64_t pid, void *addr, void *data) {
         target->ptrace_stopped = false;
         target->ptrace_wait_status = 0;
         target->ptrace_syscall_exit_pending = false;
+        target->ptrace_exec_event_pending = false;
         target->ptrace_last_stop = PTRACE_STOP_NONE;
         target->ptrace_resume_sig = 0;
         task_send_signal(target, SIGSTOP, SI_USER);
@@ -424,8 +515,10 @@ uint64_t sys_ptrace(uint64_t request, uint64_t pid, void *addr, void *data) {
         return 0;
     case PTRACE_SETOPTIONS: {
         uint64_t options = (uint64_t)data;
-        uint64_t supported = PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEEXEC |
-                             PTRACE_O_TRACEEXIT | PTRACE_O_EXITKILL;
+        uint64_t supported = PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK |
+                             PTRACE_O_TRACEVFORK | PTRACE_O_TRACECLONE |
+                             PTRACE_O_TRACEEXEC | PTRACE_O_TRACEEXIT |
+                             PTRACE_O_EXITKILL;
 
         if (options & ~supported)
             return (uint64_t)-EINVAL;

@@ -398,6 +398,7 @@ typedef struct task {
     bool ptrace_stopped;
     bool ptrace_wait_pending;
     bool ptrace_syscall_exit_pending;
+    bool ptrace_exec_event_pending;
     uint32_t personality;
     uint64_t clone_flags;
     task_ns_proxy_t *nsproxy;
