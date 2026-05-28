@@ -270,6 +270,7 @@ task_signal_info_t *task_signal_clone(task_t *parent, uint64_t flags);
 task_signal_info_t *task_signal_reset_after_exec(task_t *task);
 void task_signal_free(task_signal_info_t *signal);
 size_t task_thread_group_count(uint64_t tgid);
+bool task_group_exit_code(task_t *task, int64_t *code_out);
 
 struct pt_regs;
 

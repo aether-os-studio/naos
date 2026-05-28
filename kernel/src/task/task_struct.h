@@ -299,6 +299,8 @@ typedef struct pending_signal {
 typedef struct task_sighand {
     spinlock_t siglock;
     int ref_count;
+    bool group_exit;
+    int64_t group_exit_code;
     sigaction_t actions[MAXSIG];
 } task_sighand_t;
 

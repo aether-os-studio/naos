@@ -915,6 +915,12 @@ uint64_t sys_tgkill(int tgid, int pid, int sig) {
 
 __attribute__((used)) void task_signal(struct pt_regs *regs) {
     task_t *self = current_task;
+    int64_t group_exit_code;
+
+    if (task_group_exit_code(self, &group_exit_code)) {
+        task_exit_thread(group_exit_code);
+    }
+
     if (!self || !self->signal || self->is_kernel || self->state == TASK_DIED ||
         self->state == TASK_UNINTERRUPTABLE) {
         return;

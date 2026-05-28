@@ -984,6 +984,42 @@ size_t task_thread_group_count(uint64_t tgid) {
     return count;
 }
 
+/*
+ * Linux process-directed signals target a thread group once, not every thread
+ * in the group. This kernel does not have a separate shared pending-signal
+ * object for thread groups yet, so pick one live representative task per tgid
+ * to avoid over-delivering group-wide signals to multi-threaded processes.
+ */
+static bool task_is_signal_group_representative_locked(task_t *task,
+                                                       bool skip_kernel) {
+    if (!task || task->state == TASK_DIED || !task->arch_context ||
+        (skip_kernel && task->is_kernel)) {
+        return false;
+    }
+
+    uint64_t tgid = task_effective_tgid(task);
+    if (!tgid || !task_pid_map.buckets)
+        return true;
+
+    for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+        hashmap_entry_t *entry = &task_pid_map.buckets[i];
+        if (!hashmap_entry_is_occupied(entry))
+            continue;
+
+        task_t *peer = (task_t *)entry->value;
+        if (!peer || peer == task || peer->state == TASK_DIED ||
+            !peer->arch_context || task_effective_tgid(peer) != tgid ||
+            (skip_kernel && peer->is_kernel)) {
+            continue;
+        }
+
+        if (peer->pid < task->pid)
+            return false;
+    }
+
+    return true;
+}
+
 int task_kill_all(int sig) {
     int sent = 0;
 
@@ -996,7 +1032,8 @@ int task_kill_all(int sig) {
             }
 
             task_t *task = (task_t *)entry->value;
-            if (!task || task->is_kernel) {
+            if (!task ||
+                !task_is_signal_group_representative_locked(task, true)) {
                 continue;
             }
 
@@ -1543,6 +1580,26 @@ void task_init() {
 
 void sys_yield() { schedule(SCHED_FLAG_YIELD); }
 
+bool task_group_exit_code(task_t *task, int64_t *code_out) {
+    if (!task || !task->signal || !task->signal->sighand)
+        return false;
+
+    bool exiting;
+    int64_t code;
+
+    spin_lock(&task->signal->sighand->siglock);
+    exiting = task->signal->sighand->group_exit;
+    code = task->signal->sighand->group_exit_code;
+    spin_unlock(&task->signal->sighand->siglock);
+
+    if (!exiting)
+        return false;
+
+    if (code_out)
+        *code_out = code;
+    return true;
+}
+
 int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
                const char *blocking_reason) {
     if (!task || task->cpu_id >= cpu_count) {
@@ -1624,6 +1681,15 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
 ret:
     if (lock_irq_state)
         arch_enable_interrupt();
+
+    if (task != current_task)
+        return result;
+
+    int64_t group_exit_code;
+    if (task_group_exit_code(task, &group_exit_code)) {
+        task_exit_thread(group_exit_code);
+    }
+
     return result;
 }
 
@@ -1813,9 +1879,16 @@ uint64_t task_exit(int64_t code) {
     task_t *self = current_task;
     task_complete_vfork(self);
 
-    uint64_t current_tgid = self->tgid > 0 ? (uint64_t)self->tgid : self->pid;
+    uint64_t current_tgid = task_effective_tgid(self);
 
     spin_lock(&task_queue_lock);
+    if (self->signal && self->signal->sighand) {
+        spin_lock(&self->signal->sighand->siglock);
+        self->signal->sighand->group_exit = true;
+        self->signal->sighand->group_exit_code = code;
+        spin_unlock(&self->signal->sighand->siglock);
+    }
+
     if (task_pid_map.buckets) {
         for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
             hashmap_entry_t *entry = &task_pid_map.buckets[i];
@@ -1836,7 +1909,11 @@ uint64_t task_exit(int64_t code) {
             }
 
             task->procfs_thread_path = NULL;
-            task_send_signal(task, SIGKILL, SI_USER);
+            if (task->state == TASK_BLOCKING ||
+                task->state == TASK_READING_STDIO ||
+                task->state == TASK_UNINTERRUPTABLE) {
+                task_unblock(task, EOK);
+            }
         }
     }
 
@@ -1954,7 +2031,8 @@ static int task_kill_process_group_internal(int pgid, int sig,
         while (node != &bucket->tasks) {
             task_t *task = list_entry(node, task_t, pgid_node);
             node = node->next;
-            if (!task || (skip_kernel && task->is_kernel)) {
+            if (!task || !task_is_signal_group_representative_locked(
+                             task, skip_kernel)) {
                 continue;
             }
             sent++;
