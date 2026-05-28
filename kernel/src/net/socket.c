@@ -1038,7 +1038,7 @@ static int unix_socket_prepare_ancillary(const struct msghdr *msg,
             continue;
 
         if (cmsg->cmsg_type == SCM_RIGHTS) {
-            if (have_rights || cmsg->cmsg_len < CMSG_LEN(sizeof(int))) {
+            if (have_rights || cmsg->cmsg_len < CMSG_LEN(0)) {
                 unix_socket_ancillary_free(anc);
                 return -EINVAL;
             }
@@ -1050,7 +1050,16 @@ static int unix_socket_prepare_ancillary(const struct msghdr *msg,
             }
 
             uint32_t file_count = rights_len / sizeof(int);
-            if (file_count == 0 || file_count > MAX_PENDING_FILES_COUNT) {
+            /*
+             * Linux accepts an empty SCM_RIGHTS header and effectively treats
+             * it as "no descriptors attached". Firefox's MiniTransceiver uses
+             * exactly that encoding for ordinary messages that carry no FDs.
+             */
+            if (file_count == 0) {
+                continue;
+            }
+
+            if (file_count > MAX_PENDING_FILES_COUNT) {
                 unix_socket_ancillary_free(anc);
                 return -ETOOMANYREFS;
             }

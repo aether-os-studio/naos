@@ -1685,11 +1685,6 @@ ret:
     if (task != current_task)
         return result;
 
-    int64_t group_exit_code;
-    if (task_group_exit_code(task, &group_exit_code)) {
-        task_exit_thread(group_exit_code);
-    }
-
     return result;
 }
 

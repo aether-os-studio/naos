@@ -474,7 +474,15 @@ static int split_vma_boundaries_locked(vma_manager_t *mgr, uint64_t start,
     }
 
     while (true) {
-        vma_t *vma = vma_find_intersection(mgr, start, end);
+        /*
+         * The end boundary must be split against the VMA that actually covers
+         * the last byte in [start, end). Looking up the first intersection in
+         * the whole range is wrong when the range spans multiple VMAs: it can
+         * stop at an earlier VMA and leave the trailing VMA unsplit, after
+         * which do_munmap_locked() trips over vm_end > end and returns
+         * -ENOMEM.
+         */
+        vma_t *vma = vma_find(mgr, end - 1);
         if (!vma)
             break;
         if (vma->vm_start < end && end < vma->vm_end) {
@@ -715,8 +723,10 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         return (uint64_t)-EINVAL;
     task_mm_info_t *mm_info = current_task->mm;
     uint64_t mmap_top = task_mm_mmap_top(mm_info);
-    if (mmap_top <= USER_MMAP_START || aligned_len > mmap_top - USER_MMAP_START)
+    if (mmap_top <= USER_MMAP_START ||
+        aligned_len > mmap_top - USER_MMAP_START) {
         return (uint64_t)-ENOMEM;
+    }
 
     fd_t *map_fd_ref = NULL;
     vfs_node_t *map_node = NULL;
@@ -746,6 +756,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
     uint64_t start_addr = 0;
     uint64_t eager_vm_flags = 0;
     uint64_t eager_vm_offset = 0;
+    uint64_t accounted_grow = aligned_len;
     bool eager_map_anon = false;
     bool eager_map_file_now = false;
 
@@ -771,12 +782,25 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
                 return (uint64_t)-EEXIST;
             }
 
+            unsigned long vm_used_before_replace = mgr->vm_used;
             uint64_t ret = do_munmap_locked(start_addr, aligned_len);
             if ((int64_t)ret < 0) {
                 spin_unlock(&mgr->lock);
                 mmap_put_fd_ref(map_fd_ref);
                 return ret;
             }
+
+            /*
+             * Linux charges MAP_FIXED replacements only for the net new
+             * address-space growth. The overlapped part has already been
+             * removed by do_munmap_locked(), so charging the full new mapping
+             * length can incorrectly raise ENOMEM for in-place replacements.
+             */
+            unsigned long unmapped = vm_used_before_replace > mgr->vm_used
+                                         ? vm_used_before_replace - mgr->vm_used
+                                         : 0;
+            accounted_grow =
+                unmapped >= aligned_len ? 0 : aligned_len - unmapped;
         }
     } else {
         uint64_t hint = 0;
@@ -791,7 +815,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
         }
     }
 
-    if (check_address_space_limit(mgr, aligned_len) != 0) {
+    if (check_address_space_limit(mgr, accounted_grow) != 0) {
         spin_unlock(&mgr->lock);
         mmap_put_fd_ref(map_fd_ref);
         return (uint64_t)-ENOMEM;

@@ -541,8 +541,8 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_GETSID, (syscall_handle_t)sys_getsid);
     regist_syscall_handler(SYS_CAPGET, (syscall_handle_t)sys_capget);
     regist_syscall_handler(SYS_CAPSET, (syscall_handle_t)sys_capset);
-    // regist_syscall_handler(SYS_RT_SIGPENDING,
-    // (syscall_handle_t)sys_rt_sigpending);
+    regist_syscall_handler(SYS_RT_SIGPENDING,
+                           (syscall_handle_t)sys_rt_sigpending);
     regist_syscall_handler(SYS_RT_SIGTIMEDWAIT,
                            (syscall_handle_t)sys_rt_sigtimedwait);
     regist_syscall_handler(SYS_RT_SIGQUEUEINFO,
