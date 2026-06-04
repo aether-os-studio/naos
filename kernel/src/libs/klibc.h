@@ -286,8 +286,10 @@ typedef struct spinlock {
 
 void spin_init(spinlock_t *lock);
 void raw_spin_lock(spinlock_t *lock);
+bool raw_spin_trylock(spinlock_t *lock);
 void raw_spin_unlock(spinlock_t *lock);
 void spin_lock(spinlock_t *lock);
+bool spin_trylock(spinlock_t *lock);
 void spin_unlock(spinlock_t *lock);
 
 extern bool arch_interrupt_enabled();

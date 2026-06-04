@@ -220,7 +220,7 @@ void timerfd_check_wakeup(void) {
     }
 
     if (raise && softirq_raise(SOFTIRQ_TIMERFD))
-        sched_wake_worker(0);
+        sched_wake_worker(current_cpu_id);
 }
 
 void timerfd_softirq(void) {
@@ -613,7 +613,7 @@ uint64_t sys_timerfd_settime(int fd, int flags,
         vfs_poll_notify(tfd->node, EPOLLIN);
     vfs_poll_notify(tfd->node, EPOLLOUT);
     if (raise_softirq && softirq_raise(SOFTIRQ_TIMERFD))
-        sched_wake_worker(0);
+        sched_wake_worker(current_cpu_id);
 
     vfs_file_put(file);
     return 0;

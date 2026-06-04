@@ -770,9 +770,6 @@ void task_timeout_cancel(task_t *task) {
     task_timeout_remove_locked(task);
     task_timeout_refresh_next_locked();
     spin_unlock(&task_timeout_lock);
-
-    clockevent_program_event(
-        __atomic_load_n(&task_timeout_next_ns, __ATOMIC_ACQUIRE));
 }
 
 static void task_timeout_arm(task_t *task) {
@@ -781,9 +778,6 @@ static void task_timeout_arm(task_t *task) {
     task_timeout_add_locked(task);
     task_timeout_refresh_next_locked();
     spin_unlock(&task_timeout_lock);
-
-    clockevent_program_event(
-        __atomic_load_n(&task_timeout_next_ns, __ATOMIC_ACQUIRE));
 }
 
 static void task_timeout_softirq(void) {
@@ -812,9 +806,6 @@ static void task_timeout_softirq(void) {
 
         if (irq_state)
             arch_enable_interrupt();
-
-        clockevent_program_event(
-            __atomic_load_n(&task_timeout_next_ns, __ATOMIC_ACQUIRE));
 
         if (!expired_count) {
             return;
@@ -905,7 +896,7 @@ static bool task_should_free_pending(void) {
 
 static void task_schedule_reap_softirq(void) {
     if (softirq_raise(SOFTIRQ_TASK_REAP))
-        sched_wake_worker(0);
+        sched_wake_worker(current_cpu_id);
 }
 
 void task_schedule_reap(void) { task_schedule_reap_softirq(); }
@@ -1493,6 +1484,8 @@ extern void init_thread(uint64_t arg);
 
 extern bool system_initialized;
 
+spinlock_t do_softirq_lock = SPIN_INIT;
+
 void worker_thread(uint64_t arg) {
     uint32_t queue_id = (uint32_t)arg;
     while (true) {
@@ -1500,9 +1493,10 @@ void worker_thread(uint64_t arg) {
 
         bool did_work = sched_process_tick_work(queue_id);
 
-        if (current_cpu_id == 0 && softirq_has_pending()) {
+        if (softirq_has_pending() && spin_trylock(&do_softirq_lock)) {
             softirq_handle_pending();
             did_work = true;
+            spin_unlock(&do_softirq_lock);
         }
 
         if (!did_work) {
@@ -2006,7 +2000,7 @@ void sched_check_wakeup() {
         return;
 
     if (softirq_raise(SOFTIRQ_TIMER))
-        sched_wake_worker(0);
+        sched_wake_worker(current_cpu_id);
 }
 
 uint64_t sched_next_wakeup_ns(void) {

@@ -964,6 +964,12 @@ __attribute__((used)) void task_signal(struct pt_regs *regs) {
         }
 
         if (action.sa_handler == SIG_DFL) {
+            if (info.si_code == SI_DETHREAD) {
+                spin_unlock(&self->signal->sighand->siglock);
+                task_exit_thread(128 + sig);
+                return;
+            }
+
             switch (signal_internal_decisions[sig]) {
             case SIGNAL_INTERNAL_TERM:
             case SIGNAL_INTERNAL_CORE:

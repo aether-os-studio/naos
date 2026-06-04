@@ -1,5 +1,6 @@
 #include <init/callbacks.h>
 #include <dev/device.h>
+#include <irq/softirq.h>
 #include <mm/mm.h>
 
 spinlock_t callbacks_lock = SPIN_INIT;
@@ -13,6 +14,8 @@ callback_t *callbacks_on_new_bus_device_head = NULL;
 callback_t *callbacks_on_remove_bus_device_head = NULL;
 callback_t *callbacks_on_sched_update_head = NULL;
 callback_t *callbacks_on_send_signal_head = NULL;
+
+static void on_sched_update_softirq(void) { on_sched_update_call(); }
 
 callback_t *callback_new(void *fn) {
     callback_t *cb = malloc(sizeof(callback_t));
@@ -70,6 +73,13 @@ void regist_on_remove_bus_device_callback(on_remove_bus_device_t fn) {
 }
 
 void regist_on_sched_update_callback(on_sched_update_t fn) {
+    static bool softirq_registered = false;
+
+    if (!softirq_registered) {
+        softirq_register(SOFTIRQ_SCHED_UPDATE, on_sched_update_softirq);
+        softirq_registered = true;
+    }
+
     callback_insert(&callbacks_on_sched_update_head, callback_new(fn));
 }
 

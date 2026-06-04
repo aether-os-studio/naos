@@ -6,7 +6,8 @@ typedef enum softirq_id {
     SOFTIRQ_TIMER = 0,
     SOFTIRQ_TIMERFD = 1,
     SOFTIRQ_TASK_REAP = 2,
-    SOFTIRQ_MAX = 8,
+    SOFTIRQ_SCHED_UPDATE = 3,
+    SOFTIRQ_MAX = 64,
 } softirq_id_t;
 
 typedef void (*softirq_handler_t)(void);

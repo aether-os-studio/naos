@@ -88,9 +88,6 @@ void clockevent_program_event(uint64_t monotonic_deadline_ns) {
 void clockevent_handle_irq(void) {
     __atomic_store_n(&clockevent_deadline_ns, UINT64_MAX, __ATOMIC_RELEASE);
 
-    sched_check_wakeup();
-    clockevent_program_event(sched_next_wakeup_ns());
-
     if (softirq_raise(SOFTIRQ_TIMER))
-        sched_wake_worker(0);
+        sched_wake_worker(current_cpu_id);
 }

@@ -749,6 +749,16 @@ static void unix_socket_drop_skb_ancillary(skb_buff_t *skb) {
     unix_socket_ancillary_free(ancillary);
 }
 
+static bool unix_socket_skb_has_rights(const skb_buff_t *skb) {
+    unix_socket_ancillary_t *ancillary = NULL;
+
+    if (!skb || !skb->priv)
+        return false;
+
+    ancillary = (unix_socket_ancillary_t *)skb->priv;
+    return ancillary->file_count > 0;
+}
+
 static size_t unix_socket_iov_total_len(const struct iovec *iov,
                                         size_t iovlen) {
     size_t total = 0;
@@ -849,6 +859,7 @@ unix_socket_stream_read_locked(socket_t *sock, uint8_t *out, size_t len,
     for (skb = skb_queue_peek(&sock->recv_queue); skb && copied < len;) {
         size_t unread = skb_unread_len(skb);
         size_t chunk = MIN(len - copied, unread);
+        bool rights_barrier = unix_socket_skb_has_rights(skb);
         if (!chunk)
             break;
 
@@ -865,19 +876,23 @@ unix_socket_stream_read_locked(socket_t *sock, uint8_t *out, size_t len,
 
         copied += chunk;
 
-        if (peek) {
-            skb = skb->next;
-            continue;
+        if (!peek) {
+            sock->recv_queue.byte_count -= chunk;
+            skb->offset += chunk;
+            if (skb_unread_len(skb) == 0) {
+                skb_buff_t *done = skb_queue_pop(&sock->recv_queue);
+                skb_free(done, NULL);
+            }
         }
 
-        sock->recv_queue.byte_count -= chunk;
-        skb->offset += chunk;
-        if (skb_unread_len(skb) == 0) {
-            skb_buff_t *done = skb_queue_pop(&sock->recv_queue);
-            skb_free(done, NULL);
-        }
+        /*
+         * Linux stops a stream recv at an skb carrying SCM_RIGHTS, so the
+         * returned bytes stay aligned with the descriptor array.
+         */
+        if (rights_barrier)
+            break;
 
-        skb = skb_queue_peek(&sock->recv_queue);
+        skb = peek ? skb->next : skb_queue_peek(&sock->recv_queue);
     }
 
     return copied;
@@ -897,6 +912,7 @@ unix_socket_stream_readv_locked(socket_t *sock, const struct iovec *iov,
     for (skb = skb_queue_peek(&sock->recv_queue); skb && copied < len_total;) {
         size_t unread = skb_unread_len(skb);
         size_t chunk = MIN(len_total - copied, unread);
+        bool rights_barrier = unix_socket_skb_has_rights(skb);
         if (!chunk)
             break;
 
@@ -914,19 +930,23 @@ unix_socket_stream_readv_locked(socket_t *sock, const struct iovec *iov,
 
         copied += chunk;
 
-        if (peek) {
-            skb = skb->next;
-            continue;
+        if (!peek) {
+            sock->recv_queue.byte_count -= chunk;
+            skb->offset += chunk;
+            if (skb_unread_len(skb) == 0) {
+                skb_buff_t *done = skb_queue_pop(&sock->recv_queue);
+                skb_free(done, NULL);
+            }
         }
 
-        sock->recv_queue.byte_count -= chunk;
-        skb->offset += chunk;
-        if (skb_unread_len(skb) == 0) {
-            skb_buff_t *done = skb_queue_pop(&sock->recv_queue);
-            skb_free(done, NULL);
-        }
+        /*
+         * Linux stops a stream recv at an skb carrying SCM_RIGHTS, so the
+         * returned bytes stay aligned with the descriptor array.
+         */
+        if (rights_barrier)
+            break;
 
-        skb = skb_queue_peek(&sock->recv_queue);
+        skb = peek ? skb->next : skb_queue_peek(&sock->recv_queue);
     }
 
     return copied;

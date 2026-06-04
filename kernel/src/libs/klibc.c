@@ -18,6 +18,10 @@ void raw_spin_lock(spinlock_t *sl) {
     }
 }
 
+bool raw_spin_trylock(spinlock_t *lock) {
+    return !__sync_lock_test_and_set(&lock->lock, 1);
+}
+
 void raw_spin_unlock(spinlock_t *sl) {
     __sync_lock_release(&sl->lock);
 
@@ -39,6 +43,23 @@ void spin_lock(spinlock_t *sl) {
     raw_spin_lock(sl);
 
     sl->irq_state = irq_state;
+}
+
+bool spin_trylock(spinlock_t *lock) {
+    bool irq_state = arch_interrupt_enabled();
+    arch_disable_interrupt();
+    bool ret = raw_spin_trylock(lock);
+    if (!ret) {
+        if (irq_state) {
+            arch_enable_interrupt();
+        }
+    } else {
+        task_t *task = current_task;
+
+        if (task)
+            task->preempt_count++;
+    }
+    return ret;
 }
 
 void spin_unlock(spinlock_t *sl) {

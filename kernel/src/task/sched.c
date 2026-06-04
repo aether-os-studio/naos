@@ -104,8 +104,7 @@ static task_t *sched_pick_next_task_internal(sched_rq_t *scheduler,
 
     list_node_t *next_node = head;
     if (entity && entity != scheduler->idle && entity->on_rq &&
-        entity->rq == scheduler && entity->node &&
-        sched_queue_contains_locked(scheduler->sched_queue, entity->node)) {
+        entity->rq == scheduler && entity->node) {
         next_node = entity->node->next ? entity->node->next : head;
     }
 
