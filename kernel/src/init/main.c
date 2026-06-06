@@ -21,6 +21,7 @@
 #include <fs/initramfs.h>
 #include <fs/fs_syscall.h>
 #include <drivers/drm/drm.h>
+#include <drivers/deadline.h>
 
 extern void acpi_init();
 
@@ -78,12 +79,45 @@ void signal_notify_signalfd(task_t *task, int sig, const siginfo_t *info) {
         return;
     }
 
-    for (int i = 0; i < MAX_FD_NUM; i++) {
-        struct vfs_file *fd = task_get_file(task, i);
-        if (!fd || !signalfd_is_file(fd)) {
-            vfs_file_put(fd);
+    fd_info_t *fd_info = task_fd_info_get(task);
+    if (!fd_info)
+        return;
+
+    size_t signalfd_count = 0;
+    struct vfs_file **targets = NULL;
+
+    with_fd_info_lock(
+        fd_info, ({
+            signalfd_ref_t *pos, *tmp;
+
+            llist_for_each(pos, tmp, &fd_info->signalfd_refs, node) {
+                signalfd_count++;
+            }
+
+            if (signalfd_count == 0)
+                break;
+
+            targets = calloc(signalfd_count, sizeof(*targets));
+            if (!targets)
+                break;
+
+            size_t idx = 0;
+            llist_for_each(pos, tmp, &fd_info->signalfd_refs, node) {
+                if (idx >= signalfd_count)
+                    break;
+                targets[idx++] = vfs_file_get(pos->file);
+            }
+        }));
+
+    task_fd_info_put(fd_info, task);
+
+    if (!targets)
+        return;
+
+    for (size_t i = 0; i < signalfd_count; i++) {
+        struct vfs_file *fd = targets[i];
+        if (!fd)
             continue;
-        }
 
         bool irq_state = arch_interrupt_enabled();
         arch_disable_interrupt();
@@ -112,14 +146,13 @@ void signal_notify_signalfd(task_t *task, int sig, const siginfo_t *info) {
         if (ctx->queue_head == ctx->queue_tail) {
             ctx->queue_tail = (ctx->queue_tail + 1) % ctx->queue_size;
         }
-        if (ctx->node) {
-            vfs_poll_notify(ctx->node, EPOLLIN);
-        }
 
         if (irq_state)
             arch_enable_interrupt();
         vfs_file_put(fd);
     }
+
+    free(targets);
 }
 
 int on_send_signal(task_t *task, int sig, const siginfo_t *info) {
@@ -229,6 +262,8 @@ void kmain(void) {
     printk("Task initialized...\n");
 
     arch_init();
+
+    deadline_reprogram_local();
 
     while (1) {
         arch_enable_interrupt();

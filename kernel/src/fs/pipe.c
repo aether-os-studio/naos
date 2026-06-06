@@ -302,35 +302,6 @@ static __poll_t pipefs_poll_mask_locked(pipe_specific_t *spec,
     return out;
 }
 
-static int pipefs_wait(struct vfs_file *file, pipe_specific_t *spec,
-                       uint32_t events, const char *reason) {
-    pipe_info_t *pipe;
-    vfs_poll_wait_t wait;
-    uint32_t want = events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
-    int ret;
-
-    if (!file || !spec || !spec->info)
-        return -EINVAL;
-
-    pipe = spec->info;
-    vfs_poll_wait_init(&wait, current_task, want);
-    ret = vfs_poll_wait_arm(file->f_inode, &wait);
-    if (ret < 0)
-        return ret;
-
-    spin_lock(&pipe->lock);
-    if (pipefs_poll_mask_locked(spec, pipe) & want) {
-        spin_unlock(&pipe->lock);
-        vfs_poll_wait_disarm(&wait);
-        return EOK;
-    }
-    spin_unlock(&pipe->lock);
-
-    ret = vfs_poll_wait_sleep(file->f_inode, &wait, -1, reason);
-    vfs_poll_wait_disarm(&wait);
-    return ret;
-}
-
 static void pipefs_account_open_locked(pipe_specific_t *spec) {
     if (!spec || !spec->info)
         return;
@@ -368,8 +339,6 @@ static ssize_t pipe_read_inner(struct vfs_file *file, void *addr, size_t size,
                 pipe->read_node->i_size = pipe->ptr;
             spin_unlock(&pipe->lock);
 
-            if (pipe->write_node)
-                vfs_poll_notify(pipe->write_node, EPOLLOUT);
             return (ssize_t)to_read;
         }
 
@@ -385,9 +354,17 @@ static ssize_t pipe_read_inner(struct vfs_file *file, void *addr, size_t size,
         if (file->f_flags & O_NONBLOCK)
             return -EWOULDBLOCK;
 
-        int reason = pipefs_wait(file, spec, EPOLLIN, "pipe_read");
-        if (reason != EOK)
+        if (task_signal_has_deliverable(current_task)) {
             return -EINTR;
+        }
+
+        if (vfs_poll(file->f_inode, EPOLLIN) & EPOLLIN) {
+            continue;
+        }
+
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+        arch_disable_interrupt();
     }
 }
 
@@ -446,8 +423,6 @@ static ssize_t pipe_write_inner(struct vfs_file *file, const void *addr,
                 pipe->read_node->i_size = pipe->ptr;
             spin_unlock(&pipe->lock);
 
-            if (pipe->read_node)
-                vfs_poll_notify(pipe->read_node, EPOLLIN);
             return (ssize_t)to_write;
         }
 
@@ -458,9 +433,17 @@ static ssize_t pipe_write_inner(struct vfs_file *file, const void *addr,
         if (file->f_flags & O_NONBLOCK)
             return -EWOULDBLOCK;
 
-        int reason = pipefs_wait(file, spec, EPOLLOUT, "pipe_write");
-        if (reason != EOK)
+        if (task_signal_has_deliverable(current_task)) {
             return -EINTR;
+        }
+
+        if (vfs_poll(file->f_inode, EPOLLOUT) & EPOLLOUT) {
+            continue;
+        }
+
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+        arch_disable_interrupt();
     }
 }
 
@@ -545,8 +528,6 @@ static int pipefs_open(struct vfs_inode *inode, struct vfs_file *file) {
 static int pipefs_release(struct vfs_inode *inode, struct vfs_file *file) {
     pipe_specific_t *spec = pipefs_spec_from_file(file);
     pipe_info_t *pipe;
-    uint32_t read_events = 0;
-    uint32_t write_events = 0;
     bool free_spec = false;
 
     (void)inode;
@@ -558,23 +539,14 @@ static int pipefs_release(struct vfs_inode *inode, struct vfs_file *file) {
     if (spec->write) {
         if (pipe->write_fds > 0) {
             pipe->write_fds--;
-            if (pipe->write_fds == 0)
-                read_events |= EPOLLHUP;
         }
     }
     if (spec->read) {
         if (pipe->read_fds > 0) {
             pipe->read_fds--;
-            if (pipe->read_fds == 0)
-                write_events |= EPOLLERR;
         }
     }
     spin_unlock(&pipe->lock);
-
-    if (read_events && pipe->read_node)
-        vfs_poll_notify(pipe->read_node, read_events);
-    if (write_events && pipe->write_node)
-        vfs_poll_notify(pipe->write_node, write_events);
 
     free_spec = file->private_data && file->private_data != inode->i_private;
     file->private_data = NULL;

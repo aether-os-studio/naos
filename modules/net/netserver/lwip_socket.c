@@ -299,11 +299,7 @@ static inline int lwip_socket_recv_avail(lwip_socket_state_t *sock) {
     return avail;
 }
 
-static void lwip_socket_notify(lwip_socket_state_t *sock, uint32_t events) {
-    if (sock && sock->node && events) {
-        vfs_poll_notify(sock->node, events);
-    }
-}
+static void lwip_socket_notify(lwip_socket_state_t *sock, uint32_t events) {}
 
 static void lwip_socket_notify_ready_state(lwip_socket_state_t *sock) {
     s16_t rcvevent = 0;

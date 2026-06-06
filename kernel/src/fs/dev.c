@@ -1097,38 +1097,6 @@ ssize_t inputdev_close(void *data, void *arg) {
     return 0;
 }
 
-static int inputdev_wait_node(vfs_node_t *node, uint32_t events,
-                              const char *reason) {
-    if (!node || !current_task)
-        return -EINVAL;
-
-    uint32_t want = events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
-    int polled = vfs_poll(node, want);
-    if (polled < 0)
-        return polled;
-    if (polled & (int)want)
-        return EOK;
-
-    vfs_poll_wait_t wait;
-    vfs_poll_wait_init(&wait, current_task, want);
-    if (vfs_poll_wait_arm(node, &wait) < 0)
-        return -EINVAL;
-
-    polled = vfs_poll(node, want);
-    if (polled < 0) {
-        vfs_poll_wait_disarm(&wait);
-        return polled;
-    }
-    if (polled & (int)want) {
-        vfs_poll_wait_disarm(&wait);
-        return EOK;
-    }
-
-    int ret = vfs_poll_wait_sleep(node, &wait, -1, reason);
-    vfs_poll_wait_disarm(&wait);
-    return ret;
-}
-
 static bool input_event_queue_push(dev_input_event_t *event,
                                    const struct input_event *in) {
     if (!event || !in || !event->event_queue || !event->event_queue_capacity)
@@ -1220,9 +1188,18 @@ ssize_t inputdev_event_read(void *data, void *buf, uint64_t offset,
             return -EWOULDBLOCK;
 
         vfs_node_t *wait_node = fd && fd->node ? fd->node : event->devnode;
-        int reason = inputdev_wait_node(wait_node, EPOLLIN, "input_read");
-        if (reason != EOK)
-            return reason < 0 ? reason : -EINTR;
+
+        if (task_signal_has_deliverable(current_task)) {
+            return -EINTR;
+        }
+
+        if (vfs_poll(wait_node, EPOLLIN) & EPOLLIN) {
+            continue;
+        }
+
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+        arch_disable_interrupt();
     }
 }
 
@@ -1672,7 +1649,5 @@ void input_generate_event(void *data, uint16_t type, uint16_t code,
     event.code = code;
     event.value = value;
 
-    bool queued = input_event_queue_push(item, &event);
-    if (type == EV_SYN && code == SYN_REPORT && queued && item->devnode)
-        vfs_poll_notify(item->devnode, EPOLLIN);
+    input_event_queue_push(item, &event);
 }

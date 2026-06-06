@@ -779,7 +779,12 @@ int netdev_unregister(netdev_t *dev) {
             break;
         }
 
-        schedule(SCHED_FLAG_YIELD);
+        bool irq_state = arch_interrupt_enabled();
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+        if (!irq_state) {
+            arch_disable_interrupt();
+        }
     }
 
     netdev_notify(dev, NETDEV_EVENT_UNREGISTERED);

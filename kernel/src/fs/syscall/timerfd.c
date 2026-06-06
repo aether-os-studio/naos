@@ -3,6 +3,7 @@
 #include <fs/vfs/vfs.h>
 #include <arch/arch.h>
 #include <boot/boot.h>
+#include <drivers/deadline.h>
 #include <irq/softirq.h>
 #include <libs/klibc.h>
 #include <libs/rbtree.h>
@@ -26,6 +27,8 @@ static spinlock_t timerfd_mono_lock = SPIN_INIT;
 static spinlock_t timerfd_real_lock = SPIN_INIT;
 static uint64_t timerfd_mono_next_ns = UINT64_MAX;
 static uint64_t timerfd_real_next_ns = UINT64_MAX;
+static deadline_source_t timerfd_mono_deadline_source;
+static deadline_source_t timerfd_real_deadline_source;
 
 typedef struct timerfdfs_info {
     spinlock_t lock;
@@ -90,6 +93,10 @@ static inline void timerfd_refresh_next_locked(int clock_type) {
 
     __atomic_store_n(timerfd_next_deadline_for_clock(clock_type), next,
                      __ATOMIC_RELEASE);
+    deadline_source_update(clock_type == CLOCK_REALTIME
+                               ? &timerfd_real_deadline_source
+                               : &timerfd_mono_deadline_source,
+                           next);
 }
 
 static void timerfd_timeout_remove_locked(timerfd_t *tfd) {
@@ -219,8 +226,10 @@ void timerfd_check_wakeup(void) {
             raise = true;
     }
 
-    if (raise && softirq_raise(SOFTIRQ_TIMERFD))
+    if (raise) {
+        softirq_raise(SOFTIRQ_TIMERFD);
         sched_wake_worker(current_cpu_id);
+    }
 }
 
 void timerfd_softirq(void) {
@@ -261,7 +270,6 @@ void timerfd_softirq(void) {
                 if (!notify_node)
                     continue;
 
-                vfs_poll_notify(notify_node, EPOLLIN);
                 vfs_iput(notify_node);
             }
         }
@@ -568,7 +576,6 @@ uint64_t sys_timerfd_settime(int fd, int flags,
     }
 
     int clock_type = tfd->timer.clock_type;
-    bool notify_readable = false;
     bool raise_softirq = false;
     bool have_now = false;
     uint64_t now = 0;
@@ -605,15 +612,13 @@ uint64_t sys_timerfd_settime(int fd, int flags,
     timerfd_timeout_add_locked(tfd);
     if (tfd->timer.expires && have_now && tfd->timer.expires <= now)
         raise_softirq = true;
-    notify_readable = tfd->count > 0;
     spin_unlock(&tfd->lock);
     spin_unlock(timerfd_tree_lock_for_clock(clock_type));
 
-    if (notify_readable)
-        vfs_poll_notify(tfd->node, EPOLLIN);
-    vfs_poll_notify(tfd->node, EPOLLOUT);
-    if (raise_softirq && softirq_raise(SOFTIRQ_TIMERFD))
+    if (raise_softirq) {
+        softirq_raise(SOFTIRQ_TIMERFD);
         sched_wake_worker(current_cpu_id);
+    }
 
     vfs_file_put(file);
     return 0;
@@ -668,25 +673,35 @@ static ssize_t timerfdfs_read(struct vfs_file *file, void *addr, size_t size,
             if (file->f_flags & O_NONBLOCK) {
                 return -EAGAIN;
             } else {
-                vfs_poll_wait_t wait;
-                vfs_poll_wait_init(&wait, current_task,
-                                   EPOLLIN | EPOLLOUT | EPOLLERR | EPOLLHUP);
-                vfs_poll_wait_arm(file->f_inode, &wait);
-                int reason = vfs_poll_wait_sleep(
-                    file->f_inode, &wait, 10000000LL, "timerfd_read_unarmed");
-                vfs_poll_wait_disarm(&wait);
-                if (reason != EOK && reason != ETIMEDOUT)
+                if (task_signal_has_deliverable(current_task)) {
                     return -EINTR;
+                }
+
+                if (vfs_poll(file->f_inode, EPOLLIN) & EPOLLIN) {
+                    continue;
+                }
+
+                bool irq = arch_interrupt_enabled();
+                arch_enable_interrupt();
+                arch_wait_for_interrupt();
+                if (!irq)
+                    arch_disable_interrupt();
+
                 continue;
             }
         }
 
         if (now < expires && !(file->f_flags & O_NONBLOCK)) {
-            int64_t wait_ns = (int64_t)(expires - now);
-            int reason = task_block(current_task, TASK_BLOCKING, wait_ns,
-                                    "timerfd_read");
-            if (reason != EOK && reason != ETIMEDOUT)
+            if (task_signal_has_deliverable(current_task)) {
                 return -EINTR;
+            }
+
+            bool irq = arch_interrupt_enabled();
+            arch_enable_interrupt();
+            arch_wait_for_interrupt();
+            if (!irq)
+                arch_disable_interrupt();
+
             continue;
         }
 
@@ -708,7 +723,6 @@ static ssize_t timerfdfs_read(struct vfs_file *file, void *addr, size_t size,
      * they should not steal already-delivered expirations from readers.
      */
     *(uint64_t *)addr = count;
-    vfs_poll_notify(tfd->node, EPOLLOUT);
     return sizeof(uint64_t);
 }
 
@@ -725,8 +739,6 @@ static long timerfdfs_ioctl(struct vfs_file *file, unsigned long cmd,
         spin_lock(&tfd->lock);
         tfd->count = arg;
         spin_unlock(&tfd->lock);
-        if (tfd->node)
-            vfs_poll_notify(tfd->node, EPOLLIN);
         return 0;
     default:
         printk("timerfd_ioctl: Unsupported cmd %#018lx\n", cmd);
@@ -757,6 +769,10 @@ void timerfd_init() {
     timerfd_real_root = RB_ROOT_INIT;
     __atomic_store_n(&timerfd_mono_next_ns, UINT64_MAX, __ATOMIC_RELEASE);
     __atomic_store_n(&timerfd_real_next_ns, UINT64_MAX, __ATOMIC_RELEASE);
+    deadline_source_init(&timerfd_mono_deadline_source,
+                         DEADLINE_SOURCE_TIMERFD_MONO, 0);
+    deadline_source_init(&timerfd_real_deadline_source,
+                         DEADLINE_SOURCE_TIMERFD_REAL, 0);
     softirq_register(SOFTIRQ_TIMERFD, timerfd_softirq);
     vfs_register_filesystem(&timerfdfs_fs_type);
     timerfdfs_id = 1;

@@ -760,3 +760,5 @@ uint64_t sys_kcmp(uint64_t pid1, uint64_t pid2, int type, uint64_t idx1,
  * Current kernel: exposes the local compatibility personality state.
  */
 uint32_t sys_personality(uint32_t personality);
+
+int sys_yield();

@@ -577,17 +577,10 @@ static inline uint32_t socket_pending_take(socket_t *sock, uint32_t events) {
     return old_mask & events;
 }
 
-static inline void socket_notify_node(vfs_node_t *node, uint32_t events) {
-    if (!node || !events)
-        return;
-    vfs_poll_notify(node, events);
-}
-
 static inline void socket_notify_sock(socket_t *sock, uint32_t events) {
     if (!sock)
         return;
     socket_pending_mark(sock, events);
-    socket_notify_node(sock->node, events);
 }
 
 static bool unix_socket_backlog_reserve_locked(socket_t *sock,
@@ -1135,38 +1128,24 @@ static int socket_wait_node(vfs_node_t *node, uint32_t events,
         return -EINVAL;
 
     socket_t *wait_sock = socket_from_node(node);
-    uint32_t want = events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
-    if (socket_pending_take(wait_sock, want))
-        return EOK;
-    int polled = vfs_poll(node, want);
-    if (polled < 0)
-        return polled;
-    if (polled & (int)want)
-        return EOK;
+    const uint32_t want = events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
 
-    vfs_poll_wait_t wait;
-    vfs_poll_wait_init(&wait, current_task, want);
-    if (vfs_poll_wait_arm(node, &wait) < 0)
-        return -EINVAL;
+    uint32_t polled;
+    while (true) {
+        if (socket_pending_take(wait_sock, want))
+            return EOK;
 
-    if (socket_pending_take(wait_sock, want)) {
-        vfs_poll_wait_disarm(&wait);
-        return EOK;
+        polled = vfs_poll(node, want);
+        if (polled & (int)want)
+            return EOK;
+
+        if (task_signal_has_deliverable(current_task))
+            return -EINTR;
+
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+        arch_disable_interrupt();
     }
-
-    polled = vfs_poll(node, want);
-    if (polled < 0) {
-        vfs_poll_wait_disarm(&wait);
-        return polled;
-    }
-    if (polled & (int)want) {
-        vfs_poll_wait_disarm(&wait);
-        return EOK;
-    }
-
-    int ret = vfs_poll_wait_sleep(node, &wait, -1, reason);
-    vfs_poll_wait_disarm(&wait);
-    return ret;
 }
 
 static const char *unix_socket_local_name(const socket_t *sock) {
@@ -1797,9 +1776,13 @@ static size_t unix_socket_install_pending_files(fd_t **pending_files,
             fd_t *new_entry = vfs_file_get(pending_files[i]);
             if (!new_entry)
                 break;
-            fd_info->fds[new_fd].file = new_entry;
-            fd_info->fds[new_fd].flags =
-                (recv_flags & MSG_CMSG_CLOEXEC) ? FD_CLOEXEC : 0;
+            if (task_fd_slot_install(
+                    fd_info, new_fd, new_entry,
+                    (recv_flags & MSG_CMSG_CLOEXEC) ? FD_CLOEXEC : 0) < 0) {
+                vfs_file_put(new_entry);
+                break;
+            }
+            vfs_file_put(new_entry);
             fds_out[installed++] = new_fd;
         }
     });

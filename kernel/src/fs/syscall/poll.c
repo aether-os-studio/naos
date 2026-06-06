@@ -85,41 +85,6 @@ static int poll_scan_ready(struct pollfd *fds, int nfds) {
     return ready;
 }
 
-static void poll_arm_waiters(struct pollfd *fds, int nfds,
-                             vfs_poll_wait_t *waits) {
-    /*
-     * The expected pattern is scan -> arm -> scan again -> sleep. Arming the
-     * waiters without the second scan leaves a classic lost-wakeup window where
-     * an event can arrive after the first scan but before the task blocks.
-     */
-    for (int i = 0; i < nfds; i++) {
-        struct vfs_file *file;
-        vfs_node_t *node;
-
-        if (fds[i].fd < 0)
-            continue;
-
-        file = task_get_file(current_task, fds[i].fd);
-        if (!file)
-            continue;
-
-        node = file->node;
-        uint32_t query_events = poll_to_epoll_comp(fds[i].events) | EPOLLERR |
-                                EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
-        vfs_poll_wait_init(&waits[i], current_task, query_events);
-        vfs_poll_wait_arm(node, &waits[i]);
-        vfs_file_put(file);
-    }
-}
-
-static void poll_disarm_waiters(vfs_poll_wait_t *waits, int nfds) {
-    for (int i = 0; i < nfds; i++) {
-        if (waits[i].armed) {
-            vfs_poll_wait_disarm(&waits[i]);
-        }
-    }
-}
-
 static size_t do_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
     if (nfds < 0)
         return (size_t)-EINVAL;
@@ -128,15 +93,7 @@ static size_t do_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
     if (!current_task)
         return (size_t)-EINVAL;
 
-    vfs_poll_wait_t *waits = NULL;
-    if (nfds > 0) {
-        waits = calloc(nfds, sizeof(vfs_poll_wait_t));
-        if (!waits)
-            return (size_t)-ENOMEM;
-    }
-
     int ready = 0;
-    bool irq_state = arch_interrupt_enabled();
     uint64_t start_time = nano_time();
     bool infinite_timeout = ((int64_t)timeout < 0);
     uint64_t timeout_ns = 0;
@@ -157,56 +114,19 @@ static size_t do_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
             break;
         }
 
-        if (!infinite_timeout && timeout == 0)
-            break;
-
-        poll_arm_waiters(fds, nfds, waits);
-        ready = poll_scan_ready(fds, nfds);
-        if (ready > 0) {
-            poll_disarm_waiters(waits, nfds);
+        if (!infinite_timeout && timeout == 0) {
             break;
         }
 
         if (task_signal_has_deliverable(current_task)) {
-            poll_disarm_waiters(waits, nfds);
             ready = -EINTR;
             break;
         }
 
-        int64_t wait_ns = -1;
-        if (!infinite_timeout) {
-            uint64_t elapsed = nano_time() - start_time;
-            if (elapsed >= timeout_ns) {
-                poll_disarm_waiters(waits, nfds);
-                break;
-            }
-            wait_ns = (int64_t)(timeout_ns - elapsed);
-        }
-
-        int64_t block_ns = wait_ns;
-        if (block_ns < 0 || block_ns > 1000000LL) {
-            block_ns = 1000000LL;
-        }
-
-        int block_reason =
-            task_block(current_task, TASK_BLOCKING, block_ns, "poll_wait");
-        poll_disarm_waiters(waits, nfds);
-        if (block_reason == ETIMEDOUT) {
-            continue;
-        }
-        if (block_reason != EOK) {
-            ready = -EINTR;
-            break;
-        }
-    } while (infinite_timeout || (nano_time() - start_time) < timeout_ns);
-
-    free(waits);
-
-    if (irq_state) {
         arch_enable_interrupt();
-    } else {
+        arch_wait_for_interrupt();
         arch_disable_interrupt();
-    }
+    } while (infinite_timeout || (nano_time() - start_time) < timeout_ns);
 
     return ready;
 }

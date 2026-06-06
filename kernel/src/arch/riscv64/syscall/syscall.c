@@ -11,11 +11,6 @@
 #include <drivers/rtc.h>
 #include <net/net_syscall.h>
 
-static uint64_t sys_sched_yield(void) {
-    schedule(SCHED_FLAG_YIELD);
-    return 0;
-}
-
 static uint64_t sys_riscv_hwprobe(void) { return (uint64_t)-ENOSYS; }
 
 static uint64_t sys_riscv_flush_icache(uint64_t start, uint64_t end,
@@ -390,7 +385,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_PWRITE64] = (syscall_handle_t)sys_pwrite64;
     syscall_handlers[SYS_READV] = (syscall_handle_t)sys_readv;
     syscall_handlers[SYS_WRITEV] = (syscall_handle_t)sys_writev;
-    syscall_handlers[SYS_SCHED_YIELD] = (syscall_handle_t)sys_sched_yield;
+    syscall_handlers[SYS_SCHED_YIELD] = (syscall_handle_t)sys_yield;
     syscall_handlers[SYS_MREMAP] = (syscall_handle_t)sys_mremap;
     syscall_handlers[SYS_MSYNC] = (syscall_handle_t)sys_msync;
     syscall_handlers[SYS_MINCORE] = (syscall_handle_t)sys_mincore;

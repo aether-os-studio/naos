@@ -2560,7 +2560,6 @@ static inline void netlink_notify_sock(struct netlink_sock *sock,
                                        uint32_t events) {
     if (!sock || !sock->node || !events)
         return;
-    vfs_poll_notify(sock->node, events);
 }
 
 static bool netlink_group_mask_matches(uint32_t subscribed_groups,
@@ -2610,29 +2609,22 @@ static int netlink_wait_sock(struct netlink_sock *sock, uint32_t events,
     if (!sock || !sock->node || !current_task)
         return -EINVAL;
 
-    uint32_t want = events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
-    int polled = vfs_poll(sock->node, want);
-    if (polled < 0)
-        return polled;
-    if (polled & (int)want)
-        return EOK;
+    const uint32_t want = events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
 
-    vfs_poll_wait_t wait;
-    vfs_poll_wait_init(&wait, current_task, want);
-    if (vfs_poll_wait_arm(sock->node, &wait) < 0)
-        return -EINVAL;
-    polled = vfs_poll(sock->node, want);
-    if (polled < 0) {
-        vfs_poll_wait_disarm(&wait);
-        return polled;
+    uint32_t polled;
+
+    while (true) {
+        polled = vfs_poll(sock->node, want);
+        if (polled & (int)want)
+            return EOK;
+
+        if (task_signal_has_deliverable(current_task))
+            return -EINTR;
+
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+        arch_disable_interrupt();
     }
-    if (polled & (int)want) {
-        vfs_poll_wait_disarm(&wait);
-        return EOK;
-    }
-    int ret = vfs_poll_wait_sleep(sock->node, &wait, -1, reason);
-    vfs_poll_wait_disarm(&wait);
-    return ret;
 }
 
 // skb queue operations for netlink packets with sender info

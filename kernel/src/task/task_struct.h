@@ -116,9 +116,16 @@ typedef struct fd_entry {
     unsigned int flags;
 } fd_entry_t;
 
+typedef struct signalfd_ref {
+    struct llist_header node;
+    struct vfs_file *file;
+    int fd;
+} signalfd_ref_t;
+
 typedef struct fd_info {
     fd_entry_t *fds;
     size_t max_fds;
+    struct llist_header signalfd_refs;
     spinlock_t fdt_lock;
     volatile int ref_count;
 } fd_info_t;

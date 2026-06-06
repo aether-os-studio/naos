@@ -17,7 +17,6 @@ extern uint32_t cpuid_to_lapicid[MAX_CPU_NUM];
 #define XHCI_RING_SIZE (XHCI_RING_ITEMS * sizeof(struct xhci_trb))
 #define XHCI_DEFERRED_CB_MAX 256
 #define XHCI_TRB_MAX_XFER 65536
-#define XHCI_EVENT_POLL_NS (1ULL * 1000 * 1000)
 #define XHCI_IMAN_IP (1U << 0)
 #define XHCI_IMAN_IE (1U << 1)
 
@@ -549,9 +548,9 @@ static void xhci_run_deferred_callbacks(struct xhci_deferred_cb *callbacks,
     }
 }
 
-static void xhci_process_event_ring(struct xhci_event_ring *intr,
-                                    struct xhci_deferred_cb *callbacks,
-                                    uint32_t *callback_count) {
+static uint32_t xhci_process_event_ring(struct xhci_event_ring *intr,
+                                        struct xhci_deferred_cb *callbacks,
+                                        uint32_t *callback_count) {
     struct xhci_ring *evts = &intr->ring;
     usb_xhci_t *xhci = intr->xhci;
     uint32_t processed = 0;
@@ -657,19 +656,23 @@ static void xhci_process_event_ring(struct xhci_event_ring *intr,
 
     if (processed)
         xhci_commit_erdp(xhci, intr);
+    return processed;
 }
 
-static void xhci_process_events(usb_xhci_t *xhci) {
+static uint32_t xhci_process_events(usb_xhci_t *xhci) {
     struct xhci_deferred_cb callbacks[XHCI_DEFERRED_CB_MAX];
     uint32_t callback_count = 0;
+    uint32_t processed = 0;
 
     spin_lock(&xhci->event_lock);
     for (int i = 0; i < MIN(cpu_count, xhci->enabled_intrs); i++) {
-        xhci_process_event_ring(&xhci->evt[i], callbacks, &callback_count);
+        processed +=
+            xhci_process_event_ring(&xhci->evt[i], callbacks, &callback_count);
     }
     spin_unlock(&xhci->event_lock);
 
     xhci_run_deferred_callbacks(callbacks, callback_count);
+    return processed;
 }
 
 static int xhci_event_wait(usb_xhci_t *xhci, struct xhci_ring *ring,
@@ -681,7 +684,7 @@ static int xhci_event_wait(usb_xhci_t *xhci, struct xhci_ring *ring,
         if (!xhci_ring_busy(ring)) {
             return TRB_CC(ring->evt.status);
         }
-        schedule(SCHED_FLAG_YIELD);
+        arch_pause();
     }
 
     ring->eidx = ring->nidx;
@@ -1102,7 +1105,7 @@ static void xhci_event_thread(uint64_t arg) {
     while (xhci->running) {
         xhci_process_events(xhci);
         arch_enable_interrupt();
-        delay(10);
+        arch_wait_for_interrupt();
     }
 }
 

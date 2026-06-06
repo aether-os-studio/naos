@@ -16,6 +16,7 @@ struct global_timer_state global_timer = {
 static irq_controller_t loongarch64_timer_controller;
 static uint64_t monotonic_base_cycles;
 static uint64_t monotonic_base_ns;
+static uint64_t timer_interval_ns[MAX_CPU_NUM];
 
 static uint64_t loongarch64_timer_ticks_from_ns(uint64_t ns) {
     uint64_t freq = global_timer.frequency ? global_timer.frequency
@@ -77,14 +78,18 @@ void timer_init_percpu(void) {
     if (!__atomic_load_n(&global_timer.initialized, __ATOMIC_ACQUIRE))
         return;
 
-    timer_set_next_tick_ns(1000000000ULL / SCHED_HZ);
+    timer_set_sched_interval_ns(1000000000ULL / SCHED_HZ);
 }
 
 void timer_handler(uint64_t irq_num, void *parameter, struct pt_regs *regs) {
     (void)irq_num;
     (void)parameter;
     (void)regs;
-    timer_set_next_tick_ns(1000000000ULL / SCHED_HZ);
+    uint32_t cpu_id = current_cpu_id;
+    uint64_t interval = cpu_id < MAX_CPU_NUM ? timer_interval_ns[cpu_id] : 0;
+    if (!interval)
+        interval = 1000000000ULL / SCHED_HZ;
+    timer_set_next_tick_ns(interval);
 }
 
 void timer_set_next_tick_ns(uint64_t ns) {
@@ -94,6 +99,16 @@ void timer_set_next_tick_ns(uint64_t ns) {
     csr_write(LOONGARCH_CSR_TICLR, LOONGARCH_TICLR_CLR);
     csr_write(LOONGARCH_CSR_TCFG,
               (ticks << LOONGARCH_TCFG_INITVAL_SHIFT) | LOONGARCH_TCFG_EN);
+}
+
+void timer_set_sched_interval_ns(uint64_t ns) {
+    if (ns == 0)
+        ns = 1;
+
+    if (current_cpu_id < MAX_CPU_NUM)
+        timer_interval_ns[current_cpu_id] = ns;
+
+    timer_set_next_tick_ns(ns);
 }
 
 uint64_t get_counter() {

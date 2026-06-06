@@ -574,7 +574,7 @@ static int nvme_create_io_sq(nvme_controller_t *ctrl, nvme_queue_t *queue) {
     cmd.cdw0 = NVME_ADMIN_CREATE_SQ;
     cmd.prp1 = queue->sq_phys;
     cmd.cdw10 = ((queue->queue_depth - 1) << 16) | queue->queue_id;
-    cmd.cdw11 = (queue->queue_id << 16) | 0x1; // CQID, PC=1
+    cmd.cdw11 = ((uint32_t)queue->queue_id << 16) | 0x1; // CQID, PC=1
 
     nvme_platform_ops->log("NVMe: Creating I/O SQ %d (depth=%d, phys=0x%llx)\n",
                            queue->queue_id, queue->queue_depth, queue->sq_phys);
@@ -703,12 +703,11 @@ static inline nvme_queue_t *nvme_pick_io_queue(nvme_controller_t *ctrl) {
     return &ctrl->io_queues[current_cpu_id % ctrl->num_io_queues];
 }
 
-static int nvme_submit_io_async(nvme_controller_t *ctrl, uint8_t opcode,
-                                uint32_t nsid, uint64_t lba,
-                                uint32_t block_count, void *buffer,
-                                uint64_t buffer_phys,
-                                nvme_io_callback_t callback, void *ctx) {
-    if (!ctrl || !ctrl->initialized || !buffer || block_count == 0)
+static int nvme_submit_io_async_on_queue(
+    nvme_controller_t *ctrl, nvme_queue_t *queue, uint8_t opcode, uint32_t nsid,
+    uint64_t lba, uint32_t block_count, void *buffer, uint64_t buffer_phys,
+    nvme_io_callback_t callback, void *ctx) {
+    if (!ctrl || !ctrl->initialized || !queue || !buffer || block_count == 0)
         return -1;
     if (nsid == 0 || nsid > ctrl->num_namespaces)
         return -1;
@@ -754,7 +753,6 @@ static int nvme_submit_io_async(nvme_controller_t *ctrl, uint8_t opcode,
     if (opcode == NVME_CMD_WRITE)
         nvme_platform_ops->wmb();
 
-    nvme_queue_t *queue = nvme_pick_io_queue(ctrl);
     if (nvme_submit_cmd(queue, &cmd) != 0) {
         printk("NVMe: submit command failed\n");
         nvme_release_cid(ctrl, cid);
@@ -767,16 +765,20 @@ static int nvme_submit_io_async(nvme_controller_t *ctrl, uint8_t opcode,
 int nvme_read_async(nvme_controller_t *ctrl, uint32_t nsid, uint64_t lba,
                     uint32_t block_count, void *buffer, uint64_t buffer_phys,
                     nvme_io_callback_t callback, void *ctx) {
-    return nvme_submit_io_async(ctrl, NVME_CMD_READ, nsid, lba, block_count,
-                                buffer, buffer_phys, callback, ctx);
+    nvme_queue_t *queue = nvme_pick_io_queue(ctrl);
+    return nvme_submit_io_async_on_queue(ctrl, queue, NVME_CMD_READ, nsid, lba,
+                                         block_count, buffer, buffer_phys,
+                                         callback, ctx);
 }
 
 int nvme_write_async(nvme_controller_t *ctrl, uint32_t nsid, uint64_t lba,
                      uint32_t block_count, const void *buffer,
                      uint64_t buffer_phys, nvme_io_callback_t callback,
                      void *ctx) {
-    return nvme_submit_io_async(ctrl, NVME_CMD_WRITE, nsid, lba, block_count,
-                                (void *)buffer, buffer_phys, callback, ctx);
+    nvme_queue_t *queue = nvme_pick_io_queue(ctrl);
+    return nvme_submit_io_async_on_queue(ctrl, queue, NVME_CMD_WRITE, nsid, lba,
+                                         block_count, (void *)buffer,
+                                         buffer_phys, callback, ctx);
 }
 
 typedef struct nvme_callback_ctx {
@@ -830,8 +832,9 @@ uint64_t nvme_read(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_queue_t *queue = nvme_pick_io_queue(ns->ctrl);
 
     nvme_callback_ctx_t cb_ctx = {0};
-    int r = nvme_read_async(ns->ctrl, ns->ns->nsid, lba, size, buffer, 0,
-                            nvme_io_callback, &cb_ctx);
+    int r = nvme_submit_io_async_on_queue(ns->ctrl, queue, NVME_CMD_READ,
+                                          ns->ns->nsid, lba, size, buffer, 0,
+                                          nvme_io_callback, &cb_ctx);
     if (r < 0) {
         printk("NVMe: submit read command failed\n");
         return 0;
@@ -845,8 +848,9 @@ uint64_t nvme_write(void *data, uint64_t lba, void *buffer, uint64_t size) {
     nvme_queue_t *queue = nvme_pick_io_queue(ns->ctrl);
 
     nvme_callback_ctx_t cb_ctx = {0};
-    int r = nvme_write_async(ns->ctrl, ns->ns->nsid, lba, size, buffer, 0,
-                             nvme_io_callback, &cb_ctx);
+    int r = nvme_submit_io_async_on_queue(
+        ns->ctrl, queue, NVME_CMD_WRITE, ns->ns->nsid, lba, size,
+        (void *)buffer, 0, nvme_io_callback, &cb_ctx);
     if (r < 0) {
         printk("NVMe: submit write command failed\n");
         return 0;

@@ -226,10 +226,6 @@ void arch_context_free(arch_context_t *context) {
     }
 }
 
-void arch_context_save_interrupt_state(arch_context_t *context, bool enabled) {
-    context->kernel_interrupt_enabled = enabled;
-}
-
 task_t *arch_get_current() {
     loongarch64_cpu_local_t *local = loongarch64_get_cpu_local();
     return local ? local->task_ptr : NULL;

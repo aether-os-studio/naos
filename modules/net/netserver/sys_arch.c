@@ -221,11 +221,11 @@ u32_t sys_arch_sem_wait(sys_sem_t *sem, u32_t timeout) {
         }
         spin_unlock(&s->sem.lock);
 
-        reason =
-            task_block(current_task, TASK_BLOCKING, block_ns, "lwip_sem_wait");
-        if (reason != EOK && reason != ETIMEDOUT) {
-            schedule(SCHED_FLAG_YIELD);
-        }
+        bool irq = arch_interrupt_enabled();
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+        if (!irq)
+            arch_disable_interrupt();
     }
 
     if (!timeout) {

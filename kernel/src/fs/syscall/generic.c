@@ -513,11 +513,14 @@ static int file_lock_setlk(fd_t *fd, const flock_t *req, bool wait, bool ofd) {
 
         spin_unlock(&node->file_locks_lock);
 
-        ret = task_block(current_task, TASK_BLOCKING, 10000000LL, "fcntl_lock");
-        if (ret != EOK && ret != ETIMEDOUT) {
+        if (task_signal_has_deliverable(current_task)) {
             file_lock_waiter_remove(node, &waiter);
             return ret;
         }
+
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+        arch_disable_interrupt();
     }
 }
 
@@ -1538,12 +1541,9 @@ uint64_t sys_close(uint64_t fd) {
     with_fd_info_lock(fd_info, {
         if (fd >= fd_info->max_fds)
             break;
-        entry = fd_info->fds[fd].file;
+        entry = task_fd_slot_take(fd_info, (int)fd, NULL);
         if (!entry)
             break;
-
-        fd_info->fds[fd].file = NULL;
-        fd_info->fds[fd].flags = 0;
         ret = 0;
     });
 
@@ -1637,12 +1637,9 @@ uint64_t sys_close_range(uint64_t fd, uint64_t maxfd, uint64_t flags) {
 
     with_fd_info_lock(fd_info, {
         for (size_t fd_ = fd; fd_ <= maxfd; fd_++) {
-            fd_t *entry = fd_info->fds[fd_].file;
+            fd_t *entry = task_fd_slot_take(fd_info, (int)fd_, NULL);
             if (!entry)
                 continue;
-
-            fd_info->fds[fd_].file = NULL;
-            fd_info->fds[fd_].flags = 0;
             to_close[fd_] = entry;
         }
     });
@@ -2868,15 +2865,19 @@ static uint64_t dup_to_exact(task_t *self, uint64_t fd, uint64_t newfd,
         }
 
         if (fd_info->fds[newfd].file) {
-            replaced_fd = fd_info->fds[newfd].file;
-            fd_info->fds[newfd].file = NULL;
-            fd_info->fds[newfd].flags = 0;
+            replaced_fd = task_fd_slot_take(fd_info, (int)newfd, NULL);
             replaced_existing = true;
         }
 
         new_fd_flags = cloexec ? FD_CLOEXEC : 0;
-        fd_info->fds[newfd].file = newf;
-        fd_info->fds[newfd].flags = new_fd_flags;
+        if (task_fd_slot_install(fd_info, (int)newfd, newf, new_fd_flags) < 0) {
+            vfs_file_put(newf);
+            if (replaced_fd)
+                task_fd_slot_install(fd_info, (int)newfd, replaced_fd, 0);
+            ret = (uint64_t)-ENOMEM;
+            break;
+        }
+        vfs_file_put(newf);
         installed_new = true;
     });
     task_fd_info_put(fd_info, self);
@@ -2959,8 +2960,13 @@ static uint64_t dup_to_free_slot(task_t *self, uint64_t fd, uint64_t start,
             break;
         }
 
-        fd_info->fds[i].file = newf;
-        fd_info->fds[i].flags = cloexec ? FD_CLOEXEC : 0;
+        if (task_fd_slot_install(fd_info, (int)i, newf,
+                                 cloexec ? FD_CLOEXEC : 0) < 0) {
+            vfs_file_put(newf);
+            ret = (uint64_t)-ENOMEM;
+            break;
+        }
+        vfs_file_put(newf);
         installed_fd = (int)i;
         ret = i;
     });

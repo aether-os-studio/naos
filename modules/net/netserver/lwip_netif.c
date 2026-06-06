@@ -296,8 +296,7 @@ static void naos_lwip_rx_thread(uint64_t arg) {
         if (!rx_pbuf) {
             rx_pbuf = pbuf_alloc(PBUF_RAW, (u16_t)max_len, PBUF_POOL);
             if (!rx_pbuf) {
-                task_block(current_task, TASK_BLOCKING, 1000000,
-                           "lwip_rx_alloc");
+                arch_wait_for_interrupt();
                 continue;
             }
         }
@@ -307,7 +306,7 @@ static void naos_lwip_rx_thread(uint64_t arg) {
             if (len == -ENODEV || link->stopping) {
                 break;
             }
-            schedule(SCHED_FLAG_YIELD);
+            arch_wait_for_interrupt();
             continue;
         }
 

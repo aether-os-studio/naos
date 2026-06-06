@@ -53,6 +53,7 @@ uint32_t x64_current_cpu_id(void);
 
 void local_apic_init();
 void apic_timer_rearm(void);
+void apic_timer_set_interval_ns(uint64_t ns);
 void apic_ipi_init();
 
 void ioapic_enable(uint8_t vector);

@@ -365,21 +365,24 @@ static int socket_wait_fd_event(fd_t *fd, uint32_t events, int64_t timeout_ns,
     if (!fd || !fd->node)
         return -EBADF;
 
-    vfs_poll_wait_t wait;
-    vfs_poll_wait_init(&wait, current_task, events);
-    if (vfs_poll_wait_arm(fd->node, &wait) < 0)
-        return -EINVAL;
+    uint64_t deadline_ns =
+        (timeout_ns > 0) ? (nano_time() + timeout_ns) : UINT64_MAX;
 
-    int ret = vfs_poll_wait_sleep(fd->node, &wait, timeout_ns, reason);
-    vfs_poll_wait_disarm(&wait);
+    while (nano_time() < deadline_ns) {
+        if (vfs_poll(fd->node, events) & events) {
+            return 0;
+        }
 
-    if (ret == EOK)
-        return 0;
-    if (ret == ETIMEDOUT)
-        return -ETIMEDOUT;
-    if (ret < 0)
-        return ret;
-    return -EINTR;
+        if (task_signal_has_deliverable(current_task)) {
+            return -EINTR;
+        }
+
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+        arch_disable_interrupt();
+    }
+
+    return -ETIMEDOUT;
 }
 
 static int socket_store_mmsg_len(struct mmsghdr *msgvec, unsigned int idx,

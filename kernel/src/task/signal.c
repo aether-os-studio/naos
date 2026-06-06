@@ -755,7 +755,9 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
             return (uint64_t)-EAGAIN;
         }
 
-        schedule(SCHED_FLAG_YIELD);
+        arch_enable_interrupt();
+
+        arch_wait_for_interrupt();
     }
 }
 

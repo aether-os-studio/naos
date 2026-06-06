@@ -175,8 +175,6 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
     if (!page_paddr)
         return PF_RES_NOMEM;
 
-    memset((void *)phys_to_virt(page_paddr), 0, PAGE_SIZE);
-
     size_t loaded = 0;
     fd_t fd = {
         .f_op = snapshot->node->i_fop,
@@ -197,6 +195,8 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
             break;
         loaded += (size_t)ret;
     }
+
+    memset((void *)phys_to_virt(page_paddr) + loaded, 0, PAGE_SIZE - loaded);
 
     fault_sync_page_before_user_map(snapshot, page_paddr);
 

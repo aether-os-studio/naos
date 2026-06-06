@@ -69,13 +69,6 @@ void clockevent_program_event(uint64_t monotonic_deadline_ns) {
     now_ns = nano_time();
     delta_ns =
         monotonic_deadline_ns > now_ns ? monotonic_deadline_ns - now_ns : 1;
-    if (delta_ns < CLOCKEVENT_MIN_PROGRAM_DELTA_NS) {
-        if (dev->ops->shutdown)
-            dev->ops->shutdown(dev);
-        clockevent_deadline_ns = UINT64_MAX;
-        spin_unlock(&clockevent_lock);
-        return;
-    }
 
     delta_ns = clockevent_clamp_delta(dev, delta_ns);
 
@@ -88,6 +81,6 @@ void clockevent_program_event(uint64_t monotonic_deadline_ns) {
 void clockevent_handle_irq(void) {
     __atomic_store_n(&clockevent_deadline_ns, UINT64_MAX, __ATOMIC_RELEASE);
 
-    if (softirq_raise(SOFTIRQ_TIMER))
-        sched_wake_worker(current_cpu_id);
+    softirq_raise(SOFTIRQ_TIMER);
+    sched_wake_worker(current_cpu_id);
 }

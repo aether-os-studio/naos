@@ -8,7 +8,6 @@ void apic_timer_handler(uint64_t irq_num, void *data, struct pt_regs *regs) {
     (void)irq_num;
     (void)data;
     (void)regs;
-    apic_timer_rearm();
 }
 
 void apic_timer_init() {

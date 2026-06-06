@@ -175,11 +175,6 @@ static uint64_t linux_clock_getres_cpu(clockid_t clock_id, uint64_t user_addr) {
     return copy_timespec_to_user(user_addr, 0, 1);
 }
 
-static uint64_t sys_sched_yield(void) {
-    schedule(SCHED_FLAG_YIELD);
-    return 0;
-}
-
 static inline uint64_t getrandom_next(uint64_t *state) {
     uint64_t x = *state;
 
@@ -435,7 +430,7 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_ACCESS, (syscall_handle_t)sys_access);
     regist_syscall_handler(SYS_PIPE, (syscall_handle_t)sys_pipe_normal);
     regist_syscall_handler(SYS_SELECT, (syscall_handle_t)sys_select);
-    regist_syscall_handler(SYS_SCHED_YIELD, (syscall_handle_t)sys_sched_yield);
+    regist_syscall_handler(SYS_SCHED_YIELD, (syscall_handle_t)sys_yield);
     regist_syscall_handler(SYS_MREMAP, (syscall_handle_t)sys_mremap);
     regist_syscall_handler(SYS_MSYNC, (syscall_handle_t)sys_msync);
     regist_syscall_handler(SYS_MINCORE, (syscall_handle_t)sys_mincore);
@@ -989,8 +984,6 @@ done:
 
     if (self && self->signal && self->signal->signal != 0)
         task_signal(regs);
-
-    sched_resched_if_needed();
 
     if (idx != SYS_RT_SIGRETURN) {
         regs->rcx = regs->rip;

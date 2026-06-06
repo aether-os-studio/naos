@@ -101,7 +101,6 @@ static vfs_node_t *drm_event_node_get(drm_device_t *dev) {
 static void drm_notify_event_node(drm_device_t *dev) {
     vfs_node_t *event_node = drm_event_node_get(dev);
     if (event_node) {
-        vfs_poll_notify(event_node, EPOLLIN);
         vfs_iput(event_node);
     }
 }
@@ -214,6 +213,8 @@ ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
     memset(&event, 0, sizeof(event));
 
     while (!have_event) {
+        arch_enable_interrupt();
+
         spin_lock(&dev->event_lock);
         if (dev->drm_event_count != 0) {
             event = dev->drm_events[dev->drm_event_head];
@@ -232,31 +233,24 @@ ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
 
         vfs_node_t *event_node = drm_event_node_get(dev);
         if (!event_node) {
-            schedule(SCHED_FLAG_YIELD);
+            arch_wait_for_interrupt();
             continue;
         }
 
-        uint32_t want = EPOLLIN | EPOLLERR | EPOLLHUP;
-        vfs_poll_wait_t wait;
-        vfs_poll_wait_init(&wait, current_task, want);
-        int ret = vfs_poll_wait_arm(event_node, &wait);
-        if (ret != 0) {
-            vfs_iput(event_node);
-            return ret;
-        }
-
+        const uint32_t want = EPOLLIN | EPOLLERR | EPOLLHUP;
         int events = vfs_poll(event_node, want);
         if (!(events & want)) {
-            int reason = vfs_poll_wait_sleep(event_node, &wait, -1, "drm_read");
-            vfs_poll_wait_disarm(&wait);
-            vfs_iput(event_node);
-            if (reason != EOK) {
-                return reason == EINTR ? -EINTR : -EIO;
+            if (task_signal_has_deliverable(current_task)) {
+                -EINTR;
             }
+
+            arch_enable_interrupt();
+            arch_wait_for_interrupt();
+            arch_disable_interrupt();
+
             continue;
         }
 
-        vfs_poll_wait_disarm(&wait);
         vfs_iput(event_node);
         if (events & (EPOLLERR | EPOLLHUP)) {
             return -EIO;

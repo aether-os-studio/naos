@@ -551,8 +551,6 @@ void pidfd_on_task_exit(task_t *task) {
             continue;
         ctx->exited = true;
         ctx->exit_status = task->status;
-        if (ctx->node)
-            vfs_poll_notify(ctx->node, EPOLLIN);
     }
     spin_unlock(&pidfd_watch_lock);
 }

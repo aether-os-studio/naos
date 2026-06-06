@@ -88,7 +88,6 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->ctx->rsp = (uint64_t)context->ctx;
     context->ctx->rbp = (uint64_t)context->ctx;
     context->ctx->rflags = X64_RFLAGS_IF;
-    context->kernel_interrupt_enabled = 1;
     context->fsbase = 0;
     context->gsbase = 0;
     if (user_mode) {
@@ -135,7 +134,6 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
 
     dst->fsbase = src->fsbase;
     dst->gsbase = src->gsbase;
-    dst->kernel_interrupt_enabled = src->kernel_interrupt_enabled;
 }
 
 void arch_context_free(arch_context_t *context) {
@@ -143,11 +141,6 @@ void arch_context_free(arch_context_t *context) {
         free_frames_bytes(context->fpu_ctx, x64_fpu_state_size());
         context->fpu_ctx = NULL;
     }
-}
-
-void arch_context_save_interrupt_state(arch_context_t *context, bool enabled) {
-    if (context)
-        context->kernel_interrupt_enabled = enabled ? 1 : 0;
 }
 
 task_t *arch_get_current() {
@@ -193,7 +186,6 @@ void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
     context->ctx->ss = SELECTOR_USER_DS;
 
     context->ctx->rflags = X64_RFLAGS_IF;
-    context->kernel_interrupt_enabled = 1;
 
     context->fsbase = 0;
     context->gsbase = 0;

@@ -198,13 +198,6 @@ static bool notifyfs_handle_queue_event(notifyfs_handle_t *handle, int wd,
     return queued;
 }
 
-static void notifyfs_signal_owner(notifyfs_watch_t *watch) {
-    if (!watch || !watch->owner_inode)
-        return;
-
-    vfs_poll_notify(watch->owner_inode, EPOLLIN);
-}
-
 static notifyfs_watch_bucket_entry_t *
 notifyfs_find_bucket_entry_locked(notifyfs_watch_bucket_t *bucket,
                                   struct vfs_inode *inode) {
@@ -311,7 +304,6 @@ static void notifyfs_watch_deactivate_locked(notifyfs_watch_t *watch,
 
     notifyfs_handle_queue_event(watch->handle, (int)watch->wd, NULL, IN_IGNORED,
                                 0);
-    notifyfs_signal_owner(watch);
 }
 
 static void
@@ -329,7 +321,6 @@ notifyfs_watch_deactivate_bucket_locked(notifyfs_watch_t *watch,
 
     notifyfs_handle_queue_event(watch->handle, (int)watch->wd, NULL, IN_IGNORED,
                                 0);
-    notifyfs_signal_owner(watch);
 }
 
 static void notifyfs_free_watch(notifyfs_watch_t *watch) {
@@ -599,7 +590,6 @@ bool notifyfs_queue_inode_event(struct vfs_inode *watch_inode,
                                          event_mask, cookie))
             continue;
 
-        notifyfs_signal_owner(watch);
         queued = true;
 
         if (watch->mask & IN_ONESHOT)
@@ -630,7 +620,6 @@ static ssize_t notifyfs_read(struct vfs_file *file, void *addr, size_t size,
 
     for (;;) {
         struct llist_header stale_watches;
-        vfs_poll_wait_t wait;
         ssize_t ret;
 
         llist_init_head(&stale_watches);
@@ -642,17 +631,17 @@ static ssize_t notifyfs_read(struct vfs_file *file, void *addr, size_t size,
         if (fd_get_flags(file) & O_NONBLOCK)
             return -EWOULDBLOCK;
 
-        vfs_poll_wait_init(&wait, current_task, EPOLLIN | EPOLLERR | EPOLLHUP);
-        vfs_poll_wait_arm(owner_inode, &wait);
-        if (!notifyfs_handle_has_events(handle)) {
-            int reason =
-                vfs_poll_wait_sleep(owner_inode, &wait, -1, "notifyfs_read");
-            vfs_poll_wait_disarm(&wait);
-            if (reason != EOK)
-                return -EINTR;
-        } else {
-            vfs_poll_wait_disarm(&wait);
+        if (task_signal_has_deliverable(current_task)) {
+            return -EINTR;
         }
+
+        if (vfs_poll(owner_inode, EPOLLIN) & EPOLLIN) {
+            continue;
+        }
+
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+        arch_disable_interrupt();
     }
 }
 

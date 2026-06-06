@@ -30,6 +30,7 @@ int timer_init(void);
 void timer_init_percpu(void);
 void timer_handler(uint64_t irq_num, void *parameter, struct pt_regs *regs);
 void timer_set_next_tick_ns(uint64_t ns);
+void timer_set_sched_interval_ns(uint64_t ns);
 uint64_t get_counter();
 uint64_t get_freq();
 uint64_t realtime_boot_time();

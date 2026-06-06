@@ -22,7 +22,6 @@ typedef struct arch_context {
     uint64_t s7;
     uint64_t s8;
     uint64_t page_table_addr;
-    bool kernel_interrupt_enabled;
     struct pt_regs *ctx;
     struct fpu_context *fpu_ctx;
 } arch_context_t;
@@ -79,7 +78,6 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
 void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
                        uint64_t clone_flags);
 void arch_context_free(arch_context_t *context);
-void arch_context_save_interrupt_state(arch_context_t *context, bool enabled);
 task_t *arch_get_current();
 void arch_set_current(task_t *current);
 

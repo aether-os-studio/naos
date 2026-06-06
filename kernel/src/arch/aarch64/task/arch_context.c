@@ -144,11 +144,6 @@ void arch_context_free(arch_context_t *context) {
     }
 }
 
-void arch_context_save_interrupt_state(arch_context_t *context, bool enabled) {
-    (void)context;
-    (void)enabled;
-}
-
 extern bool task_initialized;
 
 task_t *arch_get_current() {

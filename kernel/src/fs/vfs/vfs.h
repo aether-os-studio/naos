@@ -189,15 +189,6 @@ struct vfs_poll_table;
 struct vfs_super_block;
 struct vfs_file_system_type;
 
-typedef struct vfs_poll_wait {
-    struct llist_header node;
-    struct task *task;
-    struct vfs_inode *watch_node;
-    uint32_t events;
-    volatile uint32_t revents;
-    volatile bool armed;
-} vfs_poll_wait_t;
-
 enum vfs_lookup_flags {
     LOOKUP_FOLLOW = 1U << 0,
     LOOKUP_DIRECTORY = 1U << 1,
@@ -835,7 +826,7 @@ long vfs_ioctl_file(struct vfs_file *file, unsigned long cmd,
                     unsigned long arg);
 int vfs_fsync_file(struct vfs_file *file);
 int vfs_truncate_path(const struct vfs_path *path, uint64_t size);
-int vfs_poll(vfs_node_t *node, size_t events);
+uint32_t vfs_poll(vfs_node_t *node, uint32_t events);
 
 int vfs_mkdirat(int dfd, const char *pathname, umode_t mode, bool kernel);
 int vfs_mknodat(int dfd, const char *pathname, umode_t mode, dev64_t dev,
@@ -867,20 +858,6 @@ int vfs_do_remount(int dfd, const char *pathname, unsigned long mnt_flags);
 int vfs_do_move_mount(int from_dfd, const char *from_pathname, int to_dfd,
                       const char *to_pathname);
 int vfs_do_umount(int dfd, const char *pathname, int flags);
-
-/**
- * Initialize a poll-wait entry before arming it against a node.
- * Notes: poll wait state is edge-sensitive bookkeeping around a sleep window.
- * The expected pattern is init -> arm -> recheck condition -> sleep -> disarm.
- * Skipping the recheck after arming is a classic lost-wakeup mistake.
- */
-void vfs_poll_wait_init(vfs_poll_wait_t *wait, struct task *task,
-                        uint32_t events);
-int vfs_poll_wait_arm(vfs_node_t *node, vfs_poll_wait_t *wait);
-void vfs_poll_wait_disarm(vfs_poll_wait_t *wait);
-int vfs_poll_wait_sleep(vfs_node_t *node, vfs_poll_wait_t *wait,
-                        int64_t timeout_ns, const char *reason);
-void vfs_poll_notify(vfs_node_t *node, uint32_t events);
 
 /**
  * Syscall-facing helpers that translate fd numbers into VFS file operations.

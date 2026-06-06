@@ -223,7 +223,6 @@ static ssize_t eventfdfs_read(struct vfs_file *file, void *buf, size_t count,
                                             false, __ATOMIC_ACQ_REL,
                                             __ATOMIC_ACQUIRE)) {
                 memcpy(buf, &value, sizeof(uint64_t));
-                vfs_poll_notify(node, EPOLLOUT | (new_count ? EPOLLIN : 0));
                 return sizeof(uint64_t);
             }
             continue;
@@ -232,19 +231,17 @@ static ssize_t eventfdfs_read(struct vfs_file *file, void *buf, size_t count,
         if (file->f_flags & O_NONBLOCK)
             return -EAGAIN;
 
-        vfs_poll_wait_t wait;
-        vfs_poll_wait_init(&wait, current_task, EPOLLIN | EPOLLERR | EPOLLHUP);
-        int ret = vfs_poll_wait_arm(node, &wait);
-        if (ret < 0)
-            return ret;
-        if (__atomic_load_n(&efd->count, __ATOMIC_ACQUIRE) != 0) {
-            vfs_poll_wait_disarm(&wait);
+        if (task_signal_has_deliverable(current_task)) {
+            return -EINTR;
+        }
+
+        if (vfs_poll(file->f_inode, EPOLLIN) & EPOLLIN) {
             continue;
         }
-        int reason = vfs_poll_wait_sleep(node, &wait, -1, "eventfd_read");
-        vfs_poll_wait_disarm(&wait);
-        if (reason != EOK)
-            return -EINTR;
+
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+        arch_disable_interrupt();
     }
 }
 
@@ -271,21 +268,18 @@ static ssize_t eventfdfs_write(struct vfs_file *file, const void *buf,
             if (file->f_flags & O_NONBLOCK)
                 return -EAGAIN;
 
-            vfs_poll_wait_t wait;
-            vfs_poll_wait_init(&wait, current_task,
-                               EPOLLOUT | EPOLLERR | EPOLLHUP);
-            int ret = vfs_poll_wait_arm(node, &wait);
-            if (ret < 0)
-                return ret;
-            if (__atomic_load_n(&efd->count, __ATOMIC_ACQUIRE) <=
-                UINT64_MAX - 1 - value) {
-                vfs_poll_wait_disarm(&wait);
+            if (task_signal_has_deliverable(current_task)) {
+                return -EINTR;
+            }
+
+            if (vfs_poll(file->f_inode, EPOLLOUT) & EPOLLOUT) {
                 continue;
             }
-            int reason = vfs_poll_wait_sleep(node, &wait, -1, "eventfd_write");
-            vfs_poll_wait_disarm(&wait);
-            if (reason != EOK)
-                return -EINTR;
+
+            arch_enable_interrupt();
+            arch_wait_for_interrupt();
+            arch_disable_interrupt();
+
             continue;
         }
 
@@ -296,8 +290,6 @@ static ssize_t eventfdfs_write(struct vfs_file *file, const void *buf,
                                         __ATOMIC_ACQUIRE))
             break;
     }
-
-    vfs_poll_notify(node, EPOLLIN | EPOLLOUT);
 
     return sizeof(uint64_t);
 }

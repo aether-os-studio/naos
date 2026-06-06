@@ -7,6 +7,7 @@
 #include <irq/irq_manager.h>
 
 struct global_timer_state global_timer = {0};
+static uint64_t timer_interval_ns[MAX_CPU_NUM];
 
 static inline uint64_t read_cntfrq() {
     uint64_t val;
@@ -299,7 +300,11 @@ static int timer_init_from_acpi(void) {
 }
 
 void timer_handler(uint64_t irq_num, void *parameter, struct pt_regs *regs) {
-    timer_set_next_tick_ns(1000000000ULL / SCHED_HZ);
+    uint32_t cpu_id = current_cpu_id;
+    uint64_t interval = cpu_id < MAX_CPU_NUM ? timer_interval_ns[cpu_id] : 0;
+    if (!interval)
+        interval = 1000000000ULL / SCHED_HZ;
+    timer_set_next_tick_ns(interval);
 }
 
 int timer_init(void) {
@@ -382,7 +387,7 @@ void timer_init_percpu() {
     gic_configure_irq(global_timer.irq_num, global_timer.irq_flags);
     gic_enable_irq(global_timer.irq_num);
 
-    timer_set_next_tick_ns(1000000000ULL / SCHED_HZ);
+    timer_set_sched_interval_ns(1000000000ULL / SCHED_HZ);
 }
 
 uint64_t nano_time() {
@@ -408,6 +413,16 @@ void timer_set_next_tick_ns(uint64_t ns) {
 
     global_timer.ops->write_tval(delta_ticks);
     global_timer.ops->write_ctl(1); // Enable
+}
+
+void timer_set_sched_interval_ns(uint64_t ns) {
+    if (ns == 0)
+        ns = 1;
+
+    if (current_cpu_id < MAX_CPU_NUM)
+        timer_interval_ns[current_cpu_id] = ns;
+
+    timer_set_next_tick_ns(ns);
 }
 
 timer_type_t timer_get_active_type(void) { return global_timer.active_type; }

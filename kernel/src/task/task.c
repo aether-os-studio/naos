@@ -7,6 +7,7 @@
 #include <task/sched.h>
 #include <drivers/logger.h>
 #include <drivers/clockevent.h>
+#include <drivers/deadline.h>
 #include <fs/vfs/vfs.h>
 #include <fs/fs_syscall.h>
 #include <arch/arch.h>
@@ -29,12 +30,15 @@ uint64_t next_task_pid = 1;
 hashmap_t task_pid_map = HASHMAP_INIT;
 hashmap_t task_parent_map = HASHMAP_INIT;
 hashmap_t task_pgid_map = HASHMAP_INIT;
-rb_root_t task_timeout_root = RB_ROOT_INIT;
-rb_root_t task_signal_timer_root = RB_ROOT_INIT;
-spinlock_t task_timeout_lock = SPIN_INIT;
-spinlock_t task_signal_timer_lock = SPIN_INIT;
-static uint64_t task_timeout_next_ns = UINT64_MAX;
-static uint64_t task_signal_timer_next_ns = UINT64_MAX;
+rb_root_t task_timeout_roots[MAX_CPU_NUM];
+rb_root_t task_signal_timer_roots[MAX_CPU_NUM];
+spinlock_t task_timeout_locks[MAX_CPU_NUM];
+spinlock_t task_signal_timer_locks[MAX_CPU_NUM];
+static uint64_t task_timeout_next_ns[MAX_CPU_NUM];
+static uint64_t task_signal_timer_next_ns[MAX_CPU_NUM];
+static deadline_source_t sched_tick_deadline_sources[MAX_CPU_NUM];
+static deadline_source_t task_timeout_deadline_sources[MAX_CPU_NUM];
+static deadline_source_t task_signal_timer_deadline_sources[MAX_CPU_NUM];
 spinlock_t should_free_lock = SPIN_INIT;
 DEFINE_LLIST(should_free_tasks);
 static spinlock_t should_free_mm_lock = SPIN_INIT;
@@ -51,6 +55,27 @@ uint32_t worker_task_count = 0;
 struct llist_header worker_tick_queues[MAX_WORKER_NUM];
 spinlock_t worker_tick_locks[MAX_WORKER_NUM];
 uint32_t worker_slot_by_cpu[MAX_CPU_NUM];
+
+static inline void sched_update_preempt_deadline(uint32_t cpu_id, task_t *task,
+                                                 uint64_t now_ns) {
+    uint64_t deadline =
+        sched_next_preempt_deadline(&schedulers[cpu_id], task, now_ns);
+
+    uint64_t tick_deadline = now_ns + (1000000000ULL / SCHED_HZ);
+
+    if (deadline == UINT64_MAX || deadline > tick_deadline)
+        deadline = tick_deadline;
+
+    deadline_source_update(&sched_tick_deadline_sources[cpu_id], deadline);
+}
+
+void sched_refresh_preempt_deadline(uint32_t cpu_id, task_t *task,
+                                    uint64_t now_ns) {
+    if (cpu_id >= MAX_CPU_NUM)
+        return;
+
+    sched_update_preempt_deadline(cpu_id, task, now_ns);
+}
 
 struct vfs_process_fs *task_current_vfs_fs(void) {
     return current_task ? task_vfs_fs(current_task) : NULL;
@@ -73,6 +98,7 @@ fd_info_t *task_fd_info_alloc(size_t max_fds) {
     }
 
     fd_info->max_fds = max_fds;
+    llist_init_head(&fd_info->signalfd_refs);
     spin_init(&fd_info->fdt_lock);
     task_fd_info_ref_init(fd_info, 1);
     return fd_info;
@@ -90,8 +116,9 @@ fd_info_t *task_fd_info_clone(fd_info_t *old) {
         for (size_t i = 0; i < old->max_fds; i++) {
             if (!old->fds[i].file)
                 continue;
-            new_info->fds[i].file = vfs_file_get(old->fds[i].file);
-            new_info->fds[i].flags = old->fds[i].flags;
+            if (task_fd_slot_install(new_info, (int)i, old->fds[i].file,
+                                     old->fds[i].flags) < 0)
+                break;
         }
     });
 
@@ -118,10 +145,101 @@ int task_fd_info_expand(fd_info_t *fd_info, size_t min_fds) {
 }
 
 void task_fd_info_free(fd_info_t *fd_info) {
+    signalfd_ref_t *pos, *tmp;
+
     if (!fd_info)
         return;
+    llist_for_each(pos, tmp, &fd_info->signalfd_refs, node) { free(pos); }
     free(fd_info->fds);
     free(fd_info);
+}
+
+static signalfd_ref_t *task_fd_signalfd_ref_find_locked(fd_info_t *fd_info,
+                                                        int fd) {
+    signalfd_ref_t *pos, *tmp;
+
+    if (!fd_info)
+        return NULL;
+
+    llist_for_each(pos, tmp, &fd_info->signalfd_refs, node) {
+        if (pos->fd == fd)
+            return pos;
+    }
+
+    return NULL;
+}
+
+static int task_fd_signalfd_ref_add_locked(fd_info_t *fd_info, int fd,
+                                           struct vfs_file *file) {
+    signalfd_ref_t *ref;
+
+    if (!fd_info || fd < 0 || !file || !signalfd_is_file(file))
+        return 0;
+
+    ref = calloc(1, sizeof(*ref));
+    if (!ref)
+        return -ENOMEM;
+
+    llist_init_head(&ref->node);
+    ref->file = file;
+    ref->fd = fd;
+    llist_append(&fd_info->signalfd_refs, &ref->node);
+    return 0;
+}
+
+static void task_fd_signalfd_ref_remove_locked(fd_info_t *fd_info, int fd) {
+    signalfd_ref_t *ref = task_fd_signalfd_ref_find_locked(fd_info, fd);
+
+    if (!ref)
+        return;
+
+    llist_delete(&ref->node);
+    free(ref);
+}
+
+int task_fd_slot_install(fd_info_t *fd_info, int fd, struct vfs_file *file,
+                         unsigned int flags) {
+    int ret;
+
+    if (!fd_info || fd < 0 || (size_t)fd >= fd_info->max_fds || !file)
+        return -EINVAL;
+    if (fd_info->fds[fd].file)
+        return -EEXIST;
+
+    fd_info->fds[fd].file = vfs_file_get(file);
+    if (!fd_info->fds[fd].file)
+        return -ENOMEM;
+    fd_info->fds[fd].flags = flags;
+
+    ret = task_fd_signalfd_ref_add_locked(fd_info, fd, file);
+    if (ret < 0) {
+        vfs_file_put(fd_info->fds[fd].file);
+        fd_info->fds[fd].file = NULL;
+        fd_info->fds[fd].flags = 0;
+        return ret;
+    }
+
+    return 0;
+}
+
+struct vfs_file *task_fd_slot_take(fd_info_t *fd_info, int fd,
+                                   unsigned int *flags) {
+    struct vfs_file *file;
+
+    if (!fd_info || fd < 0 || (size_t)fd >= fd_info->max_fds)
+        return NULL;
+
+    file = fd_info->fds[fd].file;
+    if (!file)
+        return NULL;
+
+    if (flags)
+        *flags = fd_info->fds[fd].flags;
+
+    task_fd_signalfd_ref_remove_locked(fd_info, fd);
+    fd_info->fds[fd].file = NULL;
+    fd_info->fds[fd].flags = 0;
+    return file;
 }
 
 fd_info_t *task_fd_info_get(task_t *task) {
@@ -252,8 +370,8 @@ int task_install_file(task_t *task, struct vfs_file *file,
         for (size_t i = (size_t)min_fd; i < limit; ++i) {
             if (fd_info->fds[i].file)
                 continue;
-            fd_info->fds[i].file = vfs_file_get(file);
-            fd_info->fds[i].flags = fd_flags;
+            if (task_fd_slot_install(fd_info, (int)i, file, fd_flags) < 0)
+                break;
             newfd = (int)i;
             break;
         }
@@ -272,8 +390,8 @@ int task_install_file(task_t *task, struct vfs_file *file,
             for (size_t i = MAX((size_t)min_fd, old_max); i < limit; ++i) {
                 if (fd_info->fds[i].file)
                     continue;
-                fd_info->fds[i].file = vfs_file_get(file);
-                fd_info->fds[i].flags = fd_flags;
+                if (task_fd_slot_install(fd_info, (int)i, file, fd_flags) < 0)
+                    break;
                 newfd = (int)i;
                 break;
             }
@@ -313,9 +431,13 @@ int task_replace_file(task_t *task, int fd, struct vfs_file *file,
             ret = -EINVAL;
             break;
         }
-        old = fd_info->fds[fd].file;
-        fd_info->fds[fd].file = vfs_file_get(file);
-        fd_info->fds[fd].flags = fd_flags;
+        old = task_fd_slot_take(fd_info, fd, NULL);
+        if (task_fd_slot_install(fd_info, fd, file, fd_flags) < 0) {
+            if (old)
+                task_fd_slot_install(fd_info, fd, old, fd_flags);
+            ret = -ENOMEM;
+            break;
+        }
     });
 
     task_fd_info_put(fd_info, task);
@@ -347,9 +469,7 @@ int task_close_file_descriptor(task_t *task, int fd) {
     with_fd_info_lock(fd_info, {
         if ((size_t)fd >= fd_info->max_fds)
             break;
-        file = fd_info->fds[fd].file;
-        fd_info->fds[fd].file = NULL;
-        fd_info->fds[fd].flags = 0;
+        file = task_fd_slot_take(fd_info, fd, NULL);
     });
 
     task_fd_info_put(fd_info, task);
@@ -364,7 +484,6 @@ int task_close_file_descriptor(task_t *task, int fd) {
 static void sched_update_itimer_task(task_t *task, uint64_t now_ms);
 static void task_reap_softirq(void);
 static void task_signal_timer_update(task_t *task);
-static void task_signal_timer_softirq(void);
 
 static inline uint64_t realtime_now_ns(void) {
     return boot_get_boottime() * 1000000000ULL + nano_time();
@@ -608,15 +727,20 @@ static inline uint64_t task_signal_timer_to_mono_deadline(clockid_t clock_type,
     return expires_ns;
 }
 
-static inline task_t *task_timeout_first_locked(void) {
-    rb_node_t *first = rb_first(&task_timeout_root);
+static inline uint32_t task_timer_cpu_id(task_t *task) {
+    return (task && task->cpu_id < MAX_CPU_NUM) ? task->cpu_id : 0;
+}
+
+static inline task_t *task_timeout_first_locked(uint32_t cpu_id) {
+    rb_node_t *first = rb_first(&task_timeout_roots[cpu_id]);
     return first ? rb_entry(first, task_t, timeout_node) : NULL;
 }
 
-static inline void task_timeout_refresh_next_locked(void) {
-    task_t *first = task_timeout_first_locked();
+static inline void task_timeout_refresh_next_locked(uint32_t cpu_id) {
+    task_t *first = task_timeout_first_locked(cpu_id);
     uint64_t next = first ? first->force_wakeup_ns : UINT64_MAX;
-    __atomic_store_n(&task_timeout_next_ns, next, __ATOMIC_RELEASE);
+    __atomic_store_n(&task_timeout_next_ns[cpu_id], next, __ATOMIC_RELEASE);
+    deadline_source_update(&task_timeout_deadline_sources[cpu_id], next);
 }
 
 static inline uint64_t task_signal_timer_compute_deadline_locked(task_t *task) {
@@ -660,33 +784,39 @@ static inline int task_signal_timer_cmp_values(uint64_t left_deadline,
     return 0;
 }
 
-static inline task_t *task_signal_timer_first_locked(void) {
-    rb_node_t *first = rb_first(&task_signal_timer_root);
+static inline task_t *task_signal_timer_first_locked(uint32_t cpu_id) {
+    rb_node_t *first = rb_first(&task_signal_timer_roots[cpu_id]);
     return first ? rb_entry(first, task_t, signal_timer_node) : NULL;
 }
 
-static inline void task_signal_timer_refresh_next_locked(void) {
-    task_t *first = task_signal_timer_first_locked();
+static inline void task_signal_timer_refresh_next_locked(uint32_t cpu_id) {
+    task_t *first = task_signal_timer_first_locked(cpu_id);
     uint64_t next = first ? first->signal_timer_deadline_ns : UINT64_MAX;
-    __atomic_store_n(&task_signal_timer_next_ns, next, __ATOMIC_RELEASE);
+    __atomic_store_n(&task_signal_timer_next_ns[cpu_id], next,
+                     __ATOMIC_RELEASE);
+    deadline_source_update(&task_signal_timer_deadline_sources[cpu_id], next);
 }
 
 static void task_signal_timer_remove_locked(task_t *task) {
+    uint32_t cpu_id = task_timer_cpu_id(task);
+
     if (!task || !task->signal_timer_queued)
         return;
 
-    rb_erase(&task->signal_timer_node, &task_signal_timer_root);
+    rb_erase(&task->signal_timer_node, &task_signal_timer_roots[cpu_id]);
     memset(&task->signal_timer_node, 0, sizeof(task->signal_timer_node));
     task->signal_timer_queued = false;
 }
 
 static void task_signal_timer_add_locked(task_t *task) {
+    uint32_t cpu_id = task_timer_cpu_id(task);
+
     if (!task || task->signal_timer_deadline_ns == UINT64_MAX ||
         task->signal_timer_queued) {
         return;
     }
 
-    rb_node_t **slot = &task_signal_timer_root.rb_node;
+    rb_node_t **slot = &task_signal_timer_roots[cpu_id].rb_node;
     rb_node_t *parent = NULL;
 
     while (*slot) {
@@ -706,49 +836,56 @@ static void task_signal_timer_add_locked(task_t *task) {
     rb_set_parent(&task->signal_timer_node, parent);
     rb_set_color(&task->signal_timer_node, KRB_RED);
     *slot = &task->signal_timer_node;
-    rb_insert_color(&task->signal_timer_node, &task_signal_timer_root);
+    rb_insert_color(&task->signal_timer_node, &task_signal_timer_roots[cpu_id]);
     task->signal_timer_queued = true;
 }
 
 static void task_signal_timer_update(task_t *task) {
-    spin_lock(&task_signal_timer_lock);
+    uint32_t cpu_id = task_timer_cpu_id(task);
+    spin_lock(&task_signal_timer_locks[cpu_id]);
     task_signal_timer_remove_locked(task);
     task->signal_timer_deadline_ns =
         task_signal_timer_compute_deadline_locked(task);
     task_signal_timer_add_locked(task);
-    task_signal_timer_refresh_next_locked();
-    spin_unlock(&task_signal_timer_lock);
+    task_signal_timer_refresh_next_locked(cpu_id);
+    spin_unlock(&task_signal_timer_locks[cpu_id]);
 }
 
 static void task_signal_timer_cancel(task_t *task) {
-    spin_lock(&task_signal_timer_lock);
+    uint32_t cpu_id = task_timer_cpu_id(task);
+    spin_lock(&task_signal_timer_locks[cpu_id]);
     task_signal_timer_remove_locked(task);
     if (task)
         task->signal_timer_deadline_ns = UINT64_MAX;
-    task_signal_timer_refresh_next_locked();
-    spin_unlock(&task_signal_timer_lock);
+    task_signal_timer_refresh_next_locked(cpu_id);
+    spin_unlock(&task_signal_timer_locks[cpu_id]);
 }
 
-static inline uint64_t task_signal_timer_next_deadline_ns(void) {
-    return __atomic_load_n(&task_signal_timer_next_ns, __ATOMIC_ACQUIRE);
+static inline uint64_t task_signal_timer_next_deadline_ns(uint32_t cpu_id) {
+    return __atomic_load_n(&task_signal_timer_next_ns[cpu_id],
+                           __ATOMIC_ACQUIRE);
 }
 
 static void task_timeout_remove_locked(task_t *task) {
+    uint32_t cpu_id = task_timer_cpu_id(task);
+
     if (!task || !task->timeout_queued) {
         return;
     }
 
-    rb_erase(&task->timeout_node, &task_timeout_root);
+    rb_erase(&task->timeout_node, &task_timeout_roots[cpu_id]);
     memset(&task->timeout_node, 0, sizeof(task->timeout_node));
     task->timeout_queued = false;
 }
 
 static void task_timeout_add_locked(task_t *task) {
+    uint32_t cpu_id = task_timer_cpu_id(task);
+
     if (!task || task->force_wakeup_ns == UINT64_MAX || task->timeout_queued) {
         return;
     }
 
-    rb_node_t **slot = &task_timeout_root.rb_node;
+    rb_node_t **slot = &task_timeout_roots[cpu_id].rb_node;
     rb_node_t *parent = NULL;
 
     while (*slot) {
@@ -768,27 +905,32 @@ static void task_timeout_add_locked(task_t *task) {
     rb_set_parent(&task->timeout_node, parent);
     rb_set_color(&task->timeout_node, KRB_RED);
     *slot = &task->timeout_node;
-    rb_insert_color(&task->timeout_node, &task_timeout_root);
+    rb_insert_color(&task->timeout_node, &task_timeout_roots[cpu_id]);
     task->timeout_queued = true;
 }
 
 void task_timeout_cancel(task_t *task) {
-    spin_lock(&task_timeout_lock);
+    uint32_t cpu_id = task_timer_cpu_id(task);
+    spin_lock(&task_timeout_locks[cpu_id]);
     task_timeout_remove_locked(task);
-    task_timeout_refresh_next_locked();
-    spin_unlock(&task_timeout_lock);
+    task_timeout_refresh_next_locked(cpu_id);
+    spin_unlock(&task_timeout_locks[cpu_id]);
 }
 
 static void task_timeout_arm(task_t *task) {
-    spin_lock(&task_timeout_lock);
+    uint32_t cpu_id = task_timer_cpu_id(task);
+    spin_lock(&task_timeout_locks[cpu_id]);
     task_timeout_remove_locked(task);
     task_timeout_add_locked(task);
-    task_timeout_refresh_next_locked();
-    spin_unlock(&task_timeout_lock);
+    task_timeout_refresh_next_locked(cpu_id);
+    spin_unlock(&task_timeout_locks[cpu_id]);
 }
 
-static void task_timeout_softirq(void) {
+static void task_timeout_softirq_cpu(uint32_t cpu_id) {
     task_t *expired[32];
+
+    if (cpu_id >= MAX_CPU_NUM)
+        return;
 
     while (true) {
         size_t expired_count = 0;
@@ -798,9 +940,9 @@ static void task_timeout_softirq(void) {
 
         arch_disable_interrupt();
 
-        spin_lock(&task_timeout_lock);
+        spin_lock(&task_timeout_locks[cpu_id]);
         while (expired_count < (sizeof(expired) / sizeof(expired[0]))) {
-            task_t *task = task_timeout_first_locked();
+            task_t *task = task_timeout_first_locked(cpu_id);
             if (!task || task->force_wakeup_ns > now) {
                 break;
             }
@@ -808,8 +950,8 @@ static void task_timeout_softirq(void) {
             task_timeout_remove_locked(task);
             expired[expired_count++] = task;
         }
-        task_timeout_refresh_next_locked();
-        spin_unlock(&task_timeout_lock);
+        task_timeout_refresh_next_locked(cpu_id);
+        spin_unlock(&task_timeout_locks[cpu_id]);
 
         if (irq_state)
             arch_enable_interrupt();
@@ -835,13 +977,11 @@ static void task_timeout_softirq(void) {
     }
 }
 
-static void task_timer_softirq(void) {
-    task_timeout_softirq();
-    task_signal_timer_softirq();
-}
-
-static void task_signal_timer_softirq(void) {
+static void task_signal_timer_softirq_cpu(uint32_t cpu_id) {
     task_t *expired[32];
+
+    if (cpu_id >= MAX_CPU_NUM)
+        return;
 
     while (true) {
         size_t expired_count = 0;
@@ -851,17 +991,17 @@ static void task_signal_timer_softirq(void) {
         bool irq_state = arch_interrupt_enabled();
         arch_disable_interrupt();
 
-        spin_lock(&task_signal_timer_lock);
+        spin_lock(&task_signal_timer_locks[cpu_id]);
         while (expired_count < (sizeof(expired) / sizeof(expired[0]))) {
-            task_t *task = task_signal_timer_first_locked();
+            task_t *task = task_signal_timer_first_locked(cpu_id);
             if (!task || task->signal_timer_deadline_ns > now)
                 break;
 
             task_signal_timer_remove_locked(task);
             expired[expired_count++] = task;
         }
-        task_signal_timer_refresh_next_locked();
-        spin_unlock(&task_signal_timer_lock);
+        task_signal_timer_refresh_next_locked(cpu_id);
+        spin_unlock(&task_signal_timer_locks[cpu_id]);
 
         if (irq_state)
             arch_enable_interrupt();
@@ -881,6 +1021,15 @@ static void task_signal_timer_softirq(void) {
         if (expired_count < (sizeof(expired) / sizeof(expired[0])))
             return;
     }
+}
+
+static void task_timer_softirq(void) {
+    for (uint32_t cpu_id = 0; cpu_id < cpu_count && cpu_id < MAX_CPU_NUM;
+         cpu_id++)
+        task_timeout_softirq_cpu(cpu_id);
+    for (uint32_t cpu_id = 0; cpu_id < cpu_count && cpu_id < MAX_CPU_NUM;
+         cpu_id++)
+        task_signal_timer_softirq_cpu(cpu_id);
 }
 
 static void task_enqueue_should_free_locked(task_t *task) {
@@ -908,8 +1057,8 @@ static bool task_should_free_pending(void) {
 }
 
 static void task_schedule_reap_softirq(void) {
-    if (softirq_raise(SOFTIRQ_TASK_REAP))
-        sched_wake_worker(current_cpu_id);
+    softirq_raise(SOFTIRQ_TASK_REAP);
+    sched_wake_worker(current_cpu_id);
 }
 
 void task_schedule_reap(void) { task_schedule_reap_softirq(); }
@@ -1597,12 +1746,22 @@ void task_init() {
     ASSERT(hashmap_init(&task_pid_map, 512) == 0);
     ASSERT(hashmap_init(&task_parent_map, 512) == 0);
     ASSERT(hashmap_init(&task_pgid_map, 512) == 0);
-    task_timeout_root = RB_ROOT_INIT;
-    task_signal_timer_root = RB_ROOT_INIT;
-    __atomic_store_n(&task_timeout_next_ns, UINT64_MAX, __ATOMIC_RELEASE);
-    __atomic_store_n(&task_signal_timer_next_ns, UINT64_MAX, __ATOMIC_RELEASE);
-    spin_init(&task_timeout_lock);
-    spin_init(&task_signal_timer_lock);
+    for (uint32_t cpu = 0; cpu < MAX_CPU_NUM; cpu++) {
+        task_timeout_roots[cpu] = RB_ROOT_INIT;
+        task_signal_timer_roots[cpu] = RB_ROOT_INIT;
+        __atomic_store_n(&task_timeout_next_ns[cpu], UINT64_MAX,
+                         __ATOMIC_RELEASE);
+        __atomic_store_n(&task_signal_timer_next_ns[cpu], UINT64_MAX,
+                         __ATOMIC_RELEASE);
+        deadline_source_init(&task_timeout_deadline_sources[cpu],
+                             DEADLINE_SOURCE_TASK_TIMEOUT, cpu);
+        deadline_source_init(&task_signal_timer_deadline_sources[cpu],
+                             DEADLINE_SOURCE_TASK_SIGNAL_TIMER, cpu);
+        deadline_source_init(&sched_tick_deadline_sources[cpu],
+                             DEADLINE_SOURCE_SCHED_TICK, cpu);
+        spin_init(&task_timeout_locks[cpu]);
+        spin_init(&task_signal_timer_locks[cpu]);
+    }
     llist_init_head(&should_free_tasks);
     spin_init(&should_free_lock);
     llist_init_head(&should_free_mms);
@@ -1615,7 +1774,9 @@ void task_init() {
         memset(&schedulers[cpu], 0, sizeof(sched_rq_t));
         schedulers[cpu].run_tree = RB_ROOT_INIT;
         schedulers[cpu].min_vruntime = 0;
+        schedulers[cpu].load_weight = 0;
         schedulers[cpu].nr_running = 0;
+        schedulers[cpu].nr_queued = 0;
         spin_init(&schedulers[cpu].lock);
     }
     for (uint32_t i = 0; i < MAX_WORKER_NUM; i++) {
@@ -1631,6 +1792,10 @@ void task_init() {
         idle_task->last_sched_in_ns = nano_time();
         schedulers[cpu].idle = idle_task->sched_info;
         remove_sched_entity(idle_task, &schedulers[cpu]);
+        struct sched_entity *idle_entity = idle_task->sched_info;
+        idle_entity->rq = &schedulers[cpu];
+        idle_entity->on_rq = false;
+        idle_entity->exec_start_ns = idle_task->last_sched_in_ns;
         schedulers[cpu].curr = idle_task->sched_info;
     }
 
@@ -1661,8 +1826,6 @@ void task_init() {
 
     can_schedule = true;
 }
-
-void sys_yield() { schedule(SCHED_FLAG_YIELD); }
 
 void sched_request_resched(task_t *task) { task_set_need_resched(task); }
 
@@ -1721,7 +1884,7 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
 
     task->status = EOK;
 
-    if (target_cpu != current_task->cpu_id && task->sched_info) {
+    if (target_cpu != current_cpu_id && task->sched_info) {
         spin_lock(&schedulers[target_cpu].lock);
         should_trigger_sched_ipi = (schedulers[target_cpu].curr ==
                                     (struct sched_entity *)task->sched_info);
@@ -1764,7 +1927,7 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
 
     arch_enable_interrupt();
 
-    while (task->state == state) {
+    if (task == current_task) {
         schedule(0);
     }
 
@@ -1815,13 +1978,12 @@ void task_unblock(task_t *task, int reason) {
 
     add_sched_entity_wakeup(task, &schedulers[task->cpu_id]);
     should_trigger_sched_ipi =
-        task->cpu_id != current_task->cpu_id && task->cpu_id < cpu_count;
+        task->cpu_id != current_cpu_id && task->cpu_id < cpu_count;
 
     spin_unlock(&task->block_lock);
 
-    bool should_preempt =
-        sched_request_preempt_on_wakeup(&schedulers[task->cpu_id], task);
-    if (should_trigger_sched_ipi && should_preempt) {
+    sched_request_preempt_on_wakeup(&schedulers[task->cpu_id], task);
+    if (should_trigger_sched_ipi) {
         irq_trigger_sched_ipi(task->cpu_id);
     }
 
@@ -1962,7 +2124,7 @@ uint64_t task_exit_thread(int64_t code) {
 
     while (1) {
         arch_enable_interrupt();
-        schedule(SCHED_FLAG_YIELD);
+        arch_wait_for_interrupt();
     }
 }
 
@@ -2020,7 +2182,7 @@ uint64_t task_exit(int64_t code) {
 
     while (1) {
         arch_enable_interrupt();
-        schedule(SCHED_FLAG_YIELD);
+        arch_wait_for_interrupt();
     }
 }
 
@@ -2084,34 +2246,27 @@ void sched_wake_worker(uint32_t cpu_id) {
 
     uint32_t worker_cpu = worker->cpu_id;
     task_unblock(worker, EOK);
-    if (worker_cpu < cpu_count && worker_cpu != current_task->cpu_id) {
+    if (worker_cpu < cpu_count && worker_cpu != current_cpu_id) {
         irq_trigger_sched_ipi(worker_cpu);
     }
 }
 
 void sched_check_wakeup() {
-    uint64_t next = __atomic_load_n(&task_timeout_next_ns, __ATOMIC_ACQUIRE);
-    uint64_t signal_next = task_signal_timer_next_deadline_ns();
-
-    if (signal_next < next)
-        next = signal_next;
+    uint64_t next = deadline_next_ns_for_cpu(current_cpu_id);
 
     if (next == UINT64_MAX)
         return;
 
     uint64_t now = nano_time();
-    if (next > now && next - now > CLOCKEVENT_MIN_PROGRAM_DELTA_NS)
+    if (next > now)
         return;
 
-    if (softirq_raise(SOFTIRQ_TIMER))
-        sched_wake_worker(current_cpu_id);
+    softirq_raise(SOFTIRQ_TIMER);
+    sched_wake_worker(current_cpu_id);
 }
 
 uint64_t sched_next_wakeup_ns(void) {
-    uint64_t next = __atomic_load_n(&task_timeout_next_ns, __ATOMIC_ACQUIRE);
-    uint64_t signal_next = task_signal_timer_next_deadline_ns();
-
-    return signal_next < next ? signal_next : next;
+    return deadline_next_ns_for_cpu(current_cpu_id);
 }
 
 static int task_kill_process_group_internal(int pgid, int sig,
@@ -2167,9 +2322,6 @@ NO_OPT void schedule(uint64_t sched_flags) {
     bool state = arch_interrupt_enabled();
     task_t *prev = current_task;
 
-    if (prev && prev->arch_context)
-        arch_context_save_interrupt_state(prev->arch_context, state);
-
     arch_disable_interrupt();
 
     if (prev->preempt_count) {
@@ -2192,16 +2344,25 @@ NO_OPT void schedule(uint64_t sched_flags) {
     if (!must_resched &&
         !sched_should_preempt(&schedulers[cpu_id], prev, now_ns)) {
         task_clear_need_resched(prev);
+        sched_update_preempt_deadline(cpu_id, prev, now_ns);
+        goto ret;
+    }
+
+    if ((sched_flags & SCHED_FLAG_YIELD) && prev->state == TASK_READY &&
+        prev->current_state == TASK_RUNNING &&
+        sched_rq_nr_queued(&schedulers[cpu_id]) == 0) {
+        task_clear_need_resched(prev);
         goto ret;
     }
 
     task_t *next = NULL;
+    if (prev->state == TASK_READY && prev->current_state == TASK_RUNNING)
+        sched_requeue_current(prev, &schedulers[cpu_id]);
+
     if (sched_flags & SCHED_FLAG_YIELD) {
         next = sched_pick_next_task_excluding(&schedulers[cpu_id], prev);
-
-        if (next == idle_tasks[cpu_id] && prev->state == TASK_READY) {
-            next = prev;
-        }
+        if (next == idle_tasks[cpu_id] && prev->state == TASK_READY)
+            next = sched_pick_next_task(&schedulers[cpu_id]);
     } else {
         next = sched_pick_next_task(&schedulers[cpu_id]);
     }
@@ -2212,7 +2373,8 @@ NO_OPT void schedule(uint64_t sched_flags) {
 
     if (prev == next) {
         task_clear_need_resched(prev);
-        sched_note_slice_start(prev, now_ns);
+        if (!(sched_flags & SCHED_FLAG_YIELD))
+            sched_update_preempt_deadline(cpu_id, prev, now_ns);
         goto ret;
     }
 
@@ -2222,6 +2384,7 @@ NO_OPT void schedule(uint64_t sched_flags) {
     prev->current_state = prev->state;
     next->current_state = TASK_RUNNING;
     next->last_sched_in_ns = now_ns;
+    sched_update_preempt_deadline(cpu_id, next, now_ns);
 
     if (prev->mm != next->mm) {
         task_mm_mark_cpu_active(next->mm, cpu_id);

@@ -64,6 +64,17 @@ void arch_shutdown() {
 void arch_enable_user_access() {}
 void arch_disable_user_access() {}
 
+void arch_program_timer_deadline_local(uint64_t deadline_ns) {
+    if (deadline_ns == UINT64_MAX) {
+        apic_timer_set_interval_ns(1000000000ULL / SCHED_HZ);
+        return;
+    }
+
+    uint64_t now = nano_time();
+    uint64_t delta_ns = deadline_ns > now ? deadline_ns - now : 1;
+    apic_timer_set_interval_ns(delta_ns);
+}
+
 bool arch_memory_region_usable(uint64_t addr, uint64_t len) {
     (void)len;
     return addr >= 0x100000;

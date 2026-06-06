@@ -1529,8 +1529,6 @@ void sound_pcm_notify(sound_pcm_substream_t *substream) {
     if (!substream || !substream->node_registered || !substream->node) {
         return;
     }
-
-    vfs_poll_notify(substream->node, EPOLLOUT | EPOLLIN);
 }
 
 int dlmain(void) { return sound_init(); }

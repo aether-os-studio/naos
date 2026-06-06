@@ -824,9 +824,7 @@ void task_fd_info_put(fd_info_t *fd_info, task_t *task) {
                 while (scan < fd_info->max_fds) {
                     if (fd_info->fds[scan].file) {
                         fd = scan;
-                        entry = fd_info->fds[scan].file;
-                        fd_info->fds[scan].file = NULL;
-                        fd_info->fds[scan].flags = 0;
+                        entry = task_fd_slot_take(fd_info, (int)scan, NULL);
                         scan++;
                         break;
                     }
@@ -848,9 +846,7 @@ void task_fd_info_put(fd_info_t *fd_info, task_t *task) {
             if (!fd_info->fds[i].file)
                 continue;
 
-            struct vfs_file *entry = fd_info->fds[i].file;
-            fd_info->fds[i].file = NULL;
-            fd_info->fds[i].flags = 0;
+            struct vfs_file *entry = task_fd_slot_take(fd_info, (int)i, NULL);
             to_close[i] = entry;
         }
     });
@@ -1754,7 +1750,7 @@ static int task_execve_dethread(task_t *self) {
             return 0;
 
         arch_enable_interrupt();
-        schedule(SCHED_FLAG_YIELD);
+        arch_wait_for_interrupt();
         arch_disable_interrupt();
     }
 }
@@ -2533,9 +2529,8 @@ shell_fallback_done:
                 continue;
 
             if (exec_fd_info->fds[i].flags & FD_CLOEXEC) {
-                struct vfs_file *entry = exec_fd_info->fds[i].file;
-                exec_fd_info->fds[i].file = NULL;
-                exec_fd_info->fds[i].flags = 0;
+                struct vfs_file *entry =
+                    task_fd_slot_take(exec_fd_info, (int)i, NULL);
                 exec_close_files[i] = entry;
             }
         }
@@ -4638,4 +4633,9 @@ uint32_t sys_personality(uint32_t personality) {
         current_task->personality = personality;
 
     return old;
+}
+
+int sys_yield() {
+    schedule(SCHED_FLAG_YIELD);
+    return 0;
 }

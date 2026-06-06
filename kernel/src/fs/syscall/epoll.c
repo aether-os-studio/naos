@@ -78,11 +78,6 @@ static bool epoll_contains_file(epoll_t *epoll, struct vfs_file *needle,
     return false;
 }
 
-static void epoll_notify_self(epoll_t *epoll) {
-    if (epoll && epoll->inode)
-        vfs_poll_notify(epoll->inode, EPOLLIN);
-}
-
 static void epoll_watch_sync_seq(epoll_watch_t *watch) {
     if (!watch || !watch->file || !watch->file->node)
         return;
@@ -175,57 +170,6 @@ static int epoll_collect_ready_locked(epoll_t *epoll,
     }
 
     return ready;
-}
-
-static int epoll_arm_waiters_locked(epoll_t *epoll, vfs_poll_wait_t **waits_out,
-                                    size_t *count_out) {
-    size_t count = 0;
-    epoll_watch_t *browse, *tmp;
-
-    *waits_out = NULL;
-    *count_out = 0;
-
-    llist_for_each(browse, tmp, &epoll->watches, node) {
-        if (browse->disabled || !browse->file || !browse->file->node)
-            continue;
-        count++;
-    }
-
-    if (!count)
-        return 0;
-
-    /*
-     * Just like poll(), epoll has to arm waiters and then recheck readiness
-     * before actually sleeping. The helper here only builds the wait set; the
-     * caller still has to close the lost-wakeup window explicitly.
-     */
-    vfs_poll_wait_t *waits = calloc(count, sizeof(vfs_poll_wait_t));
-    if (!waits)
-        return -ENOMEM;
-
-    size_t idx = 0;
-    llist_for_each(browse, tmp, &epoll->watches, node) {
-        if (browse->disabled || !browse->file || !browse->file->node)
-            continue;
-        uint32_t request_events = browse->events | EPOLL_ALWAYS_EVENTS;
-        vfs_poll_wait_init(&waits[idx], current_task, request_events);
-        vfs_poll_wait_arm(browse->file->node, &waits[idx]);
-        idx++;
-    }
-
-    *waits_out = waits;
-    *count_out = idx;
-    return 0;
-}
-
-static void epoll_disarm_waiters(vfs_poll_wait_t *waits, size_t count) {
-    if (!waits)
-        return;
-    for (size_t i = 0; i < count; i++) {
-        if (waits[i].armed)
-            vfs_poll_wait_disarm(&waits[i]);
-    }
-    free(waits);
 }
 
 static int epollfs_release(struct vfs_inode *inode, struct vfs_file *file) {
@@ -519,24 +463,13 @@ static uint64_t do_epoll_wait(struct vfs_file *epoll_file,
             break;
         }
 
-        vfs_poll_wait_t *waits = NULL;
         size_t waits_count = 0;
-        int arm_ret = epoll_arm_waiters_locked(epoll, &waits, &waits_count);
-        mutex_unlock(&epoll->lock);
-        if (arm_ret < 0) {
-            ready = arm_ret;
-            break;
-        }
-
-        mutex_lock(&epoll->lock);
         ready = epoll_collect_ready_locked(epoll, events, maxevents);
         mutex_unlock(&epoll->lock);
         if (ready > 0) {
-            epoll_disarm_waiters(waits, waits_count);
             break;
         }
         if (task_signal_has_deliverable(current_task)) {
-            epoll_disarm_waiters(waits, waits_count);
             ready = -EINTR;
             break;
         }
@@ -545,29 +478,14 @@ static uint64_t do_epoll_wait(struct vfs_file *epoll_file,
         if (!infinite_timeout) {
             uint64_t elapsed = nano_time() - start;
             if (elapsed >= (uint64_t)timeout_ns) {
-                epoll_disarm_waiters(waits, waits_count);
                 break;
             }
             wait_ns = timeout_ns - (int64_t)elapsed;
         }
 
-        int64_t block_ns = wait_ns;
-        if (block_ns < 0 || block_ns > 1000000LL) {
-            block_ns = 1000000LL;
-        }
-
         arch_enable_interrupt();
-        int block_reason =
-            task_block(current_task, TASK_BLOCKING, block_ns, "epoll_wait");
+        arch_wait_for_interrupt();
         arch_disable_interrupt();
-        epoll_disarm_waiters(waits, waits_count);
-        if (block_reason == ETIMEDOUT) {
-            continue;
-        }
-        if (block_reason != EOK) {
-            ready = -EINTR;
-            break;
-        }
     } while (infinite_timeout || (nano_time() - start) < timeout_ns);
 
     if (irq_state)
@@ -688,8 +606,6 @@ static size_t epoll_ctl_file(struct vfs_file *epoll_file, int op, int fd,
 
 out_unlock:
     mutex_unlock(&epoll->lock);
-    if (ret == 0)
-        epoll_notify_self(epoll);
     vfs_file_put(target);
     return (uint64_t)ret;
 }

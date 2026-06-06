@@ -9,6 +9,7 @@
 #include <libs/klibc.h>
 #include <arch/x86_64/irq/irq.h>
 #include <libs/llist_queue.h>
+#include <drivers/deadline.h>
 
 bool x2apic_mode = false;
 uint64_t lapic_address;
@@ -22,6 +23,41 @@ static bool lapic_use_tsc_deadline;
 static uint64_t lapic_tsc_deadline_interval;
 static uint32_t lapic_periodic_ticks;
 static uint64_t lapic_next_deadline[MAX_CPU_NUM];
+static uint64_t lapic_interval_ticks[MAX_CPU_NUM];
+
+static inline uint64_t apic_base_tick_ns(void) {
+    return 1000000000ULL / SCHED_HZ;
+}
+
+static uint64_t apic_timer_ticks_from_ns(uint64_t ns) {
+    if (ns == 0)
+        ns = 1;
+
+    if (lapic_use_tsc_deadline) {
+        uint64_t tsc_hz = tsc_cycles_per_sec();
+        __uint128_t ticks = (__uint128_t)ns * tsc_hz;
+        uint64_t delta = (uint64_t)(ticks / 1000000000ULL);
+        return delta ? delta : 1;
+    }
+
+    if (!lapic_periodic_ticks)
+        return 1;
+
+    __uint128_t ticks = (__uint128_t)ns * lapic_periodic_ticks;
+    uint64_t delta = (uint64_t)(ticks / apic_base_tick_ns());
+    if (delta == 0)
+        delta = 1;
+    if (delta > UINT32_MAX)
+        delta = UINT32_MAX;
+    return delta;
+}
+
+static void apic_timer_set_interval_ns_for_cpu(uint32_t cpu_id, uint64_t ns) {
+    if (cpu_id >= MAX_CPU_NUM)
+        return;
+
+    lapic_interval_ticks[cpu_id] = apic_timer_ticks_from_ns(ns);
+}
 
 void tss_init() {
     uint64_t paddr = alloc_frames(STACK_SIZE / PAGE_SIZE);
@@ -117,11 +153,13 @@ void local_apic_init() {
 
     lapic_write(LAPIC_SVR, 0xff | (1 << 8));
     if (tsc_deadline_mode_available()) {
+        uint32_t cpu_id = get_cpuid_by_lapic_id((uint32_t)lapic_id());
         lapic_use_tsc_deadline = true;
         lapic_tsc_deadline_interval = tsc_cycles_per_sec() / SCHED_HZ;
         if (lapic_tsc_deadline_interval == 0)
             lapic_tsc_deadline_interval = 1;
 
+        apic_timer_set_interval_ns_for_cpu(cpu_id, apic_base_tick_ns());
         lapic_write(LAPIC_TIMER, APIC_TIMER_INTERRUPT_VECTOR | (2U << 17));
         wrmsr(IA32_TSC_DEADLINE, 0);
         apic_timer_rearm();
@@ -138,26 +176,31 @@ void local_apic_init() {
     }
 
     lapic_periodic_ticks = (~(uint32_t)0) - lapic_read(LAPIC_TIMER_CURRENT);
-    lapic_write(LAPIC_TIMER_INIT, lapic_periodic_ticks);
-    lapic_write(LAPIC_TIMER, lapic_read(LAPIC_TIMER) | (1 << 17));
+    apic_timer_set_interval_ns_for_cpu(
+        get_cpuid_by_lapic_id((uint32_t)lapic_id()), apic_base_tick_ns());
+    apic_timer_rearm();
 }
 
 void apic_timer_rearm(void) {
-    if (!lapic_use_tsc_deadline)
-        return;
-
     uint32_t cpu_id = current_cpu_id;
-    uint64_t now = rdtsc_ordered();
-    uint64_t next = lapic_next_deadline[cpu_id];
+    uint64_t interval = lapic_interval_ticks[cpu_id];
+    if (!interval)
+        interval = apic_timer_ticks_from_ns(apic_base_tick_ns());
 
-    if (next <= now) {
-        next = now + lapic_tsc_deadline_interval;
-    } else {
-        next += lapic_tsc_deadline_interval;
+    if (lapic_use_tsc_deadline) {
+        uint64_t now = rdtsc_ordered();
+        uint64_t next = now + interval;
+        lapic_next_deadline[cpu_id] = next;
+        wrmsr(IA32_TSC_DEADLINE, next);
+        return;
     }
 
-    lapic_next_deadline[cpu_id] = next;
-    wrmsr(IA32_TSC_DEADLINE, next);
+    lapic_write(LAPIC_TIMER_INIT, (uint32_t)interval);
+}
+
+void apic_timer_set_interval_ns(uint64_t ns) {
+    apic_timer_set_interval_ns_for_cpu(current_cpu_id, ns);
+    apic_timer_rearm();
 }
 
 #define MAX_IOAPICS_NUM 64
@@ -544,6 +587,10 @@ static void apic_resched_ipi_handler(uint64_t irq_num, void *data,
     (void)irq_num;
     (void)data;
     (void)regs;
+
+    deadline_reprogram_local();
+    if (current_task)
+        task_set_need_resched(current_task);
 }
 
 static void apic_tlb_shootdown_ipi_handler(uint64_t irq_num, void *data,

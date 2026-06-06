@@ -396,7 +396,7 @@ size_t tty_input_read(tty_t *tty, char *buf, size_t count) {
         if (read > 0)
             break;
 
-        schedule(SCHED_FLAG_YIELD);
+        arch_wait_for_interrupt();
     }
 
     arch_disable_interrupt();

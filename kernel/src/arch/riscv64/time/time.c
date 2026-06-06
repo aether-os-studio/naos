@@ -20,6 +20,7 @@
 
 static uint64_t monotonic_base_cycles;
 static uint64_t monotonic_ns_scale;
+static uint64_t timer_interval_ns[MAX_CPU_NUM];
 
 struct global_timer_state global_timer = {
     .frequency = 10000000ULL,
@@ -182,7 +183,11 @@ static int fdt_get_reg(const void *fdt, int node_offset, int index,
 static int64_t riscv_sbi_timer_unmask(uint64_t irq, uint64_t flags) {
     (void)irq;
     (void)flags;
-    timer_set_next_tick_ns(1000000000ULL / SCHED_HZ);
+    uint32_t cpu_id = current_cpu_id;
+    uint64_t interval = cpu_id < MAX_CPU_NUM ? timer_interval_ns[cpu_id] : 0;
+    if (!interval)
+        interval = 1000000000ULL / SCHED_HZ;
+    timer_set_next_tick_ns(interval);
     return 0;
 }
 
@@ -203,7 +208,11 @@ static int64_t riscv_sbi_timer_install(uint64_t irq, uint64_t arg,
 
 static int64_t riscv_sbi_timer_ack(uint64_t irq) {
     (void)irq;
-    timer_set_next_tick_ns(1000000000ULL / SCHED_HZ);
+    uint32_t cpu_id = current_cpu_id;
+    uint64_t interval = cpu_id < MAX_CPU_NUM ? timer_interval_ns[cpu_id] : 0;
+    if (!interval)
+        interval = 1000000000ULL / SCHED_HZ;
+    timer_set_next_tick_ns(interval);
     return 0;
 }
 
@@ -282,7 +291,17 @@ void timer_init_percpu(void) {
 
     uint64_t stie = 1UL << 5;
     asm volatile("csrs sie, %0" : : "r"(stie) : "memory");
-    timer_set_next_tick_ns(1000000000ULL / SCHED_HZ);
+    timer_set_sched_interval_ns(1000000000ULL / SCHED_HZ);
+}
+
+void timer_set_sched_interval_ns(uint64_t ns) {
+    if (ns == 0)
+        ns = 1;
+
+    if (current_cpu_id < MAX_CPU_NUM)
+        timer_interval_ns[current_cpu_id] = ns;
+
+    timer_set_next_tick_ns(ns);
 }
 
 uint64_t get_counter() {

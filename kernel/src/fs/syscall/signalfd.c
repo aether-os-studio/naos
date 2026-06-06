@@ -228,18 +228,14 @@ static ssize_t signalfdfs_read(struct vfs_file *file, void *addr, size_t size,
     while (ctx->queue_head == ctx->queue_tail) {
         if (file->f_flags & O_NONBLOCK)
             return -EWOULDBLOCK;
-        vfs_poll_wait_t wait;
-        vfs_poll_wait_init(&wait, current_task, EPOLLIN | EPOLLERR | EPOLLHUP);
-        vfs_poll_wait_arm(file->f_inode, &wait);
-        if (ctx->queue_head == ctx->queue_tail) {
-            int reason =
-                vfs_poll_wait_sleep(file->f_inode, &wait, -1, "signalfd_read");
-            vfs_poll_wait_disarm(&wait);
-            if (reason != EOK)
-                return -EINTR;
-        } else {
-            vfs_poll_wait_disarm(&wait);
+
+        if (vfs_poll(file->f_inode, EPOLLIN) & EPOLLIN) {
+            break;
         }
+
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+        arch_disable_interrupt();
     }
 
     struct signalfd_siginfo *ev = &ctx->queue[ctx->queue_tail];

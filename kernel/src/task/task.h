@@ -277,6 +277,8 @@ void sched_check_wakeup();
 uint64_t sched_next_wakeup_ns(void);
 void sched_request_resched(task_t *task);
 void sched_resched_if_needed(void);
+void sched_refresh_preempt_deadline(uint32_t cpu_id, task_t *task,
+                                    uint64_t now_ns);
 
 struct vfs_process_fs *task_current_vfs_fs(void);
 fd_info_t *task_fd_info_alloc(size_t max_fds);
@@ -286,6 +288,10 @@ void task_fd_info_free(fd_info_t *fd_info);
 fd_info_t *task_fd_info_get(task_t *task);
 fd_info_t *task_fd_info_replace(task_t *task, fd_info_t *new_info);
 fd_info_t *task_fd_info_detach(task_t *task);
+int task_fd_slot_install(fd_info_t *fd_info, int fd, struct vfs_file *file,
+                         unsigned int flags);
+struct vfs_file *task_fd_slot_take(fd_info_t *fd_info, int fd,
+                                   unsigned int *flags);
 struct vfs_file *task_get_file(task_t *task, int fd);
 int task_get_fd_flags_for_file(task_t *task, int fd, struct vfs_file *file,
                                unsigned int *flags);

@@ -275,7 +275,6 @@ ssize_t logger_kmsg_write(const void *buf, size_t len) {
     char chunk[KMSG_MAX_RECORD_TEXT];
     size_t offset = 0;
     ssize_t written = 0;
-    bool notify = false;
 
     if (!buf)
         return -EINVAL;
@@ -288,15 +287,12 @@ ssize_t logger_kmsg_write(const void *buf, size_t len) {
         memcpy(chunk, (const char *)buf + offset, part);
 
         spin_lock(&printk_lock);
-        notify |= kmsg_append_record_locked(chunk, part, 6);
+        kmsg_append_record_locked(chunk, part, 6);
         spin_unlock(&printk_lock);
 
         offset += part;
         written += (ssize_t)part;
     }
-
-    if (notify && kmsg_poll_node)
-        vfs_poll_notify(kmsg_poll_node, EPOLLIN | EPOLLRDNORM | EPOLLPRI);
 
     return written;
 }
@@ -636,8 +632,6 @@ int vsprintf(char *buf, const char *fmt, va_list ap) {
 }
 
 int printk(const char *fmt, ...) {
-    bool notify = false;
-
     spin_lock(&printk_lock);
 
     va_list args;
@@ -655,7 +649,7 @@ int printk(const char *fmt, ...) {
         len = sizeof(buf) - 1;
 
     if (len > 0)
-        notify = kmsg_append_record_locked(buf, (size_t)len, 6);
+        kmsg_append_record_locked(buf, (size_t)len, 6);
 
     device_t *device = device_find(DEV_TTY, 0);
     if (device)
@@ -667,15 +661,10 @@ int printk(const char *fmt, ...) {
 
     spin_unlock(&printk_lock);
 
-    if (notify && kmsg_poll_node)
-        vfs_poll_notify(kmsg_poll_node, EPOLLIN | EPOLLRDNORM | EPOLLPRI);
-
     return len;
 }
 
 int serial_fprintk(const char *fmt, ...) {
-    bool notify = false;
-
     spin_lock(&printk_lock);
 
     va_list args;
@@ -693,14 +682,11 @@ int serial_fprintk(const char *fmt, ...) {
         len = sizeof(buf) - 1;
 
     if (len > 0)
-        notify = kmsg_append_record_locked(buf, (size_t)len, 6);
+        kmsg_append_record_locked(buf, (size_t)len, 6);
 
     serial_printk(buf, len);
 
     spin_unlock(&printk_lock);
-
-    if (notify && kmsg_poll_node)
-        vfs_poll_notify(kmsg_poll_node, EPOLLIN | EPOLLRDNORM | EPOLLPRI);
 
     return len;
 }

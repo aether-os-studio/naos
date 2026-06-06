@@ -748,22 +748,14 @@ static bool drm_syncfd_update_state(drm_syncfd_ctx_t *ctx) {
         return false;
     }
 
-    bool notify = false;
-    vfs_node_t *notify_node = NULL;
     spin_lock(&ctx->lock);
     if (!ctx->signaled) {
         ctx->signaled = true;
         ctx->status = 1;
         ctx->timestamp_ns = nano_time();
-        notify = true;
-        notify_node = vfs_igrab(ctx->node);
     }
     spin_unlock(&ctx->lock);
 
-    if (notify && notify_node) {
-        vfs_poll_notify(notify_node, EPOLLIN);
-        vfs_iput(notify_node);
-    }
     return true;
 }
 
@@ -1715,7 +1707,7 @@ drm_syncobj_wait_any_or_all(drm_device_t *dev, uint64_t owner_pid,
         }
 
         arch_enable_interrupt();
-        schedule(SCHED_FLAG_YIELD);
+        arch_wait_for_interrupt();
         arch_disable_interrupt();
     }
 }
@@ -4246,18 +4238,9 @@ ssize_t drm_ioctl_wait_vblank(drm_device_t *dev, void *arg) {
             return 0;
         }
 
-        uint64_t now = nano_time();
-        int64_t wait_ns = 1000000LL;
-
-        if (next_vblank_ns > now) {
-            uint64_t delta = next_vblank_ns - now;
-            wait_ns = (int64_t)MIN(delta, 10000000LL);
-        }
-
-        int reason =
-            task_block(current_task, TASK_BLOCKING, wait_ns, "drm_wait_vblank");
-        if (reason != EOK && reason != ETIMEDOUT)
-            return reason == EINTR ? -EINTR : -EIO;
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+        arch_disable_interrupt();
     }
 }
 

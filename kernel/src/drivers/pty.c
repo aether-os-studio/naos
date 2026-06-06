@@ -60,59 +60,6 @@ static vfs_node_t *pty_lookup_inode_path(const char *path) {
     return inode;
 }
 
-static inline void pty_notify_node(vfs_node_t *node, uint32_t events) {
-    if (node && events)
-        vfs_poll_notify(node, events);
-}
-
-static inline void pty_notify_pair_master(pty_pair_t *pair, uint32_t events) {
-    if (pair)
-        pty_notify_node(pair->ptmx_node, events);
-}
-
-static inline void pty_notify_pair_slave(pty_pair_t *pair, uint32_t events) {
-    devpts_inode_info_t *info, *tmp;
-    vfs_node_t *nodes[PTY_MAX];
-    size_t count = 0;
-
-    if (!pair || !events)
-        return;
-
-    spin_lock(&pty_global_lock);
-    llist_for_each(info, tmp, &pair->pts_nodes, pair_node) {
-        if (count >= PTY_MAX)
-            break;
-        nodes[count++] = vfs_igrab(&info->vfs_inode);
-    }
-    spin_unlock(&pty_global_lock);
-
-    for (size_t i = 0; i < count; i++) {
-        pty_notify_node(nodes[i], events);
-        vfs_iput(nodes[i]);
-    }
-}
-
-static int pty_wait_node(vfs_node_t *node, uint32_t events,
-                         const char *reason) {
-    if (!node || !current_task)
-        return -EINVAL;
-
-    uint32_t want = events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
-    int polled = vfs_poll(node, want);
-    if (polled < 0)
-        return polled;
-    if (polled & (int)want)
-        return EOK;
-
-    vfs_poll_wait_t wait;
-    vfs_poll_wait_init(&wait, current_task, want);
-    if (vfs_poll_wait_arm(node, &wait) < 0)
-        return -EINVAL;
-    int ret = vfs_poll_wait_sleep(node, &wait, -1, reason);
-    vfs_poll_wait_disarm(&wait);
-    return ret;
-}
-
 static inline void pty_packet_queue_locked(pty_pair_t *pair, uint8_t status,
                                            uint32_t *notify_master) {
     if (!pair || !pair->packet_mode || !status)
@@ -605,7 +552,6 @@ static int ptmx_release_file(struct vfs_inode *inode, struct vfs_file *file) {
         pair->masterFds--;
     mutex_unlock(&pair->lock);
 
-    pty_notify_pair_slave(pair, EPOLLHUP | EPOLLRDHUP | EPOLLERR);
     if (!pair->masterFds && !pair->slaveFds)
         pty_pair_cleanup(pair);
     file->private_data = NULL;
@@ -646,7 +592,6 @@ static ssize_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             pair->packet_data_pending =
                 pair->packet_mode && pair->ptrMaster > 0;
             mutex_unlock(&pair->lock);
-            pty_notify_pair_slave(pair, EPOLLOUT);
             return (ssize_t)(header + to_copy);
         }
         bool no_slave = (pair->slaveFds == 0);
@@ -655,10 +600,10 @@ static ssize_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             return 0;
         if (fd_get_flags(fd) & O_NONBLOCK)
             return -EWOULDBLOCK;
-        int reason = pty_wait_node(pair->ptmx_node ? pair->ptmx_node : fd->node,
-                                   EPOLLIN, "ptmx_read");
-        if (reason != EOK)
-            return -EINTR;
+
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+        arch_disable_interrupt();
     }
 }
 
@@ -675,11 +620,14 @@ static ssize_t ptmx_write(fd_t *fd, const void *addr, size_t offset,
             mutex_unlock(&pair->lock);
             if (fd_get_flags(fd) & O_NONBLOCK)
                 return -EWOULDBLOCK;
-            int reason =
-                pty_wait_node(pair->ptmx_node ? pair->ptmx_node : fd->node,
-                              EPOLLOUT, "ptmx_tcooff");
-            if (reason != EOK)
+
+            if (task_signal_has_deliverable(current_task))
                 return -EINTR;
+
+            arch_enable_interrupt();
+            arch_wait_for_interrupt();
+            arch_disable_interrupt();
+
             continue;
         }
         if (!pair->slaveFds) {
@@ -722,8 +670,6 @@ static ssize_t ptmx_write(fd_t *fd, const void *addr, size_t offset,
                 written++;
             }
             mutex_unlock(&pair->lock);
-            if (written > 0)
-                pty_notify_pair_slave(pair, EPOLLIN);
             if ((pair->term.c_lflag & ICANON) && (pair->term.c_lflag & ECHO) &&
                 echoed > 0)
                 pts_write_inner(fd, &pair->bufferSlave[echo_start], echoed);
@@ -732,10 +678,13 @@ static ssize_t ptmx_write(fd_t *fd, const void *addr, size_t offset,
         mutex_unlock(&pair->lock);
         if (fd_get_flags(fd) & O_NONBLOCK)
             return -EWOULDBLOCK;
-        int reason = pty_wait_node(pair->ptmx_node ? pair->ptmx_node : fd->node,
-                                   EPOLLOUT, "ptmx_write");
-        if (reason != EOK)
+
+        if (task_signal_has_deliverable(current_task))
             return -EINTR;
+
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+        arch_disable_interrupt();
     }
 }
 
@@ -889,10 +838,6 @@ static long ptmx_ioctl(fd_t *fd, unsigned long request, unsigned long arg) {
         pty_packet_queue_locked(pair, packet_status, &notify_master);
     mutex_unlock(&pair->lock);
 
-    if (ret >= 0) {
-        pty_notify_pair_master(pair, notify_master);
-        pty_notify_pair_slave(pair, notify_slave);
-    }
     return ret;
 }
 
@@ -943,7 +888,6 @@ static int pts_release_file(struct vfs_inode *inode, struct vfs_file *file) {
         pair->slaveFds--;
     mutex_unlock(&pair->lock);
 
-    pty_notify_pair_master(pair, EPOLLHUP | EPOLLRDHUP | EPOLLERR);
     if (!pair->masterFds && !pair->slaveFds)
         pty_pair_cleanup(pair);
     file->private_data = NULL;
@@ -980,7 +924,6 @@ static ssize_t pts_read(fd_t *fd, void *out, size_t offset, size_t limit) {
                         remaining);
             pair->ptrSlave -= to_copy;
             mutex_unlock(&pair->lock);
-            pty_notify_pair_master(pair, EPOLLOUT);
             return (ssize_t)to_copy;
         }
         bool no_master = (pair->masterFds == 0);
@@ -989,10 +932,10 @@ static ssize_t pts_read(fd_t *fd, void *out, size_t offset, size_t limit) {
             return 0;
         if (fd_get_flags(fd) & O_NONBLOCK)
             return -EWOULDBLOCK;
-        int reason = pty_wait_node(pair->pts_node ? pair->pts_node : fd->node,
-                                   EPOLLIN, "pts_read");
-        if (reason != EOK)
-            return -EINTR;
+
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+        arch_disable_interrupt();
     }
 }
 
@@ -1007,11 +950,14 @@ ssize_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
             mutex_unlock(&pair->lock);
             if (fd_get_flags(fd) & O_NONBLOCK)
                 return -EWOULDBLOCK;
-            int reason =
-                pty_wait_node(pair->pts_node ? pair->pts_node : fd->node,
-                              EPOLLOUT, "pts_tcooff");
-            if (reason != EOK)
+
+            if (task_signal_has_deliverable(current_task))
                 return -EINTR;
+
+            arch_enable_interrupt();
+            arch_wait_for_interrupt();
+            arch_disable_interrupt();
+
             continue;
         }
         if (!pair->masterFds) {
@@ -1040,17 +986,18 @@ ssize_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
             if (written > 0)
                 pty_packet_mark_data_locked(pair, old_ptr_master);
             mutex_unlock(&pair->lock);
-            if (written > 0)
-                pty_notify_pair_master(pair, EPOLLIN);
             return (ssize_t)written;
         }
         mutex_unlock(&pair->lock);
         if (fd_get_flags(fd) & O_NONBLOCK)
             return -EWOULDBLOCK;
-        int reason = pty_wait_node(pair->pts_node ? pair->pts_node : fd->node,
-                                   EPOLLOUT, "pts_write");
-        if (reason != EOK)
+
+        if (task_signal_has_deliverable(current_task))
             return -EINTR;
+
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+        arch_disable_interrupt();
     }
 }
 
@@ -1181,10 +1128,6 @@ int pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         pty_packet_queue_locked(pair, packet_status, &notify_master);
     mutex_unlock(&pair->lock);
 
-    if (ret >= 0) {
-        pty_notify_pair_master(pair, notify_master);
-        pty_notify_pair_slave(pair, notify_slave);
-    }
     return ret;
 }
 

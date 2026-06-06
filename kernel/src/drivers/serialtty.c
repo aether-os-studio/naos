@@ -63,7 +63,7 @@ size_t terminal_read_serial(tty_t *device, char *buf, size_t count) {
                     break;
             }
         } else {
-            schedule(SCHED_FLAG_YIELD);
+            arch_wait_for_interrupt();
         }
     }
 

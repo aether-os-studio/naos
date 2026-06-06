@@ -989,6 +989,8 @@ static void usb_hid_poll(hid_device_t *hid) {
         return;
 
     for (;;) {
+        arch_enable_interrupt();
+
         memset(report, 0, hid->report_buf_len);
         hid->xfer_done = false;
         hid->xfer_status = EVENT_ERROR;
@@ -998,8 +1000,9 @@ static void usb_hid_poll(hid_device_t *hid) {
         if (ret)
             break;
 
-        while (!hid->xfer_done)
-            schedule(SCHED_FLAG_YIELD);
+        while (!hid->xfer_done) {
+            arch_wait_for_interrupt();
+        }
 
         if (hid->xfer_status != EVENT_SUCCESS &&
             hid->xfer_status != EVENT_SHORT_PACKET)

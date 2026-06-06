@@ -15,3 +15,4 @@
 extern uint64_t cpu_count;
 
 extern void fast_copy_16(void *dst, const void *src, size_t size);
+void arch_program_timer_deadline_local(uint64_t deadline_ns);

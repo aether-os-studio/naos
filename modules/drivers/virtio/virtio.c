@@ -5,7 +5,6 @@
 
 #include "net.h"
 #include "blk.h"
-#include "gpu.h"
 #include "sound.h"
 
 #include <init/callbacks.h>
@@ -58,9 +57,6 @@ int virtio_probe(pci_device_t *dev) {
             break;
         case VIRTIO_DEVICE_TYPE_BLOCK:
             virtio_blk_init(driver);
-            break;
-        case VIRTIO_DEVICE_TYPE_GPU:
-            virtio_gpu_init(driver);
             break;
         case VIRTIO_DEVICE_TYPE_SOUND:
             virtio_sound_init(driver);
@@ -152,9 +148,6 @@ static int virtio_mmio_fdt_probe(fdt_device_t *fdt_dev,
     case VIRTIO_DEVICE_TYPE_BLOCK:
         virtio_blk_init(drv);
         break;
-    case VIRTIO_DEVICE_TYPE_GPU:
-        virtio_gpu_init(drv);
-        break;
     case VIRTIO_DEVICE_TYPE_SOUND:
         virtio_sound_init(drv);
         break;
@@ -193,11 +186,7 @@ fdt_driver_t virtio_mmio_driver = {
 };
 #endif
 
-extern int virtio_gpu_on_close_file(task_t *task, int fd, fd_t *file);
-
 int dlmain() {
-    regist_on_close_file_callback(virtio_gpu_on_close_file);
-
     regist_pci_driver(&virtio_pci_driver);
 
 #if !defined(__x86_64__)

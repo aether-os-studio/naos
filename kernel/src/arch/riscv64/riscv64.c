@@ -28,6 +28,12 @@ void arch_init_after_acpi_pci() {}
 
 void arch_input_dev_init() {}
 
+void arch_program_timer_deadline_local(uint64_t deadline_ns) {
+    uint64_t now = nano_time();
+    uint64_t delta_ns = deadline_ns > now ? deadline_ns - now : 1;
+    timer_set_sched_interval_ns(delta_ns);
+}
+
 typedef struct sbi_ret {
     int64_t error;
     uint64_t value;

@@ -42,3 +42,4 @@ timer_type_t timer_get_active_type();
 const char *timer_get_type_name();
 
 void timer_set_next_tick_ns(uint64_t ns);
+void timer_set_sched_interval_ns(uint64_t ns);

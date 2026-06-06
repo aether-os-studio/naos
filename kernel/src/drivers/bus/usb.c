@@ -1955,6 +1955,8 @@ static void usb_hotplug_thread(uint64_t arg) {
     (void)arg;
 
     for (;;) {
+        arch_enable_interrupt();
+
         usb_hub_t *snapshot[USB_HUB_SNAPSHOT_MAX];
         uint32_t snapshot_count = 0;
         uint64_t now = nano_time();
@@ -1981,9 +1983,7 @@ static void usb_hotplug_thread(uint64_t arg) {
             usb_hub_put(snapshot[i]);
         }
 
-        task_block(current_task, TASK_BLOCKING,
-                   snapshot_count ? 1000000LL : (int64_t)USB_HOTPLUG_SCAN_NS,
-                   "usb_hotplug");
+        arch_wait_for_interrupt();
     }
 }
 

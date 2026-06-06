@@ -126,117 +126,6 @@ void vfs_file_put(struct vfs_file *file) {
     free(file);
 }
 
-void vfs_poll_wait_init(vfs_poll_wait_t *wait, struct task *task,
-                        uint32_t events) {
-    if (!wait)
-        return;
-
-    memset(wait, 0, sizeof(*wait));
-    wait->task = task;
-    wait->events = events;
-    llist_init_head(&wait->node);
-}
-
-int vfs_poll_wait_arm(vfs_node_t *node, vfs_poll_wait_t *wait) {
-    if (!node || !wait || !wait->task)
-        return -EINVAL;
-    if (wait->armed)
-        return 0;
-
-    wait->watch_node = node;
-    wait->revents = 0;
-
-    spin_lock(&node->poll_waiters_lock);
-    llist_append(&node->poll_waiters, &wait->node);
-    wait->armed = true;
-    vfs_igrab(node);
-    spin_unlock(&node->poll_waiters_lock);
-    return 0;
-}
-
-void vfs_poll_wait_disarm(vfs_poll_wait_t *wait) {
-    vfs_node_t *node;
-
-    if (!wait || !wait->armed || !wait->watch_node)
-        return;
-
-    node = wait->watch_node;
-    spin_lock(&node->poll_waiters_lock);
-    if (wait->armed) {
-        llist_delete(&wait->node);
-        wait->armed = false;
-        vfs_iput(node);
-    }
-    spin_unlock(&node->poll_waiters_lock);
-
-    wait->watch_node = NULL;
-    llist_init_head(&wait->node);
-}
-
-int vfs_poll_wait_sleep(vfs_node_t *node, vfs_poll_wait_t *wait,
-                        int64_t timeout_ns, const char *reason) {
-    uint32_t want;
-    uint64_t deadline = UINT64_MAX;
-    bool irq_state;
-
-    if (!node || !wait || !wait->task)
-        return -EINVAL;
-
-    want = wait->events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
-    if (timeout_ns >= 0)
-        deadline = nano_time() + (uint64_t)timeout_ns;
-
-    while (true) {
-        if (wait->revents & want)
-            return EOK;
-        if (task_signal_has_deliverable(wait->task))
-            return -EINTR;
-        if (timeout_ns == 0)
-            return ETIMEDOUT;
-
-        int64_t block_ns = -1;
-        if (timeout_ns >= 0) {
-            uint64_t now = nano_time();
-            if (now >= deadline)
-                return ETIMEDOUT;
-            block_ns = (int64_t)(deadline - now);
-        }
-        if (block_ns < 0 || block_ns > 1000000LL)
-            block_ns = 1000000LL;
-
-        irq_state = arch_interrupt_enabled();
-        arch_enable_interrupt();
-        int ret = task_block(wait->task, TASK_BLOCKING, block_ns, reason);
-        if (!irq_state)
-            arch_disable_interrupt();
-        if (ret == EOK || ret == ETIMEDOUT)
-            continue;
-        return ret;
-    }
-}
-
-void vfs_poll_notify(vfs_node_t *node, uint32_t events) {
-    vfs_poll_wait_t *pos, *tmp;
-
-    if (!node || !events)
-        return;
-
-    spin_lock(&node->poll_waiters_lock);
-    if (events & (EPOLLIN | EPOLLRDNORM | EPOLLRDBAND | EPOLLRDHUP))
-        node->poll_seq_in++;
-    if (events & (EPOLLOUT | EPOLLWRNORM | EPOLLWRBAND))
-        node->poll_seq_out++;
-    if (events & (EPOLLPRI | EPOLLMSG))
-        node->poll_seq_pri++;
-
-    llist_for_each(pos, tmp, &node->poll_waiters, node) {
-        pos->revents |= events;
-        if (pos->task)
-            task_unblock(pos->task, EOK);
-    }
-    spin_unlock(&node->poll_waiters_lock);
-}
-
 int vfs_openat(int dfd, const char *name, const struct vfs_open_how *how,
                struct vfs_file **out, bool kernel) {
     struct vfs_path start = {0};
@@ -679,7 +568,7 @@ int vfs_fsync_file(struct vfs_file *file) {
     return file->f_op->fsync(file, 0, (loff_t)file->f_inode->i_size, 0);
 }
 
-int vfs_poll(vfs_node_t *node, size_t events) {
+uint32_t vfs_poll(vfs_node_t *node, uint32_t events) {
     struct vfs_file fake = {0};
 
     if (!node || !node->i_fop || !node->i_fop->poll)
@@ -688,7 +577,7 @@ int vfs_poll(vfs_node_t *node, size_t events) {
     fake.f_op = node->i_fop;
     fake.f_inode = node;
     fake.node = node;
-    return (int)node->i_fop->poll(&fake, NULL) & (int)events;
+    return node->i_fop->poll(&fake, NULL) & events;
 }
 
 int vfs_truncate_path(const struct vfs_path *path, uint64_t size) {

@@ -6,6 +6,7 @@
 #include <mm/bitmap.h>
 #include <irq/softirq.h>
 #include <init/callbacks.h>
+#include <drivers/deadline.h>
 
 irq_action_t actions[ARCH_MAX_IRQ_NUM] = {0};
 irq_ipi_send_fn_t ipi_send_fns[ARCH_MAX_IRQ_NUM] = {0};
@@ -16,10 +17,14 @@ extern bool can_schedule;
 extern sched_rq_t schedulers[MAX_CPU_NUM];
 
 void do_irq(struct pt_regs *regs, uint64_t irq_num) {
+    arch_disable_interrupt();
+
     if (irq_num >= ARCH_MAX_IRQ_NUM) {
         printk("Invalid IRQ vector %lu\n", irq_num);
         return;
     }
+
+    uint64_t cpu_id = current_cpu_id;
 
     irq_action_t *action = &actions[irq_num];
 
@@ -40,24 +45,29 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num) {
         task_membarrier_checkpoint(self);
     }
 
+    uint64_t now_ns = nano_time();
+
     if (irq_num == ARCH_TIMER_IRQ && self) {
-        if (self->cpu_id == 0) {
-            sched_check_wakeup();
-            if (softirq_raise(SOFTIRQ_SCHED_UPDATE))
-                sched_wake_worker(current_cpu_id);
+        sched_check_wakeup();
+        if (cpu_id == 0) {
+            softirq_raise(SOFTIRQ_SCHED_UPDATE);
+            sched_wake_worker(cpu_id);
         }
     }
 
-    uint64_t current_sched_ipi =
-        __atomic_load_n(&sched_ipi_irq, __ATOMIC_ACQUIRE);
-    if ((irq_num == current_sched_ipi || irq_num == ARCH_TIMER_IRQ) &&
-        can_schedule && self) {
-        uint64_t now_ns = nano_time();
-        if (sched_should_preempt(&schedulers[self->cpu_id], self, now_ns))
+    if (can_schedule) {
+        if (self &&
+            sched_should_preempt(&schedulers[self->cpu_id], self, now_ns))
             task_set_need_resched(self);
+
+        sched_resched_if_needed();
     }
 
-    sched_resched_if_needed();
+    if (irq_num == ARCH_TIMER_IRQ && self) {
+        task_t *curr = current_task;
+        sched_refresh_preempt_deadline(cpu_id, curr, nano_time());
+        deadline_reprogram_local();
+    }
 }
 
 void irq_regist_irq(uint64_t irq_num,
