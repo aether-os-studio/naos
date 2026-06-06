@@ -99,7 +99,7 @@ typedef void *timer_t;
 #define container_of_or_null(ptr, type, member)                                \
     ({                                                                         \
         uint64_t __mptr = ((uint64_t)(ptr));                                   \
-        (type *)((char *)__mptr - offsetof(type, member)) ?: NULL;             \
+        __mptr ? (type *)((char *)__mptr - offsetof(type, member)) : NULL;     \
     })
 #define container_of_const(ptr, type, member)                                  \
     _Generic(ptr,                                                              \

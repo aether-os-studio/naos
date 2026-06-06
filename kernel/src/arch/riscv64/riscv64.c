@@ -53,7 +53,12 @@ static sbi_ret_t sbi_ecall(uint64_t eid, uint64_t fid, uint64_t arg0,
     return (sbi_ret_t){.error = (int64_t)a0, .value = a1};
 }
 
-void arch_shutdown() { sbi_ecall(0x53525354, 0x0, 0, 0, 0, 0, 0, 0); }
+void arch_shutdown() {
+    sbi_ecall(0x53525354, 0x0, 0, 0, 0, 0, 0, 0);
+    while (1) {
+        asm volatile("wfi");
+    }
+}
 
 void arch_pause() { asm volatile("nop" ::: "memory"); }
 

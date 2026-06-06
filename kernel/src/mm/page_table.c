@@ -329,7 +329,8 @@ static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level,
                 arch_page_table_flags_writable(flags)) {
                 flags = arch_page_table_flags_make_cow(flags);
                 source_table[i] = ARCH_MAKE_PTE(paddr, flags);
-                arch_flush_tlb(entry_vaddr);
+                task_mm_flush_tlb_page(current_task ? current_task->mm : NULL,
+                                       entry_vaddr);
             }
 
             new_table[i] = ARCH_MAKE_PTE(paddr, flags);
@@ -502,6 +503,23 @@ void unmap_release_batch_commit(unmap_release_batch_t *batch) {
     if (!batch)
         return;
 
+    bool can_release = true;
+    if (batch->mm && (batch->page_count || batch->table_count)) {
+        task_t *self = current_task;
+        bool can_wait =
+            arch_interrupt_enabled() && (!self || self->preempt_count == 0);
+
+        if (can_wait) {
+            can_release = task_mm_flush_tlb_all(batch->mm);
+        } else {
+            task_mm_flush_tlb_all(batch->mm);
+            can_release = false;
+        }
+    }
+
+    if (!can_release)
+        goto out;
+
     for (size_t i = 0; i < batch->page_count; i++) {
         unmap_release_page(batch->page_addrs[i]);
     }
@@ -510,6 +528,10 @@ void unmap_release_batch_commit(unmap_release_batch_t *batch) {
         unmap_release_table(batch->table_addrs[i]);
     }
 
+out:
     batch->page_count = 0;
     batch->table_count = 0;
+    batch->mm = NULL;
+    batch->flush_start = 0;
+    batch->flush_end = 0;
 }

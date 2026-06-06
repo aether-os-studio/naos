@@ -198,6 +198,12 @@ static err_t naos_lwip_linkoutput(struct netif *netif, struct pbuf *p) {
         return ERR_IF;
     }
 
+    if (!p->next && p->len == p->tot_len) {
+        return netdev_send(link->netdev, p->payload, (uint32_t)p->len) < 0
+                   ? ERR_IF
+                   : ERR_OK;
+    }
+
     frame = alloc_frames_bytes(p->tot_len);
     if (!frame) {
         return ERR_MEM;
@@ -272,17 +278,13 @@ static uint32_t naos_prefixlen_to_mask_u32(uint8_t prefixlen) {
 static void naos_lwip_rx_thread(uint64_t arg) {
     naos_lwip_link_t *link = (naos_lwip_link_t *)arg;
     uint32_t max_len = 0;
-    uint8_t *buffer = NULL;
+    struct pbuf *rx_pbuf = NULL;
 
     if (!link || !link->netdev) {
         return;
     }
 
     max_len = netdev_max_frame_len(link->netdev->mtu);
-    buffer = alloc_frames_bytes(max_len);
-    if (!buffer) {
-        return;
-    }
 
     for (;;) {
         arch_enable_interrupt();
@@ -291,7 +293,16 @@ static void naos_lwip_rx_thread(uint64_t arg) {
             break;
         }
 
-        int len = netdev_recv(link->netdev, buffer, max_len);
+        if (!rx_pbuf) {
+            rx_pbuf = pbuf_alloc(PBUF_RAW, (u16_t)max_len, PBUF_POOL);
+            if (!rx_pbuf) {
+                task_block(current_task, TASK_BLOCKING, 1000000,
+                           "lwip_rx_alloc");
+                continue;
+            }
+        }
+
+        int len = netdev_recv(link->netdev, rx_pbuf->payload, max_len);
         if (len <= 0) {
             if (len == -ENODEV || link->stopping) {
                 break;
@@ -300,21 +311,17 @@ static void naos_lwip_rx_thread(uint64_t arg) {
             continue;
         }
 
-        struct pbuf *p = pbuf_alloc(PBUF_RAW, (u16_t)len, PBUF_POOL);
-        if (!p) {
-            continue;
-        }
+        pbuf_realloc(rx_pbuf, (u16_t)len);
 
-        if (pbuf_take(p, buffer, (u16_t)len) != ERR_OK) {
-            pbuf_free(p);
-            continue;
+        if (naos_lwip_netif.input(rx_pbuf, &naos_lwip_netif) != ERR_OK) {
+            pbuf_free(rx_pbuf);
         }
-
-        if (naos_lwip_netif.input(p, &naos_lwip_netif) != ERR_OK) {
-            pbuf_free(p);
-        }
+        rx_pbuf = NULL;
     }
 
+    if (rx_pbuf) {
+        pbuf_free(rx_pbuf);
+    }
     if (link->netdev_ref_held && link->netdev) {
         netdev_put(link->netdev);
         link->netdev_ref_held = false;

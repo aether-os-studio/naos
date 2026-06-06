@@ -8,6 +8,8 @@ typedef unsigned long sys_prot_t;
 
 typedef struct naos_lwip_sem {
     sem_t sem;
+    wait_node_t *wait_head;
+    wait_node_t *wait_tail;
     bool valid;
 } *sys_sem_t;
 

@@ -75,3 +75,4 @@ extern volatile struct limine_rsdp_request rsdp_request;
 void smp_init();
 void tss_init();
 void apic_send_ipi(uint32_t cpu_id, uint64_t irq_num);
+void apic_tlb_shootdown_handle(void);

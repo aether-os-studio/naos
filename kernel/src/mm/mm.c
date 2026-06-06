@@ -83,8 +83,10 @@ void task_mm_init_aslr(task_mm_info_t *mm) {
         uint64_t min_layout_top =
             max_slide > window ? layout_top - window : template_top;
         uint64_t span_pages = (layout_top - min_layout_top) / PAGE_SIZE;
+
         if (span_pages)
             layout_top -= (mmap_aslr_next() % (span_pages + 1)) * PAGE_SIZE;
+
         slide = layout_top - template_top;
     }
 
@@ -149,6 +151,23 @@ uint64_t task_mm_stack_end(task_mm_info_t *mm) {
     if (!mm->stack_end)
         task_mm_init_aslr(mm);
     return mm->stack_end;
+}
+
+bool task_mm_flush_tlb_page(task_mm_info_t *mm, uint64_t vaddr)
+    __attribute__((weak));
+
+bool task_mm_flush_tlb_page(task_mm_info_t *mm, uint64_t vaddr) {
+    (void)mm;
+    arch_flush_tlb(vaddr);
+    return true;
+}
+
+bool task_mm_flush_tlb_all(task_mm_info_t *mm) __attribute__((weak));
+
+bool task_mm_flush_tlb_all(task_mm_info_t *mm) {
+    (void)mm;
+    arch_flush_tlb_all();
+    return true;
 }
 
 uint64_t alloc_frames_early(size_t count) {
@@ -413,11 +432,18 @@ void unmap_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t size) {
     if (!mm)
         return;
 
-    unmap_release_batch_t batch = {0};
+    unmap_release_batch_t batch = {
+        .mm = mm,
+        .flush_start = vaddr,
+        .flush_end = vaddr + size,
+    };
 
     for (uint64_t va = vaddr; va < vaddr + size; va += PAGE_SIZE) {
         if (batch.page_count == UNMAP_RELEASE_BATCH_MAX) {
             unmap_release_batch_commit(&batch);
+            batch.mm = mm;
+            batch.flush_start = vaddr;
+            batch.flush_end = vaddr + size;
         }
 
         unmap_page_defer_release(task_mm_pgdir(mm), va, &batch);

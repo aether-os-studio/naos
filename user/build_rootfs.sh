@@ -11,7 +11,7 @@ XBPS_XZ_PATH="$SCRIPTPATH/cache/xbps-static-latest.tar.xz"
 XBPS_XZ_URI="http://repo-default.voidlinux.org/static/xbps-static-latest.$(uname -m)-musl.tar.xz"
 
 mkdir -p "$(dirname "$XBPS_XZ_PATH")"
-[ -f "$XBPS_XZ_PATH" ] || wget "$XBPS_XZ_URI" -O "$XBPS_XZ_PATH"
+[ -f "$XBPS_XZ_PATH" ] || curl -Lo "$XBPS_XZ_PATH" "$XBPS_XZ_URI"
 
 mkdir -p "$(dirname "$XBPS_INSTALL_PATH")"
 [ -d "$XBPS_INSTALL_PATH" ] || mkdir -p "$XBPS_INSTALL_PATH" && tar -xf $XBPS_XZ_PATH -C $XBPS_INSTALL_PATH
@@ -24,7 +24,7 @@ sudo XBPS_ARCH=$ARCH $XBPS_INSTALL_PATH/usr/bin/xbps-install -S -r $ROOTFS_SYSRO
     glibc-locales ncurses tzdata which shadow grep elfutils curl \
     seatd eudev dbus xfce4 labwc xorg-server-xwayland xrandr \
     fastfetch mesa mesa-dri mesa-demos lite-xl qemu-system-amd64 libwebkit2gtk41 \
-    adwaita-icon-theme dejavu-fonts-ttf
+    adwaita-icon-theme noto-fonts-cjk
 
 sudo ln -sf /usr/share/zoneinfo/Asia/Shanghai $ROOTFS_SYSROOT/etc/localtime
 

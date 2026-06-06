@@ -36,6 +36,71 @@ static bool naos_lwip_sem_trywait(sys_sem_t sem) {
     return acquired;
 }
 
+static void naos_lwip_sem_wait_enqueue_locked(sys_sem_t sem,
+                                              wait_node_t *node) {
+    if (!sem || !node || node->queued) {
+        return;
+    }
+
+    node->next = NULL;
+    node->queued = true;
+    if (sem->wait_tail) {
+        sem->wait_tail->next = node;
+    } else {
+        sem->wait_head = node;
+    }
+    sem->wait_tail = node;
+}
+
+static void naos_lwip_sem_wait_remove_locked(sys_sem_t sem,
+                                             wait_node_t *target) {
+    wait_node_t *prev = NULL;
+    wait_node_t *curr = NULL;
+
+    if (!sem || !target || !target->queued) {
+        return;
+    }
+
+    curr = sem->wait_head;
+    while (curr) {
+        if (curr == target) {
+            if (prev) {
+                prev->next = curr->next;
+            } else {
+                sem->wait_head = curr->next;
+            }
+            if (sem->wait_tail == curr) {
+                sem->wait_tail = prev;
+            }
+            curr->next = NULL;
+            curr->queued = false;
+            return;
+        }
+        prev = curr;
+        curr = curr->next;
+    }
+
+    target->next = NULL;
+    target->queued = false;
+}
+
+static wait_node_t *naos_lwip_sem_wait_dequeue_locked(sys_sem_t sem) {
+    wait_node_t *node = NULL;
+
+    if (!sem || !sem->wait_head) {
+        return NULL;
+    }
+
+    node = sem->wait_head;
+    sem->wait_head = node->next;
+    if (!sem->wait_head) {
+        sem->wait_tail = NULL;
+    }
+    node->next = NULL;
+    node->queued = false;
+    return node;
+}
+
 sys_prot_t naos_lwip_protect_enter(void) {
     uintptr_t owner = naos_lwip_protect_owner_id();
     sys_prot_t level = naos_lwip_protect_depth;
@@ -78,31 +143,89 @@ err_t sys_sem_new(sys_sem_t *sem, u8_t count) {
     spin_init(&created->sem.lock);
     created->sem.cnt = count;
     created->sem.invalid = false;
+    created->wait_head = NULL;
+    created->wait_tail = NULL;
     created->valid = true;
     *sem = created;
     return ERR_OK;
 }
 
 void sys_sem_signal(sys_sem_t *sem) {
+    wait_node_t *node = NULL;
+    task_t *waiter = NULL;
+
     if (!sem || !*sem || !(*sem)->valid) {
         return;
     }
-    sem_post(&(*sem)->sem);
+
+    spin_lock(&(*sem)->sem.lock);
+    (*sem)->sem.cnt++;
+    while ((node = naos_lwip_sem_wait_dequeue_locked(*sem))) {
+        waiter = node->task;
+        node->task = NULL;
+        if (waiter && waiter->state != TASK_DIED) {
+            break;
+        }
+        waiter = NULL;
+    }
+    spin_unlock(&(*sem)->sem.lock);
+
+    if (waiter) {
+        task_unblock(waiter, EOK);
+    }
 }
 
 u32_t sys_arch_sem_wait(sys_sem_t *sem, u32_t timeout) {
     uint64_t start = nano_time();
     uint64_t timeout_ns = timeout ? (uint64_t)timeout * 1000000ULL : 0;
+    sys_sem_t s = NULL;
+    wait_node_t wait_node;
 
     if (!sem || !*sem || !(*sem)->valid) {
         return SYS_ARCH_TIMEOUT;
     }
+    s = *sem;
+    memset(&wait_node, 0, sizeof(wait_node));
+    wait_node.task = current_task;
 
-    while (!naos_lwip_sem_trywait(*sem)) {
-        if (timeout_ns && nano_time() - start >= timeout_ns) {
+    for (;;) {
+        uint64_t now = 0;
+        int64_t block_ns = -1;
+        int reason = EOK;
+
+        spin_lock(&s->sem.lock);
+        if (!s->valid) {
+            naos_lwip_sem_wait_remove_locked(s, &wait_node);
+            spin_unlock(&s->sem.lock);
             return SYS_ARCH_TIMEOUT;
         }
-        task_block(current_task, TASK_BLOCKING, 1000000, "lwip_sem_wait");
+        if (s->sem.cnt > 0) {
+            s->sem.cnt--;
+            naos_lwip_sem_wait_remove_locked(s, &wait_node);
+            spin_unlock(&s->sem.lock);
+            break;
+        }
+
+        now = nano_time();
+        if (timeout_ns && now - start >= timeout_ns) {
+            naos_lwip_sem_wait_remove_locked(s, &wait_node);
+            spin_unlock(&s->sem.lock);
+            return SYS_ARCH_TIMEOUT;
+        }
+
+        wait_node.task = current_task;
+        naos_lwip_sem_wait_enqueue_locked(s, &wait_node);
+        if (timeout_ns) {
+            uint64_t elapsed = now - start;
+            block_ns = (int64_t)(timeout_ns - elapsed);
+        }
+        spin_unlock(&s->sem.lock);
+
+        reason =
+            task_block(current_task, TASK_BLOCKING, block_ns, "lwip_sem_wait");
+        if (reason != EOK && reason != ETIMEDOUT) {
+            schedule(SCHED_FLAG_YIELD);
+        }
     }
 
     if (!timeout) {
@@ -113,10 +236,36 @@ u32_t sys_arch_sem_wait(sys_sem_t *sem, u32_t timeout) {
 }
 
 void sys_sem_free(sys_sem_t *sem) {
+    wait_node_t *node = NULL;
+    bool has_waiters = false;
+
     if (!sem || !*sem) {
         return;
     }
+
+    spin_lock(&(*sem)->sem.lock);
+    has_waiters = (*sem)->wait_head != NULL;
     (*sem)->valid = false;
+    node = naos_lwip_sem_wait_dequeue_locked(*sem);
+    spin_unlock(&(*sem)->sem.lock);
+
+    while (node) {
+        task_t *waiter = node->task;
+        node->task = NULL;
+        if (waiter && waiter->state != TASK_DIED) {
+            task_unblock(waiter, EOK);
+        }
+
+        spin_lock(&(*sem)->sem.lock);
+        node = naos_lwip_sem_wait_dequeue_locked(*sem);
+        spin_unlock(&(*sem)->sem.lock);
+    }
+
+    if (has_waiters) {
+        *sem = NULL;
+        return;
+    }
+
     free(*sem);
     *sem = NULL;
 }

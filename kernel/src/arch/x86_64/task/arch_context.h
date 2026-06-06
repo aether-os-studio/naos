@@ -119,12 +119,13 @@ static inline void arch_context_set_tls(arch_context_t *context, uint64_t tls) {
             asm volatile("movq %0, %%cr3" ::"r"((next)->mm->page_table_addr)   \
                          : "memory");                                          \
         }                                                                      \
+        apic_tlb_shootdown_handle();                                           \
     } while (0)
 
 #define switch_to(prev, next)                                                  \
     do {                                                                       \
-        asm volatile("pushq %6\n\t"                                            \
-                     "pushq %%rax\n\t"                                         \
+        asm volatile("pushq %%rax\n\t"                                         \
+                     "pushq %6\n\t"                                            \
                      "pushq %%rbp\n\t"                                         \
                      "pushq %%rbx\n\t"                                         \
                      "pushq %%r12\n\t"                                         \
@@ -147,14 +148,14 @@ static inline void arch_context_set_tls(arch_context_t *context, uint64_t tls) {
                      "popq %%rbx\n\t"                                          \
                      "popq %%rbp\n\t"                                          \
                      "popq %%rax\n\t"                                          \
-                     "popq %%rcx\n\t"                                          \
-                     "testq %%rcx, %%rcx\n\t"                                  \
+                     "testq %%rax, %%rax\n\t"                                  \
                      "jz 2f\n\t"                                               \
                      "sti\n\t"                                                 \
                      "jmp 3f\n\t"                                              \
                      "2:\n\t"                                                  \
                      "cli\n\t"                                                 \
                      "3:\n\t"                                                  \
+                     "popq %%rax\n\t"                                          \
                      : "=m"(prev->arch_context->rsp),                          \
                        "=m"(prev->arch_context->rip)                           \
                      : "m"(next->arch_context->rsp),                           \

@@ -108,7 +108,6 @@
               pkg-config
               perl
               qemu
-              wget
               which
               xz
               toolchainWrappers

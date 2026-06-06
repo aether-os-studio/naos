@@ -184,8 +184,8 @@ static size_t do_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
         }
 
         int64_t block_ns = wait_ns;
-        if (block_ns < 0 || block_ns > 10000000LL) {
-            block_ns = 10000000LL;
+        if (block_ns < 0 || block_ns > 1000000LL) {
+            block_ns = 1000000LL;
         }
 
         int block_reason =

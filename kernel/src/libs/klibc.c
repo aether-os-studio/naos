@@ -58,6 +58,8 @@ bool spin_trylock(spinlock_t *lock) {
 
         if (task)
             task->preempt_count++;
+
+        lock->irq_state = irq_state;
     }
     return ret;
 }

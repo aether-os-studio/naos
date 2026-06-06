@@ -35,6 +35,11 @@ typedef struct procfs_inode_info {
     char *link_target;
 } procfs_inode_info_t;
 
+typedef struct procfs_task_snapshot {
+    uint64_t pid;
+    uint64_t tgid;
+} procfs_task_snapshot_t;
+
 static struct vfs_file_system_type procfs_fs_type;
 static const struct vfs_super_operations procfs_super_ops;
 static const struct vfs_dentry_operations procfs_dentry_ops;
@@ -57,6 +62,37 @@ static inline task_t *procfs_info_task(procfs_inode_info_t *info) {
         return NULL;
 
     return task_find_by_pid(info->task_pid);
+}
+
+static size_t procfs_collect_task_snapshot(procfs_task_snapshot_t *entries,
+                                           size_t capacity, uint64_t tgid) {
+    size_t count = 0;
+
+    spin_lock(&task_queue_lock);
+    if (task_pid_map.buckets) {
+        for (size_t i = 0; i < task_pid_map.bucket_count; ++i) {
+            hashmap_entry_t *entry = &task_pid_map.buckets[i];
+            if (!hashmap_entry_is_occupied(entry))
+                continue;
+
+            task_t *task = (task_t *)entry->value;
+            if (!procfs_task_is_alive(task) || task->pid == 0)
+                continue;
+
+            uint64_t task_tgid = task_effective_tgid(task);
+            if (tgid && task_tgid != tgid)
+                continue;
+
+            if (entries && count < capacity) {
+                entries[count].pid = task->pid;
+                entries[count].tgid = task_tgid;
+            }
+            count++;
+        }
+    }
+    spin_unlock(&task_queue_lock);
+
+    return count;
 }
 
 static uint64_t procfs_task_mnt_ns_inum(task_t *task) {
@@ -158,9 +194,8 @@ static int procfs_init_fs_context(struct vfs_fs_context *fc) {
     return 0;
 }
 
-static uint64_t procfs_ino_for(procfs_inode_kind_t kind, task_t *task,
-                               int fd_num, const char *name) {
-    uint64_t pid = task ? task->pid : 0;
+static uint64_t procfs_ino_for_pid(procfs_inode_kind_t kind, uint64_t pid,
+                                   int fd_num, const char *name) {
     uint64_t base = ((uint64_t)kind + 1) << 56;
     uint64_t extra = 0;
 
@@ -172,6 +207,11 @@ static uint64_t procfs_ino_for(procfs_inode_kind_t kind, task_t *task,
     }
 
     return base ^ (pid << 20) ^ extra;
+}
+
+static uint64_t procfs_ino_for(procfs_inode_kind_t kind, task_t *task,
+                               int fd_num, const char *name) {
+    return procfs_ino_for_pid(kind, task ? task->pid : 0, fd_num, name);
 }
 
 static vfs_node_t *procfs_new_inode(struct vfs_super_block *sb, umode_t mode,
@@ -729,7 +769,7 @@ static int procfs_iterate_shared(struct vfs_file *file,
         return -EINVAL;
 
     switch (info->kind) {
-    case PROCFS_INO_ROOT:
+    case PROCFS_INO_ROOT: {
         if (procfs_emit_entry(
                 ctx, &index, "self", DT_LNK,
                 procfs_ino_for(PROCFS_INO_SELF, NULL, -1, "self")) != 0 ||
@@ -769,30 +809,27 @@ static int procfs_iterate_shared(struct vfs_file *file,
             break;
         }
 
-        spin_lock(&task_queue_lock);
-        if (task_pid_map.buckets) {
-            for (size_t i = 0; i < task_pid_map.bucket_count; ++i) {
-                hashmap_entry_t *entry = &task_pid_map.buckets[i];
-                task_t *task;
-                char name[MAX_PID_NAME_LEN];
-
-                if (!hashmap_entry_is_occupied(entry))
-                    continue;
-                task = (task_t *)entry->value;
-                if (!procfs_task_is_alive(task) || task->pid == 0)
-                    continue;
-
-                snprintf(name, sizeof(name), "%llu",
-                         (unsigned long long)task->pid);
-                if (procfs_emit_entry(ctx, &index, name, DT_DIR,
-                                      procfs_ino_for(PROCFS_INO_TASK_DIR, task,
-                                                     -1, NULL)) != 0) {
-                    break;
-                }
+        size_t snapshot_count = procfs_collect_task_snapshot(NULL, 0, 0);
+        procfs_task_snapshot_t *snapshot =
+            snapshot_count ? calloc(snapshot_count, sizeof(*snapshot)) : NULL;
+        if (snapshot) {
+            snapshot_count =
+                procfs_collect_task_snapshot(snapshot, snapshot_count, 0);
+        }
+        for (size_t i = 0; i < snapshot_count; ++i) {
+            char name[MAX_PID_NAME_LEN];
+            snprintf(name, sizeof(name), "%llu",
+                     (unsigned long long)snapshot[i].pid);
+            if (procfs_emit_entry(ctx, &index, name, DT_DIR,
+                                  procfs_ino_for_pid(PROCFS_INO_TASK_DIR,
+                                                     snapshot[i].pid, -1,
+                                                     NULL)) != 0) {
+                break;
             }
         }
-        spin_unlock(&task_queue_lock);
+        free(snapshot);
         break;
+    }
     case PROCFS_INO_SYS_DIR:
         procfs_emit_entry(
             ctx, &index, "kernel", DT_DIR,
@@ -836,34 +873,30 @@ static int procfs_iterate_shared(struct vfs_file *file,
     case PROCFS_INO_TASK_DIR:
         procfs_iterate_task_entries(ctx, &index, procfs_info_task(info));
         break;
-    case PROCFS_INO_TASK_THREADS_DIR:
-        spin_lock(&task_queue_lock);
-        if (task_pid_map.buckets) {
-            task_t *owner = procfs_info_task(info);
-            uint64_t tgid = task_effective_tgid(owner);
-            for (size_t i = 0; i < task_pid_map.bucket_count; ++i) {
-                hashmap_entry_t *entry = &task_pid_map.buckets[i];
-                task_t *task;
-                char name[MAX_PID_NAME_LEN];
-
-                if (!hashmap_entry_is_occupied(entry))
-                    continue;
-                task = (task_t *)entry->value;
-                if (!procfs_task_is_alive(task) ||
-                    task_effective_tgid(task) != tgid)
-                    continue;
-
-                snprintf(name, sizeof(name), "%llu",
-                         (unsigned long long)task->pid);
-                if (procfs_emit_entry(ctx, &index, name, DT_DIR,
-                                      procfs_ino_for(PROCFS_INO_TASK_DIR, task,
-                                                     -1, NULL)) != 0) {
-                    break;
-                }
+    case PROCFS_INO_TASK_THREADS_DIR: {
+        task_t *owner = procfs_info_task(info);
+        uint64_t tgid = task_effective_tgid(owner);
+        size_t snapshot_count = procfs_collect_task_snapshot(NULL, 0, tgid);
+        procfs_task_snapshot_t *snapshot =
+            snapshot_count ? calloc(snapshot_count, sizeof(*snapshot)) : NULL;
+        if (snapshot) {
+            snapshot_count =
+                procfs_collect_task_snapshot(snapshot, snapshot_count, tgid);
+        }
+        for (size_t i = 0; i < snapshot_count; ++i) {
+            char name[MAX_PID_NAME_LEN];
+            snprintf(name, sizeof(name), "%llu",
+                     (unsigned long long)snapshot[i].pid);
+            if (procfs_emit_entry(ctx, &index, name, DT_DIR,
+                                  procfs_ino_for_pid(PROCFS_INO_TASK_DIR,
+                                                     snapshot[i].pid, -1,
+                                                     NULL)) != 0) {
+                break;
             }
         }
-        spin_unlock(&task_queue_lock);
+        free(snapshot);
         break;
+    }
     case PROCFS_INO_NS_DIR:
         task_t *task = procfs_info_task(info);
         if (procfs_emit_entry(ctx, &index, "mnt", DT_LNK,

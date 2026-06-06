@@ -201,8 +201,8 @@ int vfs_poll_wait_sleep(vfs_node_t *node, vfs_poll_wait_t *wait,
                 return ETIMEDOUT;
             block_ns = (int64_t)(deadline - now);
         }
-        if (block_ns < 0 || block_ns > 10000000LL)
-            block_ns = 10000000LL;
+        if (block_ns < 0 || block_ns > 1000000LL)
+            block_ns = 1000000LL;
 
         irq_state = arch_interrupt_enabled();
         arch_enable_interrupt();

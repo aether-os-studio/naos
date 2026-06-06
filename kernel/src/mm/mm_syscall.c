@@ -554,6 +554,7 @@ static uint64_t populate_anon_vma(uint64_t vm_flags, uint64_t addr,
     if (ret != 0)
         unmap_page_range_mm(mm, addr, len);
     spin_unlock(&mm->lock);
+    task_mm_flush_tlb_all(mm);
     return ret == 0 ? addr : (uint64_t)-ENOMEM;
 }
 
@@ -1010,6 +1011,7 @@ uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
         cursor = next_cursor;
     }
     spin_unlock(&mm->lock);
+    task_mm_flush_tlb_all(mm);
 
     cursor = addr;
     while (cursor < end) {
@@ -1152,6 +1154,7 @@ static uint64_t madvise_guard_remove_range(uint64_t addr, uint64_t len) {
         cursor = next_cursor;
     }
     spin_unlock(&mm->lock);
+    task_mm_flush_tlb_all(mm);
 
     cursor = addr;
     while (cursor < end) {
@@ -1237,6 +1240,7 @@ static uint64_t prepare_copy_target(vma_t *vma, uint64_t addr, uint64_t size) {
     spin_lock(&mm->lock);
     map_change_attribute_range_mm(mm, addr, size, pt_flags);
     spin_unlock(&mm->lock);
+    task_mm_flush_tlb_all(mm);
     return 0;
 }
 
@@ -1250,6 +1254,7 @@ static void restore_copy_target_permissions(vma_t *vma, uint64_t addr,
     map_change_attribute_range_mm(mm, addr, size,
                                   vm_flags_to_pt_flags(vma->vm_flags));
     spin_unlock(&mm->lock);
+    task_mm_flush_tlb_all(mm);
 }
 
 static int copy_user_range_mapped(uint64_t dst, uint64_t src, uint64_t size) {
@@ -1945,6 +1950,7 @@ static uint64_t madvise_dontneed_range(uint64_t addr, uint64_t len) {
     spin_lock(&mm->lock);
     unmap_page_range_mm(mm, addr, len);
     spin_unlock(&mm->lock);
+    task_mm_flush_tlb_all(mm);
     return 0;
 }
 

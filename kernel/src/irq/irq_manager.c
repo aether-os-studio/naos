@@ -2,6 +2,7 @@
 #include <drivers/logger.h>
 #include <arch/arch.h>
 #include <task/task.h>
+#include <task/sched.h>
 #include <mm/bitmap.h>
 #include <irq/softirq.h>
 #include <init/callbacks.h>
@@ -12,6 +13,7 @@ uint64_t sched_ipi_irq = ARCH_MAX_IRQ_NUM;
 
 extern bool system_initialized;
 extern bool can_schedule;
+extern sched_rq_t schedulers[MAX_CPU_NUM];
 
 void do_irq(struct pt_regs *regs, uint64_t irq_num) {
     if (irq_num >= ARCH_MAX_IRQ_NUM) {
@@ -48,10 +50,14 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num) {
 
     uint64_t current_sched_ipi =
         __atomic_load_n(&sched_ipi_irq, __ATOMIC_ACQUIRE);
-    if ((irq_num == ARCH_TIMER_IRQ || irq_num == current_sched_ipi) &&
+    if ((irq_num == current_sched_ipi || irq_num == ARCH_TIMER_IRQ) &&
         can_schedule && self) {
-        schedule(0);
+        uint64_t now_ns = nano_time();
+        if (sched_should_preempt(&schedulers[self->cpu_id], self, now_ns))
+            task_set_need_resched(self);
     }
+
+    sched_resched_if_needed();
 }
 
 void irq_regist_irq(uint64_t irq_num,

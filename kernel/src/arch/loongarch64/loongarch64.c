@@ -53,6 +53,9 @@ void arch_shutdown() {
 
 fdt_poweroff:
     syscon_poweroff_shutdown();
+
+    while (1)
+        arch_wait_for_interrupt();
 }
 
 size_t get_cache_line_size() { return 64; }

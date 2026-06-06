@@ -19,6 +19,8 @@ typedef enum task_state {
     TASK_DIED,
 } task_state_t;
 
+#define TASK_FLAG_CPU_PINNED (1ULL << 0)
+
 struct arch_context;
 typedef struct arch_context arch_context_t;
 typedef struct task_mm_info task_mm_info_t;
@@ -352,7 +354,6 @@ typedef struct task {
     uint32_t cpu_id;
     char name[TASK_NAME_MAX];
     struct vfs_file *exec_file;
-    int priority;
     int nice;
     int sched_policy;
     int sched_priority;
@@ -403,6 +404,7 @@ typedef struct task {
     bool ptrace_exec_event_pending;
     uint32_t personality;
     uint64_t clone_flags;
+    uint64_t flags;
     task_ns_proxy_t *nsproxy;
     bool no_new_privs;
     bool is_kernel;
@@ -411,6 +413,7 @@ typedef struct task {
     bool orphaned_to_init;
     bool exit_reaped;
     bool on_cpu;
+    bool need_resched;
     bool wake_pending;
     spinlock_t block_lock;
     uint64_t membarrier_seen_seq;

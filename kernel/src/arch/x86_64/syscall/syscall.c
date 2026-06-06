@@ -990,6 +990,8 @@ done:
     if (self && self->signal && self->signal->signal != 0)
         task_signal(regs);
 
+    sched_resched_if_needed();
+
     if (idx != SYS_RT_SIGRETURN) {
         regs->rcx = regs->rip;
         regs->r11 = regs->rflags;

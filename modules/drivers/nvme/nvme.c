@@ -700,8 +700,7 @@ static int nvme_setup_prp(nvme_controller_t *ctrl, nvme_request_t *req,
 
 // 异步读取
 static inline nvme_queue_t *nvme_pick_io_queue(nvme_controller_t *ctrl) {
-    (void)ctrl;
-    return &ctrl->io_queues[0];
+    return &ctrl->io_queues[current_cpu_id % ctrl->num_io_queues];
 }
 
 static int nvme_submit_io_async(nvme_controller_t *ctrl, uint8_t opcode,
@@ -953,7 +952,7 @@ int nvme_probe(pci_device_t *device) {
     nvme_platform_ops->log("NVMe: Model=%.40s, Namespaces=%d\n", id_ctrl.mn,
                            ctrl->num_namespaces);
 
-    ctrl->num_io_queues = 1;
+    ctrl->num_io_queues = MIN(MAX_IO_CPU_NUM, cpu_count);
     ctrl->page_size = NVME_PAGE_SIZE;
 
     // Create I/O queue pair

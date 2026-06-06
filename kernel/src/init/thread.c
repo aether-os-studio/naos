@@ -79,6 +79,8 @@ void init_thread(uint64_t arg) {
 
     printk("System initialized, ready to go to userland.\n");
 
+    current_task->nice = NORMAL_PRIORITY;
+
     const char *argvs[2];
     memset(argvs, 0, sizeof(argvs));
     argvs[0] = "/init";

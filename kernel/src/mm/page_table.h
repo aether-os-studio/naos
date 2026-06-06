@@ -42,6 +42,9 @@ typedef struct unmap_release_batch {
     size_t page_count;
     uint64_t table_addrs[UNMAP_RELEASE_TABLE_BATCH_MAX];
     size_t table_count;
+    task_mm_info_t *mm;
+    uint64_t flush_start;
+    uint64_t flush_end;
 } unmap_release_batch_t;
 
 /*

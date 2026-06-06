@@ -2,6 +2,7 @@
 #include <stdarg.h>
 #include <mm/mm.h>
 #include <drivers/logger.h>
+#include <drivers/serial.h>
 #include <drivers/tty.h>
 #include <task/task.h>
 #include <task/signal.h>
@@ -89,6 +90,9 @@ static bool x64_fault_access_allowed_now(task_t *task, uint64_t vaddr,
 }
 
 static bool x64_should_deliver_user_sigsegv(task_t *task) {
+    if (!task || !task->signal || !task->signal->sighand)
+        return false;
+
     return (task->signal->sighand->actions[SIGSEGV].sa_handler != NULL) &&
            ((task->signal->blocked & SIGMASK(SIGSEGV)) == 0);
 }
@@ -105,8 +109,6 @@ static bool x64_deliver_user_sigsegv(struct pt_regs *regs, uint64_t fault_addr,
     info._sifields._sigfault._addr = (void *)fault_addr;
 
     task_commit_signal(current_task, SIGSEGV, &info);
-
-    task_signal(regs);
 
     return true;
 }
@@ -173,7 +175,29 @@ int lookup_kallsyms(uint64_t addr, int level) {
 
 #define TRACEBACK_MAX_DEPTH 32
 
+static bool x64_task_stack_contains(task_t *task, uint64_t addr, uint64_t size,
+                                    bool syscall_stack) {
+    if (!task || !addr || size == 0 || addr > UINT64_MAX - size)
+        return false;
+
+    uint64_t base = syscall_stack ? (uint64_t)task->syscall_stack_base
+                                  : (uint64_t)task->kernel_stack_base;
+    uint64_t top = syscall_stack ? task->syscall_stack : task->kernel_stack;
+
+    return base && top && addr >= base && addr + size <= top;
+}
+
+static bool x64_current_kernel_stack_contains(uint64_t addr, uint64_t size) {
+    task_t *self = current_task;
+
+    return x64_task_stack_contains(self, addr, size, false) ||
+           x64_task_stack_contains(self, addr, size, true);
+}
+
 void traceback(struct pt_regs *regs) {
+    if (!regs)
+        return;
+
     uint64_t *rbp = (uint64_t *)regs->rbp;
     uint64_t ret_addr = regs->rip;
     if (ret_addr < get_physical_memory_offset())
@@ -187,13 +211,17 @@ void traceback(struct pt_regs *regs) {
         if (lookup_kallsyms(ret_addr, i) != 0)
             break;
 
-        if (!rbp || ((uint64_t)rbp < regs->rsp))
+        uint64_t rbp_addr = (uint64_t)rbp;
+        if (!x64_current_kernel_stack_contains(rbp_addr, sizeof(uint64_t) * 2))
             break;
 
-        ret_addr = *(rbp + 1);
-        rbp = (uint64_t *)(*rbp);
-        if ((uint64_t)rbp < get_physical_memory_offset())
+        uint64_t next_rbp = rbp[0];
+        uint64_t next_ret = rbp[1];
+        if (next_rbp <= rbp_addr)
             break;
+
+        ret_addr = next_ret;
+        rbp = (uint64_t *)next_rbp;
     }
     printk("======== Kernel traceback end =======\n");
 
@@ -203,7 +231,7 @@ check_user_fault:
     printk("======== User traceback =======\n");
     task_t *self = current_task;
 
-    if (self) {
+    if (self && self->mm) {
         rb_node_t *node = rb_first(&self->mm->task_vma_mgr.vma_tree);
 
         while (node) {
@@ -225,6 +253,12 @@ check_user_fault:
 
         struct pt_regs *syscall_regs =
             (struct pt_regs *)self->syscall_stack - 1;
+        if (!x64_task_stack_contains(self, (uint64_t)syscall_regs,
+                                     sizeof(*syscall_regs), true)) {
+            printk("Last syscall registers unavailable\n");
+            printk("======== User traceback end =======\n");
+            return;
+        }
 
         printk("Last syscall registers:\n");
         printk("RIP = %#018lx\n", syscall_regs->rip);
@@ -258,7 +292,11 @@ spinlock_t dump_lock = SPIN_INIT;
 extern tty_t *kernel_session;
 
 void dump_regs(struct pt_regs *regs, const char *error_str, ...) {
+    arch_disable_interrupt();
     can_schedule = false;
+
+    va_list args;
+    va_start(args, error_str);
 
     char old_mode = VT_AUTO;
 
@@ -267,19 +305,15 @@ void dump_regs(struct pt_regs *regs, const char *error_str, ...) {
         kernel_session->current_vt_mode.mode = VT_AUTO;
     }
 
-    spin_lock(&dump_lock);
+    raw_spin_lock(&dump_lock);
 
     char buf[128];
-    va_list args;
-    va_start(args, error_str);
     vsprintf(buf, error_str, args);
     va_end(args);
 
     // printk("\033[0;0H");
     // printk("\033[2J");
     printk("%s\n", buf);
-
-    traceback(regs);
 
     printk("current_task->pid = %d, cpu_id = %d, current_task->name = %s\n",
            current_task->pid, current_task->cpu_id, current_task->name);
@@ -295,11 +329,13 @@ void dump_regs(struct pt_regs *regs, const char *error_str, ...) {
     printk("R14 = %#018lx, R15 = %#018lx\n", regs->r14, regs->r15);
     printk(" CS = %#018lx,  SS = %#018lx\n", regs->cs, regs->ss);
 
+    traceback(regs);
+
     if (kernel_session) {
         kernel_session->current_vt_mode.mode = old_mode;
     }
 
-    spin_unlock(&dump_lock);
+    raw_spin_unlock(&dump_lock);
 }
 
 // 0 #DE 除法错误
@@ -504,7 +540,7 @@ void do_page_fault(struct pt_regs *regs, uint64_t error_code) {
 
     if (x64_should_deliver_user_sigsegv(self)) {
         if (x64_deliver_user_sigsegv(regs, cr2, error_code)) {
-            can_schedule = true;
+            x64_handle_signal_on_user_return(regs);
             return;
         }
     }

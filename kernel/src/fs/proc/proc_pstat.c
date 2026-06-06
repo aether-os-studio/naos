@@ -150,19 +150,20 @@ char *proc_gen_stat_file(task_t *task, size_t *content_len) {
         0UL,                          // 37. cnswap
         task->is_clone ? 0 : SIGCHLD, // 38. exit_signal
         task->cpu_id,                 // 39. processor
-        task->sched_priority > 0 ? (unsigned int)task->sched_priority : 0U, // 40
+        task->sched_priority > 0 ? (unsigned int)task->sched_priority
+                                 : 0U,    // 40
         (unsigned int)task->sched_policy, // 41. policy
-        0ULL,                         // 42. delayacct_blkio_ticks
-        0UL,                          // 43. guest_time
-        0L,                           // 44. cguest_time
-        0UL,                          // 45. start_data
-        0UL,                          // 46. end_data
-        task->mm->brk_start,          // 47. start_brk
-        task->arg_start,              // 48. arg_start
-        task->arg_end,                // 49. arg_end
-        task->env_start,              // 50. env_start
-        task->env_end,                // 51. env_end
-        task->status                  // 52. exit_code
+        0ULL,                             // 42. delayacct_blkio_ticks
+        0UL,                              // 43. guest_time
+        0L,                               // 44. cguest_time
+        0UL,                              // 45. start_data
+        0UL,                              // 46. end_data
+        task->mm->brk_start,              // 47. start_brk
+        task->arg_start,                  // 48. arg_start
+        task->arg_end,                    // 49. arg_end
+        task->env_start,                  // 50. env_start
+        task->env_end,                    // 51. env_end
+        task->status                      // 52. exit_code
     );
 
     *content_len = len;

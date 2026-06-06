@@ -88,6 +88,9 @@ static inline void task_mm_mark_cpu_inactive(task_mm_info_t *mm,
     __atomic_and_fetch(&mm->active_cpu_mask[word], ~bit, __ATOMIC_RELEASE);
 }
 
+bool task_mm_flush_tlb_page(task_mm_info_t *mm, uint64_t vaddr);
+bool task_mm_flush_tlb_all(task_mm_info_t *mm);
+
 uint64_t map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                         uint64_t size, uint64_t flags);
 uint64_t map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,

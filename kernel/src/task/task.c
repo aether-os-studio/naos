@@ -37,6 +37,13 @@ static uint64_t task_timeout_next_ns = UINT64_MAX;
 static uint64_t task_signal_timer_next_ns = UINT64_MAX;
 spinlock_t should_free_lock = SPIN_INIT;
 DEFINE_LLIST(should_free_tasks);
+static spinlock_t should_free_mm_lock = SPIN_INIT;
+static DEFINE_LLIST(should_free_mms);
+
+typedef struct deferred_mm_free {
+    struct llist_header node;
+    task_mm_info_t *mm;
+} deferred_mm_free_t;
 
 task_t *init_task = NULL;
 task_t *worker_tasks[MAX_WORKER_NUM];
@@ -891,6 +898,12 @@ static bool task_should_free_pending(void) {
     pending = !llist_empty(&should_free_tasks);
     spin_unlock(&should_free_lock);
 
+    if (!pending) {
+        spin_lock(&should_free_mm_lock);
+        pending = !llist_empty(&should_free_mms);
+        spin_unlock(&should_free_mm_lock);
+    }
+
     return pending;
 }
 
@@ -915,6 +928,45 @@ void task_enqueue_should_free(task_t *task) {
         task_schedule_reap_softirq();
 }
 
+void task_enqueue_mm_free(task_mm_info_t *mm) {
+    if (!mm)
+        return;
+
+    deferred_mm_free_t *entry = calloc(1, sizeof(*entry));
+    if (!entry) {
+        free_page_table(mm);
+        return;
+    }
+
+    llist_init_head(&entry->node);
+    entry->mm = mm;
+
+    spin_lock(&should_free_mm_lock);
+    llist_append(&should_free_mms, &entry->node);
+    spin_unlock(&should_free_mm_lock);
+
+    task_schedule_reap_softirq();
+}
+
+static task_mm_info_t *task_dequeue_mm_free(void) {
+    deferred_mm_free_t *entry = NULL;
+
+    spin_lock(&should_free_mm_lock);
+    if (!llist_empty(&should_free_mms)) {
+        struct llist_header *node = should_free_mms.next;
+        llist_delete(node);
+        entry = list_entry(node, deferred_mm_free_t, node);
+    }
+    spin_unlock(&should_free_mm_lock);
+
+    if (!entry)
+        return NULL;
+
+    task_mm_info_t *mm = entry->mm;
+    free(entry);
+    return mm;
+}
+
 task_t *task_dequeue_should_free(void) {
     task_t *task = NULL;
 
@@ -931,9 +983,20 @@ task_t *task_dequeue_should_free(void) {
 
 static void task_reap_softirq(void) {
     const size_t reap_budget = 64;
+    const size_t mm_reap_budget = 8;
     size_t reaped = task_reap_deferred(reap_budget);
+    size_t mm_reaped = 0;
 
-    if (reaped > 0 && task_should_free_pending())
+    for (size_t i = 0; i < mm_reap_budget; i++) {
+        task_mm_info_t *mm = task_dequeue_mm_free();
+        if (!mm)
+            break;
+
+        free_page_table(mm);
+        mm_reaped++;
+    }
+
+    if ((reaped > 0 || mm_reaped > 0) && task_should_free_pending())
         task_schedule_reap_softirq();
 }
 
@@ -1064,6 +1127,9 @@ void task_complete_vfork(task_t *task) {
     }
 
     parent->child_vfork_done = true;
+    if (parent->state == TASK_BLOCKING) {
+        task_unblock(parent, EOK);
+    }
     spin_unlock(&task_queue_lock);
 }
 
@@ -1275,9 +1341,27 @@ extern int unix_accept_fsid;
 uint32_t cpu_idx = 0;
 
 uint32_t alloc_cpu_id() {
-    uint32_t idx = cpu_idx;
-    cpu_idx = (cpu_idx + 1) % cpu_count;
-    return idx;
+    if (!cpu_count)
+        return 0;
+
+    uint32_t start = cpu_idx % cpu_count;
+    uint32_t best = start;
+    size_t best_running = SIZE_MAX;
+
+    for (uint32_t offset = 0; offset < cpu_count; offset++) {
+        uint32_t cpu = (start + offset) % cpu_count;
+        size_t nr_running = sched_rq_nr_running(&schedulers[cpu]);
+
+        if (nr_running < best_running) {
+            best = cpu;
+            best_running = nr_running;
+            if (nr_running == 0)
+                break;
+        }
+    }
+
+    cpu_idx = (best + 1) % cpu_count;
+    return best;
 }
 
 task_t *get_free_task() {
@@ -1359,8 +1443,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->pgid = 0;
     task->tgid = task->pid;
     task->sid = 0;
-    task->priority = priority;
-    task->nice = 0;
+    task->nice = priority;
     task->sched_policy = 0;
     task->sched_priority = 0;
 
@@ -1455,7 +1538,7 @@ task_t *task_create(const char *name, void (*entry)(uint64_t), uint64_t arg,
     task->sched_info = calloc(1, sizeof(struct sched_entity));
     if (!task->sched_info)
         goto fail;
-    add_sched_entity(task, &schedulers[task->cpu_id]);
+    add_sched_entity_wakeup(task, &schedulers[task->cpu_id]);
 
     on_new_task_call(task);
 
@@ -1522,13 +1605,17 @@ void task_init() {
     spin_init(&task_signal_timer_lock);
     llist_init_head(&should_free_tasks);
     spin_init(&should_free_lock);
+    llist_init_head(&should_free_mms);
+    spin_init(&should_free_mm_lock);
     softirq_register(SOFTIRQ_TIMER, task_timer_softirq);
     softirq_register(SOFTIRQ_TASK_REAP, task_reap_softirq);
     next_task_pid = 1;
 
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
         memset(&schedulers[cpu], 0, sizeof(sched_rq_t));
-        schedulers[cpu].sched_queue = create_llist_queue();
+        schedulers[cpu].run_tree = RB_ROOT_INIT;
+        schedulers[cpu].min_vruntime = 0;
+        schedulers[cpu].nr_running = 0;
         spin_init(&schedulers[cpu].lock);
     }
     for (uint32_t i = 0; i < MAX_WORKER_NUM; i++) {
@@ -1557,6 +1644,9 @@ void task_init() {
         char name[32];
         snprintf(name, sizeof(name), "worker%d", i);
         worker_tasks[i] = task_create(name, worker_thread, i, KTHREAD_PRIORITY);
+        task_set_flag(worker_tasks[i], TASK_FLAG_CPU_PINNED);
+        remove_sched_entity(worker_tasks[i],
+                            &schedulers[worker_tasks[i]->cpu_id]);
         worker_tasks[i]->state = TASK_BLOCKING;
         worker_tasks[i]->blocking_reason = "worker_wait_for_event";
         if (worker_tasks[i]->cpu_id < MAX_CPU_NUM)
@@ -1573,6 +1663,17 @@ void task_init() {
 }
 
 void sys_yield() { schedule(SCHED_FLAG_YIELD); }
+
+void sched_request_resched(task_t *task) { task_set_need_resched(task); }
+
+void sched_resched_if_needed(void) {
+    task_t *self = current_task;
+
+    if (!can_schedule || !self || !task_need_resched(self))
+        return;
+
+    schedule(0);
+}
 
 bool task_group_exit_code(task_t *task, int64_t *code_out) {
     if (!task || !task->signal || !task->signal->sighand)
@@ -1664,7 +1765,7 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
     arch_enable_interrupt();
 
     while (task->state == state) {
-        schedule(SCHED_FLAG_YIELD);
+        schedule(0);
     }
 
     if (!lock_irq_state)
@@ -1712,14 +1813,17 @@ void task_unblock(task_t *task, int reason) {
     task->force_wakeup_ns = UINT64_MAX;
     task->wake_pending = false;
 
-    add_sched_entity(task, &schedulers[task->cpu_id]);
+    add_sched_entity_wakeup(task, &schedulers[task->cpu_id]);
     should_trigger_sched_ipi =
         task->cpu_id != current_task->cpu_id && task->cpu_id < cpu_count;
 
     spin_unlock(&task->block_lock);
 
-    if (should_trigger_sched_ipi)
+    bool should_preempt =
+        sched_request_preempt_on_wakeup(&schedulers[task->cpu_id], task);
+    if (should_trigger_sched_ipi && should_preempt) {
         irq_trigger_sched_ipi(task->cpu_id);
+    }
 
 ret:
     if (irq_state) {
@@ -2078,12 +2182,25 @@ NO_OPT void schedule(uint64_t sched_flags) {
     if (!prev->last_sched_in_ns && prev->current_state == TASK_RUNNING)
         prev->last_sched_in_ns = now_ns;
 
+    uint64_t runtime_delta_ns = task_account_runtime_ns(prev, now_ns);
+    if (runtime_delta_ns)
+        sched_account_runtime(prev, runtime_delta_ns);
+
+    bool must_resched =
+        task_need_resched(prev) || (sched_flags & SCHED_FLAG_YIELD) ||
+        prev->state != TASK_READY || prev->current_state != TASK_RUNNING;
+    if (!must_resched &&
+        !sched_should_preempt(&schedulers[cpu_id], prev, now_ns)) {
+        task_clear_need_resched(prev);
+        goto ret;
+    }
+
     task_t *next = NULL;
     if (sched_flags & SCHED_FLAG_YIELD) {
         next = sched_pick_next_task_excluding(&schedulers[cpu_id], prev);
 
-        if (next == prev) {
-            next = idle_tasks[cpu_id];
+        if (next == idle_tasks[cpu_id] && prev->state == TASK_READY) {
+            next = prev;
         }
     } else {
         next = sched_pick_next_task(&schedulers[cpu_id]);
@@ -2094,10 +2211,12 @@ NO_OPT void schedule(uint64_t sched_flags) {
     }
 
     if (prev == next) {
+        task_clear_need_resched(prev);
+        sched_note_slice_start(prev, now_ns);
         goto ret;
     }
 
-    task_account_runtime_ns(prev, now_ns);
+    task_clear_need_resched(prev);
     prev->last_sched_in_ns = 0;
 
     prev->current_state = prev->state;
@@ -2105,12 +2224,14 @@ NO_OPT void schedule(uint64_t sched_flags) {
     next->last_sched_in_ns = now_ns;
 
     if (prev->mm != next->mm) {
-        task_mm_mark_cpu_inactive(prev->mm, cpu_id);
         task_mm_mark_cpu_active(next->mm, cpu_id);
     }
 
     arch_set_current(next);
     switch_mm(prev, next);
+    if (prev->mm != next->mm) {
+        task_mm_mark_cpu_inactive(prev->mm, cpu_id);
+    }
     switch_to(prev, next);
 
 ret:

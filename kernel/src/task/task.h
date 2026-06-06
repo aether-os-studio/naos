@@ -118,6 +118,44 @@ static inline void task_mark_on_cpu(task_t *task, bool on_cpu) {
     __atomic_store_n(&task->on_cpu, on_cpu, __ATOMIC_RELEASE);
 }
 
+static inline void task_set_need_resched(task_t *task) {
+    if (!task)
+        return;
+
+    __atomic_store_n(&task->need_resched, true, __ATOMIC_RELEASE);
+}
+
+static inline void task_clear_need_resched(task_t *task) {
+    if (!task)
+        return;
+
+    __atomic_store_n(&task->need_resched, false, __ATOMIC_RELEASE);
+}
+
+static inline bool task_need_resched(task_t *task) {
+    return task ? __atomic_load_n(&task->need_resched, __ATOMIC_ACQUIRE)
+                : false;
+}
+
+static inline bool task_has_flag(task_t *task, uint64_t flag) {
+    return task &&
+           (__atomic_load_n(&task->flags, __ATOMIC_ACQUIRE) & flag) != 0;
+}
+
+static inline void task_set_flag(task_t *task, uint64_t flag) {
+    if (!task)
+        return;
+
+    __atomic_fetch_or(&task->flags, flag, __ATOMIC_ACQ_REL);
+}
+
+static inline void task_clear_flag(task_t *task, uint64_t flag) {
+    if (!task)
+        return;
+
+    __atomic_fetch_and(&task->flags, ~flag, __ATOMIC_ACQ_REL);
+}
+
 static inline bool task_is_reaped(task_t *task) {
     return task ? __atomic_load_n(&task->exit_reaped, __ATOMIC_ACQUIRE) : true;
 }
@@ -158,14 +196,15 @@ static inline uint64_t task_total_system_ns(task_t *task) {
     return task->system_time_ns + task->child_system_time_ns;
 }
 
-static inline void task_account_runtime_ns(task_t *task, uint64_t now_ns) {
+static inline uint64_t task_account_runtime_ns(task_t *task, uint64_t now_ns) {
     if (!task || !task->last_sched_in_ns || now_ns <= task->last_sched_in_ns)
-        return;
+        return 0;
 
     uint64_t delta = now_ns - task->last_sched_in_ns;
     task->last_sched_in_ns = now_ns;
 
     task->user_time_ns += delta;
+    return delta;
 }
 
 static inline void task_aggregate_child_usage(task_t *parent, task_t *child) {
@@ -236,6 +275,8 @@ static inline bool task_should_index_parent(task_t *task) {
 void sched_wake_worker(uint32_t cpu_id);
 void sched_check_wakeup();
 uint64_t sched_next_wakeup_ns(void);
+void sched_request_resched(task_t *task);
+void sched_resched_if_needed(void);
 
 struct vfs_process_fs *task_current_vfs_fs(void);
 fd_info_t *task_fd_info_alloc(size_t max_fds);
@@ -258,6 +299,7 @@ int task_close_file_descriptor(task_t *task, int fd);
 void task_fd_info_put(fd_info_t *fd_info, task_t *task);
 void task_refresh_tick_work_state(task_t *task);
 void task_schedule_reap(void);
+void task_enqueue_mm_free(task_mm_info_t *mm);
 void task_detach_children_from_parent_locked(task_t *owner);
 void task_detach_children_from_parent(task_t *owner);
 

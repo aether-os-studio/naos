@@ -19,6 +19,11 @@ extern spinlock_t should_free_lock;
 static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
                                    uint64_t newsp, int *parent_tid,
                                    int *child_tid, uint64_t tls, int cgroup_fd);
+static uint64_t task_sleep_until_ns(uint64_t target_ns, int clock_id,
+                                    bool interruptible,
+                                    struct timespec *remain);
+static inline uint64_t task_ns_add_saturate(uint64_t left, uint64_t right);
+static inline uint64_t task_timespec_to_ns_saturate(const struct timespec *ts);
 
 static bool waitpid_task_matches(const task_t *task, int64_t wait_pid,
                                  uint64_t caller_pgid) {
@@ -931,11 +936,6 @@ void task_cleanup_partial(task_t *task, bool kernel_mm) {
     if (task->sched_info) {
         if (task->cpu_id < MAX_CPU_NUM)
             remove_sched_entity(task, &schedulers[task->cpu_id]);
-        struct sched_entity *entity = task->sched_info;
-        if (!entity->on_rq && entity->node) {
-            free(entity->node);
-            entity->node = NULL;
-        }
         free(task->sched_info);
         task->sched_info = NULL;
     }
@@ -1017,10 +1017,6 @@ void free_task(task_t *ptr) {
     if (entity) {
         if (ptr->cpu_id < MAX_CPU_NUM)
             remove_sched_entity(ptr, &schedulers[ptr->cpu_id]);
-        if (!entity->on_rq && entity->node) {
-            free(entity->node);
-            entity->node = NULL;
-        }
         free(entity);
         ptr->sched_info = NULL;
     }
@@ -1877,6 +1873,20 @@ static int task_execve_open_exec_file(int dirfd, const char *pathname,
     return 0;
 }
 
+static void task_execve_switch_mm(task_t *task, task_mm_info_t *from,
+                                  task_mm_info_t *to) {
+    bool irq_state = arch_interrupt_enabled();
+
+    arch_disable_interrupt();
+    task->mm = to;
+    task_mm_mark_cpu_active(to, task->cpu_id);
+    set_current_page_dir(true, to->page_table_addr);
+    task_mm_mark_cpu_inactive(from, task->cpu_id);
+
+    if (irq_state)
+        arch_enable_interrupt();
+}
+
 static uint64_t task_do_execve(int dirfd, const char *path_user,
                                const char **argv, const char **envp,
                                uint64_t flags) {
@@ -2324,9 +2334,7 @@ shell_fallback_done:
     vma_manager_init(&new_mm->task_vma_mgr, true);
     task_mm_init_aslr(new_mm);
 
-    set_current_page_dir(true, new_mm->page_table_addr);
-
-    self->mm = new_mm;
+    task_execve_switch_mm(self, old_mm, new_mm);
 
     uint64_t real_load_start = 0;
     if (ehdr->e_type == ET_DYN) {
@@ -2550,7 +2558,7 @@ shell_fallback_done:
     }
 
     if (!self->is_kernel)
-        free_page_table(old_mm);
+        task_enqueue_mm_free(old_mm);
 
     task_signal_free(self->signal);
     self->signal = new_signal;
@@ -2587,8 +2595,7 @@ shell_fallback_done:
     return (uint64_t)-EAGAIN;
 
 exec_fail_restore_mm:
-    self->mm = old_mm;
-    set_current_page_dir(true, old_mm->page_table_addr);
+    task_execve_switch_mm(self, new_mm, old_mm);
     free_page_table(new_mm);
     if (interpreter_path)
         free(interpreter_path);
@@ -3115,8 +3122,6 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
                                    uint64_t newsp, int *parent_tid,
                                    int *child_tid, uint64_t tls,
                                    int cgroup_fd) {
-    arch_disable_interrupt();
-
     if ((flags & CLONE_THREAD) &&
         (!(flags & CLONE_SIGHAND) || !(flags & CLONE_VM))) {
         return (uint64_t)-EINVAL;
@@ -3195,7 +3200,7 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
         }
     }
 
-    child->cpu_id = (flags & CLONE_VM) ? self->cpu_id : alloc_cpu_id();
+    child->cpu_id = alloc_cpu_id();
 
     void *kernel_stack_base = alloc_frames_bytes(STACK_SIZE);
     if (!kernel_stack_base)
@@ -3257,7 +3262,7 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
     child->sid = self->sid;
     task_keyring_inherit(child, self);
 
-    child->priority = NORMAL_PRIORITY;
+    child->nice = self->nice;
 
     child->arg_start = self->arg_start;
     child->arg_end = self->arg_end;
@@ -3376,16 +3381,14 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
 
     if ((flags & CLONE_VFORK)) {
         while (!self->child_vfork_done) {
-            arch_enable_interrupt();
-            schedule(SCHED_FLAG_YIELD);
+            task_block(self, TASK_BLOCKING, -1, "vfork");
         }
-
-        arch_disable_interrupt();
 
         self->child_vfork_done = false;
     }
 
-    return child->pid;
+    ret = child->pid;
+    return ret;
 
 fail:
     task_cleanup_partial(child, false);
@@ -3615,26 +3618,24 @@ uint64_t sys_nanosleep(struct timespec *req, struct timespec *rem) {
         check_unmapped((uint64_t)req, sizeof(struct timespec))) {
         return -EFAULT;
     }
-    if (req->tv_sec < 0)
-        return (uint64_t)-EINVAL;
-
-    if (req->tv_sec < 0 || req->tv_nsec >= 1000000000L) {
+    if (req->tv_sec < 0 || req->tv_nsec < 0 || req->tv_nsec >= 1000000000L) {
         return (uint64_t)-EINVAL;
     }
 
-    uint64_t start = nano_time();
-    uint64_t target = start + (req->tv_sec * 1000000000ULL) + req->tv_nsec;
-    current_task->force_wakeup_ns = target;
+    uint64_t request_ns = task_timespec_to_ns_saturate(req);
+    uint64_t target = task_ns_add_saturate(nano_time(), request_ns);
 
-    do {
-        arch_enable_interrupt();
+    struct timespec remain;
+    memset(&remain, 0, sizeof(remain));
+    uint64_t ret = task_sleep_until_ns(target, CLOCK_MONOTONIC, true, &remain);
 
-        schedule(SCHED_FLAG_YIELD);
-    } while (target > nano_time());
+    if ((int64_t)ret < 0 && rem &&
+        !check_user_overflow((uint64_t)rem, sizeof(struct timespec)) &&
+        !check_unmapped((uint64_t)rem, sizeof(struct timespec))) {
+        copy_to_user(rem, &remain, sizeof(remain));
+    }
 
-    arch_disable_interrupt();
-
-    return 0;
+    return ret;
 }
 
 uint64_t get_nanotime_by_clockid(int clock_id) {
@@ -3647,10 +3648,64 @@ uint64_t get_nanotime_by_clockid(int clock_id) {
     }
 }
 
+static uint64_t task_sleep_until_ns(uint64_t target_ns, int clock_id,
+                                    bool interruptible,
+                                    struct timespec *remain) {
+    while (true) {
+        uint64_t now = get_nanotime_by_clockid(clock_id);
+
+        if ((int64_t)now < 0)
+            return (uint64_t)-EINVAL;
+
+        if (target_ns <= now)
+            break;
+
+        uint64_t remaining = target_ns - now;
+        int64_t block_ns =
+            remaining > (uint64_t)INT64_MAX ? INT64_MAX : (int64_t)remaining;
+        int reason =
+            task_block(current_task, TASK_BLOCKING, block_ns, "nanosleep");
+
+        if (interruptible && reason >= 128) {
+            if (remain) {
+                uint64_t end = get_nanotime_by_clockid(clock_id);
+                uint64_t left = target_ns > end ? target_ns - end : 0;
+                remain->tv_sec = left / 1000000000ULL;
+                remain->tv_nsec = left % 1000000000ULL;
+            }
+            return (uint64_t)-EINTR;
+        }
+    }
+
+    if (remain) {
+        remain->tv_sec = 0;
+        remain->tv_nsec = 0;
+    }
+    return 0;
+}
+
+static inline uint64_t task_ns_add_saturate(uint64_t left, uint64_t right) {
+    if (left > UINT64_MAX - right)
+        return UINT64_MAX;
+    return left + right;
+}
+
+static inline uint64_t task_timespec_to_ns_saturate(const struct timespec *ts) {
+    uint64_t sec = (uint64_t)ts->tv_sec;
+
+    if (sec > UINT64_MAX / 1000000000ULL)
+        return UINT64_MAX;
+
+    return task_ns_add_saturate(sec * 1000000000ULL, (uint64_t)ts->tv_nsec);
+}
+
 uint64_t sys_clock_nanosleep(int clock_id, int flags,
                              const struct timespec *request_user,
                              struct timespec *remain_user) {
     if (clock_id != CLOCK_REALTIME && clock_id != CLOCK_MONOTONIC) {
+        return (uint64_t)-EINVAL;
+    }
+    if (flags & ~TIMER_ABSTIME) {
         return (uint64_t)-EINVAL;
     }
     if (check_user_overflow((uint64_t)request_user, sizeof(struct timespec)) ||
@@ -3665,41 +3720,22 @@ uint64_t sys_clock_nanosleep(int clock_id, int flags,
     if (remain_user && copy_to_user(remain_user, &remain, sizeof(remain)))
         return (uint64_t)-EFAULT;
 
-    if (request.tv_sec < 0 || request.tv_nsec >= 1000000000L) {
+    if (request.tv_sec < 0 || request.tv_nsec < 0 ||
+        request.tv_nsec >= 1000000000L) {
         return (uint64_t)-EINVAL;
     }
 
-    uint64_t start = get_nanotime_by_clockid(clock_id);
-    uint64_t target =
-        start + (request.tv_sec * 1000000000ULL) + request.tv_nsec;
-    current_task->force_wakeup_ns = target;
+    uint64_t request_ns = task_timespec_to_ns_saturate(&request);
+    uint64_t target = (flags & TIMER_ABSTIME)
+                          ? request_ns
+                          : task_ns_add_saturate(
+                                get_nanotime_by_clockid(clock_id), request_ns);
 
-    do {
-        arch_enable_interrupt();
-
-        schedule(SCHED_FLAG_YIELD);
-
-        if (task_signal_has_deliverable(current_task)) {
-            arch_disable_interrupt();
-
-            uint64_t end = get_nanotime_by_clockid(clock_id);
-            uint64_t elapsed = end > start ? end - start : 0;
-            remain.tv_sec = elapsed / 1000000000ULL;
-            remain.tv_nsec = elapsed % 1000000000ULL;
-            if (remain_user &&
-                copy_to_user(remain_user, &remain, sizeof(remain)))
-                return (uint64_t)-EFAULT;
-
-            return -EINTR;
-        }
-    } while (target > get_nanotime_by_clockid(clock_id));
-
-    arch_disable_interrupt();
-
+    uint64_t ret = task_sleep_until_ns(target, clock_id, true, &remain);
     if (remain_user && copy_to_user(remain_user, &remain, sizeof(remain)))
         return (uint64_t)-EFAULT;
 
-    return 0;
+    return ret;
 }
 
 uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
@@ -4152,7 +4188,6 @@ static void task_set_nice_locked(task_t *task, int niceval) {
     if (!task)
         return;
     task->nice = task_clamp_nice(niceval);
-    task->priority = task->nice;
 }
 
 static void task_sched_store_params(task_t *task, int policy,
@@ -4480,8 +4515,7 @@ uint64_t sys_sched_getaffinity(int pid, size_t len,
                        (sizeof(unsigned long) * 8)];
     memset(mask, 0, sizeof(mask));
 
-    // for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
-    for (uint64_t cpu = 0; cpu < 1; cpu++) {
+    for (uint64_t cpu = 0; cpu < cpu_count && cpu < MAX_CPU_NUM; cpu++) {
         size_t word = cpu / (sizeof(unsigned long) * 8);
         size_t bit = cpu % (sizeof(unsigned long) * 8);
         mask[word] |= (1UL << bit);

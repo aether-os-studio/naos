@@ -5,6 +5,13 @@
 #include <task/task.h>
 #include <irq/irq_manager.h>
 
+typedef struct x64_tlb_shootdown_state {
+    uint64_t seq;
+    uint64_t ack_seq;
+} x64_tlb_shootdown_state_t;
+
+static x64_tlb_shootdown_state_t x64_tlb_shootdown[MAX_CPU_NUM];
+
 uint64_t arch_page_table_levels() { return ARCH_MAX_PT_LEVEL; }
 
 uint64_t arch_user_va_limit(void) { return 0x00007fffffffffffULL; }
@@ -91,7 +98,112 @@ void arch_flush_tlb(uint64_t vaddr) {
 }
 
 void arch_flush_tlb_all() {
-    asm volatile("movq %%cr3, %%rax\n\t"
-                 "movq %%rax, %%cr3\n\t" ::
-                     : "rax", "memory");
+    uint64_t cr3;
+    asm volatile("movq %%cr3, %0" : "=r"(cr3)::"memory");
+    asm volatile("movq %0, %%cr3" ::"r"(cr3) : "memory");
+}
+
+static bool x64_tlb_shootdown_should_wait(void) {
+    task_t *self = current_task;
+    return arch_interrupt_enabled() && (!self || self->preempt_count == 0);
+}
+
+static void x64_tlb_shootdown_process_cpu(uint32_t cpu_id) {
+    if (cpu_id >= MAX_CPU_NUM)
+        return;
+
+    x64_tlb_shootdown_state_t *state = &x64_tlb_shootdown[cpu_id];
+    uint64_t seq = __atomic_load_n(&state->seq, __ATOMIC_ACQUIRE);
+    uint64_t ack = __atomic_load_n(&state->ack_seq, __ATOMIC_ACQUIRE);
+    if (ack == seq)
+        return;
+
+    arch_flush_tlb_all();
+    __atomic_store_n(&state->ack_seq, seq, __ATOMIC_RELEASE);
+}
+
+void apic_tlb_shootdown_handle(void) {
+    x64_tlb_shootdown_process_cpu(current_cpu_id);
+}
+
+static bool x64_tlb_shootdown_wait_cpu(uint32_t self_cpu, uint32_t cpu,
+                                       uint64_t seq) {
+    uint64_t spins = 1000000;
+    x64_tlb_shootdown_state_t *state = &x64_tlb_shootdown[cpu];
+
+    while (__atomic_load_n(&state->ack_seq, __ATOMIC_ACQUIRE) != seq) {
+        x64_tlb_shootdown_process_cpu(self_cpu);
+        arch_pause();
+        if (spins-- == 0)
+            return false;
+    }
+
+    return true;
+}
+
+static bool x64_tlb_shootdown_mm(task_mm_info_t *mm, uint64_t vaddr, bool all) {
+    if (!mm) {
+        if (all)
+            arch_flush_tlb_all();
+        else
+            arch_flush_tlb(vaddr);
+        return true;
+    }
+
+    uint32_t self_cpu = current_cpu_id;
+    bool wait = x64_tlb_shootdown_should_wait();
+    bool any_target = false;
+    bool targets[MAX_CPU_NUM];
+    memset(targets, 0, sizeof(targets));
+
+    if (all)
+        arch_flush_tlb_all();
+    else
+        arch_flush_tlb(vaddr);
+
+    for (size_t word = 0; word < MM_ACTIVE_CPU_WORDS; word++) {
+        uint64_t mask =
+            __atomic_load_n(&mm->active_cpu_mask[word], __ATOMIC_ACQUIRE);
+        while (mask) {
+            uint32_t bit = __builtin_ctzll(mask);
+            uint32_t cpu = (uint32_t)(word * 64 + bit);
+            mask &= ~(1ULL << bit);
+
+            if (cpu >= cpu_count || cpu >= MAX_CPU_NUM || cpu == self_cpu)
+                continue;
+
+            x64_tlb_shootdown_state_t *state = &x64_tlb_shootdown[cpu];
+            __atomic_add_fetch(&state->seq, 1, __ATOMIC_RELEASE);
+            targets[cpu] = true;
+            any_target = true;
+            irq_send_ipi(cpu, APIC_TLB_SHOOTDOWN_VECTOR);
+        }
+    }
+
+    if (!any_target)
+        return true;
+
+    if (!wait)
+        return false;
+
+    bool complete = true;
+    for (uint32_t cpu = 0; cpu < cpu_count && cpu < MAX_CPU_NUM; cpu++) {
+        if (!targets[cpu])
+            continue;
+
+        x64_tlb_shootdown_state_t *state = &x64_tlb_shootdown[cpu];
+        uint64_t seq = __atomic_load_n(&state->seq, __ATOMIC_ACQUIRE);
+        if (!x64_tlb_shootdown_wait_cpu(self_cpu, cpu, seq))
+            complete = false;
+    }
+
+    return complete;
+}
+
+bool task_mm_flush_tlb_page(task_mm_info_t *mm, uint64_t vaddr) {
+    return x64_tlb_shootdown_mm(mm, vaddr, false);
+}
+
+bool task_mm_flush_tlb_all(task_mm_info_t *mm) {
+    return x64_tlb_shootdown_mm(mm, 0, true);
 }

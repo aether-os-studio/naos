@@ -43,7 +43,11 @@ void arch_init_after_acpi_pci() {}
 
 void arch_input_dev_init() {}
 
-void arch_shutdown() {}
+void arch_shutdown() {
+    while (1) {
+        asm volatile("wfi");
+    }
+}
 
 void arch_pause() { asm volatile("nop"); }
 

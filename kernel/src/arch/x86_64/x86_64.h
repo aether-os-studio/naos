@@ -28,7 +28,7 @@ void arch_init_after_thread();
 void arch_init_after_acpi_pci();
 void arch_input_dev_init();
 
-void arch_shutdown();
+__attribute__((noreturn)) void arch_shutdown();
 
 static inline void arch_pause() { asm volatile("pause"); }
 

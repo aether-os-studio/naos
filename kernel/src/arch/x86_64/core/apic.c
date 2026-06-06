@@ -66,19 +66,12 @@ uint64_t lapic_id() {
 }
 
 extern uint32_t cpuid_to_lapicid[MAX_CPU_NUM];
-spinlock_t ipi_send_lock = SPIN_INIT;
 
 void apic_send_ipi(uint32_t cpu_id, uint64_t irq_num) {
     if (cpu_id >= cpu_count || irq_num >= ARCH_MAX_IRQ_NUM ||
         cpu_id == current_cpu_id) {
         return;
     }
-
-    bool irq_state = arch_interrupt_enabled();
-
-    arch_disable_interrupt();
-
-    spin_lock(&ipi_send_lock);
 
     uint32_t flags = ICR_DELIVERY_FIXED | ICR_DEST_PHYSICAL |
                      ICR_DEST_NOSHORTHAND | ICR_TRIGGER_LEVEL |
@@ -89,6 +82,9 @@ void apic_send_ipi(uint32_t cpu_id, uint64_t irq_num) {
         uint64_t icr = ((uint64_t)target_lapic_id << 32) | flags;
         wrmsr(0x800 + (LAPIC_ICR_LOW >> 4), icr);
     } else {
+        bool irq_state = arch_interrupt_enabled();
+        arch_disable_interrupt();
+
         while (lapic_read(LAPIC_ICR_LOW) & (1 << 12)) {
             arch_pause();
         }
@@ -99,12 +95,9 @@ void apic_send_ipi(uint32_t cpu_id, uint64_t irq_num) {
         while (lapic_read(LAPIC_ICR_LOW) & (1 << 12)) {
             arch_pause();
         }
-    }
 
-    spin_unlock(&ipi_send_lock);
-
-    if (irq_state) {
-        arch_enable_interrupt();
+        if (irq_state)
+            arch_enable_interrupt();
     }
 }
 
@@ -555,7 +548,10 @@ static void apic_resched_ipi_handler(uint64_t irq_num, void *data,
 
 static void apic_tlb_shootdown_ipi_handler(uint64_t irq_num, void *data,
                                            struct pt_regs *regs) {
-    arch_flush_tlb_all();
+    (void)irq_num;
+    (void)data;
+    (void)regs;
+    apic_tlb_shootdown_handle();
 }
 
 irq_controller_t apic_controller = {
