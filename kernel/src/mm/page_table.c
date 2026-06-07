@@ -457,6 +457,7 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
     new_mm->brk_end = old->brk_end;
     new_mm->stack_start = old->stack_start;
     new_mm->stack_end = old->stack_end;
+    new_mm->resident_pages = task_mm_resident_pages(old);
 
     return new_mm;
 }

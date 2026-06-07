@@ -68,6 +68,7 @@ int64_t apic_ack(uint64_t irq);
 
 struct irq_controller;
 extern struct irq_controller apic_controller;
+extern bool x2apic_mode;
 
 #define current_cpu_id x64_current_cpu_id()
 

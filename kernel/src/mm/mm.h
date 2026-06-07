@@ -37,6 +37,7 @@ typedef struct task_mm_info {
     uint64_t brk_end;
     uint64_t stack_start;
     uint64_t stack_end;
+    uint64_t resident_pages;
     uint64_t membarrier_private_expedited_seq;
     bool membarrier_private_expedited_registered;
 } task_mm_info_t;
@@ -66,6 +67,10 @@ void free_frames_released(uintptr_t addr, size_t count);
 
 static inline uint64_t *task_mm_pgdir(task_mm_info_t *mm) {
     return mm ? (uint64_t *)phys_to_virt(mm->page_table_addr) : NULL;
+}
+
+static inline uint64_t task_mm_resident_pages(task_mm_info_t *mm) {
+    return mm ? __atomic_load_n(&mm->resident_pages, __ATOMIC_RELAXED) : 0;
 }
 
 static inline void task_mm_mark_cpu_active(task_mm_info_t *mm,

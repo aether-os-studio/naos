@@ -57,6 +57,10 @@ static inline bool procfs_task_is_alive(task_t *task) {
     return task && task->state != TASK_DIED;
 }
 
+static inline bool procfs_task_is_leader(task_t *task) {
+    return task && task->pid == task_effective_tgid(task);
+}
+
 static inline task_t *procfs_info_task(procfs_inode_info_t *info) {
     if (!info || info->task_pid == 0)
         return NULL;
@@ -81,6 +85,8 @@ static size_t procfs_collect_task_snapshot(procfs_task_snapshot_t *entries,
 
             uint64_t task_tgid = task_effective_tgid(task);
             if (tgid && task_tgid != tgid)
+                continue;
+            if (!tgid && task_tgid != task->pid)
                 continue;
 
             if (entries && count < capacity) {
@@ -143,6 +149,49 @@ static bool procfs_is_ns_link_inode(const procfs_inode_info_t *info) {
     if (info->kind != PROCFS_INO_SYMLINK)
         return false;
     return procfs_is_ns_symlink_name(info->dispatch_name);
+}
+
+static bool procfs_task_inode_is_valid(procfs_inode_info_t *info) {
+    if (!info || info->task_pid == 0)
+        return true;
+
+    task_t *task = task_find_by_pid(info->task_pid);
+    if (!procfs_task_is_alive(task))
+        return false;
+
+    if (info->fd_num >= 0) {
+        fd_t *fd = task_get_file(task, info->fd_num);
+        bool valid = fd != NULL;
+        vfs_file_put(fd);
+        if (!valid)
+            return false;
+    }
+
+    return true;
+}
+
+static bool procfs_task_inode_is_visible(struct vfs_dentry *dentry,
+                                         procfs_inode_info_t *info) {
+    if (!dentry || !info || info->kind != PROCFS_INO_TASK_DIR ||
+        info->task_pid == 0)
+        return true;
+
+    struct vfs_dentry *parent = dentry->d_parent;
+    procfs_inode_info_t *parent_info =
+        parent && parent->d_inode ? procfs_i(parent->d_inode) : NULL;
+    task_t *task = procfs_info_task(info);
+
+    if (!parent_info)
+        return true;
+    if (parent_info->kind == PROCFS_INO_ROOT)
+        return procfs_task_is_leader(task);
+    if (parent_info->kind == PROCFS_INO_TASK_THREADS_DIR) {
+        task_t *owner = procfs_info_task(parent_info);
+        return procfs_task_is_alive(owner) &&
+               task_effective_tgid(task) == task_effective_tgid(owner);
+    }
+
+    return true;
 }
 
 static inline ssize_t procfs_copy_string(const char *str, void *addr,
@@ -257,6 +306,9 @@ static vfs_node_t *procfs_new_ns_inode(struct vfs_super_block *sb, task_t *task,
     uint64_t ns_inum = is_user_ns ? procfs_task_user_ns_inum(task)
                                   : procfs_task_mnt_ns_inum(task);
     vfs_node_t *inode;
+
+    if (!procfs_task_is_alive(task))
+        return NULL;
 
     if (want_symlink) {
         return procfs_new_inode(sb, S_IFLNK | 0777, PROCFS_INO_SYMLINK, task,
@@ -611,6 +663,11 @@ static int procfs_d_revalidate(struct vfs_dentry *dentry, unsigned int flags) {
         return 1;
 
     info = procfs_i(dentry->d_inode);
+    if (!procfs_task_inode_is_valid(info) ||
+        !procfs_task_inode_is_visible(dentry, info)) {
+        return 0;
+    }
+
     if (!procfs_is_ns_link_inode(info))
         return 1;
 
@@ -635,6 +692,9 @@ static int procfs_getattr(const struct vfs_path *path, struct vfs_kstat *stat,
         return -EINVAL;
 
     info = procfs_i(path->dentry->d_inode);
+    if (!procfs_task_inode_is_valid(info))
+        return -ENOENT;
+
     if (info && info->dispatch_name && info->kind == PROCFS_INO_FILE) {
         procfs_fill_handle(&handle, path->dentry->d_inode);
         procfs_stat_dispatch(&handle, path->dentry->d_inode);
@@ -680,6 +740,10 @@ static ssize_t procfs_read(struct vfs_file *file, void *addr, size_t count,
 
     if (!file || !file->f_inode || !ppos)
         return -EINVAL;
+    procfs_inode_info_t *info = procfs_i(file->f_inode);
+    if (!procfs_task_inode_is_valid(info))
+        return -ENOENT;
+
     procfs_fill_handle(&handle, file->f_inode);
     if (!handle.name[0])
         return -EINVAL;
@@ -696,6 +760,10 @@ static ssize_t procfs_write(struct vfs_file *file, const void *addr,
 
     if (!file || !file->f_inode || !ppos)
         return -EINVAL;
+    procfs_inode_info_t *info = procfs_i(file->f_inode);
+    if (!procfs_task_inode_is_valid(info))
+        return -ENOENT;
+
     procfs_fill_handle(&handle, file->f_inode);
     if (!handle.name[0])
         return -EINVAL;
@@ -871,10 +939,15 @@ static int procfs_iterate_shared(struct vfs_file *file,
             procfs_ino_for(PROCFS_INO_FILE, NULL, -1, "proc_pressure_memory"));
         break;
     case PROCFS_INO_TASK_DIR:
-        procfs_iterate_task_entries(ctx, &index, procfs_info_task(info));
+        task_t *task_dir_task = procfs_info_task(info);
+        if (!procfs_task_is_alive(task_dir_task))
+            return -ENOENT;
+        procfs_iterate_task_entries(ctx, &index, task_dir_task);
         break;
     case PROCFS_INO_TASK_THREADS_DIR: {
         task_t *owner = procfs_info_task(info);
+        if (!procfs_task_is_alive(owner))
+            return -ENOENT;
         uint64_t tgid = task_effective_tgid(owner);
         size_t snapshot_count = procfs_collect_task_snapshot(NULL, 0, tgid);
         procfs_task_snapshot_t *snapshot =
@@ -899,6 +972,8 @@ static int procfs_iterate_shared(struct vfs_file *file,
     }
     case PROCFS_INO_NS_DIR:
         task_t *task = procfs_info_task(info);
+        if (!procfs_task_is_alive(task))
+            return -ENOENT;
         if (procfs_emit_entry(ctx, &index, "mnt", DT_LNK,
                               procfs_ino_for(PROCFS_INO_SYMLINK, task, -1,
                                              "proc_ns_mnt")) != 0 ||
@@ -911,7 +986,7 @@ static int procfs_iterate_shared(struct vfs_file *file,
     case PROCFS_INO_FD_DIR:
     case PROCFS_INO_FDINFO_DIR:
         task = procfs_info_task(info);
-        if (task) {
+        if (procfs_task_is_alive(task)) {
             for (int fd_num = 0; fd_num < MAX_FD_NUM; ++fd_num) {
                 char name[16];
 
@@ -969,6 +1044,8 @@ static __poll_t procfs_poll_file(struct vfs_file *file,
     info = procfs_i(file->f_inode);
     if (!info || !info->dispatch_name)
         return 0;
+    if (!procfs_task_inode_is_valid(info))
+        return EPOLLERR;
 
     procfs_fill_handle(&handle, file->f_inode);
     return (__poll_t)procfs_poll_dispatch(&handle, file->f_inode,
@@ -1096,7 +1173,7 @@ static struct vfs_dentry *procfs_lookup(struct vfs_inode *dir,
                 }
                 if (!*name)
                     task = task_find_by_pid(pid);
-                if (procfs_task_is_alive(task)) {
+                if (procfs_task_is_alive(task) && procfs_task_is_leader(task)) {
                     inode =
                         procfs_new_inode(dir->i_sb, S_IFDIR | 0555,
                                          PROCFS_INO_TASK_DIR, task, -1, NULL);

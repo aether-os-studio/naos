@@ -923,17 +923,25 @@ static bool unix_socket_skb_has_rights(const skb_buff_t *skb) {
     return ancillary->file_count > 0;
 }
 
-static size_t unix_socket_iov_total_len(const struct iovec *iov,
-                                        size_t iovlen) {
+static int unix_socket_iov_total_len(const struct iovec *iov, size_t iovlen,
+                                     size_t *out_total) {
     size_t total = 0;
 
-    if (!iov)
-        return 0;
+    if (!out_total)
+        return -EINVAL;
 
-    for (size_t i = 0; i < iovlen; i++)
+    *out_total = 0;
+    if (iovlen && !iov)
+        return -EFAULT;
+
+    for (size_t i = 0; i < iovlen; i++) {
+        if (iov[i].len > SIZE_MAX - total)
+            return -EMSGSIZE;
         total += iov[i].len;
+    }
 
-    return total;
+    *out_total = total;
+    return 0;
 }
 
 static size_t unix_socket_iov_copy_out(const struct iovec *iov, size_t iovlen,
@@ -998,6 +1006,11 @@ unix_socket_build_skb_from_iov(const struct iovec *iov, size_t iovlen,
     for (size_t i = 0; i < iovlen; i++) {
         if (!iov[i].iov_base || !iov[i].len)
             continue;
+        if (iov[i].len > total_len - copied) {
+            skb_free(skb, NULL);
+            unix_socket_ancillary_free(anc);
+            return NULL;
+        }
         memcpy(skb->data + copied, iov[i].iov_base, iov[i].len);
         copied += iov[i].len;
     }
@@ -1816,7 +1829,10 @@ unix_socket_recvmsg_from_self(socket_t *self, socket_t *peer,
     if (self->shut_rd)
         return 0;
 
-    len_total = unix_socket_iov_total_len(msg->msg_iov, msg->msg_iovlen);
+    int total_ret =
+        unix_socket_iov_total_len(msg->msg_iov, msg->msg_iovlen, &len_total);
+    if (total_ret < 0)
+        return (size_t)total_ret;
     if (!len_total && !unix_socket_is_message_type(self->type))
         return 0;
 
@@ -2613,7 +2629,15 @@ size_t unix_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
     }
 
 done:
-    size_t total_len = unix_socket_iov_total_len(msg->msg_iov, msg->msg_iovlen);
+    size_t total_len = 0;
+    int total_ret =
+        unix_socket_iov_total_len(msg->msg_iov, msg->msg_iovlen, &total_len);
+    if (total_ret < 0) {
+        if (peer_needs_unref)
+            unix_socket_release_lookup_ref(peer);
+        vfs_file_put(caller_fd);
+        return (size_t)total_ret;
+    }
     unix_socket_ancillary_t *ancillary = NULL;
     int ancillary_ret = unix_socket_prepare_ancillary(msg, &ancillary);
     if (ancillary_ret < 0) {

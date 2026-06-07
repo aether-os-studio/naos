@@ -49,7 +49,6 @@ bus_device_t *bus_device_install_usb(void *dev_data, attribute_t **extra_attrs,
         extra_bin_attrs_count, usb_get_device_path);
 }
 
-#define USB_HOTPLUG_SCAN_NS (250ULL * 1000ULL * 1000ULL)
 #define USB_HUB_SNAPSHOT_MAX 64
 
 usb_driver_t *usb_drivers[MAX_USBDEV_NUM] = {NULL};
@@ -1959,7 +1958,6 @@ static void usb_hotplug_thread(uint64_t arg) {
 
         usb_hub_t *snapshot[USB_HUB_SNAPSHOT_MAX];
         uint32_t snapshot_count = 0;
-        uint64_t now = nano_time();
 
         spin_lock(&usb_hub_list_lock);
         for (struct llist_header *node = usb_hub_list.next;
@@ -1968,12 +1966,11 @@ static void usb_hotplug_thread(uint64_t arg) {
             usb_hub_t *hub = container_of(node, usb_hub_t, node);
             if (hub->removing)
                 continue;
-            if (!hub->needs_rescan && now < hub->next_scan_ns)
+            if (!hub->needs_rescan)
                 continue;
 
             hub->refcount++;
             hub->needs_rescan = false;
-            hub->next_scan_ns = now + USB_HOTPLUG_SCAN_NS;
             snapshot[snapshot_count++] = hub;
         }
         spin_unlock(&usb_hub_list_lock);
@@ -1983,7 +1980,26 @@ static void usb_hotplug_thread(uint64_t arg) {
             usb_hub_put(snapshot[i]);
         }
 
-        arch_wait_for_interrupt();
+        if (snapshot_count == USB_HUB_SNAPSHOT_MAX)
+            continue;
+
+        task_prepare_block(current_task);
+        bool have_pending = false;
+        spin_lock(&usb_hub_list_lock);
+        for (struct llist_header *node = usb_hub_list.next;
+             node != &usb_hub_list; node = node->next) {
+            usb_hub_t *hub = container_of(node, usb_hub_t, node);
+            if (!hub->removing && hub->needs_rescan) {
+                have_pending = true;
+                break;
+            }
+        }
+        spin_unlock(&usb_hub_list_lock);
+
+        if (have_pending)
+            task_cancel_block_prepare(current_task);
+        else
+            task_block(current_task, TASK_BLOCKING, -1, "usb_hotplug");
     }
 }
 

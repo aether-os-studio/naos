@@ -391,7 +391,41 @@ uint64_t map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
 
 uint64_t map_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t paddr,
                            uint64_t size, uint64_t flags) {
-    return map_page_range(task_mm_pgdir(mm), vaddr, paddr, size, flags);
+    uint64_t *pgdir = task_mm_pgdir(mm);
+    uint64_t mapped = 0;
+
+    if (!mm || !pgdir)
+        return (uint64_t)-1;
+
+    ASSERT((vaddr & 0xfff) == 0);
+    ASSERT(paddr == (uint64_t)-1 || (paddr & 0xfff) == 0);
+
+    for (uint64_t va = vaddr; va < vaddr + size; va += PAGE_SIZE) {
+        bool had_mapping = translate_address(pgdir, va) != 0;
+        uint64_t ret;
+
+        if (paddr == (uint64_t)-1) {
+            ret = map_page(pgdir, va, (uint64_t)-1,
+                           get_arch_page_table_flags(flags), true);
+        } else {
+            ret = map_page(pgdir, va, paddr + (va - vaddr),
+                           get_arch_page_table_flags(flags), true);
+        }
+
+        if (ret != 0) {
+            if (mapped)
+                __atomic_add_fetch(&mm->resident_pages, mapped,
+                                   __ATOMIC_RELAXED);
+            return ret;
+        }
+        if (!had_mapping && translate_address(pgdir, va)) {
+            mapped++;
+        }
+    }
+
+    if (mapped)
+        __atomic_add_fetch(&mm->resident_pages, mapped, __ATOMIC_RELAXED);
+    return 0;
 }
 
 uint64_t map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
@@ -419,7 +453,41 @@ uint64_t map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
 uint64_t map_page_range_unforce_mm(task_mm_info_t *mm, uint64_t vaddr,
                                    uint64_t paddr, uint64_t size,
                                    uint64_t flags) {
-    return map_page_range_unforce(task_mm_pgdir(mm), vaddr, paddr, size, flags);
+    uint64_t *pgdir = task_mm_pgdir(mm);
+    uint64_t mapped = 0;
+
+    if (!mm || !pgdir)
+        return (uint64_t)-1;
+
+    ASSERT((vaddr & 0xfff) == 0);
+    ASSERT(paddr == (uint64_t)-1 || (paddr & 0xfff) == 0);
+
+    for (uint64_t va = vaddr; va < vaddr + size; va += PAGE_SIZE) {
+        bool had_mapping = translate_address(pgdir, va) != 0;
+        uint64_t ret;
+
+        if (paddr == (uint64_t)-1) {
+            ret = map_page(pgdir, va, (uint64_t)-1,
+                           get_arch_page_table_flags(flags), false);
+        } else {
+            ret = map_page(pgdir, va, paddr + (va - vaddr),
+                           get_arch_page_table_flags(flags), false);
+        }
+
+        if (ret != 0) {
+            if (mapped)
+                __atomic_add_fetch(&mm->resident_pages, mapped,
+                                   __ATOMIC_RELAXED);
+            return ret;
+        }
+        if (!had_mapping && translate_address(pgdir, va)) {
+            mapped++;
+        }
+    }
+
+    if (mapped)
+        __atomic_add_fetch(&mm->resident_pages, mapped, __ATOMIC_RELAXED);
+    return 0;
 }
 
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size) {
@@ -432,6 +500,7 @@ void unmap_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t size) {
     if (!mm)
         return;
 
+    uint64_t unmapped = 0;
     unmap_release_batch_t batch = {
         .mm = mm,
         .flush_start = vaddr,
@@ -446,10 +515,16 @@ void unmap_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t size) {
             batch.flush_end = vaddr + size;
         }
 
-        unmap_page_defer_release(task_mm_pgdir(mm), va, &batch);
+        if (unmap_page_defer_release(task_mm_pgdir(mm), va, &batch))
+            unmapped++;
     }
 
     unmap_release_batch_commit(&batch);
+    if (unmapped) {
+        uint64_t old = __atomic_load_n(&mm->resident_pages, __ATOMIC_RELAXED);
+        uint64_t new_value = old > unmapped ? old - unmapped : 0;
+        __atomic_store_n(&mm->resident_pages, new_value, __ATOMIC_RELAXED);
+    }
 }
 
 uint64_t map_change_attribute_range(uint64_t *pgdir, uint64_t vaddr,

@@ -8,7 +8,7 @@
 #include <irq/irq_manager.h>
 #include <task/task.h>
 
-#if defined(__x86_64__)
+#ifdef __x86_64__
 #include <arch/x86_64/core/normal.h>
 extern uint32_t cpuid_to_lapicid[MAX_CPU_NUM];
 #endif
@@ -16,9 +16,11 @@ extern uint32_t cpuid_to_lapicid[MAX_CPU_NUM];
 #define XHCI_RING_ITEMS 128
 #define XHCI_RING_SIZE (XHCI_RING_ITEMS * sizeof(struct xhci_trb))
 #define XHCI_DEFERRED_CB_MAX 256
+#define XHCI_CALLBACK_QUEUE_ITEMS 512
 #define XHCI_TRB_MAX_XFER 65536
 #define XHCI_IMAN_IP (1U << 0)
 #define XHCI_IMAN_IE (1U << 1)
+#define XHCI_INVALID_INTR 0xffffU
 
 #define XHCI_CMD_RS (1 << 0)
 #define XHCI_CMD_HCRST (1 << 1)
@@ -220,6 +222,7 @@ struct usb_xhci {
     uint32_t slots;
     uint32_t max_intrs;
     uint32_t enabled_intrs;
+    uint16_t cpu_intr_map[MAX_CPU_NUM];
     uint8_t context64;
     struct xhci_portmap usb2;
     struct xhci_portmap usb3;
@@ -236,7 +239,14 @@ struct usb_xhci {
     struct xhci_pipe ***pipes;
 
     spinlock_t event_lock;
+    spinlock_t callback_lock;
     task_t *event_task;
+    task_t *callback_task;
+    struct xhci_deferred_cb callback_queue[XHCI_CALLBACK_QUEUE_ITEMS];
+    uint32_t callback_head;
+    uint32_t callback_tail;
+    uint32_t callback_count;
+    uint64_t callback_dropped;
     bool running;
 
     bool irq_enabled;
@@ -510,6 +520,7 @@ static void xhci_commit_erdp(usb_xhci_t *xhci, struct xhci_event_ring *intr) {
     writel(&intr->ir->erdp_low, (uint32_t)(erdp & ~0xfU) | (1 << 3));
     writel(&intr->ir->erdp_high, erdp >> 32);
     writel(&intr->ir->iman, XHCI_IMAN_IE | XHCI_IMAN_IP);
+    writel(&intr->ir->iman, XHCI_IMAN_IE);
 
     if (xhci->quirks & XHCI_QUIRK_VL805_OLD_REV) {
         uint32_t low = readl(&intr->ir->erdp_low);
@@ -517,29 +528,66 @@ static void xhci_commit_erdp(usb_xhci_t *xhci, struct xhci_event_ring *intr) {
         writel(&intr->ir->erdp_low, low);
         writel(&intr->ir->erdp_high, high);
         writel(&intr->ir->iman, XHCI_IMAN_IE | XHCI_IMAN_IP);
+        writel(&intr->ir->iman, XHCI_IMAN_IE);
     }
 }
 
-static void xhci_defer_cb(struct xhci_deferred_cb *callbacks,
-                          uint32_t *callback_count, usb_xfer_cb cb, int status,
-                          int actual, void *user_data) {
-    if (!cb)
+static void xhci_queue_callback(usb_xhci_t *xhci, usb_xfer_cb cb, int status,
+                                int actual, void *user_data) {
+    bool wake_worker = false;
+
+    if (!xhci || !cb)
         return;
-    if (!callbacks || !callback_count ||
-        *callback_count >= XHCI_DEFERRED_CB_MAX) {
-        printk("xhci: dropping async callback, deferred queue full\n");
+
+    spin_lock(&xhci->callback_lock);
+    if (xhci->callback_count >= XHCI_CALLBACK_QUEUE_ITEMS) {
+        xhci->callback_dropped++;
+        if ((xhci->callback_dropped & 0xff) == 1)
+            printk("xhci: dropping async callback, queue full\n");
+        spin_unlock(&xhci->callback_lock);
         return;
     }
 
-    callbacks[*callback_count].cb = cb;
-    callbacks[*callback_count].status = status;
-    callbacks[*callback_count].actual = actual;
-    callbacks[*callback_count].user_data = user_data;
-    (*callback_count)++;
+    wake_worker = xhci->callback_count == 0;
+    xhci->callback_queue[xhci->callback_tail] = (struct xhci_deferred_cb){
+        .cb = cb, .status = status, .actual = actual, .user_data = user_data};
+    xhci->callback_tail = (xhci->callback_tail + 1) % XHCI_CALLBACK_QUEUE_ITEMS;
+    xhci->callback_count++;
+    task_t *worker = xhci->callback_task;
+    spin_unlock(&xhci->callback_lock);
+
+    if (wake_worker && worker)
+        task_unblock(worker, EOK);
 }
 
-static void xhci_run_deferred_callbacks(struct xhci_deferred_cb *callbacks,
-                                        uint32_t callback_count) {
+static uint32_t xhci_take_callbacks(usb_xhci_t *xhci,
+                                    struct xhci_deferred_cb *callbacks,
+                                    uint32_t max_callbacks) {
+    uint32_t count = 0;
+
+    spin_lock(&xhci->callback_lock);
+    while (count < max_callbacks && xhci->callback_count > 0) {
+        callbacks[count++] = xhci->callback_queue[xhci->callback_head];
+        xhci->callback_head =
+            (xhci->callback_head + 1) % XHCI_CALLBACK_QUEUE_ITEMS;
+        xhci->callback_count--;
+    }
+    spin_unlock(&xhci->callback_lock);
+
+    return count;
+}
+
+static bool xhci_callback_queue_empty(usb_xhci_t *xhci) {
+    bool empty;
+
+    spin_lock(&xhci->callback_lock);
+    empty = xhci->callback_count == 0;
+    spin_unlock(&xhci->callback_lock);
+    return empty;
+}
+
+static void xhci_run_callbacks(struct xhci_deferred_cb *callbacks,
+                               uint32_t callback_count) {
     for (uint32_t i = 0; i < callback_count; i++) {
         if (callbacks[i].cb) {
             callbacks[i].cb(callbacks[i].status, callbacks[i].actual,
@@ -548,9 +596,27 @@ static void xhci_run_deferred_callbacks(struct xhci_deferred_cb *callbacks,
     }
 }
 
-static uint32_t xhci_process_event_ring(struct xhci_event_ring *intr,
-                                        struct xhci_deferred_cb *callbacks,
-                                        uint32_t *callback_count) {
+static void xhci_callback_thread(uint64_t arg) {
+    usb_xhci_t *xhci = (usb_xhci_t *)arg;
+    struct xhci_deferred_cb callbacks[32];
+
+    while (xhci->running) {
+        uint32_t count = xhci_take_callbacks(
+            xhci, callbacks, sizeof(callbacks) / sizeof(callbacks[0]));
+        if (count) {
+            xhci_run_callbacks(callbacks, count);
+            continue;
+        }
+
+        task_prepare_block(current_task);
+        if (xhci_callback_queue_empty(xhci))
+            task_block(current_task, TASK_BLOCKING, -1, "xhci_callback");
+        else
+            task_cancel_block_prepare(current_task);
+    }
+}
+
+static uint32_t xhci_process_event_ring(struct xhci_event_ring *intr) {
     struct xhci_ring *evts = &intr->ring;
     usb_xhci_t *xhci = intr->xhci;
     uint32_t processed = 0;
@@ -606,8 +672,7 @@ static uint32_t xhci_process_event_ring(struct xhci_event_ring *intr,
                     pipe->async_len = 0;
                     pipe->async_dir = 0;
 
-                    xhci_defer_cb(callbacks, callback_count, cb, status, actual,
-                                  user_data);
+                    xhci_queue_callback(xhci, cb, status, actual, user_data);
                 }
             } else {
                 printk(
@@ -660,18 +725,14 @@ static uint32_t xhci_process_event_ring(struct xhci_event_ring *intr,
 }
 
 static uint32_t xhci_process_events(usb_xhci_t *xhci) {
-    struct xhci_deferred_cb callbacks[XHCI_DEFERRED_CB_MAX];
-    uint32_t callback_count = 0;
     uint32_t processed = 0;
 
     spin_lock(&xhci->event_lock);
     for (int i = 0; i < MIN(cpu_count, xhci->enabled_intrs); i++) {
-        processed +=
-            xhci_process_event_ring(&xhci->evt[i], callbacks, &callback_count);
+        processed += xhci_process_event_ring(&xhci->evt[i]);
     }
     spin_unlock(&xhci->event_lock);
 
-    xhci_run_deferred_callbacks(callbacks, callback_count);
     return processed;
 }
 
@@ -812,7 +873,15 @@ static int xhci_config_hub(usb_hub_t *hub) {
 }
 
 static uint16_t xhci_pick_interrupter(usb_xhci_t *xhci) {
-    return current_cpu_id % xhci->enabled_intrs;
+    uint32_t enabled_intrs = xhci->enabled_intrs;
+    if (enabled_intrs <= 1)
+        return 0;
+
+    uint32_t cpu = current_cpu_id;
+    if (cpu < MAX_CPU_NUM && xhci->cpu_intr_map[cpu] < enabled_intrs)
+        return xhci->cpu_intr_map[cpu];
+
+    return cpu % enabled_intrs;
 }
 
 static usb_pipe_t *
@@ -1099,28 +1168,17 @@ int xhci_submit_xfer(usb_xfer_t *xfer) {
     return 0;
 }
 
-static void xhci_event_thread(uint64_t arg) {
-    usb_xhci_t *xhci = (usb_xhci_t *)arg;
-
-    while (xhci->running) {
-        xhci_process_events(xhci);
-        arch_enable_interrupt();
-        arch_wait_for_interrupt();
-    }
-}
-
 static void xhci_irq_handler(uint64_t irq_num, void *data,
                              struct pt_regs *regs) {
     xhci_event_ring_t *ring = (xhci_event_ring_t *)data;
-    struct xhci_deferred_cb callbacks[XHCI_DEFERRED_CB_MAX];
-    uint32_t callback_count = 0;
+    usb_xhci_t *xhci = ring->xhci;
 
-    spin_lock(&ring->xhci->event_lock);
-    xhci_process_event_ring(ring, callbacks, &callback_count);
-    writel(&ring->xhci->op->usbsts, XHCI_STS_EINT);
-    spin_unlock(&ring->xhci->event_lock);
+    writel(&xhci->op->usbsts, XHCI_STS_EINT);
 
-    xhci_run_deferred_callbacks(callbacks, callback_count);
+    spin_lock(&xhci->event_lock);
+    xhci_process_event_ring(ring);
+    xhci_commit_erdp(xhci, ring);
+    spin_unlock(&xhci->event_lock);
 }
 
 static int xhci_alloc_runtime_state(usb_xhci_t *xhci) {
@@ -1162,7 +1220,7 @@ static int xhci_alloc_runtime_state(usb_xhci_t *xhci) {
 }
 
 static void xhci_program_interrupters(usb_xhci_t *xhci) {
-    for (int intr = 0; intr < MIN(cpu_count, xhci->max_intrs); intr++) {
+    for (uint32_t intr = 0; intr < xhci->enabled_intrs; intr++) {
         struct xhci_event_ring *evt = &xhci->evt[intr];
         uint64_t ring_phys = xhci_virt_to_phys(evt->ring.trbs);
         uint64_t erst_phys = xhci_virt_to_phys(evt->eseg);
@@ -1178,9 +1236,101 @@ static void xhci_program_interrupters(usb_xhci_t *xhci) {
         writel(&evt->ir->erdp_low, (uint32_t)(ring_phys & ~0xfU) | (1 << 3));
         writel(&evt->ir->erdp_high, ring_phys >> 32);
         writel(&evt->ir->imod, 0);
-        writel(&evt->ir->iman, XHCI_IMAN_IE | XHCI_IMAN_IP);
+        writel(&evt->ir->iman, XHCI_IMAN_IP);
+        writel(&evt->ir->iman, XHCI_IMAN_IE);
     }
 }
+
+#ifdef __x86_64__
+static bool xhci_pick_msi_target(uint32_t index, uint32_t *cpu_id,
+                                 uint32_t *lapic_id) {
+    if (cpu_count == 0)
+        return false;
+
+    uint32_t usable = 0;
+    for (uint32_t cpu = 0; cpu < cpu_count; cpu++) {
+        uint32_t id = cpuid_to_lapicid[cpu];
+        if (x2apic_mode || id <= 0xff) {
+            if (usable++ != index)
+                continue;
+            *cpu_id = cpu;
+            *lapic_id = id;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static int xhci_setup_msi_interrupts(usb_xhci_t *xhci) {
+    bool use_msix = pci_enumerate_capability_list(xhci->pci_dev, 0x11) != 0;
+    uint32_t intr_count =
+        use_msix ? MIN(MIN(cpu_count, MAX_IO_CPU_NUM), xhci->max_intrs) : 1;
+
+    if (intr_count == 0)
+        return -ENOSYS;
+
+    xhci->irq_enabled = false;
+    xhci->enabled_intrs = 0;
+    for (uint32_t cpu = 0; cpu < MAX_CPU_NUM; cpu++)
+        xhci->cpu_intr_map[cpu] = XHCI_INVALID_INTR;
+
+    for (uint32_t i = 0; i < intr_count; i++) {
+        struct xhci_event_ring *evt = &xhci->evt[i];
+        struct msi_desc_t *desc = &evt->msi;
+        uint32_t cpu_id;
+        uint32_t lapic_id;
+
+        if (!xhci_pick_msi_target(i, &cpu_id, &lapic_id)) {
+            if (i == 0)
+                return -ENOSYS;
+            break;
+        }
+
+        int irq_num = irq_allocate_irqnum();
+        if (irq_num < 0 || irq_num >= ARCH_MAX_IRQ_NUM)
+            return -ENOSPC;
+
+        memset(desc, 0, sizeof(*desc));
+        desc->irq_num = (uint16_t)irq_num;
+        desc->processor = lapic_id;
+        desc->pci_dev = xhci->pci_dev;
+        desc->assert = false;
+        desc->edge_trigger = true;
+        desc->msi_index = i;
+        desc->pci.msi_attribute.can_mask = false;
+        desc->pci.msi_attribute.is_64 = true;
+        desc->pci.msi_attribute.is_msix = use_msix;
+
+        int ret = msi_enable(desc);
+        if (ret != 0) {
+            irq_deallocate_irqnum(desc->irq_num);
+            if (i == 0)
+                return ret;
+            break;
+        }
+
+        irq_regist_irq(desc->irq_num, xhci_irq_handler, 0, evt,
+                       &apic_controller, "xhci_irq_handler", IRQ_FLAGS_MSIX);
+
+        xhci->cpu_intr_map[cpu_id] = i;
+        xhci->enabled_intrs++;
+
+        if (!desc->pci.msi_attribute.is_msix)
+            break;
+    }
+
+    if (xhci->enabled_intrs == 0)
+        return -ENOSYS;
+
+    xhci->irq_enabled = true;
+    writel(&xhci->op->usbsts, XHCI_STS_EINT);
+    printk("xhci: using %s interrupts, vectors %u\n",
+           xhci->evt[0].msi.pci.msi_attribute.is_msix ? "MSI-X" : "MSI",
+           xhci->enabled_intrs);
+    return 0;
+}
+#endif
 
 static int xhci_setup_scratchpad(usb_xhci_t *xhci) {
     uint32_t spb = xhci_max_scratchpad(readl(&xhci->caps->hcsparams2));
@@ -1235,46 +1385,17 @@ static int xhci_start_controller(usb_xhci_t *xhci) {
 
     xhci->running = true;
     xhci->event_task = NULL;
-    xhci->enabled_intrs = 1;
-    // #if defined(__x86_64__)
-    //     xhci->irq_enabled = true;
-    //     for (int i = 0; i < MIN(cpu_count, xhci->max_intrs); i++) {
-    //         struct msi_desc_t desc;
-    //         desc.irq_num = irq_allocate_irqnum();
-    //         desc.processor = cpuid_to_lapicid[i];
-    //         desc.pci_dev = xhci->pci_dev;
-    //         desc.assert = false;
-    //         desc.edge_trigger = false;
-    //         desc.msi_index = i;
-    //         desc.pci.msi_attribute.can_mask = false;
-    //         desc.pci.msi_attribute.is_64 = true;
-    //         desc.pci.msi_attribute.is_msix = true;
-    //         if (msi_enable(&desc)) {
-    //             if (i == 0) {
-    //                 printk("XHCI use polling mode\n");
-    //                 xhci->event_task =
-    //                     task_create("xhci_event", xhci_event_thread,
-    //                     (uint64_t)xhci,
-    //                                 KTHREAD_PRIORITY);
+    xhci->callback_task = task_create("xhci_callback", xhci_callback_thread,
+                                      (uint64_t)xhci, KTHREAD_PRIORITY);
+    if (!xhci->callback_task)
+        return -ENOMEM;
 
-    //                 xhci->irq_enabled = false;
-    //             }
-    //             break;
-    //         } else {
-    //             if (i != 0)
-    //                 xhci->enabled_intrs++;
-    //             irq_regist_irq(desc.irq_num, xhci_irq_handler, 0,
-    //             &xhci->evt[i],
-    //                            &apic_controller, "xhci_irq_handler",
-    //                            IRQ_FLAGS_MSIX);
-    //         }
-    //     }
-    //     writel(&xhci->op->usbsts, XHCI_STS_EINT);
-    // #else
-    xhci->irq_enabled = false;
-    xhci->event_task = task_create("xhci_event", xhci_event_thread,
-                                   (uint64_t)xhci, KTHREAD_PRIORITY);
-    // #endif
+#ifdef __x86_64__
+    if (xhci_setup_msi_interrupts(xhci) != 0) {
+        printk("xhci: MSI/MSI-X unavailable\n");
+        return -ENOTSUP;
+    }
+#endif
     xhci_program_interrupters(xhci);
 
     if (xhci_setup_scratchpad(xhci) != 0)
@@ -1352,6 +1473,7 @@ static usb_xhci_t *xhci_controller_setup(void *baseaddr) {
     xhci->usb.type = USB_TYPE_XHCI;
     xhci->usb.flags = 0;
     spin_init(&xhci->event_lock);
+    spin_init(&xhci->callback_lock);
 
     xhci->mmio = baseaddr;
     xhci->caps = xhci->mmio;
@@ -1430,6 +1552,8 @@ static void xhci_free_controller(usb_xhci_t *xhci) {
     xhci->running = false;
     if (xhci->event_task)
         task_unblock(xhci->event_task, EOK);
+    if (xhci->callback_task)
+        task_unblock(xhci->callback_task, EOK);
 
     for (int i = 0; i < MIN(cpu_count, xhci->max_intrs); i++) {
         xhci_free_ring(&xhci->evt[i].ring);
@@ -1452,6 +1576,10 @@ static void xhci_free_controller(usb_xhci_t *xhci) {
 #define XHCI_TIME_POSTPOWER 20
 
 int xhci_hcd_driver_probe(pci_device_t *pci_dev) {
+#ifndef __x86_64__
+    return -ENOTSUP;
+#endif
+
     uint64_t mmio_base = 0;
     uint64_t mmio_size = 0;
 

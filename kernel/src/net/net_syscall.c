@@ -25,16 +25,25 @@ static int socket_copy_msghdr_back_to_user(struct msghdr *user_msg,
                                            const struct msghdr *user_shadow,
                                            const struct msghdr *kernel_msg);
 
-static size_t socket_iov_total_len(const struct iovec *iov, size_t iovlen) {
+static int socket_iov_total_len(const struct iovec *iov, size_t iovlen,
+                                size_t *out_total) {
     size_t total = 0;
+
+    if (!out_total)
+        return -EINVAL;
+
+    *out_total = 0;
+    if (iovlen && !iov)
+        return -EFAULT;
 
     for (size_t i = 0; i < iovlen; i++) {
         if (iov[i].len > SIZE_MAX - total)
-            return SIZE_MAX;
+            return -EMSGSIZE;
         total += iov[i].len;
     }
 
-    return total;
+    *out_total = total;
+    return 0;
 }
 
 static bool is_socket(fd_t *fd) {
@@ -156,6 +165,15 @@ static int socket_prepare_msghdr_from_user(const struct msghdr *user_msg,
             socket_release_msghdr_copy(copy);
             return -EFAULT;
         }
+
+        size_t total_len = 0;
+        ret = socket_iov_total_len(copy->user_iov, copy->user_shadow.msg_iovlen,
+                                   &total_len);
+        if (ret < 0) {
+            socket_release_msghdr_copy(copy);
+            return ret;
+        }
+        (void)total_len;
 
         copy->kernel_iov =
             calloc(copy->user_shadow.msg_iovlen, sizeof(*copy->kernel_iov));
@@ -991,12 +1009,16 @@ int64_t sys_recvmsg(int sockfd, struct msghdr *msg, int flags) {
 
         int64_t out = handle->op->recvmsg(sockfd, &msg_copy.kernel_msg, flags);
         int copy_back_ret = 0;
-        if (out >= 0)
-            copy_back_ret = socket_copy_recv_msghdr_to_user(
-                msg, &msg_copy,
-                MIN((size_t)out,
-                    socket_iov_total_len(msg_copy.user_iov,
-                                         msg_copy.user_shadow.msg_iovlen)));
+        if (out >= 0) {
+            size_t iov_total = 0;
+            ret = socket_iov_total_len(
+                msg_copy.user_iov, msg_copy.user_shadow.msg_iovlen, &iov_total);
+            if (ret < 0)
+                copy_back_ret = ret;
+            else
+                copy_back_ret = socket_copy_recv_msghdr_to_user(
+                    msg, &msg_copy, MIN((size_t)out, iov_total));
+        }
 
         socket_release_msghdr_copy(&msg_copy);
         if (copy_back_ret < 0) {

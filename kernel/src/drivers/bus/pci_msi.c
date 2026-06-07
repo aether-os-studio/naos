@@ -5,7 +5,8 @@
 
 struct msi_msg_t *msi_arch_get_msg(struct msi_desc_t *msi_desc) {
 #if defined(__x86_64__)
-    msi_desc->msg.address_hi = msi_desc->processor & 0xFFFFFF00;
+    msi_desc->msg.address_hi =
+        x2apic_mode ? (msi_desc->processor & 0xffffff00) : 0;
     msi_desc->msg.address_lo =
         ia64_pci_get_arch_msi_message_address(msi_desc->processor);
     msi_desc->msg.data = ia64_pci_get_arch_msi_message_data(
@@ -102,12 +103,16 @@ static inline void __msix_set_entry(struct msi_desc_t *msi_desc) {
         msi_desc->pci_dev->msix_mmio_vaddr + msi_desc->pci_dev->msix_offset;
     volatile uint32_t *entry_ptr =
         (volatile uint32_t *)(table_base + msi_desc->msi_index * 16);
+    uint32_t vector_control = msi_desc->msg.vector_control;
 
+    entry_ptr[3] = vector_control | 1U;
+    dma_mb();
     entry_ptr[0] = msi_desc->msg.address_lo;
     entry_ptr[1] = msi_desc->msg.address_hi;
-
     entry_ptr[2] = msi_desc->msg.data;
-    entry_ptr[3] = msi_desc->msg.vector_control & ~1;
+    dma_mb();
+    entry_ptr[3] = vector_control & ~1U;
+    dma_mb();
 }
 
 static inline void __msix_clear_entry(pci_device_t *pci_dev,
@@ -151,7 +156,7 @@ int msi_enable(struct msi_desc_t *msi_desc) {
 
     command = ptr->op->read16(ptr->bus, ptr->slot, ptr->func, ptr->segment,
                               PCI_CONF_COMMAND);
-    command |= (1U << 10);
+    command |= (1U << 1) | (1U << 2) | (1U << 10);
     ptr->op->write16(ptr->bus, ptr->slot, ptr->func, ptr->segment,
                      PCI_CONF_COMMAND, command);
 

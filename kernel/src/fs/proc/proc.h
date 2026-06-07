@@ -37,8 +37,22 @@ static inline task_t *procfs_handle_task(proc_handle_t *handle) {
 
 static inline task_t *procfs_handle_task_or_current(proc_handle_t *handle) {
     task_t *task = procfs_handle_task(handle);
-    return task ? task : current_task;
+    if (task || (handle && handle->task_pid != 0))
+        return task;
+    return current_task;
 }
+
+typedef struct procfs_task_mem_stats {
+    uint64_t size_pages;
+    uint64_t resident_pages;
+    uint64_t shared_pages;
+    uint64_t text_pages;
+    uint64_t data_pages;
+    uint64_t stack_pages;
+    uint64_t file_pages;
+    uint64_t anon_pages;
+    uint64_t pte_pages;
+} procfs_task_mem_stats_t;
 
 typedef struct proc_handle_node {
     char *name;
@@ -179,6 +193,7 @@ size_t procfs_node_read(size_t len, size_t offset, size_t size, char *addr,
                         char *contect);
 size_t procfs_task_region_read(task_t *task, uint64_t start, uint64_t end,
                                void *addr, size_t offset, size_t size);
+void procfs_task_mem_stats(task_t *task, procfs_task_mem_stats_t *stats);
 
 void procfs_on_new_task(task_t *task);
 void procfs_on_open_file(task_t *task, int fd);

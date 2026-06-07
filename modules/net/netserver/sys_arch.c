@@ -221,11 +221,14 @@ u32_t sys_arch_sem_wait(sys_sem_t *sem, u32_t timeout) {
         }
         spin_unlock(&s->sem.lock);
 
-        bool irq = arch_interrupt_enabled();
-        arch_enable_interrupt();
-        arch_wait_for_interrupt();
-        if (!irq)
-            arch_disable_interrupt();
+        reason =
+            task_block(current_task, TASK_BLOCKING, block_ns, "lwip_sem_wait");
+        if (reason == ETIMEDOUT && timeout_ns) {
+            spin_lock(&s->sem.lock);
+            naos_lwip_sem_wait_remove_locked(s, &wait_node);
+            spin_unlock(&s->sem.lock);
+            return SYS_ARCH_TIMEOUT;
+        }
     }
 
     if (!timeout) {

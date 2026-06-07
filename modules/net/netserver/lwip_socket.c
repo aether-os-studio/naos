@@ -1580,19 +1580,38 @@ static ssize_t lwip_socket_copyout_iov(const void *src, size_t src_len,
     return (ssize_t)copied;
 }
 
-static size_t lwip_socket_iov_total(const struct iovec *iov, size_t iovlen) {
+static int lwip_socket_iov_total(const struct iovec *iov, size_t iovlen,
+                                 size_t *out_total) {
     size_t total = 0;
 
+    if (!out_total) {
+        return -EINVAL;
+    }
+
+    *out_total = 0;
+    if (iovlen && !iov) {
+        return -EFAULT;
+    }
+
     for (size_t i = 0; i < iovlen; i++) {
+        if (iov[i].len > SIZE_MAX - total) {
+            return -EMSGSIZE;
+        }
         total += iov[i].len;
     }
-    return total;
+
+    *out_total = total;
+    return 0;
 }
 
 static ssize_t lwip_socket_recvmsg_common(lwip_socket_state_t *sock, fd_t *fd,
                                           struct msghdr *msg, int flags) {
     size_t total = 0;
-    size_t want = lwip_socket_iov_total(msg->msg_iov, msg->msg_iovlen);
+    size_t want = 0;
+    int total_ret = lwip_socket_iov_total(msg->msg_iov, msg->msg_iovlen, &want);
+    if (total_ret < 0) {
+        return total_ret;
+    }
 
     flags = lwip_socket_apply_fd_flags(fd, flags);
     msg->msg_flags = 0;
@@ -1745,10 +1764,17 @@ static ssize_t lwip_socket_sendmsg_common(lwip_socket_state_t *sock, fd_t *fd,
         ip_addr_t dst;
         u16_t port = 0;
         bool has_dest = false;
-        size_t total = lwip_socket_iov_total(msg->msg_iov, msg->msg_iovlen);
-        struct netbuf *buf = netbuf_new();
+        size_t total = 0;
+        struct netbuf *buf = NULL;
         void *payload = NULL;
+        int total_ret =
+            lwip_socket_iov_total(msg->msg_iov, msg->msg_iovlen, &total);
 
+        if (total_ret < 0) {
+            return total_ret;
+        }
+
+        buf = netbuf_new();
         if (!buf) {
             return -ENOMEM;
         }
@@ -1782,6 +1808,10 @@ static ssize_t lwip_socket_sendmsg_common(lwip_socket_state_t *sock, fd_t *fd,
 
         written = 0;
         for (size_t i = 0; i < msg->msg_iovlen; i++) {
+            if (msg->msg_iov[i].len > total - written) {
+                netbuf_delete(buf);
+                return -EMSGSIZE;
+            }
             if (msg->msg_iov[i].len) {
                 memcpy((uint8_t *)payload + written, msg->msg_iov[i].iov_base,
                        msg->msg_iov[i].len);

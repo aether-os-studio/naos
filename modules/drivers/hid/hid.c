@@ -98,7 +98,6 @@ typedef struct hid_device {
     usb_pipe_t *upipe;
     bus_device_t *bus_device;
     dev_input_event_t *input;
-    bool xfer_done;
     int xfer_status;
     uint16_t iface_num;
     size_t report_buf_len;
@@ -112,6 +111,7 @@ typedef struct hid_device {
     uint8_t *prev_reports;
     hid_field_t fields[HID_MAX_FIELDS];
     size_t field_count;
+    task_t *polling_task;
 } hid_device_t;
 
 static attribute_t hid_bus_subsystem_attr = {
@@ -980,7 +980,8 @@ static void hid_cb(int status, int actual_length, void *user_data) {
     (void)actual_length;
     hid_device_t *hid = user_data;
     hid->xfer_status = status;
-    hid->xfer_done = true;
+    if (hid->polling_task && hid->polling_task->state == TASK_BLOCKING)
+        task_unblock(hid->polling_task, EOK);
 }
 
 static void usb_hid_poll(hid_device_t *hid) {
@@ -989,10 +990,7 @@ static void usb_hid_poll(hid_device_t *hid) {
         return;
 
     for (;;) {
-        arch_enable_interrupt();
-
         memset(report, 0, hid->report_buf_len);
-        hid->xfer_done = false;
         hid->xfer_status = EVENT_ERROR;
 
         int ret = usb_send_intr_pipe(hid->upipe, report, hid->report_buf_len,
@@ -1000,9 +998,7 @@ static void usb_hid_poll(hid_device_t *hid) {
         if (ret)
             break;
 
-        while (!hid->xfer_done) {
-            arch_wait_for_interrupt();
-        }
+        task_block(current_task, TASK_BLOCKING, -1, "hid_waiting_events");
 
         if (hid->xfer_status != EVENT_SUCCESS &&
             hid->xfer_status != EVENT_SHORT_PACKET)
@@ -1135,8 +1131,9 @@ static int usb_hid_setup(usb_device_t *usbdev, usb_device_interface_t *iface) {
 
     printk("Setting up USB HID report device: %s\n", name);
 
-    task_create("usb_hid_poll", (void (*)(uint64_t))usb_hid_poll, (uint64_t)hid,
-                KTHREAD_PRIORITY);
+    hid->polling_task =
+        task_create("usb_hid_poll", (void (*)(uint64_t))usb_hid_poll,
+                    (uint64_t)hid, KTHREAD_PRIORITY);
 
     return 0;
 }

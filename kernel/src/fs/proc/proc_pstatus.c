@@ -51,8 +51,28 @@ char *proc_gen_status_file(task_t *task, size_t *content_len) {
     size_t threads = task_thread_group_count(tgid);
     unsigned long long ignored = 0;
     unsigned long long caught = 0;
+    procfs_task_mem_stats_t mem;
     proc_status_sig_masks(task, &ignored, &caught);
+    procfs_task_mem_stats(task, &mem);
     string_builder_t *builder = create_string_builder(1024);
+    if (!builder) {
+        *content_len = 0;
+        return NULL;
+    }
+
+    unsigned long long vm_size_kb = mem.size_pages * (PAGE_SIZE / 1024);
+    unsigned long long vm_rss_kb = mem.resident_pages * (PAGE_SIZE / 1024);
+    unsigned long long rss_file_kb = mem.file_pages * (PAGE_SIZE / 1024);
+    unsigned long long rss_shmem_kb = mem.shared_pages * (PAGE_SIZE / 1024);
+    unsigned long long rss_anon_pages = mem.resident_pages;
+    if (rss_anon_pages > mem.file_pages)
+        rss_anon_pages -= mem.file_pages;
+    else
+        rss_anon_pages = 0;
+    if (rss_anon_pages > mem.shared_pages)
+        rss_anon_pages -= mem.shared_pages;
+    else
+        rss_anon_pages = 0;
 
     string_builder_append(
         builder,
@@ -66,20 +86,20 @@ char *proc_gen_status_file(task_t *task, size_t *content_len) {
         "NSpid:\t%llu\n"
         "NSpgid:\t%lld\n"
         "NSsid:\t%lld\n"
-        "VmPeak:\t0 kB\n"
-        "VmSize:\t0 kB\n"
+        "VmPeak:\t%llu kB\n"
+        "VmSize:\t%llu kB\n"
         "VmLck:\t0 kB\n"
         "VmPin:\t0 kB\n"
-        "VmHWM:\t0 kB\n"
-        "VmRSS:\t0 kB\n"
-        "RssAnon:\t0 kB\n"
-        "RssFile:\t0 kB\n"
-        "RssShmem:\t0 kB\n"
-        "VmData:\t0 kB\n"
-        "VmStk:\t0 kB\n"
-        "VmExe:\t0 kB\n"
+        "VmHWM:\t%llu kB\n"
+        "VmRSS:\t%llu kB\n"
+        "RssAnon:\t%llu kB\n"
+        "RssFile:\t%llu kB\n"
+        "RssShmem:\t%llu kB\n"
+        "VmData:\t%llu kB\n"
+        "VmStk:\t%llu kB\n"
+        "VmExe:\t%llu kB\n"
         "VmLib:\t0 kB\n"
-        "VmPTE:\t0 kB\n"
+        "VmPTE:\t%llu kB\n"
         "VmSwap:\t0 kB\n"
         "HugetlbPages:\t0 kB\n"
         "SigPnd:\t%016llx\n"
@@ -96,7 +116,13 @@ char *proc_gen_status_file(task_t *task, size_t *content_len) {
         (unsigned long long)tgid, (unsigned long long)(task ? task->pid : 0),
         (unsigned long long)task_parent_pid(task), (unsigned long long)threads,
         (unsigned long long)tgid, (unsigned long long)(task ? task->pid : 0),
-        task ? task->pgid : 0, task ? task->sid : 0,
+        task ? task->pgid : 0, task ? task->sid : 0, vm_size_kb, vm_size_kb,
+        vm_rss_kb, vm_rss_kb,
+        (unsigned long long)(rss_anon_pages * (PAGE_SIZE / 1024)), rss_file_kb,
+        rss_shmem_kb, (unsigned long long)(mem.data_pages * (PAGE_SIZE / 1024)),
+        (unsigned long long)(mem.stack_pages * (PAGE_SIZE / 1024)),
+        (unsigned long long)(mem.text_pages * (PAGE_SIZE / 1024)),
+        (unsigned long long)(mem.pte_pages * (PAGE_SIZE / 1024)),
         (unsigned long long)(task && task->signal
                                  ? sigset_kernel_to_user(task->signal->signal)
                                  : 0),
@@ -116,6 +142,8 @@ size_t proc_pstatus_stat(proc_handle_t *handle) {
     task_t *task = procfs_handle_task_or_current(handle);
     size_t content_len = 0;
     char *content = proc_gen_status_file(task, &content_len);
+    if (!content)
+        return 0;
     free(content);
     return content_len;
 }
@@ -125,6 +153,8 @@ size_t proc_pstatus_read(proc_handle_t *handle, void *addr, size_t offset,
     task_t *task = procfs_handle_task_or_current(handle);
     size_t content_len = 0;
     char *content = proc_gen_status_file(task, &content_len);
+    if (!content)
+        return 0;
     if (offset >= content_len) {
         free(content);
         return 0;
