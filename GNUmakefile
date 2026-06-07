@@ -190,7 +190,6 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all rootfs-$(ARCH).img
 		-netdev user,id=net0 \
 		-device e1000,netdev=net0 \
 		-rtc base=utc \
-		-display sdl \
 		$(QEMUFLAGS)
 
 .PHONY: run-x86_64-single
@@ -203,7 +202,6 @@ run-x86_64-single: assets/ovmf-code-$(ARCH).fd all-single
 		-device usb-kbd \
 		-device usb-mouse \
 		-device usb-storage,drive=harddisk,bus=xhci.0 \
-		-display sdl \
 		$(QEMUFLAGS)
 
 .PHONY: run-aarch64
@@ -219,7 +217,6 @@ run-aarch64: assets/ovmf-code-$(ARCH).fd all rootfs-$(ARCH).img
 		-drive if=none,file=rootfs-$(ARCH).img,format=raw,id=rootdisk \
 		-device nvme,drive=harddisk,serial=1234 \
 		-device nvme,drive=rootdisk,serial=5678 \
-		-display sdl \
 		$(QEMUFLAGS)
 
 .PHONY: run-aarch64-single
@@ -233,7 +230,6 @@ run-aarch64-single: assets/ovmf-code-$(ARCH).fd all-single
 		-drive if=pflash,unit=0,format=raw,file=assets/ovmf-code-$(ARCH).fd,readonly=on \
 		-drive if=none,file=single-$(IMAGE_NAME).img,format=raw,id=harddisk \
 		-device usb-storage,drive=harddisk,bus=xhci.0 \
-		-display sdl \
 		$(QEMUFLAGS)
 
 .PHONY: run-riscv64

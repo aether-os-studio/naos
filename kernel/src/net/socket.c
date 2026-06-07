@@ -85,6 +85,7 @@ static uint16_t socket_netdev_flags(const netdev_t *dev) {
 static inline void socket_notify_sock(socket_t *sock, uint32_t events);
 static inline void unix_socket_snapshot_peer_cred(socket_t *sock,
                                                   const struct ucred *cred);
+static inline void unix_socket_release_lookup_ref(socket_t *sock);
 void unix_socket_free(socket_t *sock);
 static void unix_socket_handle_release(socket_handle_t *handle);
 int socket_poll(fd_t *fd, size_t events);
@@ -319,6 +320,30 @@ static inline socket_t *unix_socket_get(socket_t *sock) {
 
     __atomic_add_fetch(&sock->refs, 1, __ATOMIC_ACQ_REL);
     return sock;
+}
+
+static socket_t *unix_socket_get_peer_ref(socket_t *sock) {
+    socket_t *peer = NULL;
+
+    if (!sock)
+        return NULL;
+
+    mutex_lock(&sock->lock);
+    peer = sock->peer;
+    if (peer)
+        unix_socket_get(peer);
+    mutex_unlock(&sock->lock);
+    return peer;
+}
+
+static inline void unix_socket_put_peer_ref(socket_t *peer, bool lookup_ref) {
+    if (!peer)
+        return;
+
+    if (lookup_ref)
+        unix_socket_release_lookup_ref(peer);
+    else
+        unix_socket_free(peer);
 }
 
 static inline void unix_socket_set_peer(socket_t *sock, socket_t *peer) {
@@ -739,7 +764,7 @@ static void unix_socket_disconnect_peer_links(socket_t *sock, bool mark_closed,
     if (notify_self)
         socket_notify_sock(sock, EPOLLIN | EPOLLHUP | EPOLLRDHUP | EPOLLERR);
     if (notify_peer && peer)
-        socket_notify_sock(peer, EPOLLIN | EPOLLRDHUP);
+        socket_notify_sock(peer, EPOLLIN | EPOLLHUP | EPOLLRDHUP);
 
     unix_socket_free(drop_sock_peer);
     unix_socket_free(drop_peer_sock);
@@ -1596,8 +1621,6 @@ static size_t unix_socket_send_stream_to_peer(
             return -EPIPE;
         }
 
-        if (self && unix_socket_is_connected_type(self->type))
-            active_peer = self->peer;
         if (!active_peer) {
             if (!(flags & MSG_NOSIGNAL))
                 task_commit_signal(current_task, SIGPIPE, NULL);
@@ -1672,8 +1695,6 @@ static size_t unix_socket_send_skb_to_peer(socket_t *self, socket_t *peer,
             return -EPIPE;
         }
 
-        if (self && unix_socket_is_connected_type(self->type))
-            active_peer = self->peer;
         if (!active_peer) {
             if (!(flags & MSG_NOSIGNAL))
                 task_commit_signal(current_task, SIGPIPE, NULL);
@@ -1784,9 +1805,12 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
             mutex_unlock(&self->lock);
 
             if (!peek) {
+                socket_t *notify_peer = unix_socket_get_peer_ref(self);
                 socket_notify_sock(self, EPOLLOUT);
-                if (self->peer)
-                    socket_notify_sock(self->peer, EPOLLOUT);
+                if (notify_peer) {
+                    socket_notify_sock(notify_peer, EPOLLOUT);
+                    unix_socket_free(notify_peer);
+                }
             }
             return copied;
         }
@@ -1878,9 +1902,12 @@ unix_socket_recvmsg_from_self(socket_t *self, socket_t *peer,
                 unix_socket_ancillary_free_list(ancillary_list);
 
             if (!peek) {
+                socket_t *notify_peer = unix_socket_get_peer_ref(self);
                 socket_notify_sock(self, EPOLLOUT);
-                if (self->peer)
-                    socket_notify_sock(self->peer, EPOLLOUT);
+                if (notify_peer) {
+                    socket_notify_sock(notify_peer, EPOLLOUT);
+                    unix_socket_free(notify_peer);
+                }
             }
             return copied;
         }
@@ -2250,6 +2277,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
      * the authentication or RequestName traffic on newly accepted sockets.
      */
     uint32_t replay_events = 0;
+    socket_t *server_peer = NULL;
     mutex_lock(&server_sock->lock);
     bool has_input = unix_socket_is_message_type(server_sock->type)
                          ? (skb_queue_packets(&server_sock->recv_queue) > 0)
@@ -2257,11 +2285,12 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
     if (has_input || server_sock->shut_rd)
         replay_events |= EPOLLIN | EPOLLRDNORM;
     if (server_sock->peer) {
-        socket_t *peer = server_sock->peer;
-        if (mutex_trylock(&peer->lock)) {
-            if (peer->closed || peer->shut_wr)
+        server_peer = server_sock->peer;
+        unix_socket_get(server_peer);
+        if (mutex_trylock(&server_peer->lock)) {
+            if (server_peer->closed || server_peer->shut_wr)
                 replay_events |= EPOLLIN | EPOLLRDNORM | EPOLLRDHUP;
-            mutex_unlock(&peer->lock);
+            mutex_unlock(&server_peer->lock);
         }
     } else if (server_sock->established) {
         replay_events |= EPOLLIN | EPOLLRDNORM | EPOLLRDHUP | EPOLLHUP;
@@ -2279,17 +2308,19 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
     vfs_file_put(accept_file);
 
     if (ret < 0) {
+        if (server_peer)
+            unix_socket_free(server_peer);
         return ret;
     }
 
-    if (server_sock->peer) {
-        socket_notify_sock(server_sock->peer, EPOLLOUT);
+    if (server_peer) {
+        socket_notify_sock(server_peer, EPOLLOUT);
     }
 
     if (addr) {
         struct sockaddr_un kaddr;
         socklen_t kaddrlen = 0;
-        const char *name = unix_socket_local_name(server_sock->peer);
+        const char *name = unix_socket_local_name(server_peer);
         unix_socket_write_sockaddr(name, &kaddr, &kaddrlen);
 
         socklen_t user_len = *addrlen;
@@ -2299,6 +2330,8 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
         *addrlen = kaddrlen;
     }
 
+    if (server_peer)
+        unix_socket_free(server_peer);
     return ret;
 }
 
@@ -2313,12 +2346,16 @@ uint64_t socket_shutdown(uint64_t fd, uint64_t how) {
 
     socket_handle_t *handle = sockfs_file_handle(file);
     socket_t *sock = handle->sock;
+    socket_t *peer = NULL;
 
     if (unix_socket_is_connected_type(sock->type) && !sock->peer &&
         !sock->established && sock->connMax == 0) {
         vfs_file_put(file);
         return -ENOTCONN;
     }
+
+    if (how == SHUT_WR || how == SHUT_RDWR)
+        peer = unix_socket_get_peer_ref(sock);
 
     if (how == SHUT_RD || how == SHUT_RDWR)
         sock->shut_rd = true;
@@ -2327,8 +2364,10 @@ uint64_t socket_shutdown(uint64_t fd, uint64_t how) {
 
     if (how == SHUT_RD || how == SHUT_RDWR)
         socket_notify_sock(sock, EPOLLIN | EPOLLHUP | EPOLLRDHUP);
-    if (sock->peer && (how == SHUT_WR || how == SHUT_RDWR))
-        socket_notify_sock(sock->peer, EPOLLIN | EPOLLRDHUP);
+    if (peer) {
+        socket_notify_sock(peer, EPOLLIN | EPOLLRDHUP);
+        unix_socket_free(peer);
+    }
 
     vfs_file_put(file);
     return 0;
@@ -2490,7 +2529,7 @@ size_t unix_socket_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
         return (size_t)-EBADF;
     socket_handle_t *handle = sockfs_file_handle(caller_fd);
     socket_t *sock = handle->sock;
-    socket_t *peer = sock->peer;
+    socket_t *peer = unix_socket_get_peer_ref(sock);
     bool peer_needs_unref = false;
     unix_socket_ancillary_t *ancillary = NULL;
     int ret;
@@ -2535,8 +2574,7 @@ size_t unix_socket_sendto(uint64_t fd, uint8_t *in, size_t limit, int flags,
 done:
     ret = unix_socket_maybe_add_passcred(peer, &ancillary);
     if (ret < 0) {
-        if (peer_needs_unref)
-            unix_socket_release_lookup_ref(peer);
+        unix_socket_put_peer_ref(peer, peer_needs_unref);
         vfs_file_put(caller_fd);
         return (size_t)ret;
     }
@@ -2545,8 +2583,7 @@ done:
     if (ret < 0) {
         if (ancillary)
             unix_socket_ancillary_free(ancillary);
-        if (peer_needs_unref)
-            unix_socket_release_lookup_ref(peer);
+        unix_socket_put_peer_ref(peer, peer_needs_unref);
         vfs_file_put(caller_fd);
         return (size_t)ret;
     }
@@ -2555,8 +2592,7 @@ done:
                                    &ancillary);
     if (ancillary)
         unix_socket_ancillary_free(ancillary);
-    if (peer_needs_unref)
-        unix_socket_release_lookup_ref(peer);
+    unix_socket_put_peer_ref(peer, peer_needs_unref);
     vfs_file_put(caller_fd);
     return (size_t)ret;
 }
@@ -2568,16 +2604,19 @@ size_t unix_socket_recvfrom(uint64_t fd, uint8_t *out, size_t limit, int flags,
         return (size_t)-EBADF;
     socket_handle_t *handle = sockfs_file_handle(caller_fd);
     socket_t *sock = handle->sock;
+    socket_t *peer = unix_socket_get_peer_ref(sock);
 
     if (unix_socket_is_connected_type(sock->type) && !sock->peer &&
         !sock->established && unix_socket_recv_used_locked(sock) == 0 &&
         skb_queue_packets(&sock->recv_queue) == 0) {
+        unix_socket_free(peer);
         vfs_file_put(caller_fd);
         return -(ENOTCONN);
     }
 
-    size_t ret = unix_socket_recv_from_self(sock, sock->peer, out, limit, flags,
-                                            caller_fd);
+    size_t ret =
+        unix_socket_recv_from_self(sock, peer, out, limit, flags, caller_fd);
+    unix_socket_free(peer);
     vfs_file_put(caller_fd);
     return ret;
 }
@@ -2588,7 +2627,7 @@ size_t unix_socket_sendmsg(uint64_t fd, const struct msghdr *msg, int flags) {
         return (size_t)-EBADF;
     socket_handle_t *handle = sockfs_file_handle(caller_fd);
     socket_t *sock = handle->sock;
-    socket_t *peer = sock->peer;
+    socket_t *peer = unix_socket_get_peer_ref(sock);
     bool peer_needs_unref = false;
 
     if (!peer) {
@@ -2633,16 +2672,14 @@ done:
     int total_ret =
         unix_socket_iov_total_len(msg->msg_iov, msg->msg_iovlen, &total_len);
     if (total_ret < 0) {
-        if (peer_needs_unref)
-            unix_socket_release_lookup_ref(peer);
+        unix_socket_put_peer_ref(peer, peer_needs_unref);
         vfs_file_put(caller_fd);
         return (size_t)total_ret;
     }
     unix_socket_ancillary_t *ancillary = NULL;
     int ancillary_ret = unix_socket_prepare_ancillary(msg, &ancillary);
     if (ancillary_ret < 0) {
-        if (peer_needs_unref)
-            unix_socket_release_lookup_ref(peer);
+        unix_socket_put_peer_ref(peer, peer_needs_unref);
         vfs_file_put(caller_fd);
         return (size_t)ancillary_ret;
     }
@@ -2651,8 +2688,7 @@ done:
     if (ancillary_ret < 0) {
         if (ancillary)
             unix_socket_ancillary_free(ancillary);
-        if (peer_needs_unref)
-            unix_socket_release_lookup_ref(peer);
+        unix_socket_put_peer_ref(peer, peer_needs_unref);
         vfs_file_put(caller_fd);
         return (size_t)ancillary_ret;
     }
@@ -2661,8 +2697,7 @@ done:
     if (ancillary_ret < 0) {
         if (ancillary)
             unix_socket_ancillary_free(ancillary);
-        if (peer_needs_unref)
-            unix_socket_release_lookup_ref(peer);
+        unix_socket_put_peer_ref(peer, peer_needs_unref);
         vfs_file_put(caller_fd);
         return (size_t)ancillary_ret;
     }
@@ -2670,8 +2705,7 @@ done:
     if (ancillary && total_len == 0 &&
         !unix_socket_is_message_type(sock->type)) {
         unix_socket_ancillary_free(ancillary);
-        if (peer_needs_unref)
-            unix_socket_release_lookup_ref(peer);
+        unix_socket_put_peer_ref(peer, peer_needs_unref);
         vfs_file_put(caller_fd);
         return (size_t)-EINVAL;
     }
@@ -2685,8 +2719,7 @@ done:
         if (ancillary_ret < 0) {
             if (ancillary)
                 unix_socket_ancillary_free(ancillary);
-            if (peer_needs_unref)
-                unix_socket_release_lookup_ref(peer);
+            unix_socket_put_peer_ref(peer, peer_needs_unref);
             vfs_file_put(caller_fd);
             return (size_t)ancillary_ret;
         }
@@ -2696,15 +2729,13 @@ done:
         size_t ret = 0;
 
         if (!skb) {
-            if (peer_needs_unref)
-                unix_socket_release_lookup_ref(peer);
+            unix_socket_put_peer_ref(peer, peer_needs_unref);
             vfs_file_put(caller_fd);
             return -ENOMEM;
         }
 
         ret = unix_socket_send_skb_to_peer(sock, peer, skb, flags, caller_fd);
-        if (peer_needs_unref)
-            unix_socket_release_lookup_ref(peer);
+        unix_socket_put_peer_ref(peer, peer_needs_unref);
         vfs_file_put(caller_fd);
         return ret;
     }
@@ -2727,8 +2758,7 @@ done:
                 noblock ? (flags | MSG_DONTWAIT) : flags, caller_fd,
                 &ancillary_to_attach);
             if ((int64_t)ret < 0) {
-                if (peer_needs_unref)
-                    unix_socket_release_lookup_ref(peer);
+                unix_socket_put_peer_ref(peer, peer_needs_unref);
                 if (ancillary_to_attach)
                     unix_socket_ancillary_free(ancillary_to_attach);
                 if (cnt > 0) {
@@ -2739,8 +2769,7 @@ done:
                 return ret;
             }
             if (ret == 0) {
-                if (peer_needs_unref)
-                    unix_socket_release_lookup_ref(peer);
+                unix_socket_put_peer_ref(peer, peer_needs_unref);
                 if (ancillary_to_attach)
                     unix_socket_ancillary_free(ancillary_to_attach);
                 vfs_file_put(caller_fd);
@@ -2751,8 +2780,7 @@ done:
         }
     }
 
-    if (peer_needs_unref)
-        unix_socket_release_lookup_ref(peer);
+    unix_socket_put_peer_ref(peer, peer_needs_unref);
     if (ancillary_to_attach)
         unix_socket_ancillary_free(ancillary_to_attach);
     vfs_file_put(caller_fd);
@@ -2901,6 +2929,8 @@ int socket_poll(fd_t *fd, size_t events) {
     } else if (unix_socket_is_dgram_type(sock->type)) {
         mutex_lock(&sock->lock);
         socket_t *peer = sock->peer;
+        if (peer)
+            unix_socket_get(peer);
         if (socket_wants_output(want) && !sock->closed && !sock->shut_wr)
             revents |= socket_ready_output(want);
 
@@ -2922,9 +2952,13 @@ int socket_poll(fd_t *fd, size_t events) {
         }
 
         mutex_unlock(&sock->lock);
+        if (peer)
+            unix_socket_free(peer);
     } else {
         mutex_lock(&sock->lock);
         socket_t *peer = sock->peer;
+        if (peer)
+            unix_socket_get(peer);
         if (peer) {
             if (mutex_trylock(&peer->lock)) {
                 if (peer->closed || peer->shut_wr)
@@ -2952,6 +2986,7 @@ int socket_poll(fd_t *fd, size_t events) {
                     revents |= EPOLLHUP | EPOLLERR;
             }
             mutex_unlock(&sock->lock);
+            unix_socket_free(peer);
         } else {
             if (socket_wants_input(want) && sock->established)
                 revents |= socket_ready_input(want);
@@ -3137,22 +3172,28 @@ int socket_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
 ssize_t socket_read(fd_t *fd, void *buf, size_t offset, size_t limit) {
     socket_handle_t *handle = sockfs_file_handle(fd);
     socket_t *sock = handle->sock;
+    socket_t *peer = unix_socket_get_peer_ref(sock);
 
     if (unix_socket_is_connected_type(sock->type) && !sock->peer &&
         !sock->established && unix_socket_recv_used_locked(sock) == 0 &&
-        skb_queue_packets(&sock->recv_queue) == 0)
+        skb_queue_packets(&sock->recv_queue) == 0) {
+        unix_socket_free(peer);
         return -(ENOTCONN);
+    }
 
-    return unix_socket_recv_from_self(sock, sock->peer, buf, limit, 0, fd);
+    ssize_t ret = unix_socket_recv_from_self(sock, peer, buf, limit, 0, fd);
+    unix_socket_free(peer);
+    return ret;
 }
 
 ssize_t socket_write(fd_t *fd, const void *buf, size_t offset, size_t limit) {
     socket_handle_t *handle = sockfs_file_handle(fd);
     socket_t *sock = handle->sock;
+    socket_t *peer = unix_socket_get_peer_ref(sock);
     unix_socket_ancillary_t *ancillary = NULL;
     int ret;
 
-    if (!sock->peer) {
+    if (!peer) {
         if (unix_socket_is_dgram_type(sock->type))
             return -(EDESTADDRREQ);
         if (!unix_socket_is_dgram_type(sock->type) && sock->established) {
@@ -3162,21 +3203,24 @@ ssize_t socket_write(fd_t *fd, const void *buf, size_t offset, size_t limit) {
         return -(ENOTCONN);
     }
 
-    ret = unix_socket_maybe_add_passcred(sock->peer, &ancillary);
-    if (ret < 0)
-        return ret;
-
-    ret = unix_socket_maybe_add_timestamp(sock->peer, &ancillary);
+    ret = unix_socket_maybe_add_passcred(peer, &ancillary);
     if (ret < 0) {
-        if (ancillary)
-            unix_socket_ancillary_free(ancillary);
+        unix_socket_free(peer);
         return ret;
     }
 
-    ret = unix_socket_send_to_peer(sock, sock->peer, buf, limit, 0, fd,
-                                   &ancillary);
+    ret = unix_socket_maybe_add_timestamp(peer, &ancillary);
+    if (ret < 0) {
+        if (ancillary)
+            unix_socket_ancillary_free(ancillary);
+        unix_socket_free(peer);
+        return ret;
+    }
+
+    ret = unix_socket_send_to_peer(sock, peer, buf, limit, 0, fd, &ancillary);
     if (ancillary)
         unix_socket_ancillary_free(ancillary);
+    unix_socket_free(peer);
     return ret;
 }
 
@@ -3318,13 +3362,15 @@ size_t unix_socket_getpeername(uint64_t fd, struct sockaddr_un *addr,
 
     socket_handle_t *handle = sockfs_file_handle(file);
     socket_t *sock = handle->sock;
+    socket_t *peer = unix_socket_get_peer_ref(sock);
 
-    if (!sock->peer) {
+    if (!peer) {
         vfs_file_put(file);
         return -ENOTCONN;
     }
 
-    unix_socket_write_sockaddr(unix_socket_local_name(sock->peer), addr, len);
+    unix_socket_write_sockaddr(unix_socket_local_name(peer), addr, len);
+    unix_socket_free(peer);
 
     vfs_file_put(file);
     return 0;

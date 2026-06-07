@@ -33,10 +33,16 @@ dbus-uuidgen --ensure
 
 udevd --daemon
 
+echo "Waiting for udevd"
+
 while [ ! -e "/run/udev/control" ]; do
     sleep 0.5
 done
 
+echo "Waiting for udevadm"
+
 udevadm settle
+
+echo "Starting xfce4 wayland"
 
 exec dbus-run-session -- seatd-launch -- startxfce4 --wayland

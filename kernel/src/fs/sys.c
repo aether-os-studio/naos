@@ -35,7 +35,7 @@ int sysfs_fsid = 0;
 spinlock_t sysfs_oplock = SPIN_INIT;
 vfs_node_t *sysfs_root = NULL;
 static struct vfs_mount *sysfs_mnt = NULL;
-static int next_seq_num = 1;
+static uint32_t next_seq_num = 1;
 static sysfs_entry_t sysfs_tree_root;
 static bool sysfs_tree_ready = false;
 static bool sysfs_internal_mounting = false;
@@ -639,7 +639,9 @@ char *sysfs_node_path(vfs_node_t *node) {
     return info && info->path ? strdup(info->path) : NULL;
 }
 
-int alloc_seq_num(void) { return next_seq_num++; }
+int alloc_seq_num(void) {
+    return (int)__atomic_fetch_add(&next_seq_num, 1, __ATOMIC_RELAXED);
+}
 
 vfs_node_t *sysfs_ensure_dir_at(vfs_node_t *start, const char *path) {
     char *abs = sysfs_absolute_path(start, path);

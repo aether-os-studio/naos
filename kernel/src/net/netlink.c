@@ -2561,6 +2561,8 @@ static inline void netlink_notify_sock(struct netlink_sock *sock,
                                        uint32_t events) {
     if (!sock || !sock->node || !events)
         return;
+
+    vfs_poll_notify_inode(sock->node, events);
 }
 
 static bool netlink_group_mask_matches(uint32_t subscribed_groups,
@@ -3205,14 +3207,20 @@ size_t netlink_setsockopt(uint64_t fd, int level, int optname,
                 NETLINK_SETSOCKOPT_RETURN(-EINVAL);
 
             uint32_t bit = 1U << (group - 1);
+            bool replay_history = false;
             spin_lock(&nl_sk->lock);
-            if (optname == NETLINK_ADD_MEMBERSHIP)
+            if (optname == NETLINK_ADD_MEMBERSHIP) {
+                replay_history = (nl_sk->groups & bit) == 0;
                 nl_sk->groups |= bit;
-            else
+            } else {
                 nl_sk->groups &= ~bit;
+            }
             if (nl_sk->bind_addr)
                 nl_sk->bind_addr->nl_groups = nl_sk->groups;
             spin_unlock(&nl_sk->lock);
+
+            if (replay_history)
+                netlink_deliver_historical_messages(nl_sk);
             NETLINK_SETSOCKOPT_RETURN(0);
         }
         case 3:
@@ -3766,12 +3774,6 @@ static void netlink_handle_release(socket_handle_t *handle) {
 
     struct netlink_sock *nl_sk = handle->sock;
     if (nl_sk != NULL) {
-        if (nl_sk->node) {
-            vfs_node_t *node = nl_sk->node;
-            nl_sk->node = NULL;
-            vfs_iput(node);
-        }
-        // Remove from global socket array
         spin_lock(&netlink_sockets_lock);
         for (int i = 0; i < MAX_NETLINK_SOCKETS; i++) {
             if (netlink_sockets[i] == nl_sk) {
@@ -3781,6 +3783,11 @@ static void netlink_handle_release(socket_handle_t *handle) {
         }
         spin_unlock(&netlink_sockets_lock);
 
+        if (nl_sk->node) {
+            vfs_node_t *node = nl_sk->node;
+            nl_sk->node = NULL;
+            vfs_iput(node);
+        }
         if (nl_sk->buffer != NULL) {
             skb_queue_purge(&nl_sk->buffer->queue);
             free(nl_sk->buffer);

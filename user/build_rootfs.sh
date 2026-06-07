@@ -19,9 +19,9 @@ mkdir -p "$(dirname "$XBPS_INSTALL_PATH")"
 [ $ARCH == aarch64 ] && export ARCH_SPEC=aarch64
 
 sudo XBPS_ARCH=$ARCH $XBPS_INSTALL_PATH/usr/bin/xbps-install -S -r $ROOTFS_SYSROOT -R "http://mirrors.tuna.tsinghua.edu.cn/voidlinux/current/$ARCH_SPEC" \
-    base-minimal bash coreutils util-linux inetutils bind-utils pciutils sudo iw \
+    base-minimal bash coreutils util-linux inetutils bind-utils pciutils usbutils sudo iw \
     gcc binutils make strace git \
-    glibc-locales ncurses tzdata which shadow grep elfutils curl \
+    glibc-locales ncurses tzdata which shadow grep elfutils curl htop \
     seatd eudev dbus xfce4 labwc xorg-server-xwayland xrandr \
     fastfetch mesa mesa-dri mesa-demos lite-xl qemu-system-amd64 libwebkit2gtk41 \
     adwaita-icon-theme noto-fonts-cjk

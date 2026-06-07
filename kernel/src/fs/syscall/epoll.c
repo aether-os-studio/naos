@@ -31,6 +31,22 @@ static inline uint32_t epoll_filter_events(uint32_t events) {
     return events & ~EPOLL_CONTROL_FLAGS;
 }
 
+static inline uint32_t epoll_reportable_events(uint32_t requested,
+                                               uint32_t ready) {
+    uint32_t requested_events = requested | EPOLL_ALWAYS_EVENTS;
+
+    if (requested_events & EPOLLIN)
+        requested_events |= EPOLLRDNORM;
+    if (requested_events & EPOLLRDNORM)
+        requested_events |= EPOLLIN;
+    if (requested_events & EPOLLOUT)
+        requested_events |= EPOLLWRNORM;
+    if (requested_events & EPOLLWRNORM)
+        requested_events |= EPOLLOUT;
+
+    return ready & requested_events;
+}
+
 static epoll_t *epoll_file_handle(struct vfs_file *file) {
     if (!file || !file->f_inode || !file->f_inode->i_sb ||
         !file->f_inode->i_sb->s_type ||
@@ -151,7 +167,10 @@ static int epoll_collect_ready_locked(epoll_t *epoll,
 
         uint32_t request_events = browse->events | EPOLL_ALWAYS_EVENTS;
         int poll_ret = vfs_poll_with_table(browse->file, request_events, pt);
-        uint32_t ready_events = poll_ret < 0 ? EPOLLNVAL : (uint32_t)poll_ret;
+        uint32_t ready_events =
+            poll_ret < 0
+                ? EPOLLNVAL
+                : epoll_reportable_events(browse->events, (uint32_t)poll_ret);
 
         if (browse->edge_triggered) {
             uint32_t changed_events = ready_events & ~browse->last_ready_events;

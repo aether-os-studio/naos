@@ -51,6 +51,9 @@ static void proc_stat_counts(size_t *processes, size_t *running,
 
             if (cpu_times && cpu_slots) {
                 uint32_t cpu = task->cpu_id < cpu_slots ? task->cpu_id : 0;
+                if (cpu < MAX_CPU_NUM && idle_tasks[cpu] == task)
+                    continue;
+
                 uint64_t user_ns = task_self_user_ns(task);
                 uint64_t system_ns = task->system_time_ns;
 

@@ -108,6 +108,7 @@ static vfs_node_t *drm_event_node_get(drm_device_t *dev) {
 static void drm_notify_event_node(drm_device_t *dev) {
     vfs_node_t *event_node = drm_event_node_get(dev);
     if (event_node) {
+        vfs_poll_notify_inode(event_node, EPOLLIN | EPOLLRDNORM);
         vfs_iput(event_node);
     }
 }
