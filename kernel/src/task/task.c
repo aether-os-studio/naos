@@ -910,8 +910,15 @@ static void task_timeout_add_locked(task_t *task) {
 }
 
 void task_timeout_cancel(task_t *task) {
+    if (!task)
+        return;
+
     uint32_t cpu_id = task_timer_cpu_id(task);
     spin_lock(&task_timeout_locks[cpu_id]);
+    if (!task->timeout_queued) {
+        spin_unlock(&task_timeout_locks[cpu_id]);
+        return;
+    }
     task_timeout_remove_locked(task);
     task_timeout_refresh_next_locked(cpu_id);
     spin_unlock(&task_timeout_locks[cpu_id]);
@@ -1372,6 +1379,27 @@ static inline bool task_is_live_locked(task_t *task) {
     return task && task->state != TASK_DIED;
 }
 
+static task_t *task_find_child_reaper_locked(task_t *task) {
+    task_t *parent;
+
+    if (!task) {
+        return NULL;
+    }
+
+    parent = task_lookup_by_pid_nolock(task_parent_pid(task));
+    while (parent) {
+        if (task_is_live_locked(parent) && parent->child_subreaper)
+            return parent;
+
+        uint64_t next_parent_pid = task_parent_pid(parent);
+        if (!next_parent_pid)
+            break;
+        parent = task_lookup_by_pid_nolock(next_parent_pid);
+    }
+
+    return NULL;
+}
+
 static task_t *task_pick_reaper_locked(task_t *task) {
     if (!task) {
         return NULL;
@@ -1400,6 +1428,23 @@ static task_t *task_pick_reaper_locked(task_t *task) {
             }
         }
     }
+
+    task_t *subreaper = task_find_child_reaper_locked(task);
+    if (subreaper && subreaper != task)
+        return subreaper;
+
+    task_t *init = task_lookup_by_pid_nolock(1);
+    return init == task ? NULL : init;
+}
+
+static task_t *task_pick_process_reaper_locked(task_t *task) {
+    if (!task) {
+        return NULL;
+    }
+
+    task_t *subreaper = task_find_child_reaper_locked(task);
+    if (subreaper && subreaper != task)
+        return subreaper;
 
     task_t *init = task_lookup_by_pid_nolock(1);
     return init == task ? NULL : init;
@@ -1524,6 +1569,7 @@ task_t *get_free_task() {
             llist_init_head(&task->tick_work_node);
             spin_init(&task->block_lock);
             spin_init(&task->fd_info_lock);
+            wait_queue_init(&task->child_wait);
             task->tick_work_queue_id = UINT32_MAX;
             task->state = TASK_CREATING;
             task->pid = 0;
@@ -1550,6 +1596,7 @@ task_t *get_free_task() {
     llist_init_head(&task->tick_work_node);
     spin_init(&task->block_lock);
     spin_init(&task->fd_info_lock);
+    wait_queue_init(&task->child_wait);
     task->tick_work_queue_id = UINT32_MAX;
     task->state = TASK_CREATING;
     task->pid = pid;
@@ -1838,6 +1885,49 @@ void sched_resched_if_needed(void) {
     schedule(0);
 }
 
+void task_wait_poll_loop(void) {
+    bool irq_state = arch_interrupt_enabled();
+
+    arch_enable_interrupt();
+    arch_wait_for_interrupt();
+    if (!irq_state)
+        arch_disable_interrupt();
+}
+
+void task_prepare_block(task_t *task) {
+    if (!task || task->state == TASK_DIED)
+        return;
+
+    bool irq_state = arch_interrupt_enabled();
+    arch_disable_interrupt();
+    spin_lock(&task->block_lock);
+    task->wake_pending = false;
+    task->status = EOK;
+    task->block_preparing = true;
+    spin_unlock(&task->block_lock);
+    if (irq_state)
+        arch_enable_interrupt();
+}
+
+void task_cancel_block_prepare(task_t *task) {
+    if (!task || task->state == TASK_DIED)
+        return;
+
+    bool irq_state = arch_interrupt_enabled();
+    arch_disable_interrupt();
+    spin_lock(&task->block_lock);
+    if (task->block_preparing && task->state != TASK_BLOCKING &&
+        task->state != TASK_READING_STDIO &&
+        task->state != TASK_UNINTERRUPTABLE) {
+        task->block_preparing = false;
+        task->wake_pending = false;
+        task->status = EOK;
+    }
+    spin_unlock(&task->block_lock);
+    if (irq_state)
+        arch_enable_interrupt();
+}
+
 bool task_group_exit_code(task_t *task, int64_t *code_out) {
     if (!task || !task->signal || !task->signal->sighand)
         return false;
@@ -1877,12 +1967,22 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
 
     if (task->wake_pending) {
         task->wake_pending = false;
+        task->block_preparing = false;
         result = task->status;
         spin_unlock(&task->block_lock);
         goto ret;
     }
 
+    if (timeout_ns == 0) {
+        task->block_preparing = false;
+        task->status = ETIMEDOUT;
+        result = ETIMEDOUT;
+        spin_unlock(&task->block_lock);
+        goto ret;
+    }
+
     task->status = EOK;
+    task->block_preparing = false;
 
     if (target_cpu != current_cpu_id && task->sched_info) {
         spin_lock(&schedulers[target_cpu].lock);
@@ -1905,6 +2005,7 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
 
     if (task->wake_pending) {
         task->wake_pending = false;
+        task->block_preparing = false;
         task_timeout_cancel(task);
         task->state = TASK_READY;
         task->force_wakeup_ns = UINT64_MAX;
@@ -1958,10 +2059,12 @@ void task_unblock(task_t *task, int reason) {
 
     spin_lock(&task->block_lock);
 
-    task_timeout_cancel(task);
-
     if (task->state != TASK_BLOCKING && task->state != TASK_READING_STDIO &&
         task->state != TASK_UNINTERRUPTABLE) {
+        if (!task->block_preparing && reason != EOK) {
+            spin_unlock(&task->block_lock);
+            goto ret;
+        }
         task->status = reason;
         task->force_wakeup_ns = UINT64_MAX;
         task->wake_pending = true;
@@ -1971,10 +2074,13 @@ void task_unblock(task_t *task, int reason) {
 
     task->status = reason;
     task->state = TASK_READY;
+    task->block_preparing = false;
 
     task->blocking_reason = NULL;
     task->force_wakeup_ns = UINT64_MAX;
     task->wake_pending = false;
+
+    task_timeout_cancel(task);
 
     add_sched_entity_wakeup(task, &schedulers[task->cpu_id]);
     should_trigger_sched_ipi =
@@ -2032,24 +2138,28 @@ void task_exit_inner(task_t *task, int64_t code) {
     task_ns_proxy_put(task->nsproxy);
     task->nsproxy = NULL;
 
+    task->current_state = TASK_DIED;
+    task->state = TASK_DIED;
+    task->status = (uint64_t)code;
+
     futex_on_exit_task(task);
     pidfd_on_task_exit(task);
     on_exit_task_call(task);
-
-    task->current_state = TASK_DIED;
-    task->state = TASK_DIED;
-
-    task->status = (uint64_t)code;
 
     spin_lock(&task_queue_lock);
     task_t *waiting_task = task_lookup_by_pid_nolock(task->waitpid);
     if (waiting_task && waiting_task->state != TASK_DIED) {
         task_unblock(waiting_task, EOK);
     }
+    task_t *wait_parent = task_lookup_by_pid_nolock(task_parent_pid(task));
+    if (wait_parent && wait_parent->state != TASK_DIED)
+        wait_queue_wake_all(&wait_parent->child_wait, EPOLLIN, EOK);
     if (ptrace_is_traced(task) && task->ptrace_tracer_pid != task->waitpid) {
         task_t *tracer = task_lookup_by_pid_nolock(task->ptrace_tracer_pid);
-        if (tracer && tracer->state != TASK_DIED)
+        if (tracer && tracer->state != TASK_DIED) {
             task_unblock(tracer, EOK);
+            wait_queue_wake_all(&tracer->child_wait, EPOLLIN, EOK);
+        }
     }
     spin_unlock(&task_queue_lock);
 
@@ -2099,6 +2209,8 @@ void task_exit_inner(task_t *task, int64_t code) {
 
         if (parent && !ignore_sigchld && !sigchld_blocked)
             task_unblock(parent, 128 + SIGCHLD);
+        if (parent)
+            wait_queue_wake_all(&parent->child_wait, EPOLLIN, EOK);
         spin_unlock(&task_queue_lock);
     } else if (task->is_clone || !task_has_parent(task)) {
         if (task_try_mark_reaped(task))
@@ -2172,8 +2284,8 @@ uint64_t task_exit(int64_t code) {
         }
     }
 
-    task_t *init = task_lookup_by_pid_nolock(1);
-    task_reparent_children_locked(self, init, true);
+    task_t *new_parent = task_pick_process_reaper_locked(self);
+    task_reparent_children_locked(self, new_parent, true);
     spin_unlock(&task_queue_lock);
 
     task_exit_inner(self, code);

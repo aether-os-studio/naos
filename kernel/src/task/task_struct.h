@@ -7,6 +7,7 @@
 #include <libs/termios.h>
 #include <mm/shm.h>
 #include <task/ns.h>
+#include <task/wait.h>
 #include <arch/task_abi.h>
 
 typedef enum task_state {
@@ -391,6 +392,7 @@ typedef struct task {
     kernel_timer_t *timers[MAX_TIMERS_NUM];
     struct rlimit rlim[16];
     uint64_t parent_death_sig;
+    wait_queue_head_t child_wait;
     int *tidptr;
     int *set_tidptr;
     void *robust_list_head;
@@ -414,6 +416,7 @@ typedef struct task {
     uint64_t flags;
     task_ns_proxy_t *nsproxy;
     bool no_new_privs;
+    bool child_subreaper;
     bool is_kernel;
     bool is_clone;
     bool child_vfork_done;
@@ -422,6 +425,7 @@ typedef struct task {
     bool on_cpu;
     bool need_resched;
     bool wake_pending;
+    bool block_preparing;
     spinlock_t block_lock;
     uint64_t membarrier_seen_seq;
     bool tick_work_active;

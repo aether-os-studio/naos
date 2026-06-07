@@ -84,8 +84,6 @@ int virtio_net_init(virtio_driver_t *driver) {
     net_device->send_queue = send_queue;
     net_device->recv_queue = recv_queue;
 
-    virtio_net_devices[virtio_net_idx++] = net_device;
-
     // Pre-allocate and populate receive buffers for polling mode
     for (int i = 0; i < RX_BUFFER_COUNT; i++) {
         void *rx_buffer = alloc_frames_bytes(RX_BUFFER_SIZE);
@@ -110,9 +108,18 @@ int virtio_net_init(virtio_driver_t *driver) {
     // Notify device about the receive buffers
     virt_queue_notify(driver, recv_queue);
 
-    regist_netdev(net_device, net_device->mac, net_device->mtu,
-                  (netdev_send_t)virtio_net_send,
-                  (netdev_recv_t)virtio_net_receive);
+    net_device->netdev = netdev_register_full(
+        NULL, NETDEV_TYPE_ETHERNET, net_device, net_device->mac,
+        net_device->mtu, (netdev_send_t)virtio_net_send,
+        (netdev_recv_t)virtio_net_receive,
+        (netdev_poll_rx_t)virtio_net_has_packets);
+
+    if (!net_device->netdev) {
+        printk("virtio_net: Failed to register netdev\n");
+        return -ENOMEM;
+    }
+
+    virtio_net_devices[virtio_net_idx++] = net_device;
 
     return 0;
 }
@@ -201,6 +208,8 @@ int virtio_net_receive(virtio_net_device_t *net_dev, void *buffer,
             virt_queue_notify(net_dev->driver, net_dev->recv_queue);
         }
         spin_unlock(&net_dev->send_recv_lock);
+        if (net_dev->netdev && virtio_net_has_packets(net_dev))
+            netdev_notify_rx(net_dev->netdev);
         return 0;
     }
 
@@ -228,6 +237,8 @@ int virtio_net_receive(virtio_net_device_t *net_dev, void *buffer,
 
     spin_unlock(&net_dev->send_recv_lock);
 
+    if (net_dev->netdev && virtio_net_has_packets(net_dev))
+        netdev_notify_rx(net_dev->netdev);
     return data_len;
 }
 

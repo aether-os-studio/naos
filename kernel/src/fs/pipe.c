@@ -62,6 +62,18 @@ static pipe_info_t *pipefs_alloc_info(void) {
     return info;
 }
 
+static void pipefs_notify_node(vfs_node_t *node, uint32_t events) {
+    if (node && events)
+        vfs_poll_notify_inode(node, events);
+}
+
+static void pipefs_free_info(pipe_info_t *pipe) {
+    if (!pipe)
+        return;
+    free(pipe->buf);
+    free(pipe);
+}
+
 static pipe_info_t *pipefs_named_ensure_info(struct vfs_inode *inode) {
     pipe_info_t *pipe;
     pipe_info_t *new_pipe;
@@ -84,8 +96,7 @@ static pipe_info_t *pipefs_named_ensure_info(struct vfs_inode *inode) {
     if (!__atomic_compare_exchange_n((pipe_info_t **)&inode->i_private,
                                      &expected, new_pipe, false,
                                      __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-        free(new_pipe->buf);
-        free(new_pipe);
+        pipefs_free_info(new_pipe);
         pipe = expected;
     } else {
         pipe = new_pipe;
@@ -137,10 +148,8 @@ static void pipefs_evict_inode(struct vfs_inode *inode) {
     free(spec);
     inode->i_private = NULL;
 
-    if (free_pipe && pipe) {
-        free(pipe->buf);
-        free(pipe);
-    }
+    if (free_pipe && pipe)
+        pipefs_free_info(pipe);
 }
 
 static int pipefs_init_fs_context(struct vfs_fs_context *fc) {
@@ -337,8 +346,14 @@ static ssize_t pipe_read_inner(struct vfs_file *file, void *addr, size_t size,
                 pipe->write_node->i_size = pipe->ptr;
             if (pipe->read_node)
                 pipe->read_node->i_size = pipe->ptr;
+            vfs_node_t *write_node = pipe->write_node;
+            if (write_node)
+                vfs_igrab(write_node);
             spin_unlock(&pipe->lock);
 
+            pipefs_notify_node(write_node, EPOLLOUT | EPOLLWRNORM);
+            if (write_node)
+                vfs_iput(write_node);
             return (ssize_t)to_read;
         }
 
@@ -354,17 +369,10 @@ static ssize_t pipe_read_inner(struct vfs_file *file, void *addr, size_t size,
         if (file->f_flags & O_NONBLOCK)
             return -EWOULDBLOCK;
 
-        if (task_signal_has_deliverable(current_task)) {
-            return -EINTR;
-        }
-
-        if (vfs_poll(file->f_inode, EPOLLIN) & EPOLLIN) {
-            continue;
-        }
-
-        arch_enable_interrupt();
-        arch_wait_for_interrupt();
-        arch_disable_interrupt();
+        int reason = vfs_poll_wait_interruptible(
+            file, EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLNVAL);
+        if (reason < 0)
+            return reason;
     }
 }
 
@@ -421,8 +429,14 @@ static ssize_t pipe_write_inner(struct vfs_file *file, const void *addr,
                 pipe->write_node->i_size = pipe->ptr;
             if (pipe->read_node)
                 pipe->read_node->i_size = pipe->ptr;
+            vfs_node_t *read_node = pipe->read_node;
+            if (read_node)
+                vfs_igrab(read_node);
             spin_unlock(&pipe->lock);
 
+            pipefs_notify_node(read_node, EPOLLIN | EPOLLRDNORM);
+            if (read_node)
+                vfs_iput(read_node);
             return (ssize_t)to_write;
         }
 
@@ -433,17 +447,10 @@ static ssize_t pipe_write_inner(struct vfs_file *file, const void *addr,
         if (file->f_flags & O_NONBLOCK)
             return -EWOULDBLOCK;
 
-        if (task_signal_has_deliverable(current_task)) {
-            return -EINTR;
-        }
-
-        if (vfs_poll(file->f_inode, EPOLLOUT) & EPOLLOUT) {
-            continue;
-        }
-
-        arch_enable_interrupt();
-        arch_wait_for_interrupt();
-        arch_disable_interrupt();
+        int reason = vfs_poll_wait_interruptible(
+            file, EPOLLOUT | EPOLLERR | EPOLLHUP | EPOLLNVAL);
+        if (reason < 0)
+            return reason;
     }
 }
 
@@ -528,6 +535,8 @@ static int pipefs_open(struct vfs_inode *inode, struct vfs_file *file) {
 static int pipefs_release(struct vfs_inode *inode, struct vfs_file *file) {
     pipe_specific_t *spec = pipefs_spec_from_file(file);
     pipe_info_t *pipe;
+    vfs_node_t *drop_read_node = NULL;
+    vfs_node_t *drop_write_node = NULL;
     bool free_spec = false;
 
     (void)inode;
@@ -540,13 +549,39 @@ static int pipefs_release(struct vfs_inode *inode, struct vfs_file *file) {
         if (pipe->write_fds > 0) {
             pipe->write_fds--;
         }
+        if (pipe->owns_node_refs && pipe->write_fds == 0 && pipe->write_node) {
+            drop_write_node = pipe->write_node;
+            pipe->write_node = NULL;
+        }
     }
     if (spec->read) {
         if (pipe->read_fds > 0) {
             pipe->read_fds--;
         }
+        if (pipe->owns_node_refs && pipe->read_fds == 0 && pipe->read_node) {
+            drop_read_node = pipe->read_node;
+            pipe->read_node = NULL;
+        }
     }
+    vfs_node_t *read_node = pipe->read_node;
+    vfs_node_t *write_node = pipe->write_node;
+    if (read_node)
+        vfs_igrab(read_node);
+    if (write_node && write_node != read_node)
+        vfs_igrab(write_node);
     spin_unlock(&pipe->lock);
+
+    pipefs_notify_node(read_node, EPOLLIN | EPOLLRDNORM | EPOLLHUP | EPOLLERR);
+    pipefs_notify_node(write_node,
+                       EPOLLOUT | EPOLLWRNORM | EPOLLHUP | EPOLLERR);
+    if (read_node)
+        vfs_iput(read_node);
+    if (write_node && write_node != read_node)
+        vfs_iput(write_node);
+    if (drop_read_node)
+        vfs_iput(drop_read_node);
+    if (drop_write_node && drop_write_node != drop_read_node)
+        vfs_iput(drop_write_node);
 
     free_spec = file->private_data && file->private_data != inode->i_private;
     file->private_data = NULL;
@@ -639,10 +674,13 @@ static int pipefs_create_endpoint(struct vfs_file **out_file, pipe_info_t *pipe,
     }
 
     file->private_data = spec;
+    spin_lock(&pipe->lock);
+    pipe->owns_node_refs = true;
     if (write_end)
-        pipe->write_node = inode;
+        pipe->write_node = vfs_igrab(inode);
     else
-        pipe->read_node = inode;
+        pipe->read_node = vfs_igrab(inode);
+    spin_unlock(&pipe->lock);
 
     *out_file = file;
     vfs_dput(dentry);

@@ -5,10 +5,12 @@
 #include <libs/string_builder.h>
 #include <mm/fault.h>
 #include <mm/mm.h>
+#include <irq/irq_manager.h>
 #include <task/sched.h>
 #include <task/keyring.h>
 #include <task/ptrace.h>
 #include <task/task_syscall.h>
+#include <task/wait.h>
 
 extern sched_rq_t schedulers[MAX_CPU_NUM];
 extern hashmap_t task_parent_map;
@@ -24,6 +26,18 @@ static uint64_t task_sleep_until_ns(uint64_t target_ns, int clock_id,
                                     struct timespec *remain);
 static inline uint64_t task_ns_add_saturate(uint64_t left, uint64_t right);
 static inline uint64_t task_timespec_to_ns_saturate(const struct timespec *ts);
+static void task_wait_vfork_done_poll(task_t *parent);
+
+static void task_child_wait_arm(wait_queue_entry_t *wait) {
+    task_prepare_block(current_task);
+    wait_queue_entry_init(wait, current_task, EPOLLIN, NULL, NULL);
+    wait_queue_add(&current_task->child_wait, wait);
+}
+
+static void task_child_wait_disarm(wait_queue_entry_t *wait) {
+    wait_queue_remove(&current_task->child_wait, wait);
+    task_cancel_block_prepare(current_task);
+}
 
 static bool waitpid_task_matches(const task_t *task, int64_t wait_pid,
                                  uint64_t caller_pgid) {
@@ -2294,6 +2308,11 @@ shell_fallback_done:
     Elf64_Phdr *phdr;
     size_t phdr_size = (size_t)ehdr->e_phnum * sizeof(Elf64_Phdr);
     bool phdr_allocated = false;
+    task_signal_info_t *new_signal = NULL;
+    struct vfs_file **exec_close_files = NULL;
+    fd_info_t *exec_new_fd_info = NULL;
+    bool exec_fd_info_put_needed = false;
+    size_t exec_max_fds = 0;
 
     if (ehdr->e_phoff + phdr_size <= sizeof(header_buf)) {
         phdr = (Elf64_Phdr *)(header_buf + ehdr->e_phoff);
@@ -2466,24 +2485,6 @@ shell_fallback_done:
         goto exec_fail_restore_mm;
     }
 
-    if (self->clone_flags & CLONE_FILES) {
-        fd_info_t *old = task_fd_info_get(self);
-        if (!old) {
-            exec_fail_ret = (uint64_t)-EBADF;
-            goto exec_fail_restore_mm;
-        }
-        fd_info_t *new = task_fd_info_clone(old);
-        if (!new) {
-            task_fd_info_put(old, self);
-            exec_fail_ret = (uint64_t)-ENOMEM;
-            goto exec_fail_restore_mm;
-        }
-
-        fd_info_t *replaced = task_fd_info_replace(self, new);
-        task_fd_info_put(old, self);
-        task_fd_info_put(replaced, self);
-    }
-
     string_builder_t *builder = create_string_builder(PAGE_SIZE * 8);
     for (int i = 0; i < argv_count; i++) {
         string_builder_append(builder, new_argv[i]);
@@ -2514,13 +2515,49 @@ shell_fallback_done:
         goto exec_fail_restore_mm;
     }
 
-    size_t exec_max_fds = exec_fd_info->max_fds;
-    struct vfs_file **exec_close_files =
-        calloc(exec_max_fds, sizeof(*exec_close_files));
+    exec_max_fds = exec_fd_info->max_fds;
+    exec_close_files = calloc(exec_max_fds, sizeof(*exec_close_files));
     if (!exec_close_files) {
         task_fd_info_put(exec_fd_info, self);
         exec_fail_ret = (uint64_t)-ENOMEM;
         goto exec_fail_restore_mm;
+    }
+    task_fd_info_put(exec_fd_info, self);
+
+    new_signal = task_signal_reset_after_exec(self);
+    if (!new_signal) {
+        exec_fail_ret = (uint64_t)-ENOMEM;
+        goto exec_fail_restore_mm;
+    }
+
+    if (self->clone_flags & CLONE_FILES) {
+        fd_info_t *old = task_fd_info_get(self);
+        if (!old) {
+            exec_fail_ret = (uint64_t)-EBADF;
+            goto exec_fail_restore_mm;
+        }
+        exec_new_fd_info = task_fd_info_clone(old);
+        if (!exec_new_fd_info) {
+            task_fd_info_put(old, self);
+            exec_fail_ret = (uint64_t)-ENOMEM;
+            goto exec_fail_restore_mm;
+        }
+        task_fd_info_put(old, self);
+    }
+
+    if (exec_new_fd_info) {
+        fd_info_t *replaced = task_fd_info_replace(self, exec_new_fd_info);
+        exec_fd_info = exec_new_fd_info;
+        exec_new_fd_info = NULL;
+        task_fd_info_put(replaced, self);
+        exec_fd_info_put_needed = false;
+    } else {
+        exec_fd_info = task_fd_info_get(self);
+        if (!exec_fd_info) {
+            exec_fail_ret = (uint64_t)-EBADF;
+            goto exec_fail_restore_mm;
+        }
+        exec_fd_info_put_needed = true;
     }
 
     with_fd_info_lock(exec_fd_info, {
@@ -2536,7 +2573,10 @@ shell_fallback_done:
         }
     });
 
-    task_fd_info_put(exec_fd_info, self);
+    if (exec_fd_info_put_needed)
+        task_fd_info_put(exec_fd_info, self);
+    exec_fd_info = NULL;
+    exec_fd_info_put_needed = false;
 
     for (size_t i = 0; i < exec_max_fds; i++) {
         if (!exec_close_files[i])
@@ -2545,12 +2585,7 @@ shell_fallback_done:
         vfs_close_file(exec_close_files[i]);
     }
     free(exec_close_files);
-
-    task_signal_info_t *new_signal = task_signal_reset_after_exec(self);
-    if (!new_signal) {
-        exec_fail_ret = (uint64_t)-ENOMEM;
-        goto exec_fail_restore_mm;
-    }
+    exec_close_files = NULL;
 
     if (!self->is_kernel)
         task_enqueue_mm_free(old_mm);
@@ -2592,6 +2627,11 @@ shell_fallback_done:
 exec_fail_restore_mm:
     task_execve_switch_mm(self, new_mm, old_mm);
     free_page_table(new_mm);
+    free(exec_close_files);
+    if (exec_new_fd_info)
+        task_fd_info_put(exec_new_fd_info, self);
+    if (new_signal)
+        task_signal_free(new_signal);
     if (interpreter_path)
         free(interpreter_path);
     if (cmdline)
@@ -2646,10 +2686,15 @@ uint64_t sys_wait4(int pid, int *status, uint64_t options,
     }
 
     while (1) {
+        wait_queue_entry_t child_wait;
+        bool child_wait_armed = !(options & WNOHANG);
         task_t *found_alive = NULL;
         task_t *found_dead = NULL;
         task_t *found_ptrace_alive = NULL;
         task_t *found_ptrace_stop = NULL;
+
+        if (child_wait_armed)
+            task_child_wait_arm(&child_wait);
 
         arch_disable_interrupt();
 
@@ -2716,6 +2761,8 @@ uint64_t sys_wait4(int pid, int *status, uint64_t options,
         arch_enable_interrupt();
 
         if (found_ptrace_stop) {
+            if (child_wait_armed)
+                task_child_wait_disarm(&child_wait);
             if (status) {
                 int stop_status = 0;
                 ptrace_consume_wait_event(found_ptrace_stop, &stop_status, NULL,
@@ -2728,6 +2775,8 @@ uint64_t sys_wait4(int pid, int *status, uint64_t options,
         }
 
         if (found_dead) {
+            if (child_wait_armed)
+                task_child_wait_disarm(&child_wait);
             target = found_dead;
             arch_disable_interrupt();
             break;
@@ -2739,19 +2788,36 @@ uint64_t sys_wait4(int pid, int *status, uint64_t options,
         }
 
         if (found_alive) {
-            if (task_signal_has_deliverable(current_task))
+            if (task_signal_has_deliverable(current_task)) {
+                if (child_wait_armed)
+                    task_child_wait_disarm(&child_wait);
                 return -EINTR;
-            task_block(current_task, TASK_BLOCKING, -1, "waitpid");
+            }
+            int reason = task_block(current_task, TASK_BLOCKING, -1, "waitpid");
+            if (child_wait_armed)
+                task_child_wait_disarm(&child_wait);
+            if (reason != EOK && task_signal_has_deliverable(current_task))
+                return -EINTR;
             continue;
         }
 
         if (found_ptrace_alive) {
-            if (task_signal_has_deliverable(current_task))
+            if (task_signal_has_deliverable(current_task)) {
+                if (child_wait_armed)
+                    task_child_wait_disarm(&child_wait);
                 return -EINTR;
-            task_block(current_task, TASK_BLOCKING, -1, "waitpid-ptrace");
+            }
+            int reason =
+                task_block(current_task, TASK_BLOCKING, -1, "waitpid-ptrace");
+            if (child_wait_armed)
+                task_child_wait_disarm(&child_wait);
+            if (reason != EOK && task_signal_has_deliverable(current_task))
+                return -EINTR;
             continue;
         }
 
+        if (child_wait_armed)
+            task_child_wait_disarm(&child_wait);
         if (waitpid_has_specific_target(current_task, wait_pid))
             return -ESRCH;
         return -ECHILD;
@@ -2827,10 +2893,15 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
         return -ECHILD;
 
     while (1) {
+        wait_queue_entry_t child_wait;
+        bool child_wait_armed = !(options & WNOHANG);
         task_t *found_alive = NULL;
         task_t *found_dead = NULL;
         task_t *found_ptrace_alive = NULL;
         task_t *found_ptrace_stop = NULL;
+
+        if (child_wait_armed)
+            task_child_wait_arm(&child_wait);
 
         arch_disable_interrupt();
 
@@ -2901,6 +2972,8 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
         if (found_ptrace_stop) {
             siginfo_t ptrace_info;
 
+            if (child_wait_armed)
+                task_child_wait_disarm(&child_wait);
             if (infop) {
                 if (!ptrace_consume_wait_event(found_ptrace_stop, NULL,
                                                &ptrace_info,
@@ -2920,6 +2993,8 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
         }
 
         if (found_dead) {
+            if (child_wait_armed)
+                task_child_wait_disarm(&child_wait);
             target = found_dead;
             break;
         }
@@ -2937,15 +3012,25 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
 
         if (found_alive) {
             int reason = task_block(current_task, TASK_BLOCKING, -1, "waitid");
+            if (child_wait_armed)
+                task_child_wait_disarm(&child_wait);
+            if (reason != EOK && task_signal_has_deliverable(current_task))
+                return -EINTR;
             continue;
         }
 
         if (found_ptrace_alive) {
             int reason =
                 task_block(current_task, TASK_BLOCKING, -1, "waitid-ptrace");
+            if (child_wait_armed)
+                task_child_wait_disarm(&child_wait);
+            if (reason != EOK && task_signal_has_deliverable(current_task))
+                return -EINTR;
             continue;
         }
 
+        if (child_wait_armed)
+            task_child_wait_disarm(&child_wait);
         return -ECHILD;
     }
 
@@ -3053,7 +3138,7 @@ uint64_t sys_clone3(struct pt_regs *regs, clone_args_t *args_user,
         return (uint64_t)-EINVAL;
     if (args.exit_signal & ~0xFFULL)
         return (uint64_t)-EINVAL;
-    if (args.stack_size == 0)
+    if ((args.stack == 0) != (args.stack_size == 0))
         return (uint64_t)-EINVAL;
 
     if ((args.flags & CLONE_PIDFD) &&
@@ -3064,10 +3149,11 @@ uint64_t sys_clone3(struct pt_regs *regs, clone_args_t *args_user,
     if ((args.flags & CLONE_INTO_CGROUP) && args.cgroup == 0)
         return (uint64_t)-EINVAL;
 
-    uint64_t clone_flags = args.flags | (args.exit_signal & 0xFFULL);
+    uint64_t clone_flags =
+        (args.flags & ~CLONE_PIDFD) | (args.exit_signal & 0xFFULL);
     uint64_t ret = sys_clone_internal(
-        regs, clone_flags, args.stack + args.stack_size, (int *)args.parent_tid,
-        (int *)args.child_tid, args.tls,
+        regs, clone_flags, args.stack ? args.stack + args.stack_size : 0,
+        (int *)args.parent_tid, (int *)args.child_tid, args.tls,
         (args.flags & CLONE_INTO_CGROUP) ? (int)args.cgroup : -1);
     if ((int64_t)ret < 0) {
         return ret;
@@ -3245,6 +3331,7 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
         (flags & (CLONE_THREAD | CLONE_PARENT)) ? self->parent : self;
     child->parent_pid = task_effective_tgid(child->parent);
     child->orphaned_to_init = false;
+    child->child_subreaper = false;
     child->uid = self->uid;
     child->gid = self->gid;
     child->euid = self->euid;
@@ -3284,6 +3371,8 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
     }
 
     child->signal->signal = 0;
+    memset(&child->signal->pending_signal, 0,
+           sizeof(child->signal->pending_signal));
 
     if (flags & CLONE_SETTLS) {
         arch_context_set_tls(child->arch_context, tls);
@@ -3361,8 +3450,12 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
         ret = (uint64_t)-ENOMEM;
         goto fail;
     }
-    if (!ptrace_trace_fork)
+    if (!ptrace_trace_fork) {
         add_sched_entity(child, &schedulers[child->cpu_id]);
+        if (child->cpu_id != current_cpu_id) {
+            irq_trigger_sched_ipi(child->cpu_id);
+        }
+    }
 
     on_new_task_call(child);
     for (size_t i = 0; child->fd_info && i < child->fd_info->max_fds; i++) {
@@ -3374,13 +3467,8 @@ static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
     if (ptrace_trace_fork)
         ptrace_stop_for_fork_event(self, ptrace_fork_event, child->pid);
 
-    if ((flags & CLONE_VFORK)) {
-        while (!self->child_vfork_done) {
-            task_block(self, TASK_BLOCKING, -1, "vfork");
-        }
-
-        self->child_vfork_done = false;
-    }
+    if (flags & CLONE_VFORK)
+        task_wait_vfork_done_poll(self);
 
     ret = child->pid;
     return ret;
@@ -3427,6 +3515,19 @@ static int task_fs_rebind_mount_namespace(task_fs_t *fs,
     fs->vfs.seq++;
     spin_unlock(&fs->vfs.lock);
     return 0;
+}
+
+static void task_wait_vfork_done_poll(task_t *parent) {
+    if (!parent)
+        return;
+
+    while (!parent->child_vfork_done) {
+        arch_enable_interrupt();
+        arch_wait_for_interrupt();
+        arch_disable_interrupt();
+    }
+
+    parent->child_vfork_done = false;
 }
 
 static struct vfs_mount *task_namespace_clone_source_root(task_t *task) {
@@ -3784,6 +3885,22 @@ uint64_t sys_prctl(uint64_t option, uint64_t arg2, uint64_t arg3, uint64_t arg4,
         if (arg2 != 0 || arg3 != 0 || arg4 != 0 || arg5 != 0)
             return (uint64_t)-EINVAL;
         return current_task->no_new_privs ? 1 : 0;
+
+    case PR_SET_CHILD_SUBREAPER:
+        if (arg3 != 0 || arg4 != 0 || arg5 != 0)
+            return (uint64_t)-EINVAL;
+        current_task->child_subreaper = arg2 != 0;
+        return 0;
+
+    case PR_GET_CHILD_SUBREAPER:
+        if (!arg2 || arg3 != 0 || arg4 != 0 || arg5 != 0)
+            return (uint64_t)-EINVAL;
+        {
+            int value = current_task->child_subreaper ? 1 : 0;
+            if (copy_to_user((void *)arg2, &value, sizeof(value)))
+                return (uint64_t)-EFAULT;
+        }
+        return 0;
 
     case PR_CAP_AMBIENT:
         return 0;
@@ -4182,7 +4299,7 @@ static inline int task_clamp_nice(int niceval) {
 static void task_set_nice_locked(task_t *task, int niceval) {
     if (!task)
         return;
-    task->nice = task_clamp_nice(niceval);
+    sched_set_task_nice(task, niceval);
 }
 
 static void task_sched_store_params(task_t *task, int policy,
@@ -4196,31 +4313,53 @@ static void task_sched_store_params(task_t *task, int policy,
 static int task_setpriority_apply_to_process(task_t *task, int niceval) {
     if (!task)
         return -ESRCH;
-    spin_lock(&task_queue_lock);
     task_set_nice_locked(task, niceval);
-    spin_unlock(&task_queue_lock);
     return 0;
 }
 
 static int task_setpriority_apply_to_pgrp(int64_t pgid, int niceval) {
     bool found = false;
 
-    spin_lock(&task_queue_lock);
-    if (task_pid_map.buckets) {
-        for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
-            hashmap_entry_t *entry = &task_pid_map.buckets[i];
-            if (!hashmap_entry_is_occupied(entry))
-                continue;
-            task_t *task = (task_t *)entry->value;
-            if (!task || task->state == TASK_DIED)
-                continue;
-            if (task->pgid != pgid)
-                continue;
-            task_set_nice_locked(task, niceval);
-            found = true;
+    while (true) {
+        uint64_t batch[32];
+        size_t batch_count = 0;
+        bool has_more = false;
+
+        spin_lock(&task_queue_lock);
+        if (task_pid_map.buckets) {
+            for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+                hashmap_entry_t *entry = &task_pid_map.buckets[i];
+                if (!hashmap_entry_is_occupied(entry))
+                    continue;
+                task_t *task = (task_t *)entry->value;
+                if (!task || task->state == TASK_DIED)
+                    continue;
+                if (task->pgid != pgid)
+                    continue;
+                found = true;
+                if (task->nice == niceval)
+                    continue;
+                if (batch_count == sizeof(batch) / sizeof(batch[0])) {
+                    has_more = true;
+                    break;
+                }
+                batch[batch_count++] = task->pid;
+            }
         }
+        spin_unlock(&task_queue_lock);
+
+        if (!batch_count)
+            break;
+
+        for (size_t i = 0; i < batch_count; i++) {
+            task_t *task = task_find_by_pid(batch[i]);
+            if (task)
+                task_set_nice_locked(task, niceval);
+        }
+
+        if (!has_more)
+            break;
     }
-    spin_unlock(&task_queue_lock);
 
     return found ? 0 : -ESRCH;
 }
@@ -4228,22 +4367,46 @@ static int task_setpriority_apply_to_pgrp(int64_t pgid, int niceval) {
 static int task_setpriority_apply_to_user(int64_t uid, int niceval) {
     bool found = false;
 
-    spin_lock(&task_queue_lock);
-    if (task_pid_map.buckets) {
-        for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
-            hashmap_entry_t *entry = &task_pid_map.buckets[i];
-            if (!hashmap_entry_is_occupied(entry))
-                continue;
-            task_t *task = (task_t *)entry->value;
-            if (!task || task->state == TASK_DIED)
-                continue;
-            if (task->uid != uid)
-                continue;
-            task_set_nice_locked(task, niceval);
-            found = true;
+    while (true) {
+        uint64_t batch[32];
+        size_t batch_count = 0;
+        bool has_more = false;
+
+        spin_lock(&task_queue_lock);
+        if (task_pid_map.buckets) {
+            for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+                hashmap_entry_t *entry = &task_pid_map.buckets[i];
+                if (!hashmap_entry_is_occupied(entry))
+                    continue;
+                task_t *task = (task_t *)entry->value;
+                if (!task || task->state == TASK_DIED)
+                    continue;
+                if (task->uid != uid)
+                    continue;
+                found = true;
+                if (task->nice == niceval)
+                    continue;
+                if (batch_count == sizeof(batch) / sizeof(batch[0])) {
+                    has_more = true;
+                    break;
+                }
+                batch[batch_count++] = task->pid;
+            }
         }
+        spin_unlock(&task_queue_lock);
+
+        if (!batch_count)
+            break;
+
+        for (size_t i = 0; i < batch_count; i++) {
+            task_t *task = task_find_by_pid(batch[i]);
+            if (task)
+                task_set_nice_locked(task, niceval);
+        }
+
+        if (!has_more)
+            break;
     }
-    spin_unlock(&task_queue_lock);
 
     return found ? 0 : -ESRCH;
 }

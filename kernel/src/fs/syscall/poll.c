@@ -7,10 +7,20 @@ uint32_t epoll_to_poll_comp(uint32_t epoll_events) {
 
     if (epoll_events & EPOLLIN)
         poll_events |= POLLIN;
+    if (epoll_events & EPOLLRDNORM)
+        poll_events |= POLLRDNORM;
+    if (epoll_events & EPOLLRDBAND)
+        poll_events |= POLLRDBAND;
     if (epoll_events & EPOLLOUT)
         poll_events |= POLLOUT;
+    if (epoll_events & EPOLLWRNORM)
+        poll_events |= POLLWRNORM;
+    if (epoll_events & EPOLLWRBAND)
+        poll_events |= POLLWRBAND;
     if (epoll_events & EPOLLPRI)
         poll_events |= POLLPRI;
+    if (epoll_events & EPOLLMSG)
+        poll_events |= POLLMSG;
     if (epoll_events & EPOLLERR)
         poll_events |= POLLERR;
     if (epoll_events & EPOLLHUP)
@@ -28,10 +38,20 @@ uint32_t poll_to_epoll_comp(uint32_t poll_events) {
 
     if (poll_events & POLLIN)
         epoll_events |= EPOLLIN;
+    if (poll_events & POLLRDNORM)
+        epoll_events |= EPOLLRDNORM;
+    if (poll_events & POLLRDBAND)
+        epoll_events |= EPOLLRDBAND;
     if (poll_events & POLLOUT)
         epoll_events |= EPOLLOUT;
+    if (poll_events & POLLWRNORM)
+        epoll_events |= EPOLLWRNORM;
+    if (poll_events & POLLWRBAND)
+        epoll_events |= EPOLLWRBAND;
     if (poll_events & POLLPRI)
         epoll_events |= EPOLLPRI;
+    if (poll_events & POLLMSG)
+        epoll_events |= EPOLLMSG;
     if (poll_events & POLLERR)
         epoll_events |= EPOLLERR;
     if (poll_events & POLLHUP)
@@ -44,7 +64,8 @@ uint32_t poll_to_epoll_comp(uint32_t poll_events) {
     return epoll_events;
 }
 
-static int poll_scan_ready(struct pollfd *fds, int nfds) {
+static int poll_scan_ready(struct pollfd *fds, int nfds,
+                           struct vfs_poll_table *pt) {
     int ready = 0;
 
     /*
@@ -68,10 +89,10 @@ static int poll_scan_ready(struct pollfd *fds, int nfds) {
 
         uint32_t query_events = poll_to_epoll_comp(fds[i].events) | EPOLLERR |
                                 EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
-        int polled = EPOLLNVAL;
-        if (file->f_op && file->f_op->poll)
-            polled = (int)file->f_op->poll(file, NULL) & (int)query_events;
-        if (polled < 0)
+        int polled = vfs_poll_with_table(file, query_events, pt);
+        if (polled == -ENOTSUP)
+            polled = EPOLLNVAL;
+        else if (polled < 0)
             polled = 0;
 
         int revents = epoll_to_poll_comp((uint32_t)polled);
@@ -93,42 +114,55 @@ static size_t do_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
     if (!current_task)
         return (size_t)-EINVAL;
 
-    int ready = 0;
-    uint64_t start_time = nano_time();
     bool infinite_timeout = ((int64_t)timeout < 0);
-    uint64_t timeout_ns = 0;
-    if (!infinite_timeout) {
-        timeout_ns = timeout * 1000000ULL;
+    uint64_t timeout_ns = infinite_timeout ? UINT64_MAX : timeout * 1000000ULL;
+    uint64_t deadline_ns =
+        infinite_timeout ? UINT64_MAX : nano_time() + timeout_ns;
+
+    while (true) {
+        vfs_poll_wait_table_t table;
+        vfs_poll_wait_table_init(&table, current_task);
+
+        int ready = poll_scan_ready(fds, nfds, &table.pt);
+        int table_error = vfs_poll_wait_table_error(&table);
+        if (table_error) {
+            vfs_poll_wait_table_cleanup(&table);
+            return (size_t)table_error;
+        }
+
+        if (ready > 0) {
+            vfs_poll_wait_table_cleanup(&table);
+            return (size_t)ready;
+        }
+
+        if (task_signal_has_deliverable(current_task)) {
+            vfs_poll_wait_table_cleanup(&table);
+            return (size_t)-EINTR;
+        }
+
+        if (!infinite_timeout) {
+            uint64_t now = nano_time();
+            if (timeout == 0 || now >= deadline_ns) {
+                vfs_poll_wait_table_cleanup(&table);
+                return 0;
+            }
+        }
+
+        int64_t sleep_ns = -1;
+        if (!infinite_timeout) {
+            uint64_t now = nano_time();
+            sleep_ns = now >= deadline_ns ? 0 : (int64_t)(deadline_ns - now);
+        }
+
+        int reason =
+            task_block(current_task, TASK_BLOCKING, sleep_ns, "poll_wait");
+        vfs_poll_wait_table_cleanup(&table);
+
+        if (reason == ETIMEDOUT)
+            continue;
+        if (reason != EOK && task_signal_has_deliverable(current_task))
+            return (size_t)-EINTR;
     }
-
-    do {
-        arch_enable_interrupt();
-
-        ready = poll_scan_ready(fds, nfds);
-
-        if (ready > 0)
-            break;
-
-        if (task_signal_has_deliverable(current_task)) {
-            ready = -EINTR;
-            break;
-        }
-
-        if (!infinite_timeout && timeout == 0) {
-            break;
-        }
-
-        if (task_signal_has_deliverable(current_task)) {
-            ready = -EINTR;
-            break;
-        }
-
-        arch_enable_interrupt();
-        arch_wait_for_interrupt();
-        arch_disable_interrupt();
-    } while (infinite_timeout || (nano_time() - start_time) < timeout_ns);
-
-    return ready;
 }
 
 size_t sys_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
@@ -193,7 +227,7 @@ uint64_t sys_ppoll(struct pollfd *fds, uint64_t nfds,
         }
     }
 
-    int timeout = -1;
+    uint64_t timeout = -1;
     if (timeout_ts) {
         struct timespec ts;
         if (copy_from_user(&ts, timeout_ts, sizeof(ts))) {

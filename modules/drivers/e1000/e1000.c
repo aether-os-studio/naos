@@ -244,8 +244,16 @@ int e1000_init(void *mmio_base) {
     e1000_write32(dev, E1000_IMC, 0xFFFFFFFF);
 
     // Store device and register with network framework
+    dev->netdev = netdev_register_full(NULL, NETDEV_TYPE_ETHERNET, dev,
+                                       dev->mac, dev->mtu, e1000_send,
+                                       e1000_receive, e1000_has_packets);
+
+    if (!dev->netdev) {
+        printk("e1000: Failed to register netdev\n");
+        free(dev);
+        return -1;
+    }
     e1000_devices[e1000_device_count++] = dev;
-    regist_netdev(dev, dev->mac, dev->mtu, e1000_send, e1000_receive);
 
     return 0;
 }
@@ -345,6 +353,8 @@ cleanup:
     dev->rx_tail = next_rx;
     e1000_write32(dev, E1000_RDT, dev->rx_tail);
 
+    if (dev->netdev && e1000_has_packets(dev))
+        netdev_notify_rx(dev->netdev);
     return have_data ? packet_len : 0;
 }
 
@@ -352,13 +362,18 @@ cleanup:
 bool e1000_has_packets(void *dev_desc) {
     e1000_device_t *dev = (e1000_device_t *)dev_desc;
     uint16_t next_rx = (dev->rx_tail + 1) % E1000_NUM_RX_DESC;
-    return (dev->rx_descs[next_rx].status & E1000_RXD_STAT_DD) != 0;
+    struct e1000_rx_desc *desc = &dev->rx_descs[next_rx];
+
+    dma_sync_device_to_cpu(desc, sizeof(*desc));
+    return (desc->status & E1000_RXD_STAT_DD) != 0;
 }
 
 // Poll for received packets (can be called periodically)
 void e1000_poll(void *dev_desc) {
-    // This function can be implemented if needed for background polling
-    // Currently, packets are checked on-demand in e1000_receive
+    e1000_device_t *dev = (e1000_device_t *)dev_desc;
+
+    if (dev && dev->netdev && e1000_has_packets(dev))
+        netdev_notify_rx(dev->netdev);
 }
 
 // Get device by index (similar to virtio-net interface)

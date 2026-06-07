@@ -49,6 +49,16 @@ int signalfd_is_file(struct vfs_file *file) {
     return file->f_inode->i_sb->s_type == &signalfdfs_fs_type;
 }
 
+bool signalfd_mask_contains(struct vfs_file *file, int sig) {
+    struct signalfd_ctx *ctx;
+
+    if (!signal_sig_in_range(sig))
+        return false;
+
+    ctx = signalfd_file_handle(file);
+    return ctx && (sigset_user_to_kernel(ctx->sigmask) & signal_sigbit(sig));
+}
+
 static inline void signalfd_apply_flags(int fd_num, fd_t *fd, int flags) {
     uint64_t file_flags = fd_get_flags(fd);
     file_flags &= ~O_NONBLOCK;
@@ -220,28 +230,30 @@ static loff_t signalfdfs_llseek(struct vfs_file *file, loff_t offset,
 static ssize_t signalfdfs_read(struct vfs_file *file, void *addr, size_t size,
                                loff_t *ppos) {
     struct signalfd_ctx *ctx = signalfd_file_handle(file);
+    struct signalfd_siginfo ev = {0};
 
     (void)ppos;
     if (!ctx)
         return -EINVAL;
 
-    while (ctx->queue_head == ctx->queue_tail) {
+    while (!task_signal_take_signalfd(current_task, ctx->sigmask, &ev) &&
+           ctx->queue_head == ctx->queue_tail) {
         if (file->f_flags & O_NONBLOCK)
             return -EWOULDBLOCK;
 
-        if (vfs_poll(file->f_inode, EPOLLIN) & EPOLLIN) {
-            break;
-        }
-
-        arch_enable_interrupt();
-        arch_wait_for_interrupt();
-        arch_disable_interrupt();
+        int reason = vfs_poll_wait_interruptible(
+            file, EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLNVAL);
+        if (reason < 0)
+            return reason;
     }
 
-    struct signalfd_siginfo *ev = &ctx->queue[ctx->queue_tail];
-    size_t copy_len = size < sizeof(*ev) ? size : sizeof(*ev);
-    memcpy(addr, ev, copy_len);
-    ctx->queue_tail = (ctx->queue_tail + 1) % ctx->queue_size;
+    if (ev.ssi_signo == 0) {
+        memcpy(&ev, &ctx->queue[ctx->queue_tail], sizeof(ev));
+        ctx->queue_tail = (ctx->queue_tail + 1) % ctx->queue_size;
+    }
+
+    size_t copy_len = size < sizeof(ev) ? size : sizeof(ev);
+    memcpy(addr, &ev, copy_len);
     return (ssize_t)copy_len;
 }
 
@@ -266,7 +278,10 @@ static __poll_t signalfdfs_poll(struct vfs_file *file,
     (void)pt;
     if (!ctx)
         return EPOLLNVAL;
-    return ctx->queue_head != ctx->queue_tail ? EPOLLIN : 0;
+    return task_signal_has_pending_in_set(current_task, ctx->sigmask) ||
+                   ctx->queue_head != ctx->queue_tail
+               ? (EPOLLIN | EPOLLRDNORM)
+               : 0;
 }
 
 static int signalfdfs_open(struct vfs_inode *inode, struct vfs_file *file) {

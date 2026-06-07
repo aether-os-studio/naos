@@ -1485,12 +1485,12 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
 
     if (flags & ~supported_flags)
         return (uint64_t)-EINVAL;
-    if (old_size == 0 || new_size == 0)
+    if (new_size == 0)
         return (uint64_t)-EINVAL;
     if (old_addr != old_addr_aligned)
         return (uint64_t)-EINVAL;
-    if (!user_range_valid(old_addr_aligned, old_size_aligned) ||
-        !user_range_valid(old_addr_aligned, new_size_aligned))
+    if (old_size_aligned &&
+        !user_range_valid(old_addr_aligned, old_size_aligned))
         return (uint64_t)-EFAULT;
     task_mm_info_t *mm = current_task->mm;
     uint64_t mmap_top = task_mm_mmap_top(mm);
@@ -1507,6 +1507,16 @@ uint64_t sys_mremap(uint64_t old_addr, uint64_t old_size, uint64_t new_size,
         return (uint64_t)-EINVAL;
     if ((flags & MREMAP_DONTUNMAP) && old_size_aligned != new_size_aligned)
         return (uint64_t)-EINVAL;
+
+    if (old_size_aligned == 0) {
+        if (!(flags & MREMAP_MAYMOVE) || (flags & MREMAP_DONTUNMAP))
+            return (uint64_t)-EINVAL;
+        return sys_mmap((flags & MREMAP_FIXED) ? new_addr_aligned : 0,
+                        new_size_aligned, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS |
+                            ((flags & MREMAP_FIXED) ? MAP_FIXED : 0),
+                        (uint64_t)-1, 0);
+    }
 
     vma_manager_t *mgr = &mm->task_vma_mgr;
     bool shrink_inplace = !(flags & MREMAP_FIXED) &&

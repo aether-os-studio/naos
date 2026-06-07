@@ -26,6 +26,7 @@ typedef struct pipe_info {
 
     vfs_node_t *read_node;
     vfs_node_t *write_node;
+    bool owns_node_refs;
 
     spinlock_t lock;
 } pipe_info_t;

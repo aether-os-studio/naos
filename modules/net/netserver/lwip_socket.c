@@ -87,7 +87,7 @@ _Static_assert(sizeof(naos_ifconf_t) == 16,
 
 extern int err_to_errno(err_t err);
 
-static int lwip_socket_poll(vfs_node_t *node, size_t events);
+static int lwip_socket_poll(fd_t *fd, size_t events);
 static int lwip_socket_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg);
 static ssize_t lwip_socket_read(fd_t *fd, void *buf, size_t offset,
                                 size_t limit);
@@ -299,7 +299,12 @@ static inline int lwip_socket_recv_avail(lwip_socket_state_t *sock) {
     return avail;
 }
 
-static void lwip_socket_notify(lwip_socket_state_t *sock, uint32_t events) {}
+static void lwip_socket_notify(lwip_socket_state_t *sock, uint32_t events) {
+    if (!sock || !events)
+        return;
+    if (sock->node)
+        vfs_poll_notify_inode(sock->node, events);
+}
 
 static void lwip_socket_notify_ready_state(lwip_socket_state_t *sock) {
     s16_t rcvevent = 0;
@@ -2218,7 +2223,8 @@ static size_t lwip_socket_getsockopt(uint64_t fd, int level, int optname,
     return ret;
 }
 
-static int lwip_socket_poll(vfs_node_t *node, size_t events) {
+static int lwip_socket_poll(fd_t *fd, size_t events) {
+    vfs_node_t *node = fd ? fd->node : NULL;
     lwip_socket_state_t *sock = lwip_socket_state_from_node(node);
     int revents = 0;
     s16_t rcvevent = 0;

@@ -63,8 +63,7 @@ struct vfs_inode *vfs_alloc_inode(struct vfs_super_block *sb) {
     inode->i_exec_count = 0;
     llist_init_head(&inode->i_dentry_aliases);
     llist_init_head(&inode->i_sb_list);
-    spin_init(&inode->poll_waiters_lock);
-    llist_init_head(&inode->poll_waiters);
+    wait_queue_init(&inode->poll_wait);
     vfs_ref_init(&inode->i_ref, 1);
 
     spin_lock(&sb->s_inode_lock);

@@ -1,4 +1,5 @@
 #include <boot/boot.h>
+#include <irq/irq_manager.h>
 #include <task/futex.h>
 #include <task/task_syscall.h>
 
@@ -34,6 +35,12 @@ typedef struct futex_key {
     uint64_t addr;
     uintptr_t ctx;
 } futex_key_t;
+
+typedef struct futex_wake_batch {
+    struct futex_wait *head;
+    struct futex_wait *tail;
+    int count;
+} futex_wake_batch_t;
 
 static inline uint32_t futex_bucket_id_for_key(const futex_key_t *key) {
     uint64_t hash;
@@ -192,6 +199,7 @@ int futex_on_exit_task(task_t *task) {
                 bucket->tail = prev;
 
             curr->next = NULL;
+            curr->queued = false;
             curr = next;
         }
 
@@ -250,6 +258,7 @@ static void futex_enqueue_locked(futex_bucket_t *bucket,
 
     wait->next = NULL;
     wait->bucket_id = bucket_id;
+    wait->queued = true;
 
     if (bucket->tail)
         bucket->tail->next = wait;
@@ -280,6 +289,7 @@ static bool futex_dequeue_from_bucket_locked(futex_bucket_t *bucket,
                 bucket->tail = prev;
 
             curr->next = NULL;
+            curr->queued = false;
             return true;
         }
         prev = curr;
@@ -289,16 +299,65 @@ static bool futex_dequeue_from_bucket_locked(futex_bucket_t *bucket,
     return false;
 }
 
-static bool futex_dequeue_locked(struct futex_wait *target) {
-    if (!target)
-        return false;
+static bool futex_wait_queued_locked(struct futex_wait *wait) {
+    return wait && wait->queued;
+}
 
-    return futex_dequeue_from_bucket_locked(
-        futex_bucket_for_id(target->bucket_id), target);
+static futex_bucket_t *futex_lock_wait_bucket(struct futex_wait *wait) {
+    while (true) {
+        uint32_t bucket_id = wait ? wait->bucket_id : 0;
+        futex_bucket_t *bucket = futex_bucket_for_id(bucket_id);
+
+        spin_lock(&bucket->lock);
+        if (!wait || wait->bucket_id == bucket_id)
+            return bucket;
+        spin_unlock(&bucket->lock);
+    }
+}
+
+static void futex_signal_waiter(struct futex_wait *wait) {
+    task_t *task = wait ? wait->task : NULL;
+
+    if (!task || task->state == TASK_DIED)
+        return;
+
+    task_unblock(task, EOK);
+}
+
+static void futex_wake_batch_add(futex_wake_batch_t *batch,
+                                 struct futex_wait *wait) {
+    if (!batch || !wait)
+        return;
+
+    wait->next = NULL;
+    if (batch->tail)
+        batch->tail->next = wait;
+    else
+        batch->head = wait;
+    batch->tail = wait;
+    batch->count++;
+}
+
+static void futex_wake_batch_run(futex_wake_batch_t *batch) {
+    if (!batch)
+        return;
+
+    struct futex_wait *wait = batch->head;
+    while (wait) {
+        struct futex_wait *next = wait->next;
+        wait->next = NULL;
+        futex_signal_waiter(wait);
+        wait = next;
+    }
+
+    batch->head = NULL;
+    batch->tail = NULL;
+    batch->count = 0;
 }
 
 static int futex_wake_locked(futex_bucket_t *bucket, const futex_key_t *key,
-                             int val, uint32_t bitset) {
+                             int val, uint32_t bitset,
+                             futex_wake_batch_t *batch) {
     if (val <= 0)
         return 0;
 
@@ -319,6 +378,7 @@ static int futex_wake_locked(futex_bucket_t *bucket, const futex_key_t *key,
                 bucket->tail = prev;
 
             curr->next = NULL;
+            curr->queued = false;
             curr = next;
             continue;
         }
@@ -334,7 +394,8 @@ static int futex_wake_locked(futex_bucket_t *bucket, const futex_key_t *key,
                 bucket->tail = prev;
 
             curr->next = NULL;
-            task_unblock(curr->task, EOK);
+            curr->queued = false;
+            futex_wake_batch_add(batch, curr);
             woke++;
             curr = next;
             continue;
@@ -358,13 +419,65 @@ static inline bool futex_should_interrupt_before_sleep(void) {
     return task_signal_has_deliverable(current_task);
 }
 
+static int futex_wait_poll(struct futex_wait *wait, uint64_t deadline_ns,
+                           bool has_timeout, bool realtime_clock) {
+    while (true) {
+        futex_bucket_t *bucket = futex_lock_wait_bucket(wait);
+        bool queued = futex_wait_queued_locked(wait);
+        spin_unlock(&bucket->lock);
+        if (!queued) {
+            task_cancel_block_prepare(current_task);
+            return EOK;
+        }
+
+        if (futex_should_interrupt_before_sleep()) {
+            bucket = futex_lock_wait_bucket(wait);
+            bool removed = futex_dequeue_from_bucket_locked(bucket, wait);
+            spin_unlock(&bucket->lock);
+            task_cancel_block_prepare(current_task);
+            return removed ? EINTR : EOK;
+        }
+
+        int64_t sleep_ns = -1;
+        uint64_t now_ns = has_timeout ? futex_now_ns(realtime_clock) : 0;
+        if (has_timeout && now_ns >= deadline_ns) {
+            bucket = futex_lock_wait_bucket(wait);
+            bool removed = futex_dequeue_from_bucket_locked(bucket, wait);
+            spin_unlock(&bucket->lock);
+            task_cancel_block_prepare(current_task);
+            return removed ? ETIMEDOUT : EOK;
+        }
+        if (has_timeout)
+            sleep_ns = (int64_t)(deadline_ns - now_ns);
+
+        int reason =
+            task_block(current_task, TASK_BLOCKING, sleep_ns, "futex_wait");
+        if (reason == ETIMEDOUT) {
+            bucket = futex_lock_wait_bucket(wait);
+            bool removed = futex_dequeue_from_bucket_locked(bucket, wait);
+            spin_unlock(&bucket->lock);
+            task_cancel_block_prepare(current_task);
+            return removed ? ETIMEDOUT : EOK;
+        }
+        if (reason != EOK && futex_should_interrupt_before_sleep()) {
+            bucket = futex_lock_wait_bucket(wait);
+            bool removed = futex_dequeue_from_bucket_locked(bucket, wait);
+            spin_unlock(&bucket->lock);
+            task_cancel_block_prepare(current_task);
+            return removed ? EINTR : EOK;
+        }
+    }
+}
+
 static uint64_t sys_futex_wait(int *uaddr, const futex_key_t *key, int val,
                                const struct timespec *timeout, uint32_t bitset,
                                bool absolute_timeout, bool realtime_clock) {
     if (bitset == 0)
         return (uint64_t)-EINVAL;
 
-    int64_t tmo = -1;
+    bool has_timeout = timeout != NULL;
+    uint64_t deadline_ns = UINT64_MAX;
+
     if (timeout) {
         if (timeout->tv_sec < 0 || timeout->tv_nsec < 0 ||
             timeout->tv_nsec >= 1000000000L) {
@@ -372,12 +485,12 @@ static uint64_t sys_futex_wait(int *uaddr, const futex_key_t *key, int val,
         }
         int64_t req = timeout->tv_sec * 1000000000LL + timeout->tv_nsec;
         if (!absolute_timeout) {
-            tmo = req;
+            deadline_ns = futex_now_ns(false) + (uint64_t)req;
         } else {
             uint64_t now_ns = futex_now_ns(realtime_clock);
             if ((uint64_t)req <= now_ns)
                 return (uint64_t)-ETIMEDOUT;
-            tmo = req - now_ns;
+            deadline_ns = (uint64_t)req;
         }
     }
 
@@ -388,6 +501,7 @@ static uint64_t sys_futex_wait(int *uaddr, const futex_key_t *key, int val,
         .next = NULL,
         .bucket_id = 0,
         .bitset = bitset,
+        .queued = false,
     };
     uint32_t bucket_id;
     futex_bucket_t *bucket = futex_bucket_for_key(key, &bucket_id);
@@ -402,7 +516,7 @@ static uint64_t sys_futex_wait(int *uaddr, const futex_key_t *key, int val,
         spin_unlock(&bucket->lock);
         return (uint64_t)-EAGAIN;
     }
-    if (timeout && tmo == 0) {
+    if (has_timeout && futex_now_ns(realtime_clock) >= deadline_ns) {
         spin_unlock(&bucket->lock);
         return (uint64_t)-ETIMEDOUT;
     }
@@ -410,14 +524,12 @@ static uint64_t sys_futex_wait(int *uaddr, const futex_key_t *key, int val,
         spin_unlock(&bucket->lock);
         return (uint64_t)-EINTR;
     }
+    task_prepare_block(current_task);
     futex_enqueue_locked(bucket, &wait, bucket_id);
     spin_unlock(&bucket->lock);
 
-    int reason = task_block(current_task, TASK_BLOCKING, tmo, "futex_wait");
-
-    spin_lock(&bucket->lock);
-    futex_dequeue_locked(&wait);
-    spin_unlock(&bucket->lock);
+    int reason =
+        futex_wait_poll(&wait, deadline_ns, has_timeout, realtime_clock);
 
     if (reason == ETIMEDOUT)
         return (uint64_t)-ETIMEDOUT;
@@ -433,10 +545,12 @@ static uint64_t sys_futex_wake_key(const futex_key_t *key, int val,
         return (uint64_t)-EINVAL;
 
     futex_bucket_t *bucket = futex_bucket_for_key(key, NULL);
+    futex_wake_batch_t batch = {0};
 
     spin_lock(&bucket->lock);
-    int count = futex_wake_locked(bucket, key, val, bitset);
+    int count = futex_wake_locked(bucket, key, val, bitset, &batch);
     spin_unlock(&bucket->lock);
+    futex_wake_batch_run(&batch);
     return count;
 }
 
@@ -584,7 +698,9 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             return (uint64_t)-EFAULT;
         }
 
-        int ret_count = futex_wake_locked(bucket1, &key1, val, 0xFFFFFFFF);
+        futex_wake_batch_t batch = {0};
+        int ret_count =
+            futex_wake_locked(bucket1, &key1, val, 0xFFFFFFFF, &batch);
 
         bool wake_uaddr2 = false;
         switch (cmp_type) {
@@ -612,12 +728,14 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 
         if (wake_uaddr2) {
             int val2 = (int)(uintptr_t)timeout;
-            ret_count += futex_wake_locked(bucket2, &key2, val2, 0xFFFFFFFF);
+            ret_count +=
+                futex_wake_locked(bucket2, &key2, val2, 0xFFFFFFFF, &batch);
         }
 
         if (bucket1_id != bucket2_id)
             spin_unlock(&bucket2->lock);
         spin_unlock(&bucket1->lock);
+        futex_wake_batch_run(&batch);
         return ret_count;
     }
     case FUTEX_LOCK_PI: {
@@ -628,13 +746,16 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
         if ((int64_t)ret < 0)
             return ret;
 
-        int64_t tmo = -1;
+        bool has_timeout = timeout != NULL;
+        uint64_t deadline_ns = UINT64_MAX;
         if (timeout) {
             if (timeout->tv_sec < 0 || timeout->tv_nsec < 0 ||
                 timeout->tv_nsec >= 1000000000L) {
                 return (uint64_t)-EINVAL;
             }
-            tmo = timeout->tv_sec * 1000000000LL + timeout->tv_nsec;
+            uint64_t req =
+                (uint64_t)timeout->tv_sec * 1000000000ULL + timeout->tv_nsec;
+            deadline_ns = futex_now_ns(false) + req;
         }
 
         struct futex_wait wait = {
@@ -644,6 +765,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             .next = NULL,
             .bucket_id = 0,
             .bitset = (uint32_t)val3 ? (uint32_t)val3 : 0xFFFFFFFF,
+            .queued = false,
         };
         uint32_t bucket_id;
         futex_bucket_t *bucket = futex_bucket_for_key(&key, &bucket_id);
@@ -664,7 +786,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             spin_unlock(&bucket->lock);
             return 0;
         } else {
-            if (timeout && tmo == 0) {
+            if (has_timeout && futex_now_ns(false) >= deadline_ns) {
                 spin_unlock(&bucket->lock);
                 return (uint64_t)-ETIMEDOUT;
             }
@@ -672,15 +794,12 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
                 spin_unlock(&bucket->lock);
                 return (uint64_t)-EINTR;
             }
+            task_prepare_block(current_task);
             futex_enqueue_locked(bucket, &wait, bucket_id);
             spin_unlock(&bucket->lock);
 
             int reason =
-                task_block(current_task, TASK_BLOCKING, tmo, "futex_lock_pi");
-
-            spin_lock(&bucket->lock);
-            futex_dequeue_locked(&wait);
-            spin_unlock(&bucket->lock);
+                futex_wait_poll(&wait, deadline_ns, has_timeout, false);
 
             if (reason == ETIMEDOUT)
                 return (uint64_t)-ETIMEDOUT;
@@ -714,8 +833,10 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             spin_unlock(&bucket->lock);
             return (uint64_t)-EFAULT;
         }
-        futex_wake_locked(bucket, &key, 1, 0xFFFFFFFF);
+        futex_wake_batch_t batch = {0};
+        futex_wake_locked(bucket, &key, 1, 0xFFFFFFFF, &batch);
         spin_unlock(&bucket->lock);
+        futex_wake_batch_run(&batch);
         return 0;
     }
     case FUTEX_REQUEUE:
@@ -769,8 +890,9 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             return (uint64_t)-EAGAIN;
         }
 
+        futex_wake_batch_t batch = {0};
         int wake_count =
-            futex_wake_locked(src_bucket, &src_key, val, 0xFFFFFFFF);
+            futex_wake_locked(src_bucket, &src_key, val, 0xFFFFFFFF, &batch);
         int requeue_count = 0;
 
         if (nr_requeue > 0) {
@@ -819,6 +941,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
         if (src_bucket_id != dst_bucket_id)
             spin_unlock(&dst_bucket->lock);
         spin_unlock(&src_bucket->lock);
+        futex_wake_batch_run(&batch);
         return wake_count + requeue_count;
     }
     default:

@@ -30,6 +30,8 @@ typedef enum virtio_device_type {
 
 struct virtio_driver;
 typedef struct virtio_driver virtio_driver_t;
+struct netdev;
+typedef struct netdev netdev_t;
 
 typedef struct virtio_driver_op {
     virtio_driver_t *(*init)(
@@ -74,6 +76,7 @@ typedef struct virtio_net_device {
     void *tx_buffers[64];
     uint32_t tx_buffer_sizes[64];
     spinlock_t send_recv_lock;
+    netdev_t *netdev;
 } virtio_net_device_t;
 
 uint64_t virtio_begin_init(virtio_driver_t *driver,

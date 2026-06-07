@@ -24,6 +24,13 @@ static spinlock_t drm_event_node_bindings_lock = SPIN_INIT;
 static drm_device_t *drm_devices[DRM_MAX_TRACKED_DEVICES];
 static spinlock_t drm_devices_lock = SPIN_INIT;
 
+static void drm_event_file_from_node(vfs_node_t *node, struct vfs_file *file) {
+    memset(file, 0, sizeof(*file));
+    file->f_inode = node;
+    file->node = node;
+    file->f_op = node ? node->i_fop : NULL;
+}
+
 static bool drm_queue_ready_event_locked(drm_device_t *dev, uint32_t type,
                                          uint64_t user_data,
                                          uint64_t timestamp_ns,
@@ -238,23 +245,28 @@ ssize_t drm_read(void *data, void *buf, uint64_t offset, uint64_t len,
         }
 
         const uint32_t want = EPOLLIN | EPOLLERR | EPOLLHUP;
-        int events = vfs_poll(event_node, want);
-        if (!(events & want)) {
-            if (task_signal_has_deliverable(current_task)) {
-                -EINTR;
-            }
+        struct vfs_file event_file;
+        drm_event_file_from_node(event_node, &event_file);
+        int events = vfs_poll(&event_file, want);
+        if (events < 0) {
+            vfs_iput(event_node);
+            return events;
+        }
 
-            arch_enable_interrupt();
-            arch_wait_for_interrupt();
-            arch_disable_interrupt();
+        if (events & (EPOLLERR | EPOLLHUP)) {
+            vfs_iput(event_node);
+            return -EIO;
+        }
 
+        if (!(events & EPOLLIN)) {
+            int reason = vfs_poll_wait_interruptible(&event_file, want);
+            vfs_iput(event_node);
+            if (reason < 0)
+                return reason;
             continue;
         }
 
         vfs_iput(event_node);
-        if (events & (EPOLLERR | EPOLLHUP)) {
-            return -EIO;
-        }
     }
 
     struct drm_event_vblank vbl = {

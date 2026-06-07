@@ -1,7 +1,101 @@
 #include "fs/vfs/vfs_internal.h"
 #include "fs/vfs/notify.h"
 #include "task/task.h"
+#include <arch/arch.h>
 #include <mm/mm.h>
+#include <task/signal.h>
+
+static inline uint32_t vfs_poll_expand_events(uint32_t events) {
+    if (events & EPOLLIN)
+        events |= EPOLLRDNORM;
+    if (events & EPOLLRDNORM)
+        events |= EPOLLIN;
+    if (events & EPOLLOUT)
+        events |= EPOLLWRNORM;
+    if (events & EPOLLWRNORM)
+        events |= EPOLLOUT;
+    return events;
+}
+
+static void vfs_poll_table_queue_proc(struct vfs_file *file,
+                                      struct vfs_poll_table *pt) {
+    vfs_poll_wait_table_t *table;
+    vfs_poll_wait_entry_t *entry;
+
+    if (!file || !file->f_inode || !pt || !pt->private_data)
+        return;
+
+    table = (vfs_poll_wait_table_t *)pt->private_data;
+    if (table->error)
+        return;
+
+    entry = calloc(1, sizeof(*entry));
+    if (!entry) {
+        table->error = -ENOMEM;
+        return;
+    }
+
+    entry->inode = vfs_igrab(file->f_inode);
+    if (!entry->inode) {
+        free(entry);
+        table->error = -EBADF;
+        return;
+    }
+
+    llist_init_head(&entry->node);
+    wait_queue_entry_init(&entry->wait, table->task, pt->events, NULL, table);
+    wait_queue_add(&entry->inode->poll_wait, &entry->wait);
+    llist_append(&table->entries, &entry->node);
+}
+
+void vfs_poll_wait_table_init(vfs_poll_wait_table_t *table, task_t *task) {
+    if (!table)
+        return;
+
+    memset(table, 0, sizeof(*table));
+    table->pt.queue_proc = vfs_poll_table_queue_proc;
+    table->pt.private_data = table;
+    table->task = task;
+    llist_init_head(&table->entries);
+    task_prepare_block(task);
+}
+
+void vfs_poll_wait_table_cleanup(vfs_poll_wait_table_t *table) {
+    vfs_poll_wait_entry_t *entry, *tmp;
+
+    if (!table)
+        return;
+
+    llist_for_each(entry, tmp, &table->entries, node) {
+        wait_queue_remove(&entry->inode->poll_wait, &entry->wait);
+        llist_delete(&entry->node);
+        vfs_iput(entry->inode);
+        free(entry);
+    }
+    task_cancel_block_prepare(table->task);
+}
+
+int vfs_poll_wait_table_error(vfs_poll_wait_table_t *table) {
+    return table ? table->error : -EINVAL;
+}
+
+void vfs_poll_wait(struct vfs_file *file, struct vfs_poll_table *pt) {
+    if (!pt || !pt->queue_proc)
+        return;
+    pt->queue_proc(file, pt);
+}
+
+void vfs_poll_notify_inode(struct vfs_inode *inode, uint32_t events) {
+    if (!inode || !events)
+        return;
+    wait_queue_wake_all(&inode->poll_wait, vfs_poll_expand_events(events), EOK);
+}
+
+void vfs_poll_notify_file(struct vfs_file *file, uint32_t events) {
+    if (!file)
+        return;
+    vfs_poll_notify_inode(file->f_inode, events);
+}
 
 static unsigned int vfs_open_lookup_flags(const struct vfs_open_how *how) {
     unsigned int flags = 0;
@@ -568,16 +662,61 @@ int vfs_fsync_file(struct vfs_file *file) {
     return file->f_op->fsync(file, 0, (loff_t)file->f_inode->i_size, 0);
 }
 
-uint32_t vfs_poll(vfs_node_t *node, uint32_t events) {
-    struct vfs_file fake = {0};
+int vfs_poll(struct vfs_file *file, uint32_t events) {
+    return vfs_poll_with_table(file, events, NULL);
+}
 
-    if (!node || !node->i_fop || !node->i_fop->poll)
+int vfs_poll_with_table(struct vfs_file *file, uint32_t events,
+                        struct vfs_poll_table *pt) {
+    if (!file || !file->f_op || !file->f_op->poll)
         return -ENOTSUP;
 
-    fake.f_op = node->i_fop;
-    fake.f_inode = node;
-    fake.node = node;
-    return node->i_fop->poll(&fake, NULL) & events;
+    uint32_t request_events = events | EPOLLERR | EPOLLHUP | EPOLLNVAL;
+    uint32_t wait_events = vfs_poll_expand_events(request_events);
+    if (pt) {
+        pt->events = wait_events;
+        vfs_poll_wait(file, pt);
+    }
+
+    return (int)(vfs_poll_expand_events(file->f_op->poll(file, pt)) &
+                 request_events);
+}
+
+int vfs_poll_wait_interruptible(struct vfs_file *file, uint32_t events) {
+    while (true) {
+        vfs_poll_wait_table_t table;
+        vfs_poll_wait_table_init(&table, current_task);
+
+        int polled = vfs_poll_with_table(file, events, &table.pt);
+        int table_error = vfs_poll_wait_table_error(&table);
+        if (table_error) {
+            vfs_poll_wait_table_cleanup(&table);
+            return table_error;
+        }
+        if (polled < 0) {
+            vfs_poll_wait_table_cleanup(&table);
+            return polled;
+        }
+        if (vfs_poll_expand_events((uint32_t)polled) &
+            vfs_poll_expand_events(events)) {
+            vfs_poll_wait_table_cleanup(&table);
+            return EOK;
+        }
+
+        if (task_signal_has_deliverable(current_task)) {
+            vfs_poll_wait_table_cleanup(&table);
+            return -EINTR;
+        }
+
+        int reason =
+            task_block(current_task, TASK_BLOCKING, -1, "vfs_poll_wait");
+        vfs_poll_wait_table_cleanup(&table);
+
+        if (reason == ETIMEDOUT)
+            return -ETIMEDOUT;
+        if (reason != EOK && task_signal_has_deliverable(current_task))
+            return -EINTR;
+    }
 }
 
 int vfs_truncate_path(const struct vfs_path *path, uint64_t size) {

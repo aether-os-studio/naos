@@ -277,6 +277,7 @@ void sched_check_wakeup();
 uint64_t sched_next_wakeup_ns(void);
 void sched_request_resched(task_t *task);
 void sched_resched_if_needed(void);
+void task_wait_poll_loop(void);
 void sched_refresh_preempt_deadline(uint32_t cpu_id, task_t *task,
                                     uint64_t now_ns);
 
@@ -330,6 +331,8 @@ uint64_t task_exit(int64_t code);
 int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
                const char *blocking_reason);
 void task_unblock(task_t *task, int reason);
+void task_prepare_block(task_t *task);
+void task_cancel_block_prepare(task_t *task);
 void task_membarrier_checkpoint(task_t *task);
 
 void futex_init();

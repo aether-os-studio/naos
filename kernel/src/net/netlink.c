@@ -7,6 +7,7 @@
 #include <fs/proc.h>
 #include <net/netdev.h>
 #include <net/real_socket.h>
+#include <net/socket.h>
 #include <bpf/socket_filter.h>
 #include <init/callbacks.h>
 
@@ -47,9 +48,9 @@ static ssize_t netlink_read_op(fd_t *fd, void *buf, size_t offset,
 static ssize_t netlink_write_op(fd_t *fd, const void *buf, size_t offset,
                                 size_t count);
 int netlink_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg);
-int netlink_poll(vfs_node_t *node, size_t events);
-static int netlink_wait_sock(struct netlink_sock *sock, uint32_t events,
-                             const char *reason);
+int netlink_poll(fd_t *fd, size_t events);
+static int netlink_wait_file(fd_t *file, struct netlink_sock *sock,
+                             uint32_t events, const char *reason);
 static bool netlink_buffer_has_msg(struct netlink_sock *sock);
 static size_t netlink_buffer_peek_msg_len(struct netlink_sock *sock);
 static size_t netlink_deliver_to_socket(struct netlink_sock *target,
@@ -2325,7 +2326,7 @@ static int netlink_wait_for_message(struct netlink_sock *sock, fd_t *file,
         return -EAGAIN;
 
     while (!has_msg) {
-        int ret = netlink_wait_sock(sock, EPOLLIN, reason);
+        int ret = netlink_wait_file(file, sock, EPOLLIN, reason);
         if (ret != EOK)
             return ret < 0 ? ret : -EINTR;
         has_msg = netlink_buffer_has_msg(sock);
@@ -2604,26 +2605,24 @@ static uint32_t netlink_resolve_portid_locked(struct netlink_sock *self,
     return candidate;
 }
 
-static int netlink_wait_sock(struct netlink_sock *sock, uint32_t events,
-                             const char *reason) {
-    if (!sock || !sock->node || !current_task)
+static int netlink_wait_file(fd_t *file, struct netlink_sock *sock,
+                             uint32_t events, const char *reason) {
+    if (!file || !sock || !current_task)
         return -EINVAL;
 
     const uint32_t want = events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
 
-    uint32_t polled;
-
     while (true) {
-        polled = vfs_poll(sock->node, want);
-        if (polled & (int)want)
+        int polled = vfs_poll(file, want);
+        if (polled < 0)
+            return polled;
+
+        if (polled & want)
             return EOK;
 
-        if (task_signal_has_deliverable(current_task))
-            return -EINTR;
-
-        arch_enable_interrupt();
-        arch_wait_for_interrupt();
-        arch_disable_interrupt();
+        int reason = vfs_poll_wait_interruptible(file, want);
+        if (reason < 0)
+            return reason;
     }
 }
 
@@ -3558,7 +3557,8 @@ int netlink_socket(int domain, int type, int protocol) {
     if (domain != AF_NETLINK) {
         return -EAFNOSUPPORT;
     }
-    if ((type & 0xF) != SOCK_RAW && (type & 0xF) != SOCK_DGRAM) {
+    int sock_type = type & SOCK_TYPE_MASK;
+    if (sock_type != SOCK_RAW && sock_type != SOCK_DGRAM) {
         return -ESOCKTNOSUPPORT;
     }
 
@@ -3569,7 +3569,7 @@ int netlink_socket(int domain, int type, int protocol) {
     memset(nl_sk, 0, sizeof(struct netlink_sock));
 
     nl_sk->domain = domain;
-    nl_sk->type = type & 0xF;
+    nl_sk->type = sock_type;
     nl_sk->protocol = protocol;
     nl_sk->portid = (uint32_t)current_task->pid;
     nl_sk->groups = 0;
@@ -3625,7 +3625,7 @@ int netlink_socket(int domain, int type, int protocol) {
     }
 
     uint64_t flags = 0;
-    if (type & O_NONBLOCK) {
+    if (type & SOCK_NONBLOCK_FLAG) {
         flags |= O_NONBLOCK;
     }
 
@@ -3643,7 +3643,7 @@ int netlink_socket(int domain, int type, int protocol) {
 
     nl_sk->node = vfs_igrab(file->f_inode);
     ret = task_install_file(current_task, file,
-                            (type & O_CLOEXEC) ? FD_CLOEXEC : 0, 0);
+                            (type & SOCK_CLOEXEC_FLAG) ? FD_CLOEXEC : 0, 0);
     vfs_file_put(file);
 
     if (ret < 0) {
@@ -3661,8 +3661,8 @@ int netlink_socket_pair(int type, int protocol, int *sv) {
     return -EOPNOTSUPP;
 }
 
-int netlink_poll(vfs_node_t *node, size_t events) {
-    socket_handle_t *handle = sockfs_inode_socket_handle(node);
+int netlink_poll(fd_t *fd, size_t events) {
+    socket_handle_t *handle = sockfs_file_handle(fd);
     if (handle == NULL || handle->sock == NULL) {
         return EPOLLERR;
     }
@@ -3671,15 +3671,15 @@ int netlink_poll(vfs_node_t *node, size_t events) {
 
     int revents = 0;
 
-    if (events & EPOLLIN) {
+    if (events & (EPOLLIN | EPOLLRDNORM)) {
         bool has_msg = netlink_buffer_has_msg(nl_sk);
         if (has_msg) {
-            revents |= EPOLLIN;
+            revents |= EPOLLIN | EPOLLRDNORM;
         }
     }
 
-    if (events & EPOLLOUT) {
-        revents |= EPOLLOUT;
+    if (events & (EPOLLOUT | EPOLLWRNORM)) {
+        revents |= EPOLLOUT | EPOLLWRNORM;
     }
 
     return revents;

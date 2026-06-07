@@ -146,6 +146,19 @@ struct statx_timestamp {
     int32_t __reserved;
 };
 
+#define STATX_TYPE 0x00000001U
+#define STATX_MODE 0x00000002U
+#define STATX_NLINK 0x00000004U
+#define STATX_UID 0x00000008U
+#define STATX_GID 0x00000010U
+#define STATX_ATIME 0x00000020U
+#define STATX_MTIME 0x00000040U
+#define STATX_CTIME 0x00000080U
+#define STATX_INO 0x00000100U
+#define STATX_SIZE 0x00000200U
+#define STATX_BLOCKS 0x00000400U
+#define STATX_BASIC_STATS 0x000007ffU
+#define STATX_BTIME 0x00000800U
 #define STATX_MNT_ID 0x00001000U
 #define STATX_DIOALIGN 0x00002000U
 #define STATX_MNT_ID_UNIQUE 0x00004000U
@@ -257,15 +270,15 @@ __attribute__((__packed__))
 typedef struct epoll_watch {
     struct llist_header node;
     struct vfs_file *file;
+    struct epoll *owner;
+    wait_queue_entry_t wait;
+    bool wait_armed;
     uint32_t events;
+    uint32_t last_ready_events;
     uint64_t data;
-    bool edge_trigger;
+    bool edge_triggered;
     bool one_shot;
     bool disabled;
-    uint32_t last_events;
-    uint64_t last_seq_in;
-    uint64_t last_seq_out;
-    uint64_t last_seq_pri;
 } epoll_watch_t;
 
 typedef struct epoll {
@@ -301,6 +314,7 @@ struct itimerspec {
 
 typedef struct eventfd {
     vfs_node_t *node;
+    spinlock_t lock;
     uint64_t count;
     int flags;
 } eventfd_t;

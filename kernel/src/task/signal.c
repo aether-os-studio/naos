@@ -7,6 +7,7 @@
 #include <task/task.h>
 #include <mm/mm.h>
 #include <mm/page.h>
+#include <irq/irq_manager.h>
 
 #include <init/callbacks.h>
 
@@ -196,6 +197,54 @@ static bool signal_should_wake_task_locked(task_t *task, int sig) {
     return !signal_action_ignored(sig, action);
 }
 
+static bool signal_has_signalfd_waiter(task_t *task, int sig) {
+    fd_info_t *fd_info;
+    bool matched = false;
+
+    if (!task || !signal_sig_in_range(sig))
+        return false;
+
+    fd_info = task_fd_info_get(task);
+    if (!fd_info)
+        return false;
+
+    with_fd_info_lock(
+        fd_info, ({
+            signalfd_ref_t *ref, *tmp;
+            llist_for_each(ref, tmp, &fd_info->signalfd_refs, node) {
+                if (ref->file && signalfd_mask_contains(ref->file, sig)) {
+                    matched = true;
+                    break;
+                }
+            }
+        }));
+
+    task_fd_info_put(fd_info, task);
+    return matched;
+}
+
+static void signal_notify_signalfd_waiters(task_t *task, int sig) {
+    fd_info_t *fd_info;
+
+    if (!task || !signal_sig_in_range(sig))
+        return;
+
+    fd_info = task_fd_info_get(task);
+    if (!fd_info)
+        return;
+
+    with_fd_info_lock(
+        fd_info, ({
+            signalfd_ref_t *ref, *tmp;
+            llist_for_each(ref, tmp, &fd_info->signalfd_refs, node) {
+                if (ref->file && signalfd_mask_contains(ref->file, sig))
+                    vfs_poll_notify_file(ref->file, EPOLLIN | EPOLLRDNORM);
+            }
+        }));
+
+    task_fd_info_put(fd_info, task);
+}
+
 static bool signal_should_wake_task(task_t *task, int sig) {
     if (!task || !task->signal || !task->signal->sighand ||
         !signal_sig_in_range(sig)) {
@@ -214,13 +263,18 @@ static inline void signal_wake_interruptible_task(task_t *task, int sig) {
     if (!task || !signal_sig_in_range(sig))
         return;
 
-    if (task->state != TASK_BLOCKING && task->state != TASK_READING_STDIO)
+    bool signalfd_waiter = signal_has_signalfd_waiter(task, sig);
+    if (signalfd_waiter)
+        signal_notify_signalfd_waiters(task, sig);
+    if (!signal_should_wake_task(task, sig) && !signalfd_waiter)
         return;
 
-    if (!signal_should_wake_task(task, sig))
-        return;
-
-    task_unblock(task, 128 + sig);
+    if (task->state == TASK_BLOCKING || task->state == TASK_READING_STDIO) {
+        task_unblock(task, 128 + sig);
+    } else if (signalfd_waiter && task->cpu_id < cpu_count &&
+               task->cpu_id != current_cpu_id) {
+        irq_trigger_sched_ipi(task->cpu_id);
+    }
 }
 
 static inline int signal_pick_from_set_locked(task_t *task, sigset_t set) {
@@ -508,6 +562,86 @@ bool task_signal_has_deliverable(task_t *task) {
     return deliverable;
 }
 
+static void signal_fill_signalfd_siginfo(struct signalfd_siginfo *sinfo,
+                                         int sig, const siginfo_t *info) {
+    memset(sinfo, 0, sizeof(*sinfo));
+    sinfo->ssi_signo = info ? info->si_signo : sig;
+    sinfo->ssi_errno = info ? info->si_errno : 0;
+    sinfo->ssi_code = info ? info->si_code : SI_KERNEL;
+
+    if (!info) {
+        sinfo->ssi_pid = current_task ? current_task->pid : 0;
+        sinfo->ssi_uid = current_task ? current_task->uid : 0;
+        return;
+    }
+
+    switch (sig) {
+    case SIGCHLD:
+        sinfo->ssi_pid = info->_sifields._sigchld._pid;
+        sinfo->ssi_uid = info->_sifields._sigchld._uid;
+        sinfo->ssi_status = info->_sifields._sigchld._status;
+        sinfo->ssi_utime = (uint64_t)info->_sifields._sigchld._utime;
+        sinfo->ssi_stime = (uint64_t)info->_sifields._sigchld._stime;
+        break;
+    case SIGSEGV:
+    case SIGBUS:
+    case SIGILL:
+    case SIGFPE:
+    case SIGTRAP:
+        sinfo->ssi_addr = (uint64_t)info->_sifields._sigfault._addr;
+        break;
+    default:
+        if (info->si_code == SI_QUEUE || info->si_code == SI_TIMER ||
+            info->si_code == SI_MESGQ || info->si_code == SI_ASYNCIO) {
+            sinfo->ssi_pid = info->_sifields._rt._pid;
+            sinfo->ssi_uid = info->_sifields._rt._uid;
+            sinfo->ssi_int = info->_sifields._rt._sigval.sival_int;
+            sinfo->ssi_ptr = (uint64_t)info->_sifields._rt._sigval.sival_ptr;
+        } else {
+            sinfo->ssi_pid = info->_sifields._kill._pid;
+            sinfo->ssi_uid = info->_sifields._kill._uid;
+        }
+        break;
+    }
+}
+
+bool task_signal_has_pending_in_set(task_t *task, sigset_t user_mask) {
+    if (!task || !task->signal || !task->signal->sighand) {
+        return false;
+    }
+
+    sigset_t wait_set = sigset_user_to_kernel(user_mask);
+    bool pending = false;
+    spin_lock(&task->signal->sighand->siglock);
+    pending = signal_pick_from_set_locked(task, wait_set) != 0;
+    spin_unlock(&task->signal->sighand->siglock);
+    return pending;
+}
+
+bool task_signal_take_signalfd(task_t *task, sigset_t user_mask,
+                               struct signalfd_siginfo *sinfo) {
+    if (!task || !task->signal || !task->signal->sighand || !sinfo) {
+        return false;
+    }
+
+    sigset_t wait_set = sigset_user_to_kernel(user_mask);
+    siginfo_t info;
+    int sig;
+
+    spin_lock(&task->signal->sighand->siglock);
+    sig = signal_pick_from_set_locked(task, wait_set);
+    if (sig) {
+        signal_take_pending_locked(task, sig, &info);
+    }
+    spin_unlock(&task->signal->sighand->siglock);
+
+    if (!sig)
+        return false;
+
+    signal_fill_signalfd_siginfo(sinfo, sig, &info);
+    return true;
+}
+
 uint64_t sys_ssetmask(int how, const sigset_t *nset, sigset_t *oset,
                       size_t sigsetsize) {
     if (!signal_sigset_size_valid(sigsetsize)) {
@@ -759,6 +893,8 @@ uint64_t sys_rt_sigtimedwait(const sigset_t *uthese, siginfo_t *uinfo,
 
         arch_wait_for_interrupt();
     }
+
+    arch_disable_interrupt();
 }
 
 uint64_t sys_rt_sigqueueinfo(uint64_t tgid, uint64_t sig, siginfo_t *info) {

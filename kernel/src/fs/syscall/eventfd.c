@@ -214,34 +214,26 @@ static ssize_t eventfdfs_read(struct vfs_file *file, void *buf, size_t count,
         return -EINVAL;
 
     while (true) {
-        uint64_t old_count = __atomic_load_n(&efd->count, __ATOMIC_ACQUIRE);
+        spin_lock(&efd->lock);
+        uint64_t old_count = efd->count;
         if (old_count != 0) {
             value = (efd->flags & EFD_SEMAPHORE) ? 1 : old_count;
-            uint64_t new_count = old_count - value;
-            uint64_t expected = old_count;
-            if (__atomic_compare_exchange_n(&efd->count, &expected, new_count,
-                                            false, __ATOMIC_ACQ_REL,
-                                            __ATOMIC_ACQUIRE)) {
-                memcpy(buf, &value, sizeof(uint64_t));
-                return sizeof(uint64_t);
-            }
-            continue;
+            efd->count = old_count - value;
+            spin_unlock(&efd->lock);
+
+            vfs_poll_notify_inode(node, EPOLLOUT | EPOLLWRNORM);
+            memcpy(buf, &value, sizeof(uint64_t));
+            return sizeof(uint64_t);
         }
+        spin_unlock(&efd->lock);
 
         if (file->f_flags & O_NONBLOCK)
             return -EAGAIN;
 
-        if (task_signal_has_deliverable(current_task)) {
-            return -EINTR;
-        }
-
-        if (vfs_poll(file->f_inode, EPOLLIN) & EPOLLIN) {
-            continue;
-        }
-
-        arch_enable_interrupt();
-        arch_wait_for_interrupt();
-        arch_disable_interrupt();
+        int reason = vfs_poll_wait_interruptible(
+            file, EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLNVAL);
+        if (reason < 0)
+            return reason;
     }
 }
 
@@ -263,34 +255,27 @@ static ssize_t eventfdfs_write(struct vfs_file *file, const void *buf,
         return -EINVAL;
 
     while (true) {
-        uint64_t old_count = __atomic_load_n(&efd->count, __ATOMIC_ACQUIRE);
+        spin_lock(&efd->lock);
+        uint64_t old_count = efd->count;
         if (old_count > UINT64_MAX - 1 - value) {
+            spin_unlock(&efd->lock);
             if (file->f_flags & O_NONBLOCK)
                 return -EAGAIN;
 
-            if (task_signal_has_deliverable(current_task)) {
-                return -EINTR;
-            }
-
-            if (vfs_poll(file->f_inode, EPOLLOUT) & EPOLLOUT) {
-                continue;
-            }
-
-            arch_enable_interrupt();
-            arch_wait_for_interrupt();
-            arch_disable_interrupt();
+            int reason = vfs_poll_wait_interruptible(
+                file, EPOLLOUT | EPOLLERR | EPOLLHUP | EPOLLNVAL);
+            if (reason < 0)
+                return reason;
 
             continue;
         }
 
-        uint64_t new_count = old_count + value;
-        uint64_t expected = old_count;
-        if (__atomic_compare_exchange_n(&efd->count, &expected, new_count,
-                                        false, __ATOMIC_ACQ_REL,
-                                        __ATOMIC_ACQUIRE))
-            break;
+        efd->count = old_count + value;
+        spin_unlock(&efd->lock);
+        break;
     }
 
+    vfs_poll_notify_inode(node, EPOLLIN | EPOLLRDNORM);
     return sizeof(uint64_t);
 }
 
@@ -303,13 +288,15 @@ static __poll_t eventfdfs_poll(struct vfs_file *file,
     if (!efd)
         return EPOLLNVAL;
 
-    count = __atomic_load_n(&efd->count, __ATOMIC_ACQUIRE);
+    spin_lock(&efd->lock);
+    count = efd->count;
+    spin_unlock(&efd->lock);
 
     __poll_t revents = 0;
     if (count > 0)
-        revents |= EPOLLIN;
+        revents |= EPOLLIN | EPOLLRDNORM;
     if (count < UINT64_MAX - 1)
-        revents |= EPOLLOUT;
+        revents |= EPOLLOUT | EPOLLWRNORM;
     return revents;
 }
 
@@ -383,6 +370,7 @@ int eventfd_create_file(struct vfs_file **out_file, uint64_t initial_val,
     inode->i_private = efd;
 
     efd->count = initial_val;
+    spin_init(&efd->lock);
     efd->flags = flags & EFD_SEMAPHORE;
     efd->node = inode;
 

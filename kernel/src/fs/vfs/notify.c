@@ -195,7 +195,15 @@ static bool notifyfs_handle_queue_event(notifyfs_handle_t *handle, int wd,
 
     notifyfs_event_free(event);
     notifyfs_event_free(overflow);
+
     return queued;
+}
+
+static void notifyfs_signal_owner(notifyfs_watch_t *watch) {
+    if (!watch || !watch->owner_inode)
+        return;
+
+    vfs_poll_notify_inode(watch->owner_inode, EPOLLIN | EPOLLRDNORM);
 }
 
 static notifyfs_watch_bucket_entry_t *
@@ -302,8 +310,9 @@ static void notifyfs_watch_deactivate_locked(notifyfs_watch_t *watch,
     if (!queue_ignored)
         return;
 
-    notifyfs_handle_queue_event(watch->handle, (int)watch->wd, NULL, IN_IGNORED,
-                                0);
+    if (notifyfs_handle_queue_event(watch->handle, (int)watch->wd, NULL,
+                                    IN_IGNORED, 0))
+        notifyfs_signal_owner(watch);
 }
 
 static void
@@ -319,8 +328,9 @@ notifyfs_watch_deactivate_bucket_locked(notifyfs_watch_t *watch,
     if (!queue_ignored)
         return;
 
-    notifyfs_handle_queue_event(watch->handle, (int)watch->wd, NULL, IN_IGNORED,
-                                0);
+    if (notifyfs_handle_queue_event(watch->handle, (int)watch->wd, NULL,
+                                    IN_IGNORED, 0))
+        notifyfs_signal_owner(watch);
 }
 
 static void notifyfs_free_watch(notifyfs_watch_t *watch) {
@@ -590,6 +600,7 @@ bool notifyfs_queue_inode_event(struct vfs_inode *watch_inode,
                                          event_mask, cookie))
             continue;
 
+        notifyfs_signal_owner(watch);
         queued = true;
 
         if (watch->mask & IN_ONESHOT)
@@ -610,13 +621,9 @@ bool notifyfs_queue_inode_event(struct vfs_inode *watch_inode,
 static ssize_t notifyfs_read(struct vfs_file *file, void *addr, size_t size,
                              loff_t *ppos) {
     notifyfs_handle_t *handle;
-    struct vfs_inode *owner_inode;
 
     (void)ppos;
     handle = notifyfs_file_handle(file);
-    owner_inode = file ? file->f_inode : NULL;
-    if (!handle || !owner_inode)
-        return -EINVAL;
 
     for (;;) {
         struct llist_header stale_watches;
@@ -631,17 +638,10 @@ static ssize_t notifyfs_read(struct vfs_file *file, void *addr, size_t size,
         if (fd_get_flags(file) & O_NONBLOCK)
             return -EWOULDBLOCK;
 
-        if (task_signal_has_deliverable(current_task)) {
-            return -EINTR;
-        }
-
-        if (vfs_poll(owner_inode, EPOLLIN) & EPOLLIN) {
-            continue;
-        }
-
-        arch_enable_interrupt();
-        arch_wait_for_interrupt();
-        arch_disable_interrupt();
+        int reason = vfs_poll_wait_interruptible(
+            file, EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLNVAL);
+        if (reason < 0)
+            return reason;
     }
 }
 

@@ -270,6 +270,7 @@ void timerfd_softirq(void) {
                 if (!notify_node)
                     continue;
 
+                vfs_poll_notify_inode(notify_node, EPOLLIN | EPOLLRDNORM);
                 vfs_iput(notify_node);
             }
         }
@@ -441,9 +442,27 @@ static int timerfdfs_open(struct vfs_inode *inode, struct vfs_file *file) {
 }
 
 static int timerfdfs_release(struct vfs_inode *inode, struct vfs_file *file) {
-    (void)inode;
+    timerfd_t *tfd = timerfd_file_handle(file);
+    vfs_node_t *node = NULL;
+
     if (file)
         file->private_data = NULL;
+    if (!tfd)
+        return 0;
+
+    spin_lock(timerfd_tree_lock_for_clock(tfd->timer.clock_type));
+    spin_lock(&tfd->lock);
+    timerfd_timeout_remove_locked(tfd);
+    node = tfd->node;
+    tfd->node = NULL;
+    spin_unlock(&tfd->lock);
+    spin_unlock(timerfd_tree_lock_for_clock(tfd->timer.clock_type));
+
+    if (node) {
+        vfs_poll_notify_inode(node, EPOLLHUP | EPOLLERR);
+        vfs_iput(node);
+    }
+    (void)inode;
     return 0;
 }
 
@@ -493,7 +512,6 @@ static int timerfdfs_create_file(struct vfs_file **out_file, int clockid,
     inode->i_nlink = 1;
     inode->i_fop = &timerfdfs_file_ops;
     inode->i_private = tfd;
-    tfd->node = inode;
 
     snprintf(label, sizeof(label), "timerfd-%llu",
              (unsigned long long)inode->i_ino);
@@ -520,6 +538,7 @@ static int timerfdfs_create_file(struct vfs_file **out_file, int clockid,
     }
 
     file->private_data = tfd;
+    tfd->node = vfs_igrab(inode);
     *out_file = file;
     if (out_tfd)
         *out_tfd = tfd;
@@ -618,6 +637,7 @@ uint64_t sys_timerfd_settime(int fd, int flags,
     if (raise_softirq) {
         softirq_raise(SOFTIRQ_TIMERFD);
         sched_wake_worker(current_cpu_id);
+        vfs_poll_notify_inode(tfd->node, EPOLLIN | EPOLLRDNORM);
     }
 
     vfs_file_put(file);
@@ -642,7 +662,7 @@ static __poll_t timerfdfs_poll(struct vfs_file *file,
             timerfd_refresh_due(tfd, clock_type, now, &count, &expires);
     }
 
-    return ((count > 0) ? EPOLLIN : 0);
+    return ((count > 0) ? (EPOLLIN | EPOLLRDNORM) : 0);
 }
 
 static ssize_t timerfdfs_read(struct vfs_file *file, void *addr, size_t size,
@@ -673,20 +693,10 @@ static ssize_t timerfdfs_read(struct vfs_file *file, void *addr, size_t size,
             if (file->f_flags & O_NONBLOCK) {
                 return -EAGAIN;
             } else {
-                if (task_signal_has_deliverable(current_task)) {
-                    return -EINTR;
-                }
-
-                if (vfs_poll(file->f_inode, EPOLLIN) & EPOLLIN) {
-                    continue;
-                }
-
-                bool irq = arch_interrupt_enabled();
-                arch_enable_interrupt();
-                arch_wait_for_interrupt();
-                if (!irq)
-                    arch_disable_interrupt();
-
+                int reason = vfs_poll_wait_interruptible(
+                    file, EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLNVAL);
+                if (reason < 0)
+                    return reason;
                 continue;
             }
         }
@@ -739,6 +749,8 @@ static long timerfdfs_ioctl(struct vfs_file *file, unsigned long cmd,
         spin_lock(&tfd->lock);
         tfd->count = arg;
         spin_unlock(&tfd->lock);
+        if (arg)
+            vfs_poll_notify_file(file, EPOLLIN | EPOLLRDNORM);
         return 0;
     default:
         printk("timerfd_ioctl: Unsupported cmd %#018lx\n", cmd);

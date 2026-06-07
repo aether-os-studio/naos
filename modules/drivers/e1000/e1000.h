@@ -128,6 +128,7 @@ typedef struct e1000_device {
     uint16_t tx_lengths[E1000_NUM_TX_DESC];
     uint16_t tx_head;
     uint16_t tx_tail;
+    netdev_t *netdev;
 } e1000_device_t;
 
 // Function prototypes

@@ -56,11 +56,16 @@ typedef enum signal_internal {
 
 struct task;
 typedef struct task task_t;
+struct signalfd_siginfo;
 
 void task_fill_siginfo(siginfo_t *info, int sig, int code);
 void task_send_signal(task_t *task, int sig, int code);
 void task_commit_signal(task_t *task, int sig, siginfo_t *info);
 bool task_signal_has_deliverable(task_t *task);
+bool task_signal_has_pending_in_set(task_t *task, sigset_t user_mask);
+bool task_signal_take_signalfd(task_t *task, sigset_t user_mask,
+                               struct signalfd_siginfo *sinfo);
+bool signalfd_mask_contains(struct vfs_file *file, int sig);
 
 #define SIG_BLOCK 0   /* for blocking signals */
 #define SIG_UNBLOCK 1 /* for unblocking signals */

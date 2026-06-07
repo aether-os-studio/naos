@@ -6,6 +6,7 @@
 #include <libs/llist.h>
 #include <libs/mutex.h>
 #include <libs/rbtree.h>
+#include <task/wait.h>
 
 #ifndef AT_REMOVEDIR
 #define AT_REMOVEDIR 0x200
@@ -281,7 +282,21 @@ struct vfs_dir_context {
 struct vfs_poll_table {
     void (*queue_proc)(struct vfs_file *file, struct vfs_poll_table *pt);
     void *private_data;
+    uint32_t events;
 };
+
+typedef struct vfs_poll_wait_entry {
+    struct llist_header node;
+    struct vfs_inode *inode;
+    wait_queue_entry_t wait;
+} vfs_poll_wait_entry_t;
+
+typedef struct vfs_poll_wait_table {
+    struct vfs_poll_table pt;
+    task_t *task;
+    struct llist_header entries;
+    int error;
+} vfs_poll_wait_table_t;
 
 /**
  * Page-cache style operations for filesystems that back inodes with pageable
@@ -454,11 +469,7 @@ struct vfs_inode {
     struct llist_header i_dentry_aliases;
     struct llist_header i_sb_list;
     vfs_ref_t i_ref;
-    spinlock_t poll_waiters_lock;
-    struct llist_header poll_waiters;
-    uint64_t poll_seq_in;
-    uint64_t poll_seq_out;
-    uint64_t poll_seq_pri;
+    wait_queue_head_t poll_wait;
 };
 
 #define VFS_FMODE_WRITE_ACCESS (1U << 0)
@@ -826,7 +837,16 @@ long vfs_ioctl_file(struct vfs_file *file, unsigned long cmd,
                     unsigned long arg);
 int vfs_fsync_file(struct vfs_file *file);
 int vfs_truncate_path(const struct vfs_path *path, uint64_t size);
-uint32_t vfs_poll(vfs_node_t *node, uint32_t events);
+int vfs_poll(struct vfs_file *file, uint32_t events);
+int vfs_poll_with_table(struct vfs_file *file, uint32_t events,
+                        struct vfs_poll_table *pt);
+void vfs_poll_wait(struct vfs_file *file, struct vfs_poll_table *pt);
+void vfs_poll_wait_table_init(vfs_poll_wait_table_t *table, task_t *task);
+void vfs_poll_wait_table_cleanup(vfs_poll_wait_table_t *table);
+int vfs_poll_wait_table_error(vfs_poll_wait_table_t *table);
+void vfs_poll_notify_inode(struct vfs_inode *inode, uint32_t events);
+void vfs_poll_notify_file(struct vfs_file *file, uint32_t events);
+int vfs_poll_wait_interruptible(struct vfs_file *file, uint32_t events);
 
 int vfs_mkdirat(int dfd, const char *pathname, umode_t mode, bool kernel);
 int vfs_mknodat(int dfd, const char *pathname, umode_t mode, dev64_t dev,

@@ -1085,24 +1085,30 @@ static void devtmpfs_ensure_populated(struct vfs_super_block *sb) {
 ssize_t inputdev_open(void *data, void *arg) {
     dev_input_event_t *event = data;
     (void)arg;
-    event->timesOpened++;
+    __atomic_add_fetch(&event->timesOpened, 1, __ATOMIC_ACQ_REL);
     return 0;
 }
 
 ssize_t inputdev_close(void *data, void *arg) {
     dev_input_event_t *event = data;
     (void)arg;
-    if (event->timesOpened > 0)
-        event->timesOpened--;
+    size_t opened = __atomic_load_n(&event->timesOpened, __ATOMIC_ACQUIRE);
+    while (opened > 0 && !__atomic_compare_exchange_n(
+                             &event->timesOpened, &opened, opened - 1, false,
+                             __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    }
     return 0;
 }
 
 static bool input_event_queue_push(dev_input_event_t *event,
-                                   const struct input_event *in) {
+                                   const struct input_event *in,
+                                   bool *wake_needed) {
     if (!event || !in || !event->event_queue || !event->event_queue_capacity)
         return false;
 
     spin_lock(&event->event_queue_lock);
+    bool was_empty =
+        event->event_queue_count == 0 && !event->event_queue_overflow;
 
     if (event->event_queue_count >= event->event_queue_capacity) {
         event->event_queue_head =
@@ -1116,8 +1122,18 @@ static bool input_event_queue_push(dev_input_event_t *event,
         (event->event_queue_tail + 1) % event->event_queue_capacity;
     event->event_queue_count++;
 
+    if (wake_needed)
+        *wake_needed = was_empty || event->event_queue_overflow;
+
     spin_unlock(&event->event_queue_lock);
     return true;
+}
+
+static void inputdev_notify_readable(dev_input_event_t *event) {
+    if (!event || !event->devnode)
+        return;
+
+    vfs_poll_notify_inode(event->devnode, EPOLLIN | EPOLLRDNORM);
 }
 
 static size_t input_event_queue_pop(dev_input_event_t *event,
@@ -1169,7 +1185,7 @@ ssize_t inputdev_event_read(void *data, void *buf, uint64_t offset,
                             uint64_t len, fd_t *fd) {
     dev_input_event_t *event = data;
     (void)offset;
-    if (!event || !buf)
+    if (!event || !buf || !fd)
         return -EINVAL;
     if (len == 0)
         return 0;
@@ -1187,19 +1203,10 @@ ssize_t inputdev_event_read(void *data, void *buf, uint64_t offset,
         if (fd && (fd_get_flags(fd) & O_NONBLOCK))
             return -EWOULDBLOCK;
 
-        vfs_node_t *wait_node = fd && fd->node ? fd->node : event->devnode;
-
-        if (task_signal_has_deliverable(current_task)) {
-            return -EINTR;
-        }
-
-        if (vfs_poll(wait_node, EPOLLIN) & EPOLLIN) {
-            continue;
-        }
-
-        arch_enable_interrupt();
-        arch_wait_for_interrupt();
-        arch_disable_interrupt();
+        int reason = vfs_poll_wait_interruptible(fd, EPOLLIN | EPOLLERR |
+                                                         EPOLLHUP | EPOLLNVAL);
+        if (reason < 0)
+            return reason;
     }
 }
 
@@ -1638,7 +1645,7 @@ void input_generate_event(void *data, uint16_t type, uint16_t code,
         return;
 
     tty_input_event(item, type, code, value);
-    if (item->timesOpened == 0)
+    if (__atomic_load_n(&item->timesOpened, __ATOMIC_ACQUIRE) == 0)
         return;
 
     struct input_event event;
@@ -1649,5 +1656,7 @@ void input_generate_event(void *data, uint16_t type, uint16_t code,
     event.code = code;
     event.value = value;
 
-    input_event_queue_push(item, &event);
+    bool wake_needed = false;
+    if (input_event_queue_push(item, &event, &wake_needed) && wake_needed)
+        inputdev_notify_readable(item);
 }

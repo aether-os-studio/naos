@@ -145,7 +145,7 @@ static __poll_t pidfd_poll(struct vfs_file *file, struct vfs_poll_table *pt) {
         }
     }
 
-    return ctx->exited ? EPOLLIN : 0;
+    return ctx->exited ? (EPOLLIN | EPOLLRDNORM) : 0;
 }
 
 static long pidfd_ioctl(struct vfs_file *file, unsigned long cmd,
@@ -467,7 +467,7 @@ uint64_t pidfd_create_for_pid(uint64_t pid, uint64_t flags, bool cloexec) {
         pidfd_watch_detach_locked(ctx);
         spin_unlock(&pidfd_watch_lock);
     }
-    vfs_close_file(file);
+    vfs_file_put(file);
     return (uint64_t)ret;
 }
 
@@ -551,6 +551,8 @@ void pidfd_on_task_exit(task_t *task) {
             continue;
         ctx->exited = true;
         ctx->exit_status = task->status;
+        if (ctx->node)
+            vfs_poll_notify_inode(ctx->node, EPOLLIN | EPOLLRDNORM);
     }
     spin_unlock(&pidfd_watch_lock);
 }

@@ -45,6 +45,12 @@ struct ucred {
 #define SOCK_RAW 3
 #define SOCK_RDM 4
 #define SOCK_SEQPACKET 5
+#define SOCK_CLOEXEC 02000000
+#define SOCK_NONBLOCK 00004000
+
+#define SOCK_TYPE_MASK 0xF
+#define SOCK_CLOEXEC_FLAG SOCK_CLOEXEC
+#define SOCK_NONBLOCK_FLAG SOCK_NONBLOCK
 
 #define SCM_RIGHTS 0x01
 #define SCM_CREDENTIALS 0x02
@@ -67,6 +73,7 @@ typedef struct unix_socket_ancillary {
 typedef struct socket {
     struct socket *next;
     struct socket *bind_next;
+    volatile int refs;
 
     int domain;
     int type;
@@ -84,6 +91,7 @@ typedef struct socket {
 
     // 对端指针 (SOCK_STREAM 连接后设置)
     struct socket *peer;
+    bool peer_ref;
     vfs_node_t *node;
 
     // bind()

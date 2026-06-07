@@ -4216,11 +4216,9 @@ ssize_t drm_ioctl_wait_vblank(drm_device_t *dev, void *arg) {
 
     while (true) {
         uint64_t seq = 0;
-        uint64_t next_vblank_ns = 0;
 
         spin_lock(&dev->event_lock);
         seq = dev->vblank_counter;
-        next_vblank_ns = dev->next_vblank_ns;
         spin_unlock(&dev->event_lock);
 
         if (!target_set) {

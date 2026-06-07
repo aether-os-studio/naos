@@ -368,18 +368,19 @@ static int socket_wait_fd_event(fd_t *fd, uint32_t events, int64_t timeout_ns,
     uint64_t deadline_ns =
         (timeout_ns > 0) ? (nano_time() + timeout_ns) : UINT64_MAX;
 
+    uint32_t want = events | EPOLLERR | EPOLLHUP | EPOLLNVAL | EPOLLRDHUP;
+
     while (nano_time() < deadline_ns) {
-        if (vfs_poll(fd->node, events) & events) {
+        int polled = vfs_poll(fd, want);
+        if (polled < 0)
+            return polled;
+
+        if (polled & want)
             return 0;
-        }
 
-        if (task_signal_has_deliverable(current_task)) {
-            return -EINTR;
-        }
-
-        arch_enable_interrupt();
-        arch_wait_for_interrupt();
-        arch_disable_interrupt();
+        int reason = vfs_poll_wait_interruptible(fd, want);
+        if (reason < 0)
+            return reason;
     }
 
     return -ETIMEDOUT;
@@ -613,7 +614,15 @@ uint64_t sys_getsockopt(int fd, int level, int optname, void *optval,
         }
 
         size_t copy_len = MIN((size_t)user_len, (size_t)koptlen);
+        int returned_pidfd = -1;
+        if (level == SOL_SOCKET && optname == SO_PEERPIDFD &&
+            copy_len >= sizeof(int)) {
+            returned_pidfd = *(int *)koptval;
+        }
+
         if (copy_len && copy_to_user(optval, koptval, copy_len)) {
+            if (returned_pidfd >= 0)
+                sys_close((uint64_t)returned_pidfd);
             free(koptval);
             vfs_file_put(node);
             return -EFAULT;
@@ -621,6 +630,8 @@ uint64_t sys_getsockopt(int fd, int level, int optname, void *optval,
         free(koptval);
 
         if (copy_to_user(optlen, &koptlen, sizeof(koptlen))) {
+            if (returned_pidfd >= 0)
+                sys_close((uint64_t)returned_pidfd);
             vfs_file_put(node);
             return -EFAULT;
         }

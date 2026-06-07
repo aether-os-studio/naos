@@ -1,9 +1,11 @@
 #pragma once
 
 #include <libs/klibc.h>
+#include <task/wait.h>
 
 typedef int (*netdev_send_t)(void *dev, void *data, uint32_t len);
 typedef int (*netdev_recv_t)(void *dev, void *data, uint32_t len);
+typedef bool (*netdev_poll_rx_t)(void *dev);
 struct netdev;
 typedef void (*netdev_event_cb_t)(struct netdev *dev, uint32_t events,
                                   void *ctx);
@@ -127,6 +129,7 @@ typedef struct netdev {
     void *desc;
     netdev_send_t send;
     netdev_recv_t recv;
+    netdev_poll_rx_t poll_rx;
     netdev_trigger_scan_t trigger_scan;
     netdev_trigger_connect_t trigger_connect;
     netdev_trigger_disconnect_t trigger_disconnect;
@@ -135,13 +138,19 @@ typedef struct netdev {
     netdev_ipv4_info_t ipv4;
     netdev_scan_state_t scan;
     netdev_listener_t listeners[NETDEV_MAX_EVENT_LISTENERS];
+    wait_queue_head_t rx_wait;
+    uint64_t rx_seq;
 } netdev_t;
 
+netdev_t *netdev_register_full(const char *name, uint32_t type, void *desc,
+                               const uint8_t *mac, uint32_t mtu,
+                               netdev_send_t send, netdev_recv_t recv,
+                               netdev_poll_rx_t poll_rx);
 netdev_t *netdev_register(const char *name, uint32_t type, void *desc,
                           const uint8_t *mac, uint32_t mtu, netdev_send_t send,
                           netdev_recv_t recv);
-void regist_netdev(void *desc, uint8_t *mac, uint32_t mtu, netdev_send_t send,
-                   netdev_recv_t recv);
+netdev_t *regist_netdev(void *desc, uint8_t *mac, uint32_t mtu,
+                        netdev_send_t send, netdev_recv_t recv);
 
 netdev_t *get_default_netdev();
 netdev_t *netdev_get_by_name(const char *name);
@@ -179,6 +188,9 @@ void netdev_put(netdev_t *dev);
 int netdev_register_listener(netdev_t *dev, netdev_event_cb_t cb, void *ctx);
 void netdev_unregister_listener(netdev_t *dev, netdev_event_cb_t cb, void *ctx);
 void netdev_notify(netdev_t *dev, uint32_t events);
+void netdev_notify_rx(netdev_t *dev);
+uint64_t netdev_rx_seq(netdev_t *dev);
+int netdev_wait_rx(netdev_t *dev, uint64_t observed_seq);
 
 int netdev_send(netdev_t *dev, void *data, uint32_t len);
 int netdev_recv(netdev_t *dev, void *data, uint32_t len);

@@ -287,16 +287,19 @@ static void naos_lwip_rx_thread(uint64_t arg) {
     max_len = netdev_max_frame_len(link->netdev->mtu);
 
     for (;;) {
-        arch_enable_interrupt();
+        uint64_t rx_seq;
 
         if (link->stopping || !link->netdev) {
             break;
         }
 
+        rx_seq = netdev_rx_seq(link->netdev);
         if (!rx_pbuf) {
             rx_pbuf = pbuf_alloc(PBUF_RAW, (u16_t)max_len, PBUF_POOL);
             if (!rx_pbuf) {
-                arch_wait_for_interrupt();
+                int wait_ret = netdev_wait_rx(link->netdev, rx_seq);
+                if (wait_ret == -ENODEV || link->stopping)
+                    break;
                 continue;
             }
         }
@@ -306,7 +309,9 @@ static void naos_lwip_rx_thread(uint64_t arg) {
             if (len == -ENODEV || link->stopping) {
                 break;
             }
-            arch_wait_for_interrupt();
+            int wait_ret = netdev_wait_rx(link->netdev, rx_seq);
+            if (wait_ret == -ENODEV || link->stopping)
+                break;
             continue;
         }
 

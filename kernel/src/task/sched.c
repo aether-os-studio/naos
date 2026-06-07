@@ -33,6 +33,14 @@ static inline uint64_t sched_task_weight(task_t *task) {
     return sched_prio_to_weight[sched_task_nice(task) - SCHED_NICE_MIN];
 }
 
+static inline uint64_t sched_nice_weight(int nice) {
+    if (nice < SCHED_NICE_MIN)
+        nice = SCHED_NICE_MIN;
+    if (nice > SCHED_NICE_MAX)
+        nice = SCHED_NICE_MAX;
+    return sched_prio_to_weight[nice - SCHED_NICE_MIN];
+}
+
 static inline uint64_t sched_calc_delta_fair(uint64_t delta_ns, task_t *task) {
     uint64_t weight = sched_task_weight(task);
 
@@ -173,6 +181,41 @@ static void sched_entity_dequeue_locked(sched_rq_t *scheduler,
     scheduler->load_weight =
         scheduler->load_weight > weight ? scheduler->load_weight - weight : 0;
     sched_update_min_vruntime_locked(scheduler);
+}
+
+static void sched_entity_reweight_current_locked(sched_rq_t *scheduler,
+                                                 struct sched_entity *entity,
+                                                 uint64_t old_weight,
+                                                 int new_nice,
+                                                 uint64_t now_ns) {
+    if (!scheduler || !entity)
+        return;
+
+    task_t *task = entity->task;
+    if (!task)
+        return;
+
+    if (task->last_sched_in_ns && now_ns > task->last_sched_in_ns) {
+        uint64_t delta_ns = now_ns - task->last_sched_in_ns;
+
+        task->last_sched_in_ns = now_ns;
+        task->user_time_ns += delta_ns;
+        if (old_weight == SCHED_NICE_0_LOAD)
+            entity->vruntime += delta_ns;
+        else
+            entity->vruntime += (delta_ns * SCHED_NICE_0_LOAD) / old_weight;
+    }
+
+    task->nice = new_nice;
+    uint64_t new_weight = sched_task_weight(entity->task);
+
+    scheduler->load_weight = scheduler->load_weight > old_weight
+                                 ? scheduler->load_weight - old_weight
+                                 : 0;
+    scheduler->load_weight += new_weight;
+
+    entity->slice_ns = sched_entity_slice_locked(scheduler, entity);
+    entity->deadline = sched_entity_deadline_locked(scheduler, entity);
 }
 
 static void sched_curr_attach_locked(sched_rq_t *scheduler,
@@ -338,10 +381,57 @@ void sched_account_runtime(task_t *task, uint64_t delta_ns) {
     raw_spin_unlock(&scheduler->lock);
 }
 
+void sched_set_task_nice(task_t *task, int niceval) {
+    if (!task)
+        return;
+
+    if (niceval < SCHED_NICE_MIN)
+        niceval = SCHED_NICE_MIN;
+    if (niceval > SCHED_NICE_MAX)
+        niceval = SCHED_NICE_MAX;
+
+    if (task->nice == niceval)
+        return;
+
+    struct sched_entity *entity = task->sched_info;
+    uint64_t now_ns = nano_time();
+
+    if (!entity) {
+        task->nice = niceval;
+        return;
+    }
+
+    sched_rq_t *scheduler = entity->rq;
+    if (!scheduler && task->cpu_id < MAX_CPU_NUM)
+        scheduler = &schedulers[task->cpu_id];
+    if (!scheduler) {
+        task->nice = niceval;
+        return;
+    }
+
+    raw_spin_lock(&scheduler->lock);
+
+    if (entity->on_rq && entity->rq == scheduler) {
+        sched_entity_dequeue_locked(scheduler, entity);
+        task->nice = niceval;
+        sched_entity_enqueue_locked(scheduler, entity);
+    } else if (sched_entity_is_current_locked(scheduler, entity)) {
+        uint64_t old_weight = sched_nice_weight(task->nice);
+        sched_entity_reweight_current_locked(scheduler, entity, old_weight,
+                                             niceval, now_ns);
+    } else {
+        task->nice = niceval;
+    }
+
+    sched_update_min_vruntime_locked(scheduler);
+
+    raw_spin_unlock(&scheduler->lock);
+}
+
 static struct sched_entity *sched_pick_eevdf_locked(sched_rq_t *scheduler,
                                                     task_t *excluded) {
     struct sched_entity *best = NULL;
-    struct sched_entity *fallback = NULL;
+    struct sched_entity *min_vruntime = NULL;
 
     for (rb_node_t *node = rb_first(&scheduler->run_tree); node;
          node = rb_next(node)) {
@@ -352,15 +442,15 @@ static struct sched_entity *sched_pick_eevdf_locked(sched_rq_t *scheduler,
             continue;
         if (candidate == excluded)
             continue;
-        if (!fallback)
-            fallback = se;
+        if (!min_vruntime || se->vruntime < min_vruntime->vruntime)
+            min_vruntime = se;
         if (sched_entity_eligible_locked(scheduler, se)) {
             best = se;
             break;
         }
     }
 
-    return best ? best : fallback;
+    return best ? best : min_vruntime;
 }
 
 static void sched_drop_dead_queued_locked(sched_rq_t *scheduler) {

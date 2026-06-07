@@ -43,14 +43,65 @@ static epoll_t *epoll_file_handle(struct vfs_file *file) {
     return (epoll_t *)file->f_inode->i_private;
 }
 
-static __poll_t epoll_target_poll(struct vfs_file *file, uint32_t events) {
-    if (!file || !file->f_op || !file->f_op->poll)
-        return EPOLLNVAL;
-    return file->f_op->poll(file, NULL) & events;
-}
-
 static bool epoll_file_is_epoll(struct vfs_file *file) {
     return epoll_file_handle(file) != NULL;
+}
+
+static int epoll_watch_wake(wait_queue_entry_t *entry, uint32_t events,
+                            int reason) {
+    epoll_watch_t *watch;
+
+    (void)reason;
+    watch = entry ? (epoll_watch_t *)entry->private_data : NULL;
+    if (!watch || !watch->owner || !watch->owner->inode)
+        return 0;
+
+    watch->last_ready_events = 0;
+
+    /*
+     * The watched file changed state; the epoll file itself becomes readable
+     * if a subsequent ready scan finds an event.
+     */
+    vfs_poll_notify_inode(watch->owner->inode, EPOLLIN | EPOLLRDNORM);
+    return 1;
+}
+
+static void epoll_watch_arm(epoll_t *epoll, epoll_watch_t *watch) {
+    uint32_t events;
+
+    if (!epoll || !watch || !watch->file || !watch->file->f_inode ||
+        watch->wait_armed)
+        return;
+
+    events = watch->events | EPOLL_ALWAYS_EVENTS;
+    wait_queue_entry_init(&watch->wait, NULL, events, epoll_watch_wake, watch);
+    watch->owner = epoll;
+    wait_queue_add(&watch->file->f_inode->poll_wait, &watch->wait);
+    watch->wait_armed = true;
+}
+
+static void epoll_watch_disarm(epoll_watch_t *watch) {
+    if (!watch || !watch->wait_armed || !watch->file || !watch->file->f_inode)
+        return;
+
+    wait_queue_remove(&watch->file->f_inode->poll_wait, &watch->wait);
+    watch->wait_armed = false;
+    watch->owner = NULL;
+}
+
+static void epoll_watch_update_events(epoll_t *epoll, epoll_watch_t *watch,
+                                      uint32_t events) {
+    bool was_armed;
+
+    if (!watch)
+        return;
+
+    was_armed = watch->wait_armed;
+    if (was_armed)
+        epoll_watch_disarm(watch);
+    watch->events = events;
+    if (was_armed)
+        epoll_watch_arm(epoll, watch);
 }
 
 static bool epoll_contains_file(epoll_t *epoll, struct vfs_file *needle,
@@ -78,37 +129,9 @@ static bool epoll_contains_file(epoll_t *epoll, struct vfs_file *needle,
     return false;
 }
 
-static void epoll_watch_sync_seq(epoll_watch_t *watch) {
-    if (!watch || !watch->file || !watch->file->node)
-        return;
-    watch->last_seq_in = watch->file->node->poll_seq_in;
-    watch->last_seq_out = watch->file->node->poll_seq_out;
-    watch->last_seq_pri = watch->file->node->poll_seq_pri;
-}
-
-static bool epoll_watch_has_seq_update(epoll_watch_t *watch,
-                                       uint32_t ready_events) {
-    if (!watch || !watch->file || !watch->file->node)
-        return false;
-
-    if ((ready_events & EPOLL_IN_EVENTS) &&
-        watch->file->node->poll_seq_in != watch->last_seq_in) {
-        return true;
-    }
-    if ((ready_events & EPOLL_OUT_EVENTS) &&
-        watch->file->node->poll_seq_out != watch->last_seq_out) {
-        return true;
-    }
-    if ((ready_events & EPOLL_PRI_EVENTS) &&
-        watch->file->node->poll_seq_pri != watch->last_seq_pri) {
-        return true;
-    }
-    return false;
-}
-
 static int epoll_collect_ready_locked(epoll_t *epoll,
-                                      struct epoll_event *events,
-                                      int maxevents) {
+                                      struct epoll_event *events, int maxevents,
+                                      struct vfs_poll_table *pt, bool consume) {
     int ready = 0;
     epoll_watch_t *browse, *tmp;
 
@@ -127,45 +150,29 @@ static int epoll_collect_ready_locked(epoll_t *epoll,
             continue;
 
         uint32_t request_events = browse->events | EPOLL_ALWAYS_EVENTS;
-        uint32_t ready_events =
-            epoll_target_poll(browse->file, request_events) |
-            (epoll_target_poll(browse->file, EPOLL_ALWAYS_EVENTS) &
-             EPOLL_ALWAYS_EVENTS);
+        int poll_ret = vfs_poll_with_table(browse->file, request_events, pt);
+        uint32_t ready_events = poll_ret < 0 ? EPOLLNVAL : (uint32_t)poll_ret;
+
+        if (browse->edge_triggered) {
+            uint32_t changed_events = ready_events & ~browse->last_ready_events;
+
+            if (!changed_events) {
+                if (consume)
+                    browse->last_ready_events = ready_events;
+                continue;
+            }
+        }
 
         if (ready_events) {
-            bool emit = true;
-            if (browse->edge_trigger) {
-                uint32_t state_events = ready_events & ~EPOLL_ALWAYS_EVENTS;
-                uint32_t raised = state_events & ~browse->last_events;
-                bool seq_update =
-                    epoll_watch_has_seq_update(browse, state_events);
-                /*
-                 * Edge-triggered delivery is the easy place to regress. Merely
-                 * seeing the same readiness bits twice is not enough to
-                 * suppress a new event if the underlying producer has advanced
-                 * and the node sequence counters say something changed
-                 * underneath.
-                 */
-                emit = !!(raised || seq_update ||
-                          (ready_events & EPOLL_ALWAYS_EVENTS));
-                browse->last_events = state_events;
-                if (emit || !state_events)
-                    epoll_watch_sync_seq(browse);
-            } else {
-                browse->last_events = ready_events & ~EPOLL_ALWAYS_EVENTS;
-                epoll_watch_sync_seq(browse);
-            }
-
-            if (emit) {
-                events[ready].events = ready_events;
-                events[ready].data.u64 = browse->data;
-                if (browse->one_shot)
-                    browse->disabled = true;
-                ready++;
-            }
-        } else if (browse->edge_trigger) {
-            browse->last_events = 0;
-            epoll_watch_sync_seq(browse);
+            events[ready].events = ready_events;
+            events[ready].data.u64 = browse->data;
+            if (consume)
+                browse->last_ready_events = ready_events;
+            if (consume && browse->one_shot)
+                browse->disabled = true;
+            ready++;
+        } else if (consume) {
+            browse->last_ready_events = 0;
         }
     }
 
@@ -181,6 +188,7 @@ static int epollfs_release(struct vfs_inode *inode, struct vfs_file *file) {
         return 0;
 
     llist_for_each(browse, tmp, &epoll->watches, node) {
+        epoll_watch_disarm(browse);
         if (browse->file)
             vfs_file_put(browse->file);
         llist_delete(&browse->node);
@@ -204,9 +212,9 @@ static __poll_t epollfs_poll(struct vfs_file *file, struct vfs_poll_table *pt) {
 
     if (!mutex_trylock(&epoll->lock))
         return 0;
-    int ready = epoll_collect_ready_locked(epoll, &event, 1);
+    int ready = epoll_collect_ready_locked(epoll, &event, 1, pt, false);
     mutex_unlock(&epoll->lock);
-    return ready > 0 ? EPOLLIN : 0;
+    return ready > 0 ? (EPOLLIN | EPOLLRDNORM) : 0;
 }
 
 static loff_t epollfs_llseek(struct vfs_file *file, loff_t offset, int whence) {
@@ -414,7 +422,7 @@ size_t epoll_create1(int flags) {
 
     ret = task_install_file(current_task, file,
                             (flags & O_CLOEXEC) ? FD_CLOEXEC : 0, 0);
-    vfs_close_file(file);
+    vfs_file_put(file);
     return (uint64_t)ret;
 }
 
@@ -428,9 +436,7 @@ static uint64_t do_epoll_wait(struct vfs_file *epoll_file,
                               struct epoll_event *events, int maxevents,
                               int64_t timeout_ns) {
     epoll_t *epoll;
-    int ready = 0;
-    bool irq_state;
-    uint64_t start;
+    uint64_t deadline_ns;
     bool infinite_timeout;
 
     if (!epoll_file || maxevents < 1)
@@ -440,60 +446,59 @@ static uint64_t do_epoll_wait(struct vfs_file *epoll_file,
     if (!epoll)
         return (uint64_t)-EBADF;
 
-    irq_state = arch_interrupt_enabled();
-    start = nano_time();
     infinite_timeout = timeout_ns < 0;
+    deadline_ns =
+        infinite_timeout ? UINT64_MAX : nano_time() + (uint64_t)timeout_ns;
 
-    do {
-        arch_disable_interrupt();
+    while (true) {
+        vfs_poll_wait_table_t table;
+        vfs_poll_wait_table_init(&table, current_task);
 
         mutex_lock(&epoll->lock);
-        ready = epoll_collect_ready_locked(epoll, events, maxevents);
+        int ready = epoll_collect_ready_locked(epoll, events, maxevents,
+                                               &table.pt, true);
         if (ready > 0) {
             mutex_unlock(&epoll->lock);
-            break;
+            vfs_poll_wait_table_cleanup(&table);
+            return (uint64_t)ready;
         }
+        int table_error = vfs_poll_wait_table_error(&table);
+        mutex_unlock(&epoll->lock);
+        if (table_error) {
+            vfs_poll_wait_table_cleanup(&table);
+            return (uint64_t)table_error;
+        }
+
         if (task_signal_has_deliverable(current_task)) {
-            mutex_unlock(&epoll->lock);
-            ready = -EINTR;
-            break;
+            vfs_poll_wait_table_cleanup(&table);
+            return (uint64_t)-EINTR;
         }
         if (timeout_ns == 0) {
-            mutex_unlock(&epoll->lock);
-            break;
+            vfs_poll_wait_table_cleanup(&table);
+            return 0;
         }
 
-        size_t waits_count = 0;
-        ready = epoll_collect_ready_locked(epoll, events, maxevents);
-        mutex_unlock(&epoll->lock);
-        if (ready > 0) {
-            break;
-        }
-        if (task_signal_has_deliverable(current_task)) {
-            ready = -EINTR;
-            break;
-        }
-
-        int64_t wait_ns = -1;
+        int64_t sleep_ns = -1;
         if (!infinite_timeout) {
-            uint64_t elapsed = nano_time() - start;
-            if (elapsed >= (uint64_t)timeout_ns) {
-                break;
+            uint64_t now = nano_time();
+            if (now >= deadline_ns) {
+                vfs_poll_wait_table_cleanup(&table);
+                return 0;
             }
-            wait_ns = timeout_ns - (int64_t)elapsed;
+            sleep_ns = (int64_t)(deadline_ns - now);
         }
 
-        arch_enable_interrupt();
-        arch_wait_for_interrupt();
-        arch_disable_interrupt();
-    } while (infinite_timeout || (nano_time() - start) < timeout_ns);
+        int reason =
+            task_block(current_task, TASK_BLOCKING, sleep_ns, "epoll_wait");
+        vfs_poll_wait_table_cleanup(&table);
 
-    if (irq_state)
-        arch_enable_interrupt();
-    else
-        arch_disable_interrupt();
+        if (reason == ETIMEDOUT)
+            continue;
+        if (reason != EOK && task_signal_has_deliverable(current_task))
+            return (uint64_t)-EINTR;
+    }
 
-    return (uint64_t)ready;
+    return 0;
 }
 
 static size_t epoll_ctl_file(struct vfs_file *epoll_file, int op, int fd,
@@ -569,11 +574,16 @@ static size_t epoll_ctl_file(struct vfs_file *epoll_file, int op, int fd,
         new_watch->file = vfs_file_get(target);
         new_watch->events = epoll_filter_events(event->events);
         new_watch->data = event->data.u64;
-        new_watch->edge_trigger = (event->events & EPOLLET) != 0;
+        new_watch->edge_triggered = (event->events & EPOLLET) != 0;
         new_watch->one_shot = (event->events & EPOLLONESHOT) != 0;
-        epoll_watch_sync_seq(new_watch);
         llist_init_head(&new_watch->node);
+        llist_init_head(&new_watch->wait.node);
         llist_append(&epoll->watches, &new_watch->node);
+        epoll_watch_arm(epoll, new_watch);
+        if (vfs_poll(new_watch->file, new_watch->events | EPOLL_ALWAYS_EVENTS) >
+            0) {
+            vfs_poll_notify_inode(epoll->inode, EPOLLIN | EPOLLRDNORM);
+        }
         break;
     }
     case EPOLL_CTL_DEL:
@@ -581,6 +591,7 @@ static size_t epoll_ctl_file(struct vfs_file *epoll_file, int op, int fd,
             ret = -ENOENT;
             break;
         }
+        epoll_watch_disarm(existing);
         if (existing->file)
             vfs_file_put(existing->file);
         llist_delete(&existing->node);
@@ -591,13 +602,17 @@ static size_t epoll_ctl_file(struct vfs_file *epoll_file, int op, int fd,
             ret = -ENOENT;
             break;
         }
-        existing->events = epoll_filter_events(event->events);
+        epoll_watch_update_events(epoll, existing,
+                                  epoll_filter_events(event->events));
         existing->data = event->data.u64;
-        existing->edge_trigger = (event->events & EPOLLET) != 0;
+        existing->edge_triggered = (event->events & EPOLLET) != 0;
         existing->one_shot = (event->events & EPOLLONESHOT) != 0;
         existing->disabled = false;
-        existing->last_events = 0;
-        epoll_watch_sync_seq(existing);
+        existing->last_ready_events = 0;
+        if (vfs_poll(existing->file, existing->events | EPOLL_ALWAYS_EVENTS) >
+            0) {
+            vfs_poll_notify_inode(epoll->inode, EPOLLIN | EPOLLRDNORM);
+        }
         break;
     default:
         ret = -EINVAL;

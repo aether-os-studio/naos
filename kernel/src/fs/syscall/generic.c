@@ -633,7 +633,7 @@ static void generic_fill_statx_from_kstat(struct statx *buf,
         return;
 
     memset(buf, 0, sizeof(*buf));
-    buf->stx_mask = (uint32_t)mask;
+    buf->stx_mask = STATX_BASIC_STATS | STATX_BTIME | STATX_MNT_ID;
     buf->stx_blksize = stat->blksize;
     buf->stx_nlink = stat->nlink;
     buf->stx_uid = stat->uid;
@@ -1065,7 +1065,7 @@ uint64_t sys_open_tree(int dfd, const char *pathname, unsigned int flags) {
     if (flags & OPEN_TREE_CLOEXEC)
         fd_flags |= FD_CLOEXEC;
     ret = task_install_file(current_task, file, (unsigned int)fd_flags, 0);
-    vfs_close_file(file);
+    vfs_file_put(file);
     return (uint64_t)ret;
 }
 
@@ -1751,8 +1751,6 @@ uint64_t sys_copy_file_range(uint64_t fd_in, int *offset_in_user,
 
 uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {
     struct vfs_file *file;
-    void *kbuf = NULL;
-    ssize_t ret;
 
     if (rw_validate_user_buffer(buf, len) < 0) {
         return (uint64_t)-EFAULT;
@@ -1764,58 +1762,16 @@ uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {
         vfs_file_put(file);
         return (uint64_t)-EISDIR;
     }
-    /*
-     * Do not short-circuit len == 0 here. The call still needs to flow through
-     * VFS so the final behavior comes from the real file/socket backend, which
-     * matters for Linux userspace compatibility.
-     */
-    if (len > 0) {
-        kbuf = malloc((size_t)MIN(len, (uint64_t)RW_BOUNCE_CHUNK));
-        if (!kbuf) {
-            vfs_file_put(file);
-            return (uint64_t)-ENOMEM;
-        }
-    }
 
-    if (len == 0) {
-        ret = (ssize_t)vfs_read_file(file, buf, len, NULL);
-    } else {
-        size_t done = 0;
-        ret = 0;
-        while (done < len) {
-            size_t chunk = (size_t)MIN((uint64_t)RW_BOUNCE_CHUNK, len - done);
-            ssize_t io_ret = (ssize_t)vfs_read_file(file, kbuf, chunk, NULL);
-            if (io_ret < 0) {
-                ret = done ? (ssize_t)done : io_ret;
-                break;
-            }
-            if (io_ret == 0) {
-                ret = (ssize_t)done;
-                break;
-            }
-            if (copy_to_user((uint8_t *)buf + done, kbuf, (size_t)io_ret)) {
-                ret = -EFAULT;
-                break;
-            }
-            done += (size_t)io_ret;
-            if ((size_t)io_ret < chunk) {
-                ret = (ssize_t)done;
-                break;
-            }
-        }
-        if (done == len)
-            ret = (ssize_t)done;
-    }
+    ssize_t ret = (ssize_t)vfs_read_file(file, buf, len, &file->f_pos);
 
-    free(kbuf);
     vfs_file_put(file);
+
     return ret;
 }
 
 uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
     struct vfs_file *file;
-    void *kbuf = NULL;
-    ssize_t ret;
 
     if (len != 0 && rw_validate_user_buffer(buf, len) < 0) {
         return (uint64_t)-EFAULT;
@@ -1828,44 +1784,9 @@ uint64_t sys_write(uint64_t fd, const void *buf, uint64_t len) {
         vfs_file_put(file);
         return (uint64_t)-EISDIR;
     }
-    /*
-     * Same rule as read: a zero-length write is still forwarded so the backend
-     * keeps control over the exact ABI-visible result.
-     */
-    if (len > 0) {
-        kbuf = malloc((size_t)MIN(len, (uint64_t)RW_BOUNCE_CHUNK));
-        if (!kbuf) {
-            vfs_file_put(file);
-            return (uint64_t)-ENOMEM;
-        }
-    }
 
-    if (len == 0) {
-        ret = (ssize_t)vfs_write_file(file, buf, len, NULL);
-    } else {
-        size_t done = 0;
-        ret = 0;
-        while (done < len) {
-            size_t chunk = (size_t)MIN((uint64_t)RW_BOUNCE_CHUNK, len - done);
-            if (copy_from_user(kbuf, (const uint8_t *)buf + done, chunk)) {
-                ret = done ? (ssize_t)done : -EFAULT;
-                break;
-            }
-            ssize_t io_ret = (ssize_t)vfs_write_file(file, kbuf, chunk, NULL);
-            if (io_ret < 0) {
-                ret = done ? (ssize_t)done : io_ret;
-                break;
-            }
-            done += (size_t)io_ret;
-            if ((size_t)io_ret < chunk) {
-                ret = (ssize_t)done;
-                break;
-            }
-        }
-        if (done == len)
-            ret = (ssize_t)done;
-    }
-    free(kbuf);
+    ssize_t ret = (ssize_t)vfs_write_file(file, buf, len, &file->f_pos);
+
     vfs_file_put(file);
     return ret;
 }
@@ -1891,43 +1812,8 @@ uint64_t sys_pread64(int fd, void *buf, size_t len, uint64_t offset) {
      * pread/pwrite follow the same rule. The explicit offset does not change
      * the ABI detail that a 0-byte request should still reach the backend.
      */
-    if (len > 0) {
-        kbuf = malloc((size_t)MIN((uint64_t)len, (uint64_t)RW_BOUNCE_CHUNK));
-        if (!kbuf) {
-            vfs_file_put(file);
-            return (uint64_t)-ENOMEM;
-        }
-    }
 
-    if (len == 0) {
-        ret = (ssize_t)vfs_read_file(file, buf, len, &pos);
-    } else {
-        size_t done = 0;
-        ret = 0;
-        while (done < len) {
-            size_t chunk = (size_t)MIN((uint64_t)RW_BOUNCE_CHUNK, len - done);
-            ssize_t io_ret = (ssize_t)vfs_read_file(file, kbuf, chunk, &pos);
-            if (io_ret < 0) {
-                ret = done ? (ssize_t)done : io_ret;
-                break;
-            }
-            if (io_ret == 0) {
-                ret = (ssize_t)done;
-                break;
-            }
-            if (copy_to_user((uint8_t *)buf + done, kbuf, (size_t)io_ret)) {
-                ret = -EFAULT;
-                break;
-            }
-            done += (size_t)io_ret;
-            if ((size_t)io_ret < chunk) {
-                ret = (ssize_t)done;
-                break;
-            }
-        }
-        if (done == len)
-            ret = (ssize_t)done;
-    }
+    ret = vfs_read_file(file, buf, len, &pos);
 
     free(kbuf);
     vfs_file_put(file);
@@ -1951,44 +1837,9 @@ uint64_t sys_pwrite64(int fd, const void *buf, size_t len, uint64_t offset) {
         vfs_file_put(file);
         return (uint64_t)-EISDIR;
     }
-    /*
-     * Same as pread64: do not short-circuit 0-byte requests here, otherwise
-     * positioned writes can drift away from plain write semantics.
-     */
-    if (len > 0) {
-        kbuf = malloc((size_t)MIN((uint64_t)len, (uint64_t)RW_BOUNCE_CHUNK));
-        if (!kbuf) {
-            vfs_file_put(file);
-            return (uint64_t)-ENOMEM;
-        }
-    }
 
-    if (len == 0) {
-        ret = (ssize_t)vfs_write_file(file, buf, len, &pos);
-    } else {
-        size_t done = 0;
-        ret = 0;
-        while (done < len) {
-            size_t chunk = (size_t)MIN((uint64_t)RW_BOUNCE_CHUNK, len - done);
-            if (copy_from_user(kbuf, (const uint8_t *)buf + done, chunk)) {
-                ret = done ? (ssize_t)done : -EFAULT;
-                break;
-            }
-            ssize_t io_ret = (ssize_t)vfs_write_file(file, kbuf, chunk, &pos);
-            if (io_ret < 0) {
-                ret = done ? (ssize_t)done : io_ret;
-                break;
-            }
-            done += (size_t)io_ret;
-            if ((size_t)io_ret < chunk) {
-                ret = (ssize_t)done;
-                break;
-            }
-        }
-        if (done == len)
-            ret = (ssize_t)done;
-    }
-    free(kbuf);
+    ret = vfs_write_file(file, buf, len, &pos);
+
     vfs_file_put(file);
     return (uint64_t)ret;
 }

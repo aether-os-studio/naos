@@ -2,10 +2,13 @@
 #include <net/netlink.h>
 #include <mm/mm.h>
 #include <task/task.h>
+#include <task/signal.h>
 #include <fs/sys.h>
 
 netdev_t *netdevs[MAX_NETDEV_NUM] = {NULL};
 static spinlock_t netdevs_lock = SPIN_INIT;
+
+#define NETDEV_RX_POLL_FALLBACK_NS (20ULL * 1000ULL * 1000ULL)
 
 static void netdev_default_name(char *name, uint32_t type, uint32_t id) {
     if (!name) {
@@ -154,9 +157,10 @@ static void netdev_create_sysfs(netdev_t *dev) {
     }
 }
 
-netdev_t *netdev_register(const char *name, uint32_t type, void *desc,
-                          const uint8_t *mac, uint32_t mtu, netdev_send_t send,
-                          netdev_recv_t recv) {
+netdev_t *netdev_register_full(const char *name, uint32_t type, void *desc,
+                               const uint8_t *mac, uint32_t mtu,
+                               netdev_send_t send, netdev_recv_t recv,
+                               netdev_poll_rx_t poll_rx) {
     netdev_t *dev = NULL;
 
     spin_lock(&netdevs_lock);
@@ -176,8 +180,10 @@ netdev_t *netdev_register(const char *name, uint32_t type, void *desc,
         dev->mtu = mtu;
         dev->send = send;
         dev->recv = recv;
+        dev->poll_rx = poll_rx;
         dev->lock = SPIN_INIT;
         dev->refcount = 1;
+        wait_queue_init(&dev->rx_wait);
 
         if (name && name[0] != '\0') {
             strncpy(dev->name, name, NETDEV_NAME_LEN - 1);
@@ -208,10 +214,16 @@ netdev_t *netdev_register(const char *name, uint32_t type, void *desc,
     return NULL;
 }
 
-void regist_netdev(void *desc, uint8_t *mac, uint32_t mtu, netdev_send_t send,
-                   netdev_recv_t recv) {
-    (void)netdev_register(NULL, NETDEV_TYPE_ETHERNET, desc, mac, mtu, send,
-                          recv);
+netdev_t *netdev_register(const char *name, uint32_t type, void *desc,
+                          const uint8_t *mac, uint32_t mtu, netdev_send_t send,
+                          netdev_recv_t recv) {
+    return netdev_register_full(name, type, desc, mac, mtu, send, recv, NULL);
+}
+
+netdev_t *regist_netdev(void *desc, uint8_t *mac, uint32_t mtu,
+                        netdev_send_t send, netdev_recv_t recv) {
+    return netdev_register_full(NULL, NETDEV_TYPE_ETHERNET, desc, mac, mtu,
+                                send, recv, NULL);
 }
 
 netdev_t *get_default_netdev() {
@@ -767,6 +779,7 @@ int netdev_unregister(netdev_t *dev) {
 
     netdev_notify(dev, NETDEV_EVENT_LINK_DOWN | NETDEV_EVENT_ADMIN_DOWN |
                            NETDEV_EVENT_UNREGISTERING);
+    netdev_notify_rx(dev);
 
     for (;;) {
         uint32_t refs = 0;
@@ -850,6 +863,81 @@ void netdev_notify(netdev_t *dev, uint32_t events) {
     }
 
     netlink_publish_netdev_event(dev, events);
+}
+
+void netdev_notify_rx(netdev_t *dev) {
+    if (!dev)
+        return;
+
+    spin_lock(&dev->lock);
+    dev->rx_seq++;
+    spin_unlock(&dev->lock);
+
+    wait_queue_wake_all(&dev->rx_wait, 0, EOK);
+}
+
+uint64_t netdev_rx_seq(netdev_t *dev) {
+    uint64_t seq = 0;
+
+    if (!dev)
+        return 0;
+
+    spin_lock(&dev->lock);
+    seq = dev->rx_seq;
+    spin_unlock(&dev->lock);
+    return seq;
+}
+
+int netdev_wait_rx(netdev_t *dev, uint64_t observed_seq) {
+    wait_queue_entry_t wait;
+    netdev_poll_rx_t poll_rx = NULL;
+    void *desc = NULL;
+    bool ready = false;
+    bool gone = false;
+    int reason;
+
+    if (!dev)
+        return -EINVAL;
+
+    task_prepare_block(current_task);
+    wait_queue_entry_init(&wait, current_task, 0, NULL, NULL);
+    wait_queue_add(&dev->rx_wait, &wait);
+
+    spin_lock(&dev->lock);
+    ready = dev->rx_seq != observed_seq;
+    gone = dev->unregistering;
+    poll_rx = dev->poll_rx;
+    desc = dev->desc;
+    spin_unlock(&dev->lock);
+
+    if (!ready && !gone && poll_rx && poll_rx(desc)) {
+        netdev_notify_rx(dev);
+        ready = true;
+    }
+
+    if (ready || gone) {
+        wait_queue_remove(&dev->rx_wait, &wait);
+        task_cancel_block_prepare(current_task);
+        return gone ? -ENODEV : EOK;
+    }
+
+    if (task_signal_has_deliverable(current_task)) {
+        wait_queue_remove(&dev->rx_wait, &wait);
+        task_cancel_block_prepare(current_task);
+        return -EINTR;
+    }
+
+    reason = task_block(current_task, TASK_BLOCKING, NETDEV_RX_POLL_FALLBACK_NS,
+                        "netdev_rx");
+
+    wait_queue_remove(&dev->rx_wait, &wait);
+    task_cancel_block_prepare(current_task);
+
+    if (reason == ETIMEDOUT)
+        return EOK;
+    if (reason != EOK && task_signal_has_deliverable(current_task))
+        return -EINTR;
+    return reason == EOK ? EOK : -EINTR;
 }
 
 int netdev_send(netdev_t *dev, void *data, uint32_t len) {
