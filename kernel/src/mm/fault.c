@@ -4,6 +4,10 @@
 #include <mm/shm.h>
 #include <fs/vfs/vfs.h>
 
+static inline bool fault_page_table_levels_valid(uint64_t levels) {
+    return levels > 0 && levels <= ARCH_MAX_PT_LEVEL;
+}
+
 typedef struct fault_vma_snapshot {
     uint64_t vm_start;
     uint64_t vm_end;
@@ -257,6 +261,10 @@ map_cow_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
     uint64_t aligned_vaddr = PADDING_DOWN(vaddr, PAGE_SIZE);
     uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
     uint64_t levels = arch_page_table_levels();
+    if (!fault_page_table_levels_valid(levels)) {
+        spin_unlock(&task->mm->lock);
+        return PF_RES_SEGF;
+    }
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
     for (uint64_t i = 0; i < levels; i++) {
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(aligned_vaddr, i + 1);
@@ -334,6 +342,11 @@ page_fault_result_t handle_page_fault_flags(task_t *task, uint64_t vaddr,
     uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
 
     uint64_t levels = arch_page_table_levels();
+    if (!fault_page_table_levels_valid(levels)) {
+        spin_unlock(&task->mm->lock);
+        spin_unlock(&mgr->lock);
+        return PF_RES_SEGF;
+    }
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
     for (uint64_t i = 0; i < levels; i++) {
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(aligned_vaddr, i + 1);

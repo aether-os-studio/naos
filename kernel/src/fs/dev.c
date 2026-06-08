@@ -164,7 +164,21 @@ static inline devtmpfs_fs_info_t *devtmpfs_sb_info(struct vfs_super_block *sb) {
 }
 
 static void devtmpfs_ensure_populated(struct vfs_super_block *sb);
+static vfs_node_t *devtmpfs_lookup_inode_path(const char *path,
+                                              unsigned int flags);
 static void setup_console_symlinks(void);
+
+static void ttydev_bind_path(tty_t *tty, const char *path) {
+    if (!tty || !path)
+        return;
+
+    vfs_node_t *inode = devtmpfs_lookup_inode_path(path, LOOKUP_FOLLOW);
+    if (!inode)
+        return;
+
+    tty_bind_devnode(tty, inode);
+    vfs_iput(inode);
+}
 
 static unsigned char devtmpfs_dtype(umode_t mode) {
     if (S_ISDIR(mode))
@@ -1332,6 +1346,11 @@ void devfs_register_device(device_t *device) {
         }
     }
 
+    if (device->subtype == DEV_TTY && device->ptr)
+        ttydev_bind_path(device->ptr, path);
+    if (device->subtype == DEV_SYSDEV && streq(device->name, "tty"))
+        ttydev_bind_path(kernel_session, path);
+
     if (device->type == DEV_BLOCK && device->ptr) {
         vfs_node_t *inode = devtmpfs_lookup_inode_path(path, LOOKUP_FOLLOW);
         partition_t *part = device->ptr;
@@ -1481,17 +1500,15 @@ static ssize_t ttydev_read(void *data, void *buf, uint64_t offset, uint64_t len,
     (void)data;
     if (!kernel_session)
         return -ENODEV;
-    return tty_read(kernel_session, buf, offset, len,
-                    fd ? fd_get_flags(fd) : 0);
+    return tty_read(kernel_session, buf, offset, len, fd);
 }
 
 static ssize_t ttydev_write(void *data, void *buf, uint64_t offset,
                             uint64_t len, fd_t *fd) {
     (void)data;
-    (void)fd;
     if (!kernel_session)
         return -ENODEV;
-    return tty_write(kernel_session, buf, offset, len, 0);
+    return tty_write(kernel_session, buf, offset, len, fd);
 }
 
 void setup_console_symlinks() {
@@ -1502,15 +1519,19 @@ void setup_console_symlinks() {
     if (!tty_node)
         return;
 
+    ttydev_bind_path(kernel_session, "/dev/tty");
     vfs_mknodat(AT_FDCWD, "/dev/console", 0600 | S_IFCHR, tty_node->i_rdev,
                 true);
+    ttydev_bind_path(kernel_session, "/dev/console");
     tty0_node = devtmpfs_lookup_inode_path("/dev/tty0", LOOKUP_FOLLOW);
     if (!tty0_node)
         vfs_mknodat(AT_FDCWD, "/dev/tty0", 0600 | S_IFCHR, tty_node->i_rdev,
                     true);
     else
         vfs_iput(tty0_node);
+    ttydev_bind_path(kernel_session, "/dev/tty0");
     vfs_mknodat(AT_FDCWD, "/dev/tty1", 0600 | S_IFCHR, tty_node->i_rdev, true);
+    ttydev_bind_path(kernel_session, "/dev/tty1");
 
     vfs_iput(tty_node);
 }

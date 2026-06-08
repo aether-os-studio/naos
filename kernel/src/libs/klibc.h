@@ -19,6 +19,48 @@
 #define NO_OPT
 #endif
 
+#ifndef __has_attribute
+#define __has_attribute(x) 0
+#endif
+
+#if __has_attribute(malloc) || defined(__GNUC__)
+#define KLIBC_ATTR_MALLOC __attribute__((malloc))
+#else
+#define KLIBC_ATTR_MALLOC
+#endif
+
+#if __has_attribute(alloc_size) || defined(__GNUC__)
+#define KLIBC_ATTR_ALLOC_SIZE(...) __attribute__((alloc_size(__VA_ARGS__)))
+#else
+#define KLIBC_ATTR_ALLOC_SIZE(...)
+#endif
+
+#if __has_attribute(warn_unused_result) || defined(__GNUC__)
+#define KLIBC_ATTR_WARN_UNUSED_RESULT __attribute__((warn_unused_result))
+#else
+#define KLIBC_ATTR_WARN_UNUSED_RESULT
+#endif
+
+#if __has_attribute(nonnull) || defined(__GNUC__)
+#define KLIBC_ATTR_NONNULL(...) __attribute__((nonnull(__VA_ARGS__)))
+#else
+#define KLIBC_ATTR_NONNULL(...)
+#endif
+
+#if defined(__clang__) && __has_attribute(ownership_returns)
+#define KLIBC_ATTR_OWNERSHIP_RETURNS(kind)                                     \
+    __attribute__((ownership_returns(kind)))
+#else
+#define KLIBC_ATTR_OWNERSHIP_RETURNS(kind)
+#endif
+
+#if defined(__clang__) && __has_attribute(ownership_takes)
+#define KLIBC_ATTR_OWNERSHIP_TAKES(kind, arg)                                  \
+    __attribute__((ownership_takes(kind, arg)))
+#else
+#define KLIBC_ATTR_OWNERSHIP_TAKES(kind, arg)
+#endif
+
 #define _IOC_NRBITS 8
 #define _IOC_TYPEBITS 8
 
@@ -271,11 +313,18 @@ static inline char *strrchr(const char *s, int c) {
     return (char *)last;
 }
 
-char *strdup(const char *s);
-void *malloc(size_t size);
-void *calloc(size_t nmemb, size_t size);
-void *realloc(void *ptr, size_t size);
-void free(void *ptr);
+char *strdup(const char *s) KLIBC_ATTR_MALLOC
+    KLIBC_ATTR_OWNERSHIP_RETURNS(malloc)
+KLIBC_ATTR_WARN_UNUSED_RESULT
+KLIBC_ATTR_NONNULL(1);
+void *malloc(size_t size) KLIBC_ATTR_MALLOC KLIBC_ATTR_ALLOC_SIZE(1)
+    KLIBC_ATTR_OWNERSHIP_RETURNS(malloc) KLIBC_ATTR_WARN_UNUSED_RESULT;
+void *calloc(size_t nmemb, size_t size) KLIBC_ATTR_MALLOC
+    KLIBC_ATTR_ALLOC_SIZE(1, 2)
+        KLIBC_ATTR_OWNERSHIP_RETURNS(malloc) KLIBC_ATTR_WARN_UNUSED_RESULT;
+void *realloc(void *ptr, size_t size)
+    KLIBC_ATTR_ALLOC_SIZE(2) KLIBC_ATTR_WARN_UNUSED_RESULT;
+void free(void *ptr) KLIBC_ATTR_OWNERSHIP_TAKES(malloc, 1);
 
 typedef struct spinlock {
     volatile uint8_t lock;

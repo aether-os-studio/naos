@@ -383,6 +383,74 @@ static ssize_t sysfs_entry_write(sysfs_entry_t *entry, const void *buf,
     return (ssize_t)count;
 }
 
+static bool sysfs_is_uevent_entry(sysfs_entry_t *entry) {
+    return entry && entry->parent && entry->name &&
+           strcmp(entry->name, "uevent") == 0 && entry->parent->path &&
+           strncmp(entry->parent->path, "/sys/", 5) == 0;
+}
+
+static bool sysfs_uevent_write_requests_add(const void *buf, size_t count) {
+    const char *s = (const char *)buf;
+
+    if (!s || count == 0)
+        return false;
+    while (count > 0 && (*s == ' ' || *s == '\t' || *s == '\n')) {
+        s++;
+        count--;
+    }
+    return count >= 3 && s[0] == 'a' && s[1] == 'd' && s[2] == 'd' &&
+           (count == 3 || s[3] == '\0' || s[3] == '\n' || s[3] == ' ' ||
+            s[3] == '\t');
+}
+
+static ssize_t sysfs_uevent_write(sysfs_entry_t *entry, const void *buf,
+                                  size_t count) {
+    if (!sysfs_is_uevent_entry(entry))
+        return -EINVAL;
+    if (!sysfs_uevent_write_requests_add(buf, count))
+        return (ssize_t)count;
+
+    const char *devpath = entry->parent->path + 4;
+    const char *content = entry->content ? entry->content : "";
+    int seqnum = alloc_seq_num();
+    size_t buffer_len =
+        snprintf(NULL, 0, "add@%s\nACTION=add\nSEQNUM=%d\n%s%s", devpath,
+                 seqnum, content,
+                 content[0] && content[strlen(content) - 1] == '\n' ? ""
+                                                                    : "\n") +
+        1;
+    char *event_buffer = malloc(buffer_len);
+    if (!event_buffer)
+        return -ENOMEM;
+
+    snprintf(event_buffer, buffer_len, "add@%s\nACTION=add\nSEQNUM=%d\n%s%s",
+             devpath, seqnum, content,
+             content[0] && content[strlen(content) - 1] == '\n' ? "" : "\n");
+
+    size_t src_len = strlen(event_buffer);
+    size_t dst_len = 0;
+    bool last_was_nul = false;
+    for (size_t i = 0; i < src_len; i++) {
+        char c = event_buffer[i];
+        if (c == '\n')
+            c = '\0';
+        if (c == '\0') {
+            if (last_was_nul)
+                continue;
+            last_was_nul = true;
+        } else {
+            last_was_nul = false;
+        }
+        event_buffer[dst_len++] = c;
+    }
+    if (dst_len == 0 || event_buffer[dst_len - 1] != '\0')
+        event_buffer[dst_len++] = '\0';
+
+    netlink_kernel_uevent_send(event_buffer, (int)dst_len);
+    free(event_buffer);
+    return (ssize_t)count;
+}
+
 static struct vfs_dentry *sysfs_lookup(struct vfs_inode *dir,
                                        struct vfs_dentry *dentry,
                                        unsigned int flags) {
@@ -441,6 +509,9 @@ static ssize_t sysfs_read(struct vfs_file *file, void *buf, size_t count,
 static ssize_t sysfs_write(struct vfs_file *file, const void *buf, size_t count,
                            loff_t *ppos) {
     sysfs_entry_t *entry = sysfs_entry_from_inode(file ? file->f_inode : NULL);
+    if (sysfs_is_uevent_entry(entry))
+        return sysfs_uevent_write(entry, buf, count);
+
     ssize_t ret = sysfs_entry_write(entry, buf, count, ppos);
 
     if (ret >= 0 && file && file->f_inode && entry)
@@ -727,6 +798,8 @@ vfs_node_t *sysfs_regist_dev(char t, int major, int minor,
     char dev_root_path[256];
     char devpath_for_event[256];
     char buf[256];
+    char *uevent_content = NULL;
+    char *event_buffer = NULL;
     vfs_node_t *device_root;
 
     snprintf(dev_root_path, sizeof(dev_root_path), "/sys/dev/%s/%d:%d", root,
@@ -772,26 +845,44 @@ vfs_node_t *sysfs_regist_dev(char t, int major, int minor,
     }
 
     vfs_node_t *uevent = sysfs_child_append(device_root, "uevent", false);
-    snprintf(buf, sizeof(buf), "MAJOR=%d\nMINOR=%d\nDEVNAME=%s\nDEVPATH=%s\n%s",
-             major, minor, dev_name, devpath_for_event,
+    if (!uevent)
+        return device_root;
+
+    size_t uevent_content_len =
+        snprintf(NULL, 0, "MAJOR=%d\nMINOR=%d\nDEVNAME=%s\nDEVPATH=%s\n%s",
+                 major, minor, dev_name, devpath_for_event,
+                 other_uevent_content ? other_uevent_content : "") +
+        1;
+    uevent_content = malloc(uevent_content_len);
+    if (!uevent_content) {
+        vfs_iput(uevent);
+        return device_root;
+    }
+    snprintf(uevent_content, uevent_content_len,
+             "MAJOR=%d\nMINOR=%d\nDEVNAME=%s\nDEVPATH=%s\n%s", major, minor,
+             dev_name, devpath_for_event,
              other_uevent_content ? other_uevent_content : "");
-    sysfs_write_node(uevent, buf, strlen(buf), 0);
+    sysfs_write_node(uevent, uevent_content, strlen(uevent_content), 0);
     vfs_iput(uevent);
 
     int seqnum = alloc_seq_num();
     size_t buffer_len =
         snprintf(NULL, 0, "add@%s\nACTION=add\nSEQNUM=%d\nTAGS=:systemd:\n%s\n",
-                 devpath_for_event, seqnum, buf) +
+                 devpath_for_event, seqnum, uevent_content) +
         1;
-    char *buffer = malloc(buffer_len);
-    snprintf(buffer, buffer_len,
+    event_buffer = malloc(buffer_len);
+    if (!event_buffer) {
+        free(uevent_content);
+        return device_root;
+    }
+    snprintf(event_buffer, buffer_len,
              "add@%s\nACTION=add\nSEQNUM=%d\nTAGS=:systemd:\n%s\n",
-             devpath_for_event, seqnum, buf);
-    size_t src_len = strlen(buffer);
+             devpath_for_event, seqnum, uevent_content);
+    size_t src_len = strlen(event_buffer);
     size_t dst_len = 0;
     bool last_was_nul = false;
     for (size_t i = 0; i < src_len; i++) {
-        char c = buffer[i];
+        char c = event_buffer[i];
         if (c == '\n')
             c = '\0';
         if (c == '\0') {
@@ -801,12 +892,13 @@ vfs_node_t *sysfs_regist_dev(char t, int major, int minor,
         } else {
             last_was_nul = false;
         }
-        buffer[dst_len++] = c;
+        event_buffer[dst_len++] = c;
     }
-    if (dst_len == 0 || buffer[dst_len - 1] != '\0')
-        buffer[dst_len++] = '\0';
-    netlink_kernel_uevent_send(buffer, (int)dst_len);
-    free(buffer);
+    if (dst_len == 0 || event_buffer[dst_len - 1] != '\0')
+        event_buffer[dst_len++] = '\0';
+    netlink_kernel_uevent_send(event_buffer, (int)dst_len);
+    free(event_buffer);
+    free(uevent_content);
 
     return device_root;
 }

@@ -1,9 +1,6 @@
 #include <fs/vfs/vfs.h>
 #include <mm/vma.h>
 
-void *malloc(size_t size);
-void free(void *ptr);
-
 static inline unsigned long vma_len(const vma_t *vma) {
     return vma->vm_end - vma->vm_start;
 }

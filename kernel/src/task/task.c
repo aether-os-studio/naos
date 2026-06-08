@@ -1601,6 +1601,7 @@ task_t *get_free_task() {
     task->state = TASK_CREATING;
     task->pid = pid;
     task->cpu_id = alloc_cpu_id();
+    task->start_time_ns = nano_time();
     task_pid_index_add_locked(task);
     next_task_pid++;
     spin_unlock(&task_queue_lock);

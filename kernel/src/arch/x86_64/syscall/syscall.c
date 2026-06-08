@@ -876,8 +876,8 @@ void syscall_handler_init() {
     // (syscall_handle_t)sys_process_madvise);
     regist_syscall_handler(SYS_EPOLL_PWAIT2,
                            (syscall_handle_t)sys_epoll_pwait2);
-    // regist_syscall_handler(SYS_MOUNT_SETATTR,
-    // (syscall_handle_t)sys_mount_setattr);
+    regist_syscall_handler(SYS_MOUNT_SETATTR,
+                           (syscall_handle_t)sys_mount_setattr);
     // regist_syscall_handler(SYS_LANDLOCK_CREATE_RULESET,
     // (syscall_handle_t)sys_landlock_create_ruleset);
     // regist_syscall_handler(SYS_LANDLOCK_ADD_RULE,
@@ -971,7 +971,8 @@ done:
             self->system_time_ns += self->user_time_ns - syscall_user_base;
     }
 
-    self->last_syscall_ret = regs->rax;
+    if (self)
+        self->last_syscall_ret = regs->rax;
 
     ptrace_on_syscall_exit(regs);
 

@@ -5,6 +5,7 @@
 #include <libs/string_builder.h>
 #include <mm/fault.h>
 #include <mm/mm.h>
+#include <mm/page_table.h>
 #include <irq/irq_manager.h>
 #include <task/sched.h>
 #include <task/keyring.h>
@@ -17,6 +18,10 @@ extern hashmap_t task_parent_map;
 extern hashmap_t task_pgid_map;
 extern struct llist_header should_free_tasks;
 extern spinlock_t should_free_lock;
+
+static inline bool task_page_table_levels_valid(uint64_t levels) {
+    return levels > 0 && levels <= ARCH_MAX_PT_LEVEL;
+}
 
 static uint64_t sys_clone_internal(struct pt_regs *regs, uint64_t flags,
                                    uint64_t newsp, int *parent_tid,
@@ -376,6 +381,8 @@ static uint64_t task_user_translate_access(task_t *task, uint64_t uaddr,
 
     uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
     uint64_t levels = arch_page_table_levels();
+    if (!task_page_table_levels_valid(levels))
+        return 0;
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
     for (uint64_t i = 0; i < levels; i++)
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(uaddr, i + 1);
@@ -1903,6 +1910,7 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
     task_t *self = current_task;
     uint64_t exec_fail_ret = (uint64_t)-ENOEXEC;
     char *cmdline = NULL;
+    char *interpreter_path = NULL;
     int open_ret;
 
     char lookup_path[VFS_PATH_MAX];
@@ -2373,7 +2381,6 @@ shell_fallback_done:
     uint64_t aux_entry = e_entry;
     uint64_t aux_phdr = 0;
     uint64_t aux_phnum = ehdr->e_phnum;
-    char *interpreter_path = NULL;
 
     uint64_t phdr_vaddr = 0;
     for (int i = 0; i < ehdr->e_phnum; ++i) {

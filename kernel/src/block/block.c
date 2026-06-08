@@ -58,11 +58,16 @@ int blkdev_mount(blkdev_t *dev) {
     if (!dev || dev->mounted)
         return -1;
 
-    partition_t *part = &partitions[partition_num];
     uint64_t lba_size = dev->block_size ? dev->block_size : 512;
 
     struct GPT_DPT *buffer = (struct GPT_DPT *)malloc(sizeof(struct GPT_DPT));
-    blkdev_read(dev->id, lba_size, buffer, sizeof(struct GPT_DPT));
+    if (!buffer)
+        return -ENOMEM;
+    if (blkdev_read(dev->id, lba_size, buffer, sizeof(struct GPT_DPT)) !=
+        sizeof(struct GPT_DPT)) {
+        free(buffer);
+        goto probe_mbr;
+    }
 
     if (memcmp(buffer->signature, GPT_HEADER_SIGNATURE, 8) ||
         buffer->num_partition_entries == 0 ||
@@ -73,13 +78,28 @@ int blkdev_mount(blkdev_t *dev) {
 
     struct GPT_DPTE *dptes =
         (struct GPT_DPTE *)malloc(128 * sizeof(struct GPT_DPTE));
-    blkdev_read(dev->id, buffer->partition_entry_lba * lba_size, dptes,
-                128 * sizeof(struct GPT_DPTE));
+    if (!dptes) {
+        free(buffer);
+        return -ENOMEM;
+    }
+    if (blkdev_read(dev->id, buffer->partition_entry_lba * lba_size, dptes,
+                    128 * sizeof(struct GPT_DPTE)) !=
+        128 * sizeof(struct GPT_DPTE)) {
+        free(dptes);
+        free(buffer);
+        return -EIO;
+    }
 
     for (uint32_t j = 0; j < 128; j++) {
         if (dptes[j].starting_lba == 0 || dptes[j].ending_lba == 0)
             continue;
+        if (partition_num >= MAX_PARTITIONS_NUM) {
+            free(dptes);
+            free(buffer);
+            return -ENOSPC;
+        }
 
+        partition_t *part = &partitions[partition_num];
         part->blkdev_id = dev->id;
         part->starting_lba = dptes[j].starting_lba;
         part->ending_lba = dptes[j].ending_lba;
@@ -101,9 +121,18 @@ int blkdev_mount(blkdev_t *dev) {
 
 probe_mbr:
     char *iso9660_detect = (char *)malloc(5);
+    if (!iso9660_detect)
+        return -ENOMEM;
     memset(iso9660_detect, 0, 5);
-    blkdev_read(dev->id, 0x8001, iso9660_detect, 5);
-    if (!memcmp(iso9660_detect, "CD001", 5)) {
+    bool is_iso9660 = blkdev_read(dev->id, 0x8001, iso9660_detect, 5) == 5 &&
+                      !memcmp(iso9660_detect, "CD001", 5);
+    if (is_iso9660) {
+        if (partition_num >= MAX_PARTITIONS_NUM) {
+            free(iso9660_detect);
+            return -ENOSPC;
+        }
+
+        partition_t *part = &partitions[partition_num];
         part->blkdev_id = dev->id;
         part->starting_lba = 0;
         part->ending_lba =
@@ -121,12 +150,25 @@ probe_mbr:
         dev->mounted = true;
         return 0;
     }
+    free(iso9660_detect);
 
     struct MBR_DPT *boot_sector =
         (struct MBR_DPT *)malloc(sizeof(struct MBR_DPT));
-    blkdev_read(dev->id, 0, boot_sector, sizeof(struct MBR_DPT));
+    if (!boot_sector)
+        return -ENOMEM;
+    if (blkdev_read(dev->id, 0, boot_sector, sizeof(struct MBR_DPT)) !=
+        sizeof(struct MBR_DPT)) {
+        free(boot_sector);
+        return -EIO;
+    }
 
     if (boot_sector->bs_trail_sig != 0xAA55) {
+        if (partition_num >= MAX_PARTITIONS_NUM) {
+            free(boot_sector);
+            return -ENOSPC;
+        }
+
+        partition_t *part = &partitions[partition_num];
         part->blkdev_id = dev->id;
         part->starting_lba = 0;
         part->ending_lba =
@@ -149,7 +191,12 @@ probe_mbr:
         if (boot_sector->dpte[j].start_lba == 0 ||
             boot_sector->dpte[j].sectors_limit == 0)
             continue;
+        if (partition_num >= MAX_PARTITIONS_NUM) {
+            free(boot_sector);
+            return -ENOSPC;
+        }
 
+        partition_t *part = &partitions[partition_num];
         part->blkdev_id = dev->id;
         part->starting_lba = boot_sector->dpte[j].start_lba;
         part->ending_lba = boot_sector->dpte[j].start_lba +
@@ -239,6 +286,8 @@ static bool blk_copy_to_buffer(void *dst, const void *src, uint64_t len,
                                bool dst_is_userspace) {
     if (len == 0)
         return true;
+    if (!dst || !src)
+        return false;
 
     if (dst_is_userspace)
         return !copy_to_user(dst, src, len);
@@ -251,6 +300,8 @@ static bool blk_copy_from_buffer(void *dst, const void *src, uint64_t len,
                                  bool src_is_userspace) {
     if (len == 0)
         return true;
+    if (!dst || !src)
+        return false;
 
     if (src_is_userspace)
         return !copy_from_user(dst, src, len);

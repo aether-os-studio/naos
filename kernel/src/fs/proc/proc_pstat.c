@@ -145,7 +145,7 @@ char *proc_gen_stat_file(task_t *task, size_t *content_len) {
         (long)task->nice,                                        // 19. nice
         (long)threads,                                // 20. num_threads
         0L,                                           // 21. itrealvalue
-        0ULL,                                         // 22. starttime
+        proc_stat_ns_to_ticks(task->start_time_ns),   // 22. starttime
         (unsigned long)(mem.size_pages * PAGE_SIZE),  // 23. vsize
         (long)mem.resident_pages,                     // 24. rss (页数)
         task->rlim[RLIMIT_RSS].rlim_cur,              // 25. rsslim

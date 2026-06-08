@@ -187,6 +187,10 @@ typedef struct attributes_builder {
  */
 attributes_builder_t *attributes_builder_new();
 int attributes_builder_append(attributes_builder_t *builder, attribute_t *attr);
+int attributes_builder_append_new(attributes_builder_t *builder,
+                                  const char *name, const char *value);
+void attributes_builder_free(attributes_builder_t *builder);
+void attributes_builder_free_all(attributes_builder_t *builder);
 
 typedef struct bin_attributes_builder {
     bin_attribute_t **bin_attrs;

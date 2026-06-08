@@ -3,11 +3,17 @@
 #include <mm/page.h>
 #include <task/task.h>
 
+static inline bool page_table_levels_valid(uint64_t levels) {
+    return levels > 0 && levels <= ARCH_MAX_PT_LEVEL;
+}
+
 uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr) {
     if (!vaddr)
         return 0;
 
     uint64_t levels = arch_page_table_levels();
+    if (!page_table_levels_valid(levels))
+        return 0;
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
     for (uint64_t i = 0; i < levels; i++) {
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(vaddr, i + 1);
@@ -73,6 +79,8 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
     ASSERT(paddr == (uint64_t)-1 || (paddr & 0xfff) == 0);
 
     uint64_t levels = arch_page_table_levels();
+    if (!page_table_levels_valid(levels))
+        return (uint64_t)-1;
     uint64_t indexs[ARCH_MAX_PT_LEVEL] = {0};
     uint64_t *created_parent_tables[ARCH_MAX_PT_LEVEL - 1] = {0};
     uint64_t created_parent_indices[ARCH_MAX_PT_LEVEL - 1] = {0};
@@ -158,6 +166,8 @@ rollback_created_tables:
 uint64_t unmap_page_defer_release(uint64_t *pgdir, uint64_t vaddr,
                                   unmap_release_batch_t *batch) {
     uint64_t levels = arch_page_table_levels();
+    if (!page_table_levels_valid(levels))
+        return 0;
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
     uint64_t *table_ptrs[ARCH_MAX_PT_LEVEL];
     uint64_t table_indices[ARCH_MAX_PT_LEVEL];
@@ -239,6 +249,8 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr) {
 
 uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
     uint64_t levels = arch_page_table_levels();
+    if (!page_table_levels_valid(levels))
+        return 0;
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
     for (uint64_t i = 0; i < levels; i++) {
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(vaddr, i + 1);
@@ -282,6 +294,9 @@ static void free_page_table_recursive(uint64_t *table, int level);
 
 static uint64_t page_table_entry_span(int level) {
     uint64_t levels = arch_page_table_levels();
+    if (!page_table_levels_valid(levels) || level <= 0 ||
+        (uint64_t)level > levels)
+        return 0;
     return PAGE_CALC_PAGE_TABLE_SIZE(levels - level + 1);
 }
 
@@ -422,8 +437,15 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
     spin_lock(&old->lock);
 
     uint64_t *old_root = phys_to_virt(old->page_table_addr);
-    uint64_t *new_root =
-        copy_page_table_recursive(old_root, arch_page_table_levels(), 0, mgr);
+    uint64_t levels = arch_page_table_levels();
+    if (!page_table_levels_valid(levels)) {
+        free(new_mm);
+        spin_unlock(&old->lock);
+        spin_unlock(&mgr->lock);
+        return NULL;
+    }
+
+    uint64_t *new_root = copy_page_table_recursive(old_root, levels, 0, mgr);
     if (!new_root) {
         free(new_mm);
         spin_unlock(&old->lock);
@@ -437,7 +459,7 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
     new_mm->ref_count = 1;
 
     if (vma_manager_copy(&new_mm->task_vma_mgr, mgr) != 0) {
-        free_page_table_recursive(new_root, arch_page_table_levels());
+        free_page_table_recursive(new_root, levels);
         free(new_mm);
         spin_unlock(&old->lock);
         spin_unlock(&mgr->lock);
@@ -488,9 +510,11 @@ void free_page_table(task_mm_info_t *directory) {
     vma_manager_exit_cleanup(mgr);
     spin_unlock(&mgr->lock);
 
-    free_page_table_recursive(
-        (uint64_t *)phys_to_virt(directory->page_table_addr),
-        arch_page_table_levels());
+    uint64_t levels = arch_page_table_levels();
+    if (page_table_levels_valid(levels)) {
+        free_page_table_recursive(
+            (uint64_t *)phys_to_virt(directory->page_table_addr), levels);
+    }
 
     free(directory);
 }

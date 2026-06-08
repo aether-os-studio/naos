@@ -11,12 +11,16 @@
 #define SOCKET_MMSG_VLEN_MAX 1024U
 #define SOCKET_IOV_MAX 1024U
 #define SOCKET_OPT_MAX_LEN (1U << 20)
+#define SOCKET_MSG_PAYLOAD_MAX (16U * 1024U * 1024U)
+#define SOCKET_MSG_NAME_MAX 256U
+#define SOCKET_MSG_CONTROL_MAX (64U * 1024U)
 
 typedef struct socket_msghdr_copy {
     struct msghdr user_shadow;
     struct msghdr kernel_msg;
     struct iovec *user_iov;
     struct iovec *kernel_iov;
+    void **kernel_iov_allocs;
     void *name_buf;
     void *control_buf;
 } socket_msghdr_copy_t;
@@ -89,6 +93,8 @@ static int socket_alloc_copy_from_user(const void *user_ptr, size_t len,
 static int socket_copy_sockaddr_from_user(const struct sockaddr_un *user_addr,
                                           socklen_t addrlen,
                                           struct sockaddr_un **out_addr) {
+    if (addrlen > SOCKET_MSG_NAME_MAX)
+        return -EINVAL;
     return socket_alloc_copy_from_user(user_addr, addrlen, (void **)out_addr);
 }
 
@@ -111,17 +117,19 @@ static void socket_release_msghdr_copy(socket_msghdr_copy_t *copy) {
     if (!copy)
         return;
 
-    if (copy->kernel_iov) {
+    if (copy->kernel_iov_allocs) {
         for (size_t i = 0; i < copy->user_shadow.msg_iovlen; i++) {
-            free(copy->kernel_iov[i].iov_base);
+            free(copy->kernel_iov_allocs[i]);
         }
     }
 
+    free(copy->kernel_iov_allocs);
     free(copy->kernel_iov);
     free(copy->user_iov);
     free(copy->name_buf);
     free(copy->control_buf);
 
+    copy->kernel_iov_allocs = NULL;
     copy->kernel_iov = NULL;
     copy->user_iov = NULL;
     copy->name_buf = NULL;
@@ -144,6 +152,10 @@ static int socket_prepare_msghdr_from_user(const struct msghdr *user_msg,
         return -EFAULT;
 
     if (copy->user_shadow.msg_iovlen > SOCKET_IOV_MAX)
+        return -EMSGSIZE;
+    if (copy->user_shadow.msg_namelen > SOCKET_MSG_NAME_MAX)
+        return -ENAMETOOLONG;
+    if (copy->user_shadow.msg_controllen > SOCKET_MSG_CONTROL_MAX)
         return -EMSGSIZE;
 
     if (copy->user_shadow.msg_iovlen > 0) {
@@ -173,11 +185,21 @@ static int socket_prepare_msghdr_from_user(const struct msghdr *user_msg,
             socket_release_msghdr_copy(copy);
             return ret;
         }
+        if (total_len > SOCKET_MSG_PAYLOAD_MAX) {
+            socket_release_msghdr_copy(copy);
+            return -EMSGSIZE;
+        }
         (void)total_len;
 
         copy->kernel_iov =
             calloc(copy->user_shadow.msg_iovlen, sizeof(*copy->kernel_iov));
         if (!copy->kernel_iov) {
+            socket_release_msghdr_copy(copy);
+            return -ENOMEM;
+        }
+        copy->kernel_iov_allocs = calloc(copy->user_shadow.msg_iovlen,
+                                         sizeof(*copy->kernel_iov_allocs));
+        if (!copy->kernel_iov_allocs) {
             socket_release_msghdr_copy(copy);
             return -ENOMEM;
         }
@@ -199,6 +221,7 @@ static int socket_prepare_msghdr_from_user(const struct msghdr *user_msg,
                 socket_release_msghdr_copy(copy);
                 return -ENOMEM;
             }
+            copy->kernel_iov_allocs[i] = copy->kernel_iov[i].iov_base;
 
             if (copy_payloads && copy_from_user(copy->kernel_iov[i].iov_base,
                                                 copy->user_iov[i].iov_base,
@@ -780,6 +803,10 @@ uint64_t sys_accept(int sockfd, struct sockaddr_un *addr, socklen_t *addrlen,
                 vfs_file_put(node);
                 return -EFAULT;
             }
+            if (kaddrlen > SOCKET_MSG_NAME_MAX) {
+                vfs_file_put(node);
+                return -EINVAL;
+            }
             if (kaddrlen) {
                 kaddr = calloc(1, kaddrlen);
                 if (!kaddr) {
@@ -838,6 +865,8 @@ int64_t sys_send(int sockfd, void *buff, size_t len, int flags,
                  struct sockaddr_un *dest_addr, socklen_t addrlen) {
     if (sockfd < 0)
         return -EBADF;
+    if (len > SOCKET_MSG_PAYLOAD_MAX)
+        return -EMSGSIZE;
     if (socket_validate_user_mapped_buffer(buff, len) < 0)
         return -EFAULT;
 
@@ -883,6 +912,8 @@ int64_t sys_recv(int sockfd, void *buf, size_t len, int flags,
                  struct sockaddr_un *dest_addr, socklen_t *addrlen) {
     if (sockfd < 0)
         return -EBADF;
+    if (len > SOCKET_MSG_PAYLOAD_MAX)
+        return -EMSGSIZE;
     if (socket_validate_user_mapped_buffer(buf, len) < 0)
         return -EFAULT;
 
@@ -919,6 +950,11 @@ int64_t sys_recv(int sockfd, void *buf, size_t len, int flags,
                 free(kbuf);
                 vfs_file_put(node);
                 return -EFAULT;
+            }
+            if (user_addrlen > SOCKET_MSG_NAME_MAX) {
+                free(kbuf);
+                vfs_file_put(node);
+                return -EINVAL;
             }
             if (user_addrlen) {
                 kaddr = calloc(1, user_addrlen);

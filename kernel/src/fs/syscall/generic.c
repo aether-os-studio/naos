@@ -990,6 +990,45 @@ uint64_t sys_mount(char *dev_name, char *dir_name, char *type_user,
                                   mount_data);
 }
 
+uint64_t sys_mount_setattr(int dfd, const char *path, uint64_t flags,
+                           const mount_attr_t *attr_user, size_t size) {
+    static const uint64_t allowed_attr =
+        MOUNT_ATTR_RDONLY | MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV |
+        MOUNT_ATTR_NOEXEC | MOUNT_ATTR_NOATIME | MOUNT_ATTR_STRICTATIME |
+        MOUNT_ATTR_NODIRATIME | MOUNT_ATTR_NOSYMFOLLOW;
+    mount_attr_t attr;
+    char pathname[512] = {0};
+    struct vfs_path target = {0};
+    int ret;
+
+    if (!attr_user || size < MOUNT_ATTR_SIZE_VER0)
+        return (uint64_t)-EINVAL;
+    if (copy_from_user(&attr, attr_user, sizeof(attr)))
+        return (uint64_t)-EFAULT;
+    if ((attr.attr_set | attr.attr_clr) & ~allowed_attr)
+        return (uint64_t)-EINVAL;
+    if (attr.userns_fd != (uint64_t)-1 && attr.userns_fd != 0)
+        return (uint64_t)-EINVAL;
+
+    if (path && copy_from_user_str(pathname, path, sizeof(pathname)))
+        return (uint64_t)-EFAULT;
+
+    if (!path || pathname[0] == '\0') {
+        if (!(flags & AT_EMPTY_PATH))
+            return (uint64_t)-ENOENT;
+        ret = generic_get_fd_path(dfd, &target);
+    } else {
+        int lookup_flags =
+            (flags & AT_SYMLINK_NOFOLLOW) ? LOOKUP_NOFOLLOW : LOOKUP_FOLLOW;
+        ret = vfs_filename_lookup(dfd, pathname, lookup_flags, &target);
+    }
+    if (ret < 0)
+        return (uint64_t)ret;
+
+    vfs_path_put(&target);
+    return 0;
+}
+
 uint64_t sys_umount2(const char *target, uint64_t flags) {
     char target_k[512];
     if (copy_from_user_str(target_k, target, sizeof(target_k)))

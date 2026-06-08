@@ -6,6 +6,7 @@ static const char *proc_filesystems_text = "nodev\tproc\n"
                                            "nodev\tdevtmpfs\n"
                                            "nodev\tramfs\n"
                                            "nodev\tconfigfs\n"
+                                           "nodev\tcgroup\n"
                                            "nodev\tcgroup2\n"
                                            "nodev\tsockfs\n"
                                            "nodev\tnotifyfs\n";

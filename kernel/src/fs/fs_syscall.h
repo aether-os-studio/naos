@@ -403,6 +403,14 @@ enum fsconfig_command {
 #define MOUNT_ATTR_STRICTATIME 0x00000020
 #define MOUNT_ATTR_NODIRATIME 0x00000080
 #define MOUNT_ATTR_NOSYMFOLLOW 0x00200000
+#define MOUNT_ATTR_SIZE_VER0 32
+
+typedef struct mount_attr {
+    uint64_t attr_set;
+    uint64_t attr_clr;
+    uint64_t propagation;
+    uint64_t userns_fd;
+} mount_attr_t;
 
 /* move_mount flags */
 #define MOVE_MOUNT_F_SYMLINKS 0x00000001
@@ -444,6 +452,8 @@ struct sysinfo {
  */
 uint64_t sys_mount(char *dev_name, char *dir_name, char *type, uint64_t flags,
                    void *data);
+uint64_t sys_mount_setattr(int dfd, const char *path, uint64_t flags,
+                           const mount_attr_t *attr, size_t size);
 /**
  * Linux contract: unmount a mountpoint with umount2(2) semantics.
  * Current kernel: copies the path from userspace and delegates to

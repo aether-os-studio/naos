@@ -462,9 +462,12 @@ static ssize_t drm_primefd_write(struct vfs_file *fd, const void *buf,
 
 static int drm_primefd_release(struct vfs_inode *inode, struct vfs_file *file) {
     drm_prime_fd_ctx_t *ctx = drm_primefd_file_ctx(file);
-    (void)inode;
     if (!ctx)
         return 0;
+    if (file)
+        file->private_data = NULL;
+    if (inode && inode->i_private == ctx)
+        inode->i_private = NULL;
     free(ctx);
     return 0;
 }
@@ -862,7 +865,6 @@ static long drm_syncfdfs_ioctl(struct vfs_file *fd, unsigned long cmd,
         }
 
         ssize_t new_fd = drm_syncfd_create_fd(merged, 0);
-        drm_syncfd_ctx_put(other);
         drm_syncfd_ctx_put(merged);
         if (new_fd < 0) {
             return (int)new_fd;
@@ -1222,8 +1224,10 @@ static ssize_t drm_syncfd_create_fd(drm_syncfd_ctx_t *ctx, uint32_t flags) {
     ret = task_install_file(current_task, file,
                             (flags & DRM_CLOEXEC) ? FD_CLOEXEC : 0, 0);
     vfs_file_put(file);
-    if (ret < 0)
+    if (ret < 0) {
+        drm_syncfd_ctx_unlink(ctx);
         return ret;
+    }
 
     drm_syncfd_update_state(ctx);
     return ret;

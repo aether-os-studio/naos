@@ -185,59 +185,83 @@ static void usb_register_bus_device(usb_device_t *usbdev) {
         return;
 
     attributes_builder_t *builder = attributes_builder_new();
+    if (!builder)
+        return;
     char value[256];
 
     snprintf(value, sizeof(value), "/devices/usb/%s", usbdev->topology);
-    attributes_builder_append(builder, attribute_new("DEVPATH", value));
-    attributes_builder_append(builder, attribute_new("DEVTYPE", "usb_device"));
+    if (attributes_builder_append_new(builder, "DEVPATH", value) < 0)
+        goto err_attrs;
+    if (attributes_builder_append_new(builder, "DEVTYPE", "usb_device") < 0)
+        goto err_attrs;
 
     snprintf(value, sizeof(value), "%u", usbdev->busnum);
-    attributes_builder_append(builder, attribute_new("busnum", value));
+    if (attributes_builder_append_new(builder, "busnum", value) < 0)
+        goto err_attrs;
 
     snprintf(value, sizeof(value), "%u", usbdev->devnum);
-    attributes_builder_append(builder, attribute_new("devnum", value));
+    if (attributes_builder_append_new(builder, "devnum", value) < 0)
+        goto err_attrs;
 
     snprintf(value, sizeof(value), "%s", usbdev->topology);
-    attributes_builder_append(builder, attribute_new("devpath", value));
+    if (attributes_builder_append_new(builder, "devpath", value) < 0)
+        goto err_attrs;
 
     snprintf(value, sizeof(value), "%04x", usbdev->vendorid);
-    attributes_builder_append(builder, attribute_new("idVendor", value));
+    if (attributes_builder_append_new(builder, "idVendor", value) < 0)
+        goto err_attrs;
 
     snprintf(value, sizeof(value), "%04x", usbdev->productid);
-    attributes_builder_append(builder, attribute_new("idProduct", value));
+    if (attributes_builder_append_new(builder, "idProduct", value) < 0)
+        goto err_attrs;
 
     snprintf(value, sizeof(value), "%02x", usbdev->device_desc.bDeviceClass);
-    attributes_builder_append(builder, attribute_new("bDeviceClass", value));
+    if (attributes_builder_append_new(builder, "bDeviceClass", value) < 0)
+        goto err_attrs;
 
     snprintf(value, sizeof(value), "%02x", usbdev->device_desc.bDeviceSubClass);
-    attributes_builder_append(builder, attribute_new("bDeviceSubClass", value));
+    if (attributes_builder_append_new(builder, "bDeviceSubClass", value) < 0)
+        goto err_attrs;
 
     snprintf(value, sizeof(value), "%02x", usbdev->device_desc.bDeviceProtocol);
-    attributes_builder_append(builder, attribute_new("bDeviceProtocol", value));
+    if (attributes_builder_append_new(builder, "bDeviceProtocol", value) < 0)
+        goto err_attrs;
 
     usb_format_bcd(value, sizeof(value), usbdev->device_desc.bcdUSB);
-    attributes_builder_append(builder, attribute_new("version", value));
+    if (attributes_builder_append_new(builder, "version", value) < 0)
+        goto err_attrs;
 
     usb_format_bcd(value, sizeof(value), usbdev->device_desc.bcdDevice);
-    attributes_builder_append(builder, attribute_new("bcdDevice", value));
+    if (attributes_builder_append_new(builder, "bcdDevice", value) < 0)
+        goto err_attrs;
 
-    attributes_builder_append(
-        builder, attribute_new("speed", usb_speed_sysfs_name(usbdev->speed)));
+    if (attributes_builder_append_new(builder, "speed",
+                                      usb_speed_sysfs_name(usbdev->speed)) < 0)
+        goto err_attrs;
 
     if (usbdev->manufacturer[0])
-        attributes_builder_append(
-            builder, attribute_new("manufacturer", usbdev->manufacturer));
+        if (attributes_builder_append_new(builder, "manufacturer",
+                                          usbdev->manufacturer) < 0)
+            goto err_attrs;
     if (usbdev->product[0])
-        attributes_builder_append(builder,
-                                  attribute_new("product", usbdev->product));
+        if (attributes_builder_append_new(builder, "product", usbdev->product) <
+            0)
+            goto err_attrs;
     if (usbdev->serial[0])
-        attributes_builder_append(builder,
-                                  attribute_new("serial", usbdev->serial));
+        if (attributes_builder_append_new(builder, "serial", usbdev->serial) <
+            0)
+            goto err_attrs;
 
     usbdev->bus_device =
         bus_device_install_usb(usbdev, builder->attrs, builder->count, NULL, 0);
+    if (!usbdev->bus_device)
+        goto err_attrs;
 
-    free(builder);
+    attributes_builder_free_all(builder);
+    return;
+
+err_attrs:
+    attributes_builder_free_all(builder);
 }
 
 static void usb_register_interface_bus_devices(usb_device_t *usbdev) {
@@ -250,49 +274,61 @@ static void usb_register_interface_bus_devices(usb_device_t *usbdev) {
             continue;
 
         attributes_builder_t *builder = attributes_builder_new();
+        if (!builder)
+            return;
         char value[256];
 
         snprintf(value, sizeof(value), "/devices/usb/%s/%s:1.%u",
                  usbdev->topology, usbdev->topology,
                  iface->iface->bInterfaceNumber);
-        attributes_builder_append(builder, attribute_new("DEVPATH", value));
-        attributes_builder_append(builder,
-                                  attribute_new("DEVTYPE", "usb_interface"));
+        if (attributes_builder_append_new(builder, "DEVPATH", value) < 0)
+            goto err_attrs;
+        if (attributes_builder_append_new(builder, "DEVTYPE", "usb_interface") <
+            0)
+            goto err_attrs;
 
         snprintf(value, sizeof(value), "%02x", iface->iface->bInterfaceNumber);
-        attributes_builder_append(builder,
-                                  attribute_new("bInterfaceNumber", value));
+        if (attributes_builder_append_new(builder, "bInterfaceNumber", value) <
+            0)
+            goto err_attrs;
 
         snprintf(value, sizeof(value), "%02x", iface->iface->bAlternateSetting);
-        attributes_builder_append(builder,
-                                  attribute_new("bAlternateSetting", value));
+        if (attributes_builder_append_new(builder, "bAlternateSetting", value) <
+            0)
+            goto err_attrs;
 
         snprintf(value, sizeof(value), "%02x", iface->iface->bNumEndpoints);
-        attributes_builder_append(builder,
-                                  attribute_new("bNumEndpoints", value));
+        if (attributes_builder_append_new(builder, "bNumEndpoints", value) < 0)
+            goto err_attrs;
 
         snprintf(value, sizeof(value), "%02x", iface->iface->bInterfaceClass);
-        attributes_builder_append(builder,
-                                  attribute_new("bInterfaceClass", value));
+        if (attributes_builder_append_new(builder, "bInterfaceClass", value) <
+            0)
+            goto err_attrs;
 
         snprintf(value, sizeof(value), "%02x",
                  iface->iface->bInterfaceSubClass);
-        attributes_builder_append(builder,
-                                  attribute_new("bInterfaceSubClass", value));
+        if (attributes_builder_append_new(builder, "bInterfaceSubClass",
+                                          value) < 0)
+            goto err_attrs;
 
         snprintf(value, sizeof(value), "%02x",
                  iface->iface->bInterfaceProtocol);
-        attributes_builder_append(builder,
-                                  attribute_new("bInterfaceProtocol", value));
+        if (attributes_builder_append_new(builder, "bInterfaceProtocol",
+                                          value) < 0)
+            goto err_attrs;
 
         iface->bus_device = bus_device_install_internal(
             &usb_bus, iface, builder->attrs, builder->count, NULL, 0,
             usb_get_interface_path);
+        if (!iface->bus_device)
+            goto err_attrs;
 
-        for (int j = 0; j < builder->count; j++) {
-            free(builder->attrs[j]);
-        }
-        free(builder);
+        attributes_builder_free_all(builder);
+        continue;
+
+    err_attrs:
+        attributes_builder_free_all(builder);
     }
 }
 

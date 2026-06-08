@@ -1,31 +1,29 @@
 #include <fs/proc.h>
-#include <fs/vfs/cgroup/cgroupfs.h>
+#include <cgroup/cgroup.h>
 #include <task/task.h>
 
 size_t proc_pcgroup_stat(proc_handle_t *handle) {
     task_t *task = procfs_handle_task_or_current(handle);
-    char *path = cgroupfs_task_path(task);
-    size_t len = path ? strlen(path) + strlen("0::\n") : strlen("0::/\n");
-    free(path);
+    char *text = cgroup_task_proc_text(task);
+    size_t len = text ? strlen(text) : strlen("0::/\n");
+    free(text);
     return len;
 }
 
 size_t proc_pcgroup_read(proc_handle_t *handle, void *addr, size_t offset,
                          size_t size) {
     task_t *task = procfs_handle_task_or_current(handle);
-    char *path = cgroupfs_task_path(task);
-    char buf[VFS_PATH_MAX];
-    const char *cgroup_path = path ? path : "/";
+    char *text = cgroup_task_proc_text(task);
+    const char *content = text ? text : "0::/\n";
     size_t content_len;
 
-    snprintf(buf, sizeof(buf), "0::%s\n", cgroup_path);
-    content_len = strlen(buf);
+    content_len = strlen(content);
     if (offset >= content_len) {
-        free(path);
+        free(text);
         return 0;
     }
     size_t to_copy = MIN(size, content_len - offset);
-    memcpy(addr, buf + offset, to_copy);
-    free(path);
+    memcpy(addr, content + offset, to_copy);
+    free(text);
     return to_copy;
 }

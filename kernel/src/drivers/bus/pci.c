@@ -65,6 +65,7 @@ uint8_t pci_read8(uint32_t b, uint32_t d, uint32_t f, uint32_t s,
     uint64_t mmio_address = get_mmio_address(pci_address, offset);
     if (mmio_address == 0) {
         printk("Cannot read pci: failed to get mmio address\n");
+        return 0xff;
     }
     return *(volatile uint8_t *)mmio_address;
 }
@@ -76,6 +77,7 @@ void pci_write8(uint32_t b, uint32_t d, uint32_t f, uint32_t s, uint32_t offset,
     uint64_t mmio_address = get_mmio_address(pci_address, offset);
     if (mmio_address == 0) {
         printk("Cannot write pci: failed to get mmio address\n");
+        return;
     }
     *(volatile uint8_t *)mmio_address = value;
 }
@@ -87,6 +89,7 @@ uint16_t pci_read16(uint32_t b, uint32_t d, uint32_t f, uint32_t s,
     uint64_t mmio_address = get_mmio_address(pci_address, offset);
     if (mmio_address == 0) {
         printk("Cannot read pci: failed to get mmio address\n");
+        return 0xffff;
     }
     return *(volatile uint16_t *)mmio_address;
 }
@@ -98,6 +101,7 @@ void pci_write16(uint32_t b, uint32_t d, uint32_t f, uint32_t s,
     uint64_t mmio_address = get_mmio_address(pci_address, offset);
     if (mmio_address == 0) {
         printk("Cannot write pci: failed to get mmio address\n");
+        return;
     }
     *(volatile uint16_t *)mmio_address = value;
 }
@@ -109,6 +113,7 @@ uint32_t pci_read32(uint32_t b, uint32_t d, uint32_t f, uint32_t s,
     uint64_t mmio_address = get_mmio_address(pci_address, offset);
     if (mmio_address == 0) {
         printk("Cannot read pci: failed to get mmio address\n");
+        return 0xffffffffu;
     }
     return *(volatile uint32_t *)mmio_address;
 }
@@ -120,6 +125,7 @@ void pci_write32(uint32_t b, uint32_t d, uint32_t f, uint32_t s,
     uint64_t mmio_address = get_mmio_address(pci_address, offset);
     if (mmio_address == 0) {
         printk("Cannot write pci: failed to get mmio address\n");
+        return;
     }
     *(volatile uint32_t *)mmio_address = value;
 }
@@ -787,44 +793,59 @@ void pci_scan_function(pci_device_op_t *op, uint16_t segment, uint8_t bus,
 
         // 添加到设备列表
         if (pci_device_number < PCI_DEVICE_MAX) {
-            pci_devices[pci_device_number] = pci_device;
-
             attributes_builder_t *builder = attributes_builder_new();
+            if (!builder) {
+                printk("PCIe: failed to allocate bus attributes\n");
+                free(pci_device);
+                break;
+            }
             char value[256];
 
             sprintf(value, "/devices/pci%04x:%02x/%04x:%02x:%02x.%01x",
                     pci_device->segment, pci_device->bus, pci_device->segment,
                     pci_device->bus, pci_device->slot, pci_device->func);
-            attribute_t *attr = attribute_new("DEVPATH", value);
-            attributes_builder_append(builder, attr);
+            if (attributes_builder_append_new(builder, "DEVPATH", value) < 0)
+                goto err_bus_attrs;
 
             sprintf(value, "%06x", pci_device->class_code);
-            attr = attribute_new("PCI_CLASS", value);
-            attributes_builder_append(builder, attr);
+            if (attributes_builder_append_new(builder, "PCI_CLASS", value) < 0)
+                goto err_bus_attrs;
 
             sprintf(value, "%04x:%04x", pci_device->vendor_id,
                     pci_device->device_id);
-            attr = attribute_new("PCI_ID", value);
-            attributes_builder_append(builder, attr);
+            if (attributes_builder_append_new(builder, "PCI_ID", value) < 0)
+                goto err_bus_attrs;
 
             sprintf(value, "%04x:%04x", pci_device->subsystem_vendor_id,
                     pci_device->subsystem_device_id);
-            attr = attribute_new("PCI_SUBSYS_ID", value);
-            attributes_builder_append(builder, attr);
+            if (attributes_builder_append_new(builder, "PCI_SUBSYS_ID", value) <
+                0)
+                goto err_bus_attrs;
 
             sprintf(value, "%04x:%02x:%02x:%01x", pci_device->segment,
                     pci_device->bus, pci_device->slot, pci_device->func);
-            attr = attribute_new("PCI_SLOT_NAME", value);
-            attributes_builder_append(builder, attr);
+            if (attributes_builder_append_new(builder, "PCI_SLOT_NAME", value) <
+                0)
+                goto err_bus_attrs;
 
             attribute_t **attrs = builder->attrs;
             int attrs_count = builder->count;
-            free(builder);
 
             pci_device->device =
                 bus_device_install_pci(pci_device, attrs, attrs_count, NULL, 0);
+            if (!pci_device->device)
+                goto err_bus_attrs;
+
+            pci_devices[pci_device_number] = pci_device;
+            attributes_builder_free_all(builder);
 
             pci_device_number++;
+            break;
+
+        err_bus_attrs:
+            printk("PCIe: failed to create bus attributes\n");
+            attributes_builder_free_all(builder);
+            free(pci_device);
         } else {
             printk("PCIe: Device list full, dropping device\n");
             free(pci_device);

@@ -1254,9 +1254,29 @@ static int unix_socket_prepare_ancillary(const struct msghdr *msg,
 
     bool have_rights = false;
     bool have_cred = false;
+    uint8_t *control = (uint8_t *)msg->msg_control;
+    size_t offset = 0;
 
-    for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg); cmsg != NULL;
-         cmsg = CMSG_NXTHDR((struct msghdr *)msg, cmsg)) {
+    while (offset + sizeof(struct cmsghdr) <= msg->msg_controllen) {
+        struct cmsghdr *cmsg = (struct cmsghdr *)(control + offset);
+        size_t cmsg_len = cmsg->cmsg_len;
+        size_t aligned_len;
+
+        if (cmsg_len < sizeof(struct cmsghdr) ||
+            cmsg_len > msg->msg_controllen - offset) {
+            unix_socket_ancillary_free(anc);
+            return -EINVAL;
+        }
+        if (cmsg_len > SIZE_MAX - sizeof(size_t) + 1) {
+            unix_socket_ancillary_free(anc);
+            return -EINVAL;
+        }
+        aligned_len = CMSG_ALIGN(cmsg_len);
+        if (aligned_len == 0 || aligned_len > msg->msg_controllen - offset)
+            offset = msg->msg_controllen;
+        else
+            offset += aligned_len;
+
         if (cmsg->cmsg_level != SOL_SOCKET)
             continue;
 

@@ -4,6 +4,7 @@
 #include <boot/boot.h>
 #include <task/task.h>
 #include <task/signal.h>
+#include <fs/vfs/fcntl.h>
 
 DEFINE_LLIST(tty_device_list);
 tty_t *kernel_session = NULL; // 内核会话
@@ -41,6 +42,29 @@ static bool tty_input_dequeue_byte(tty_t *tty, char *c) {
     return true;
 }
 
+void tty_bind_devnode(tty_t *tty, vfs_node_t *node) {
+    if (!tty || !node)
+        return;
+
+    for (size_t i = 0; i < tty->poll_node_count; i++) {
+        if (tty->poll_nodes[i] == node)
+            return;
+    }
+
+    if (tty->poll_node_count >= TTY_POLL_NODE_LIMIT)
+        return;
+
+    tty->poll_nodes[tty->poll_node_count++] = vfs_igrab(node);
+}
+
+static void tty_notify_readable(tty_t *tty) {
+    if (!tty)
+        return;
+
+    for (size_t i = 0; i < tty->poll_node_count; i++)
+        vfs_poll_notify_inode(tty->poll_nodes[i], EPOLLIN | EPOLLRDNORM);
+}
+
 static void tty_echo_bytes(tty_t *tty, const char *buf, size_t len) {
     if (!tty || !buf || len == 0 || !(tty->termios.c_lflag & ECHO))
         return;
@@ -59,12 +83,17 @@ static void tty_echo_erase(tty_t *tty) {
 }
 
 static void tty_input_commit_canon(tty_t *tty) {
+    uint16_t old_count;
+
     if (!tty)
         return;
 
+    old_count = tty->input_count;
     for (uint16_t i = 0; i < tty->canon_count; i++)
         tty_input_enqueue_byte(tty, tty->canon_buf[i]);
     tty->canon_count = 0;
+    if (old_count == 0 && tty->input_count > 0)
+        tty_notify_readable(tty);
 }
 
 static char tty_shifted_digit(uint16_t code) {
@@ -281,6 +310,7 @@ static bool tty_translate_key(tty_t *tty, uint16_t code, char *out,
 static void tty_receive_bytes(tty_t *tty, const char *buf, size_t len) {
     bool canonical;
     char eofc;
+    bool notify = false;
 
     if (!tty || !buf || len == 0)
         return;
@@ -317,7 +347,10 @@ static void tty_receive_bytes(tty_t *tty, const char *buf, size_t len) {
         }
 
         if (!canonical) {
+            bool was_empty = tty->input_count == 0;
             tty_input_enqueue_byte(tty, c);
+            if (was_empty)
+                notify = true;
             tty_echo_bytes(tty, &c, 1);
             continue;
         }
@@ -353,6 +386,9 @@ static void tty_receive_bytes(tty_t *tty, const char *buf, size_t len) {
             tty_input_commit_canon(tty);
         }
     }
+
+    if (notify)
+        tty_notify_readable(tty);
 }
 
 static bool tty_input_device_is_keyboard(dev_input_event_t *event) {
@@ -365,7 +401,7 @@ static bool tty_input_device_is_keyboard(dev_input_event_t *event) {
             tty_bitmap_test(event->keybit, KEY_SPACE));
 }
 
-size_t tty_input_read(tty_t *tty, char *buf, size_t count) {
+ssize_t tty_input_read(tty_t *tty, char *buf, size_t count, fd_t *fd) {
     size_t read = 0;
     int vmin;
 
@@ -396,7 +432,22 @@ size_t tty_input_read(tty_t *tty, char *buf, size_t count) {
         if (read > 0)
             break;
 
-        arch_wait_for_interrupt();
+        if (fd && (fd_get_flags(fd) & O_NONBLOCK)) {
+            arch_disable_interrupt();
+            return -EWOULDBLOCK;
+        }
+
+        arch_disable_interrupt();
+        if (fd) {
+            int reason = vfs_poll_wait_interruptible(
+                fd, EPOLLIN | EPOLLRDNORM | EPOLLERR | EPOLLHUP | EPOLLNVAL);
+            if (reason < 0)
+                return reason;
+        } else {
+            arch_enable_interrupt();
+            arch_wait_for_interrupt();
+            arch_disable_interrupt();
+        }
     }
 
     arch_disable_interrupt();
@@ -409,10 +460,10 @@ int tty_input_poll(tty_t *tty, int events) {
     if (!tty)
         return 0;
 
-    if ((events & EPOLLIN) && tty->input_count > 0)
-        revents |= EPOLLIN;
-    if (events & EPOLLOUT)
-        revents |= EPOLLOUT;
+    if ((events & (EPOLLIN | EPOLLRDNORM)) && tty->input_count > 0)
+        revents |= EPOLLIN | EPOLLRDNORM;
+    if (events & (EPOLLOUT | EPOLLWRNORM))
+        revents |= EPOLLOUT | EPOLLWRNORM;
 
     return revents;
 }
@@ -425,6 +476,7 @@ void tty_input_flush(tty_t *tty) {
     tty->input_tail = 0;
     tty->input_count = 0;
     tty->canon_count = 0;
+    tty_notify_readable(tty);
 }
 
 void tty_input_event(dev_input_event_t *event, uint16_t type, uint16_t code,
@@ -603,15 +655,17 @@ int tty_poll(void *dev, int events) {
     return tty->ops.poll(tty, events);
 }
 
-int tty_read(void *dev, void *buf, uint64_t offset, size_t size,
-             uint64_t flags) {
+int tty_read(void *dev, void *buf, uint64_t offset, size_t size, fd_t *fd) {
     tty_t *tty = dev;
-    return tty->ops.read(tty, buf, size);
+    (void)offset;
+    return tty->ops.read(tty, buf, size, fd);
 }
 
 int tty_write(void *dev, const void *buf, uint64_t offset, size_t size,
-              uint64_t flags) {
+              fd_t *fd) {
     tty_t *tty = dev;
+    (void)offset;
+    (void)fd;
     return tty->ops.write(tty, buf, size);
 }
 

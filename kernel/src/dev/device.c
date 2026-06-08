@@ -7,7 +7,6 @@ uint64_t devices_idxs[DEV_MAX];
 spinlock_t device_lock = SPIN_INIT;
 
 static device_t *get_null_device();
-static void device_reset_entry(device_t *device);
 
 static bool device_minor_in_use(int subtype, uint64_t minor) {
     device_t *ptr, *tmp;
@@ -33,7 +32,7 @@ static uint64_t device_install_internal(int type, int subtype, void *ptr,
     device_t *device;
     uint64_t devnr;
 
-    if (subtype < 0 || subtype >= DEV_MAX) {
+    if (subtype < 0 || subtype >= DEV_MAX || !name) {
         return 0;
     }
 
@@ -55,6 +54,7 @@ static uint64_t device_install_internal(int type, int subtype, void *ptr,
     if (use_fixed_minor) {
         if (device_minor_in_use(subtype, fixed_minor)) {
             spin_unlock(&device_lock);
+            free(device);
             return 0;
         }
 
@@ -72,6 +72,11 @@ static uint64_t device_install_internal(int type, int subtype, void *ptr,
     device->subtype = subtype;
     device->dev = (dev_major << 8) | dev_minor;
     device->name = strdup(name);
+    if (!device->name) {
+        spin_unlock(&device_lock);
+        free(device);
+        return 0;
+    }
     device->open = open;
     device->close = close;
     device->ioctl = ioctl;
@@ -81,9 +86,8 @@ static uint64_t device_install_internal(int type, int subtype, void *ptr,
     device->map = map;
 
     devnr = device->dev;
-    spin_unlock(&device_lock);
-
     llist_append(&device_list, &device->node);
+    spin_unlock(&device_lock);
 
     on_new_device_call(device);
 
@@ -92,18 +96,6 @@ static uint64_t device_install_internal(int type, int subtype, void *ptr,
 
 // 获取空设备
 static device_t *get_null_device() { return calloc(1, sizeof(device_t)); }
-
-static void device_reset_entry(device_t *device) {
-    if (!device)
-        return;
-
-    memset(device, 0, sizeof(*device));
-    strcpy(device->name, "null");
-    device->type = DEV_NULL;
-    device->subtype = DEV_NULL;
-    device->dev = 0;
-    device->parent = 0;
-}
 
 ssize_t device_open(uint64_t dev, void *arg) {
     device_t *device = device_get(dev);
@@ -209,12 +201,14 @@ int device_uninstall(uint64_t dev) {
     }
 
     memcpy(&removed, device, sizeof(removed));
-    device_reset_entry(device);
+    llist_delete(&device->node);
     ret = 0;
 
     spin_unlock(&device_lock);
 
-    on_remove_device_call(device);
+    on_remove_device_call(&removed);
+    free(removed.name);
+    free(device);
 
     return ret;
 }

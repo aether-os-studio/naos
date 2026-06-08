@@ -73,7 +73,8 @@ static void input_bitmap_to_string(char *out, size_t out_size,
 
 static void input_sysfs_publish_metadata(dev_input_event_t *input_event,
                                          const char *input_dir_path,
-                                         const char *input_dirname) {
+                                         const char *input_dirname,
+                                         const char *event_dir_path) {
     if (!input_event || !input_dir_path || !input_dirname)
         return;
 
@@ -166,6 +167,78 @@ static void input_sysfs_publish_metadata(dev_input_event_t *input_event,
 
     snprintf(path, sizeof(path), "%s/capabilities/ff", input_dir_path);
     input_sysfs_write_file(path, "0\n");
+
+    if (event_dir_path && event_dir_path[0]) {
+        snprintf(path, sizeof(path), "%s/name", event_dir_path);
+        snprintf(content, sizeof(content), "%s\n",
+                 input_event->devname ? input_event->devname : "");
+        input_sysfs_write_file(path, content);
+
+        snprintf(path, sizeof(path), "%s/phys", event_dir_path);
+        snprintf(content, sizeof(content), "%s\n",
+                 input_event->physloc ? input_event->physloc : "");
+        input_sysfs_write_file(path, content);
+
+        snprintf(path, sizeof(path), "%s/uniq", event_dir_path);
+        snprintf(content, sizeof(content), "%s\n", input_event->uniq);
+        input_sysfs_write_file(path, content);
+
+        snprintf(path, sizeof(path), "%s/properties", event_dir_path);
+        snprintf(content, sizeof(content), "%lx\n", input_event->properties);
+        input_sysfs_write_file(path, content);
+
+        snprintf(path, sizeof(path), "%s/modalias", event_dir_path);
+        snprintf(content, sizeof(content), "input:b%04Xv%04Xp%04Xe%04X\n",
+                 input_event->inputid.bustype, input_event->inputid.vendor,
+                 input_event->inputid.product, input_event->inputid.version);
+        input_sysfs_write_file(path, content);
+
+        snprintf(path, sizeof(path), "%s/id", event_dir_path);
+        sysfs_ensure_dir(path);
+
+        snprintf(path, sizeof(path), "%s/id/bustype", event_dir_path);
+        snprintf(content, sizeof(content), "%04x\n",
+                 input_event->inputid.bustype);
+        input_sysfs_write_file(path, content);
+
+        snprintf(path, sizeof(path), "%s/id/vendor", event_dir_path);
+        snprintf(content, sizeof(content), "%04x\n",
+                 input_event->inputid.vendor);
+        input_sysfs_write_file(path, content);
+
+        snprintf(path, sizeof(path), "%s/id/product", event_dir_path);
+        snprintf(content, sizeof(content), "%04x\n",
+                 input_event->inputid.product);
+        input_sysfs_write_file(path, content);
+
+        snprintf(path, sizeof(path), "%s/id/version", event_dir_path);
+        snprintf(content, sizeof(content), "%04x\n",
+                 input_event->inputid.version);
+        input_sysfs_write_file(path, content);
+
+        snprintf(path, sizeof(path), "%s/capabilities", event_dir_path);
+        sysfs_ensure_dir(path);
+
+        snprintf(path, sizeof(path), "%s/capabilities/ev", event_dir_path);
+        input_bitmap_to_string(content, sizeof(content), input_event->evbit,
+                               sizeof(input_event->evbit));
+        input_sysfs_write_file(path, content);
+
+        snprintf(path, sizeof(path), "%s/capabilities/key", event_dir_path);
+        input_bitmap_to_string(content, sizeof(content), input_event->keybit,
+                               sizeof(input_event->keybit));
+        input_sysfs_write_file(path, content);
+
+        snprintf(path, sizeof(path), "%s/capabilities/rel", event_dir_path);
+        input_bitmap_to_string(content, sizeof(content), input_event->relbit,
+                               sizeof(input_event->relbit));
+        input_sysfs_write_file(path, content);
+
+        snprintf(path, sizeof(path), "%s/capabilities/abs", event_dir_path);
+        input_bitmap_to_string(content, sizeof(content), input_event->absbit,
+                               sizeof(input_event->absbit));
+        input_sysfs_write_file(path, content);
+    }
 }
 
 static size_t input_event_bit(void *data, uint64_t request, void *arg) {
@@ -343,21 +416,27 @@ dev_input_event_t *regist_input_dev(const char *device_name,
     input_event->timesOpened = 0;
     input_event->devnode = NULL;
 
-    char uevent[128];
+    char uevent[256];
+    char modalias[64];
     const char *extra_uevent =
         desc && desc->uevent_append ? desc->uevent_append : "";
     size_t extra_len = strlen(extra_uevent);
     bool extra_has_trailing_nl =
         extra_len > 0 && extra_uevent[extra_len - 1] == '\n';
-    snprintf(uevent, sizeof(uevent), "ID_INPUT=1\n%s%sSUBSYSTEM=input\n",
-             extra_uevent,
-             (extra_len == 0 || extra_has_trailing_nl) ? "" : "\n");
+    snprintf(modalias, sizeof(modalias), "input:b%04Xv%04Xp%04Xe%04X",
+             input_event->inputid.bustype, input_event->inputid.vendor,
+             input_event->inputid.product, input_event->inputid.version);
+    snprintf(uevent, sizeof(uevent),
+             "SUBSYSTEM=input\nID_INPUT=1\n%s%sMODALIAS=%s\n", extra_uevent,
+             (extra_len == 0 || extra_has_trailing_nl) ? "" : "\n", modalias);
 
     char sysfs_path[256];
     char input_dir_path[256];
+    char event_parent_path[256];
     char parent_device_path[256];
     memset(sysfs_path, 0, sizeof(sysfs_path));
     memset(input_dir_path, 0, sizeof(input_dir_path));
+    memset(event_parent_path, 0, sizeof(event_parent_path));
     memset(parent_device_path, 0, sizeof(parent_device_path));
     if (desc && desc->from == INPUT_FROM_PS2) {
         sprintf(input_dir_path, "/sys/devices/platform/i8042/serio%d/input%d",
@@ -387,12 +466,16 @@ dev_input_event_t *regist_input_dev(const char *device_name,
         input_event->physloc = physloc;
     }
 
+    snprintf(event_parent_path, sizeof(event_parent_path), "%s",
+             input_dir_path);
+    input_sysfs_publish_metadata(input_event, input_dir_path, input_dirname,
+                                 sysfs_path);
+
     vfs_node_t *node = sysfs_regist_dev(
         'c', (dev >> 8) & 0xFF, dev & 0xFF, sysfs_path, dirpath, uevent,
-        "/sys/class/input", "/sys/class/input", dirname, parent_device_path);
+        "/sys/class/input", "/sys/class/input", dirname, event_parent_path);
     if (node)
         vfs_iput(node);
-    input_sysfs_publish_metadata(input_event, input_dir_path, input_dirname);
 
     eventn++;
 

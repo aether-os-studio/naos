@@ -2342,6 +2342,8 @@ static size_t netlink_iov_total_len(const struct iovec *iov, size_t iovlen) {
         return 0;
 
     for (size_t i = 0; i < iovlen; i++) {
+        if (!iov[i].iov_base && iov[i].len)
+            return SIZE_MAX;
         if (iov[i].len > SIZE_MAX - total)
             return SIZE_MAX;
         total += iov[i].len;

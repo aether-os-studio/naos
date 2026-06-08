@@ -15,11 +15,13 @@ void terminal_flush_serial(tty_t *session) {
 
 extern void send_process_group_signal(int pgid, int sig);
 
-size_t terminal_read_serial(tty_t *device, char *buf, size_t count) {
+ssize_t terminal_read_serial(tty_t *device, char *buf, size_t count, fd_t *fd) {
     size_t read = 0;
     bool canonical = (device->termios.c_lflag & ICANON) != 0;
     char eofc = device->termios.c_cc[VEOF];
     int vmin = device->termios.c_cc[VMIN];
+
+    (void)fd;
 
     while (read < count) {
         arch_enable_interrupt();

@@ -73,21 +73,20 @@ void task_mm_init_aslr(task_mm_info_t *mm) {
 
     uint64_t default_layout_top =
         task_mm_mmap_top(NULL) + (USER_STACK_END - USER_MMAP_BASE_END);
-    uint64_t layout_top = default_layout_top;
     uint64_t template_top = USER_STACK_END;
     uint64_t slide = 0;
 
-    if (layout_top > template_top) {
-        uint64_t max_slide = layout_top - template_top;
+    if (default_layout_top > template_top) {
+        uint64_t max_slide = default_layout_top - template_top;
         uint64_t window = (1ULL << USER_LAYOUT_ASLR_BITS) * PAGE_SIZE;
-        uint64_t min_layout_top =
-            max_slide > window ? layout_top - window : template_top;
-        uint64_t span_pages = (layout_top - min_layout_top) / PAGE_SIZE;
+        uint64_t span_pages;
+
+        if (max_slide > window)
+            max_slide = window;
+        span_pages = max_slide / PAGE_SIZE;
 
         if (span_pages)
-            layout_top -= (mmap_aslr_next() % (span_pages + 1)) * PAGE_SIZE;
-
-        slide = layout_top - template_top;
+            slide = (mmap_aslr_next() % (span_pages + 1)) * PAGE_SIZE;
     }
 
     mm->mmap_top = USER_MMAP_BASE_END + slide;

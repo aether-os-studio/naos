@@ -81,6 +81,8 @@ char *proc_gen_status_file(task_t *task, size_t *content_len) {
         "Tgid:\t%llu\n"
         "Pid:\t%llu\n"
         "PPid:\t%llu\n"
+        "Uid:\t%lld\t%lld\t%lld\t%lld\n"
+        "Gid:\t%lld\t%lld\t%lld\t%lld\n"
         "Threads:\t%llu\n"
         "NStgid:\t%llu\n"
         "NSpid:\t%llu\n"
@@ -114,7 +116,10 @@ char *proc_gen_status_file(task_t *task, size_t *content_len) {
         "CapAmb:\t0000000000000000\n",
         task ? task->name : "unknown", task_state_to_proc_state(task),
         (unsigned long long)tgid, (unsigned long long)(task ? task->pid : 0),
-        (unsigned long long)task_parent_pid(task), (unsigned long long)threads,
+        (unsigned long long)task_parent_pid(task), task ? task->uid : 0,
+        task ? task->euid : 0, task ? task->suid : 0, task ? task->fsuid : 0,
+        task ? task->gid : 0, task ? task->egid : 0, task ? task->sgid : 0,
+        task ? task->fsgid : 0, (unsigned long long)threads,
         (unsigned long long)tgid, (unsigned long long)(task ? task->pid : 0),
         task ? task->pgid : 0, task ? task->sid : 0, vm_size_kb, vm_size_kb,
         vm_rss_kb, vm_rss_kb,

@@ -10,6 +10,7 @@ enum tty_device_type {
 
 typedef struct tty_virtual_device tty_device_t;
 typedef struct tty_session tty_t;
+typedef struct vfs_file fd_t;
 
 typedef struct tty_device_ops {
     size_t (*write)(tty_device_t *device, const char *buf, size_t count);
@@ -48,11 +49,13 @@ typedef struct tty_virtual_device { // TTY 设备
 
 typedef struct tty_session_ops {
     size_t (*write)(tty_t *device, const char *buf, size_t count);
-    size_t (*read)(tty_t *device, char *buf, size_t count);
+    ssize_t (*read)(tty_t *device, char *buf, size_t count, fd_t *fd);
     void (*flush)(tty_t *res);
     int (*ioctl)(tty_t *device, uint32_t cmd, uint64_t arg);
     int (*poll)(tty_t *device, int events);
 } tty_session_ops_t;
+
+#define TTY_POLL_NODE_LIMIT 8
 
 typedef struct tty_session { // 一个 TTY 会话
     void *terminal;
@@ -73,16 +76,17 @@ typedef struct tty_session { // 一个 TTY 会话
     bool key_capslock;
     tty_session_ops_t ops;
     tty_device_t *device; // 会话所属的TTY设备
+    vfs_node_t *poll_nodes[TTY_POLL_NODE_LIMIT];
+    size_t poll_node_count;
 } tty_t;
 
 extern tty_t *kernel_session;
 
 int tty_ioctl(void *dev, int cmd, void *args);
 int tty_poll(void *dev, int events);
-int tty_read(void *dev, void *buf, uint64_t offset, size_t size,
-             uint64_t flags);
+int tty_read(void *dev, void *buf, uint64_t offset, size_t size, fd_t *fd);
 int tty_write(void *dev, const void *buf, uint64_t offset, size_t size,
-              uint64_t flags);
+              fd_t *fd);
 
 tty_device_t *get_tty_device(const char *name);
 tty_device_t *alloc_tty_device(enum tty_device_type type);
@@ -91,7 +95,8 @@ uint64_t delete_tty_device(tty_device_t *device);
 void tty_init();
 void tty_init_session();
 void tty_init_session_serial();
-size_t tty_input_read(tty_t *tty, char *buf, size_t count);
+void tty_bind_devnode(tty_t *tty, vfs_node_t *node);
+ssize_t tty_input_read(tty_t *tty, char *buf, size_t count, fd_t *fd);
 int tty_input_poll(tty_t *tty, int events);
 void tty_input_flush(tty_t *tty);
 void tty_input_event(dev_input_event_t *event, uint16_t type, uint16_t code,

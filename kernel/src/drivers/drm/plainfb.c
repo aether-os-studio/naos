@@ -753,6 +753,16 @@ int plainfb_atomic_commit(drm_device_t *drm_dev, struct drm_mode_atomic *atomic,
             switch (prop_id) {
             case DRM_PROPERTY_ID_PLANE_TYPE:
                 // Immutable: userspace may query it, but must not set it.
+                if (!plane) {
+                    if (connector) {
+                        drm_connector_free(&gpu_dev->resource_mgr,
+                                           connector->id);
+                    }
+                    if (crtc) {
+                        drm_crtc_free(&gpu_dev->resource_mgr, crtc->id);
+                    }
+                    return -EINVAL;
+                }
                 if (value != plane->plane_type) {
                     if (connector) {
                         drm_connector_free(&gpu_dev->resource_mgr,

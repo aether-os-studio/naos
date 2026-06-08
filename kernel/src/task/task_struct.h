@@ -354,6 +354,7 @@ typedef struct task {
     rb_node_t timeout_node;
     rb_node_t signal_timer_node;
     uint64_t last_sched_in_ns;
+    uint64_t start_time_ns;
     uint64_t user_time_ns;
     uint64_t system_time_ns;
     uint64_t child_user_time_ns;

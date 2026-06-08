@@ -6,6 +6,10 @@
 #include <mm/fault.h>
 #include <mm/page_table.h>
 
+static inline bool klibc_page_table_levels_valid(uint64_t levels) {
+    return levels > 0 && levels <= ARCH_MAX_PT_LEVEL;
+}
+
 void spin_init(spinlock_t *lock) { memset(lock, 0, sizeof(spinlock_t)); }
 
 void raw_spin_lock(spinlock_t *sl) {
@@ -157,6 +161,8 @@ static uint64_t user_translate_access(uint64_t *pgdir, uint64_t uaddr,
         return 0;
 
     uint64_t levels = arch_page_table_levels();
+    if (!klibc_page_table_levels_valid(levels))
+        return 0;
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
     for (uint64_t i = 0; i < levels; i++) {
         indexs[i] = PAGE_CALC_PAGE_TABLE_INDEX(uaddr, i + 1);

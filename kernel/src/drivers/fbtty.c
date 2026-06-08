@@ -17,8 +17,8 @@ void terminal_flush(tty_t *session) { flanterm_flush(session->terminal); }
 
 extern void send_process_group_signal(int pgid, int sig);
 
-size_t terminal_read(tty_t *device, char *buf, size_t count) {
-    return tty_input_read(device, buf, count);
+ssize_t terminal_read(tty_t *device, char *buf, size_t count, fd_t *fd) {
+    return tty_input_read(device, buf, count, fd);
 }
 
 int terminal_ioctl(tty_t *device, uint32_t cmd, uint64_t arg) {

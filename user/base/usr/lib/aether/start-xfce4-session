@@ -17,32 +17,4 @@ export LIBGL_ALWAYS_SOFTWARE=1
 export WLR_RENDERER_ALLOW_SOFTWARE=1
 export WLR_RENDERER=pixman
 
-mkdir -p /tmp/.X11-unix
-mkdir -p /tmp/.ICE-unix
-mkdir -p $HOME/.config/dconf
-mkdir -p /run/dbus
-mkdir -p /var/lib/dbus
-mkdir -p $XDG_RUNTIME_DIR
-
-chmod 01777 /tmp/.X11-unix
-chmod 0777 /tmp/.ICE-unix
-chmod 0700 $XDG_RUNTIME_DIR
-
-dbus-daemon --system --fork
-dbus-uuidgen --ensure
-
-udevd --daemon
-
-echo "Waiting for udevd"
-
-while [ ! -e "/run/udev/control" ]; do
-    sleep 0.5
-done
-
-echo "Waiting for udevadm"
-
-udevadm settle
-
-echo "Starting xfce4 wayland"
-
-exec dbus-run-session -- seatd-launch -- startxfce4 --wayland
+exec dbus-run-session -- startxfce4 --wayland

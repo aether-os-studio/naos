@@ -11,6 +11,7 @@
 #include <mod/dlinker.h>
 #include <task/signal.h>
 #include <task/task.h>
+#include <cgroup/cgroup.h>
 #include <fs/vfs/vfs.h>
 #include <fs/vfs/notify.h>
 #include <fs/vfs/cgroup/cgroupfs.h>
@@ -104,6 +105,7 @@ void kmain(void) {
 
     devtmpfs_init();
     sysfs_init();
+    cgroup_init();
 
     regist_on_sched_update_callback(on_sched_update);
     regist_on_new_task_callback(on_new_task);
