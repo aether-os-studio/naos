@@ -528,6 +528,7 @@ uint64_t general_ap_entry() {
 
     while (1) {
         arch_enable_interrupt();
+        deadline_reprogram_local();
         arch_wait_for_interrupt();
     }
 }

@@ -6,6 +6,8 @@
 #include <mm/fault.h>
 #include <mm/page_table.h>
 
+#define PANIC_CALL_STACK_DEPTH 16
+
 static inline bool klibc_page_table_levels_valid(uint64_t levels) {
     return levels > 0 && levels <= ARCH_MAX_PT_LEVEL;
 }
@@ -467,6 +469,14 @@ uint64_t strtoul(const char *restrict cp, char **restrict endp, int base) {
 void panic(const char *file, int line, const char *func, const char *cond) {
     printk("assert failed! %s\n", cond);
     printk("file: %s\nline %d\nfunc: %s\n", file, line, func);
+
+    printk("call stack:\n");
+    for (uint32_t i = 0; i < PANIC_CALL_STACK_DEPTH; i++) {
+        uintptr_t addr = arch_get_return_address(i + 1);
+        if (!addr)
+            break;
+        printk("  #%u: %#018lx\n", i, (uint64_t)addr);
+    }
 
     arch_shutdown();
 }

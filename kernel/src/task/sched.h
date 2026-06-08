@@ -21,10 +21,12 @@ typedef struct sched_rq {
     rb_root_t run_tree;
     struct sched_entity *idle;
     struct sched_entity *curr;
+    struct sched_entity *min_vruntime_entity;
     uint64_t min_vruntime;
     uint64_t load_weight;
     size_t nr_running;
     size_t nr_queued;
+    bool cleanup_queued;
     spinlock_t lock;
 } sched_rq_t;
 

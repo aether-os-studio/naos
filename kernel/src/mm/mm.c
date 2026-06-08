@@ -19,8 +19,6 @@ static size_t early_last_alloc_pos = 0;
 
 #define USER_LAYOUT_ASLR_BITS 18
 
-static uint64_t mmap_aslr_state;
-
 uint64_t arch_user_va_limit(void) __attribute__((weak));
 
 uint64_t arch_user_va_limit(void) { return 0; }
@@ -41,63 +39,29 @@ uint64_t mm_default_mmap_top(void) {
     uint64_t limit = va_limit == UINT64_MAX
                          ? PADDING_DOWN(UINT64_MAX, PAGE_SIZE)
                          : PADDING_DOWN(va_limit + 1, PAGE_SIZE);
-    if (limit <= USER_STACK_END - USER_MMAP_BASE_END)
+    if (limit <= USER_STACK_END - USER_MMAP_END)
         return USER_MMAP_START;
-    limit =
-        PADDING_DOWN(limit - (USER_STACK_END - USER_MMAP_BASE_END), PAGE_SIZE);
+    limit = PADDING_DOWN(limit - (USER_STACK_END - USER_MMAP_END), PAGE_SIZE);
     if (limit <= USER_MMAP_START)
         return USER_MMAP_START;
     return limit;
-}
-
-static uint64_t mmap_aslr_next(void) {
-    uint64_t seed = mmap_aslr_state;
-    if (seed == 0) {
-        seed = nano_time() ^ (boot_get_boottime() << 32) ^
-               (uint64_t)(uintptr_t)&seed ^
-               (uint64_t)(uintptr_t)get_kernel_page_dir();
-    }
-
-    seed ^= seed << 13;
-    seed ^= seed >> 7;
-    seed ^= seed << 17;
-    if (seed == 0)
-        seed = 0x9e3779b97f4a7c15ULL;
-    mmap_aslr_state = seed;
-    return seed;
 }
 
 void task_mm_init_aslr(task_mm_info_t *mm) {
     if (!mm)
         return;
 
-    uint64_t default_layout_top =
-        task_mm_mmap_top(NULL) + (USER_STACK_END - USER_MMAP_BASE_END);
-    uint64_t template_top = USER_STACK_END;
-    uint64_t slide = 0;
+    // TODO
 
-    if (default_layout_top > template_top) {
-        uint64_t max_slide = default_layout_top - template_top;
-        uint64_t window = (1ULL << USER_LAYOUT_ASLR_BITS) * PAGE_SIZE;
-        uint64_t span_pages;
-
-        if (max_slide > window)
-            max_slide = window;
-        span_pages = max_slide / PAGE_SIZE;
-
-        if (span_pages)
-            slide = (mmap_aslr_next() % (span_pages + 1)) * PAGE_SIZE;
-    }
-
-    mm->mmap_top = USER_MMAP_BASE_END + slide;
-    mm->signal_trampoline_start = USER_SIGNAL_TRAMPOLINE_START + slide;
-    mm->pie_base = PIE_BASE_ADDR + slide;
-    mm->interpreter_base = INTERPRETER_BASE_ADDR + slide;
-    mm->brk_start = USER_BRK_START + slide;
+    mm->mmap_top = USER_MMAP_END;
+    mm->signal_trampoline_start = USER_SIGNAL_TRAMPOLINE_START;
+    mm->pie_base = PIE_BASE_ADDR;
+    mm->interpreter_base = INTERPRETER_BASE_ADDR;
+    mm->brk_start = USER_BRK_START;
     mm->brk_current = mm->brk_start;
-    mm->brk_end = USER_BRK_END + slide;
-    mm->stack_start = USER_STACK_START + slide;
-    mm->stack_end = USER_STACK_END + slide;
+    mm->brk_end = USER_BRK_END;
+    mm->stack_start = USER_STACK_START;
+    mm->stack_end = USER_STACK_END;
 }
 
 uint64_t task_mm_mmap_top(task_mm_info_t *mm) {

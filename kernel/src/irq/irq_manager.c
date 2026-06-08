@@ -11,6 +11,7 @@
 irq_action_t actions[ARCH_MAX_IRQ_NUM] = {0};
 irq_ipi_send_fn_t ipi_send_fns[ARCH_MAX_IRQ_NUM] = {0};
 uint64_t sched_ipi_irq = ARCH_MAX_IRQ_NUM;
+static uint64_t irq_counts[MAX_CPU_NUM][ARCH_MAX_IRQ_NUM] = {0};
 
 extern bool system_initialized;
 extern bool can_schedule;
@@ -25,6 +26,8 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num) {
     }
 
     uint64_t cpu_id = current_cpu_id;
+    uint64_t stat_cpu = cpu_id < MAX_CPU_NUM ? cpu_id : 0;
+    __atomic_fetch_add(&irq_counts[stat_cpu][irq_num], 1, __ATOMIC_RELAXED);
 
     irq_action_t *action = &actions[irq_num];
 
@@ -63,9 +66,8 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num) {
         sched_resched_if_needed();
     }
 
-    if (irq_num == ARCH_TIMER_IRQ && self) {
-        task_t *curr = current_task;
-        sched_refresh_preempt_deadline(cpu_id, curr, nano_time());
+    if (irq_num == ARCH_TIMER_IRQ) {
+        sched_refresh_preempt_deadline(cpu_id, self, nano_time());
         deadline_reprogram_local();
     }
 }
@@ -148,6 +150,30 @@ bool irq_is_registered(uint64_t irq_num) {
         return false;
 
     return __atomic_load_n(&actions[irq_num].used, __ATOMIC_ACQUIRE);
+}
+
+void irq_stat_read(uint64_t *counts, size_t count, uint64_t *total) {
+    size_t limit = counts ? MIN(count, (size_t)ARCH_MAX_IRQ_NUM) : 0;
+    size_t online_cpus = cpu_count ? MIN(cpu_count, (uint64_t)MAX_CPU_NUM) : 1;
+    uint64_t sum = 0;
+
+    for (size_t irq_num = 0; irq_num < ARCH_MAX_IRQ_NUM; irq_num++) {
+        uint64_t irq_total = 0;
+
+        for (size_t cpu = 0; cpu < online_cpus; cpu++) {
+            irq_total +=
+                __atomic_load_n(&irq_counts[cpu][irq_num], __ATOMIC_RELAXED);
+        }
+
+        if (irq_num < limit)
+            counts[irq_num] = irq_total;
+        sum += irq_total;
+    }
+
+    if (counts && count > limit)
+        memset(counts + limit, 0, sizeof(*counts) * (count - limit));
+    if (total)
+        *total = sum;
 }
 
 uint64_t irq = IRQ_ALLOCATE_NUM_BASE;

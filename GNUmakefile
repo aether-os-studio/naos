@@ -41,7 +41,7 @@ endif
 ifeq ($(MON), 1)
 override QEMUFLAGS := $(QEMUFLAGS) -monitor stdio
 else
-override QEMUFLAGS := $(QEMUFLAGS) -monitor none
+override QEMUFLAGS := $(QEMUFLAGS)
 endif
 
 ifeq ($(HVF), 1)

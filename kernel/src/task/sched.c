@@ -108,6 +108,24 @@ static int sched_entity_cmp(struct sched_entity *left,
     return left < right ? -1 : (left > right ? 1 : 0);
 }
 
+static struct sched_entity *
+sched_rebuild_min_vruntime_entity_locked(sched_rq_t *scheduler) {
+    struct sched_entity *min_vruntime = NULL;
+
+    for (rb_node_t *node = rb_first(&scheduler->run_tree); node;
+         node = rb_next(node)) {
+        struct sched_entity *se = rb_entry(node, struct sched_entity, run_node);
+
+        if (!se || !se->on_rq || se->rq != scheduler)
+            continue;
+        if (!min_vruntime || se->vruntime < min_vruntime->vruntime)
+            min_vruntime = se;
+    }
+
+    scheduler->min_vruntime_entity = min_vruntime;
+    return min_vruntime;
+}
+
 static void sched_update_min_vruntime_locked(sched_rq_t *scheduler) {
     uint64_t min_vruntime = scheduler->min_vruntime;
     bool found = false;
@@ -120,12 +138,12 @@ static void sched_update_min_vruntime_locked(sched_rq_t *scheduler) {
         found = true;
     }
 
-    for (rb_node_t *node = rb_first(&scheduler->run_tree); node;
-         node = rb_next(node)) {
-        struct sched_entity *se = rb_entry(node, struct sched_entity, run_node);
+    struct sched_entity *se = scheduler->min_vruntime_entity;
+    if ((se && (!se->on_rq || se->rq != scheduler)) ||
+        (!se && scheduler->nr_queued))
+        se = sched_rebuild_min_vruntime_entity_locked(scheduler);
 
-        if (!se || !se->on_rq)
-            continue;
+    if (se) {
         if (!found || se->vruntime < min_vruntime)
             min_vruntime = se->vruntime;
         found = true;
@@ -160,13 +178,23 @@ static void sched_entity_enqueue_locked(sched_rq_t *scheduler,
 
     entity->on_rq = true;
     entity->rq = scheduler;
+    if (!scheduler->min_vruntime_entity ||
+        !scheduler->min_vruntime_entity->on_rq ||
+        scheduler->min_vruntime_entity->rq != scheduler ||
+        entity->vruntime < scheduler->min_vruntime_entity->vruntime)
+        scheduler->min_vruntime_entity = entity;
+    if (!entity->task || entity->task->state != TASK_READY)
+        scheduler->cleanup_queued = true;
     scheduler->nr_queued++;
     scheduler->nr_running++;
     scheduler->load_weight += sched_task_weight(entity->task);
 }
 
 static void sched_entity_dequeue_locked(sched_rq_t *scheduler,
-                                        struct sched_entity *entity) {
+                                        struct sched_entity *entity,
+                                        bool update_min_vruntime) {
+    bool was_min_vruntime = scheduler->min_vruntime_entity == entity;
+
     rb_erase(&entity->run_node, &scheduler->run_tree);
     sched_run_node_reset(&entity->run_node);
 
@@ -180,7 +208,14 @@ static void sched_entity_dequeue_locked(sched_rq_t *scheduler,
     uint64_t weight = sched_task_weight(entity->task);
     scheduler->load_weight =
         scheduler->load_weight > weight ? scheduler->load_weight - weight : 0;
-    sched_update_min_vruntime_locked(scheduler);
+    if (was_min_vruntime) {
+        if (update_min_vruntime)
+            sched_rebuild_min_vruntime_entity_locked(scheduler);
+        else
+            scheduler->min_vruntime_entity = NULL;
+    }
+    if (update_min_vruntime)
+        sched_update_min_vruntime_locked(scheduler);
 }
 
 static void sched_entity_reweight_current_locked(sched_rq_t *scheduler,
@@ -321,7 +356,7 @@ void remove_sched_entity(task_t *task, sched_rq_t *scheduler) {
     raw_spin_lock(&scheduler->lock);
 
     if (entity->on_rq && entity->rq == scheduler) {
-        sched_entity_dequeue_locked(scheduler, entity);
+        sched_entity_dequeue_locked(scheduler, entity, true);
     } else if (sched_entity_is_current_locked(scheduler, entity)) {
         sched_curr_detach_locked(scheduler, entity);
     }
@@ -364,7 +399,7 @@ void sched_account_runtime(task_t *task, uint64_t delta_ns) {
 
     bool was_queued = entity->on_rq && entity->rq == scheduler;
     if (was_queued)
-        sched_entity_dequeue_locked(scheduler, entity);
+        sched_entity_dequeue_locked(scheduler, entity, true);
 
     entity->vruntime += sched_calc_delta_fair(delta_ns, task);
 
@@ -412,7 +447,7 @@ void sched_set_task_nice(task_t *task, int niceval) {
     raw_spin_lock(&scheduler->lock);
 
     if (entity->on_rq && entity->rq == scheduler) {
-        sched_entity_dequeue_locked(scheduler, entity);
+        sched_entity_dequeue_locked(scheduler, entity, true);
         task->nice = niceval;
         sched_entity_enqueue_locked(scheduler, entity);
     } else if (sched_entity_is_current_locked(scheduler, entity)) {
@@ -431,18 +466,34 @@ void sched_set_task_nice(task_t *task, int niceval) {
 static struct sched_entity *sched_pick_eevdf_locked(sched_rq_t *scheduler,
                                                     task_t *excluded) {
     struct sched_entity *best = NULL;
-    struct sched_entity *min_vruntime = NULL;
+    struct sched_entity *min_vruntime = scheduler->min_vruntime_entity;
+    task_t *min_task = min_vruntime ? min_vruntime->task : NULL;
+    bool min_queued =
+        min_vruntime && min_vruntime->on_rq && min_vruntime->rq == scheduler;
+    bool min_bad = min_queued && (!min_task || min_task->state != TASK_READY);
+    bool min_excluded = min_queued && min_task == excluded;
+
+    if (!min_queued || min_bad || min_excluded) {
+        if (min_bad)
+            scheduler->cleanup_queued = true;
+        min_vruntime = NULL;
+    }
+
+    bool scan_min_vruntime = min_vruntime == NULL;
 
     for (rb_node_t *node = rb_first(&scheduler->run_tree); node;
          node = rb_next(node)) {
         struct sched_entity *se = rb_entry(node, struct sched_entity, run_node);
         task_t *candidate = se ? se->task : NULL;
 
-        if (!candidate || candidate->state != TASK_READY)
+        if (!candidate || candidate->state != TASK_READY) {
+            scheduler->cleanup_queued = true;
             continue;
+        }
         if (candidate == excluded)
             continue;
-        if (!min_vruntime || se->vruntime < min_vruntime->vruntime)
+        if (scan_min_vruntime &&
+            (!min_vruntime || se->vruntime < min_vruntime->vruntime))
             min_vruntime = se;
         if (sched_entity_eligible_locked(scheduler, se)) {
             best = se;
@@ -455,6 +506,7 @@ static struct sched_entity *sched_pick_eevdf_locked(sched_rq_t *scheduler,
 
 static void sched_drop_dead_queued_locked(sched_rq_t *scheduler) {
     rb_node_t *node = rb_first(&scheduler->run_tree);
+    bool rebuild_min_vruntime = false;
 
     while (node) {
         struct sched_entity *se = rb_entry(node, struct sched_entity, run_node);
@@ -462,13 +514,20 @@ static void sched_drop_dead_queued_locked(sched_rq_t *scheduler) {
         task_t *task = se ? se->task : NULL;
 
         if (!task || task->state != TASK_READY) {
-            sched_entity_dequeue_locked(scheduler, se);
-            node = rb_first(&scheduler->run_tree);
+            rebuild_min_vruntime |= scheduler->min_vruntime_entity == se;
+            sched_entity_dequeue_locked(scheduler, se, false);
+            node = next;
             continue;
         }
 
         node = next;
     }
+
+    if (rebuild_min_vruntime) {
+        sched_rebuild_min_vruntime_entity_locked(scheduler);
+        sched_update_min_vruntime_locked(scheduler);
+    }
+    scheduler->cleanup_queued = false;
 }
 
 bool sched_should_preempt(sched_rq_t *scheduler, task_t *curr_task,
@@ -513,9 +572,18 @@ bool sched_should_preempt(sched_rq_t *scheduler, task_t *curr_task,
         goto out;
 
     struct sched_entity *next = rb_entry(first, struct sched_entity, run_node);
-    if (!next || !next->task || next->task == curr_task ||
-        next->task->state != TASK_READY)
+    if (!next || !next->task) {
+        scheduler->cleanup_queued = true;
+        should_preempt = true;
         goto out;
+    }
+    if (next->task == curr_task)
+        goto out;
+    if (next->task->state != TASK_READY) {
+        scheduler->cleanup_queued = true;
+        should_preempt = true;
+        goto out;
+    }
 
     if (next->deadline + SCHED_WAKEUP_PREEMPT_GRANULARITY_NS < curr->deadline) {
         should_preempt = true;
@@ -651,15 +719,20 @@ static task_t *sched_pick_next_task_internal(sched_rq_t *scheduler,
 
     raw_spin_lock(&scheduler->lock);
 
-    sched_drop_dead_queued_locked(scheduler);
+    if (scheduler->cleanup_queued)
+        sched_drop_dead_queued_locked(scheduler);
 
     struct sched_entity *next = sched_pick_eevdf_locked(scheduler, excluded);
+    if (scheduler->cleanup_queued) {
+        sched_drop_dead_queued_locked(scheduler);
+        next = sched_pick_eevdf_locked(scheduler, excluded);
+    }
     if (next) {
         if (scheduler->curr == scheduler->idle && scheduler->idle) {
             scheduler->idle->rq = NULL;
             scheduler->idle->on_rq = false;
         }
-        sched_entity_dequeue_locked(scheduler, next);
+        sched_entity_dequeue_locked(scheduler, next, true);
         sched_curr_attach_locked(scheduler, next, now_ns);
         next_task = next->task;
         goto out;

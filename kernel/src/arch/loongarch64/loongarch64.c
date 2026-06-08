@@ -103,13 +103,55 @@ bool arch_memory_region_usable(uint64_t addr, uint64_t len) {
 }
 
 uintptr_t arch_get_return_address(uint32_t level) {
-    if (level != 0)
-        return 0;
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wframe-address"
 #endif
-    return (uintptr_t)__builtin_return_address(0);
+#define RETURN_ADDRESS(level)                                                  \
+    do {                                                                       \
+        if (!__builtin_frame_address(level))                                   \
+            return 0;                                                          \
+        return (uintptr_t)__builtin_return_address(level);                     \
+    } while (0)
+    switch (level) {
+    case 0:
+        RETURN_ADDRESS(0);
+    case 1:
+        RETURN_ADDRESS(1);
+    case 2:
+        RETURN_ADDRESS(2);
+    case 3:
+        RETURN_ADDRESS(3);
+    case 4:
+        RETURN_ADDRESS(4);
+    case 5:
+        RETURN_ADDRESS(5);
+    case 6:
+        RETURN_ADDRESS(6);
+    case 7:
+        RETURN_ADDRESS(7);
+    case 8:
+        RETURN_ADDRESS(8);
+    case 9:
+        RETURN_ADDRESS(9);
+    case 10:
+        RETURN_ADDRESS(10);
+    case 11:
+        RETURN_ADDRESS(11);
+    case 12:
+        RETURN_ADDRESS(12);
+    case 13:
+        RETURN_ADDRESS(13);
+    case 14:
+        RETURN_ADDRESS(14);
+    case 15:
+        RETURN_ADDRESS(15);
+    case 16:
+        RETURN_ADDRESS(16);
+    default:
+        return 0;
+    }
+#undef RETURN_ADDRESS
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
 #endif

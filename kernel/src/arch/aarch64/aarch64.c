@@ -162,30 +162,51 @@ uintptr_t arch_get_return_address(uint32_t level) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wframe-address"
 #endif
+#define RETURN_ADDRESS(level)                                                  \
+    do {                                                                       \
+        if (!__builtin_frame_address(level))                                   \
+            return 0;                                                          \
+        return (uintptr_t)__builtin_return_address(level);                     \
+    } while (0)
     switch (level) {
     case 0:
-        return (uintptr_t)__builtin_return_address(0);
+        RETURN_ADDRESS(0);
     case 1:
-        return (uintptr_t)__builtin_return_address(1);
+        RETURN_ADDRESS(1);
     case 2:
-        return (uintptr_t)__builtin_return_address(2);
+        RETURN_ADDRESS(2);
     case 3:
-        return (uintptr_t)__builtin_return_address(3);
+        RETURN_ADDRESS(3);
     case 4:
-        return (uintptr_t)__builtin_return_address(4);
+        RETURN_ADDRESS(4);
     case 5:
-        return (uintptr_t)__builtin_return_address(5);
+        RETURN_ADDRESS(5);
     case 6:
-        return (uintptr_t)__builtin_return_address(6);
+        RETURN_ADDRESS(6);
     case 7:
-        return (uintptr_t)__builtin_return_address(7);
+        RETURN_ADDRESS(7);
     case 8:
-        return (uintptr_t)__builtin_return_address(8);
+        RETURN_ADDRESS(8);
     case 9:
-        return (uintptr_t)__builtin_return_address(9);
+        RETURN_ADDRESS(9);
+    case 10:
+        RETURN_ADDRESS(10);
+    case 11:
+        RETURN_ADDRESS(11);
+    case 12:
+        RETURN_ADDRESS(12);
+    case 13:
+        RETURN_ADDRESS(13);
+    case 14:
+        RETURN_ADDRESS(14);
+    case 15:
+        RETURN_ADDRESS(15);
+    case 16:
+        RETURN_ADDRESS(16);
     default:
         return 0;
     }
+#undef RETURN_ADDRESS
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
