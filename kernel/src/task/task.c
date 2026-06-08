@@ -145,23 +145,33 @@ int task_fd_info_expand(fd_info_t *fd_info, size_t min_fds) {
 }
 
 void task_fd_info_free(fd_info_t *fd_info) {
-    signalfd_ref_t *pos, *tmp;
-
     if (!fd_info)
         return;
-    llist_for_each(pos, tmp, &fd_info->signalfd_refs, node) { free(pos); }
+
+    while (!llist_empty(&fd_info->signalfd_refs)) {
+        signalfd_ref_t *pos =
+            list_entry(fd_info->signalfd_refs.next, signalfd_ref_t, node);
+
+        llist_delete(&pos->node);
+        free(pos);
+    }
+
     free(fd_info->fds);
     free(fd_info);
 }
 
 static signalfd_ref_t *task_fd_signalfd_ref_find_locked(fd_info_t *fd_info,
                                                         int fd) {
-    signalfd_ref_t *pos, *tmp;
+    struct llist_header *node;
 
     if (!fd_info)
         return NULL;
 
-    llist_for_each(pos, tmp, &fd_info->signalfd_refs, node) {
+    node = fd_info->signalfd_refs.next;
+    while (node != &fd_info->signalfd_refs) {
+        signalfd_ref_t *pos = list_entry(node, signalfd_ref_t, node);
+
+        node = node->next;
         if (pos->fd == fd)
             return pos;
     }
@@ -209,10 +219,12 @@ int task_fd_slot_install(fd_info_t *fd_info, int fd, struct vfs_file *file,
     fd_info->fds[fd].file = vfs_file_get(file);
     if (!fd_info->fds[fd].file)
         return -ENOMEM;
+    vfs_file_fd_ref_get(file);
     fd_info->fds[fd].flags = flags;
 
     ret = task_fd_signalfd_ref_add_locked(fd_info, fd, file);
     if (ret < 0) {
+        vfs_file_fd_ref_put(fd_info->fds[fd].file);
         vfs_file_put(fd_info->fds[fd].file);
         fd_info->fds[fd].file = NULL;
         fd_info->fds[fd].flags = 0;
@@ -239,6 +251,7 @@ struct vfs_file *task_fd_slot_take(fd_info_t *fd_info, int fd,
     task_fd_signalfd_ref_remove_locked(fd_info, fd);
     fd_info->fds[fd].file = NULL;
     fd_info->fds[fd].flags = 0;
+    vfs_file_fd_ref_put(file);
     return file;
 }
 
@@ -1230,6 +1243,109 @@ static bool task_is_signal_group_representative_locked(task_t *task,
     return true;
 }
 
+static bool task_signal_forces_group_exit(int sig) { return sig == SIGKILL; }
+
+static bool task_signalable_user_task_locked(task_t *task, uint64_t tgid,
+                                             bool skip_kernel) {
+    return task && task->state != TASK_DIED && task->arch_context &&
+           task_effective_tgid(task) == tgid &&
+           !(skip_kernel && task->is_kernel);
+}
+
+static task_t *task_pick_thread_group_signal_target_locked(uint64_t tgid,
+                                                           bool skip_kernel) {
+    task_t *fallback = NULL;
+
+    if (!tgid || !task_pid_map.buckets)
+        return NULL;
+
+    for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+        hashmap_entry_t *entry = &task_pid_map.buckets[i];
+        if (!hashmap_entry_is_occupied(entry))
+            continue;
+
+        task_t *task = (task_t *)entry->value;
+        if (!task_signalable_user_task_locked(task, tgid, skip_kernel))
+            continue;
+
+        if (!fallback || task->pid < fallback->pid)
+            fallback = task;
+        if (task->state != TASK_UNINTERRUPTABLE)
+            return task;
+    }
+
+    return fallback;
+}
+
+static void task_mark_group_exit_locked(task_t *task, int64_t code) {
+    if (!task || !task->signal || !task->signal->sighand)
+        return;
+
+    spin_lock(&task->signal->sighand->siglock);
+    task->signal->sighand->group_exit = true;
+    task->signal->sighand->group_exit_code = code;
+    spin_unlock(&task->signal->sighand->siglock);
+}
+
+static int task_kill_thread_group_locked(uint64_t tgid, int sig, int code,
+                                         bool skip_kernel) {
+    int sent = 0;
+
+    if (!tgid || !task_pid_map.buckets)
+        return 0;
+
+    if (!task_signal_forces_group_exit(sig)) {
+        task_t *target =
+            task_pick_thread_group_signal_target_locked(tgid, skip_kernel);
+        if (!target)
+            return 0;
+
+        task_send_signal(target, sig, code);
+        return 1;
+    }
+
+    for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+        hashmap_entry_t *entry = &task_pid_map.buckets[i];
+        if (!hashmap_entry_is_occupied(entry))
+            continue;
+
+        task_t *task = (task_t *)entry->value;
+        if (!task_signalable_user_task_locked(task, tgid, skip_kernel))
+            continue;
+
+        task_mark_group_exit_locked(task, 128 + sig);
+    }
+
+    for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+        hashmap_entry_t *entry = &task_pid_map.buckets[i];
+        if (!hashmap_entry_is_occupied(entry))
+            continue;
+
+        task_t *task = (task_t *)entry->value;
+        if (!task_signalable_user_task_locked(task, tgid, skip_kernel))
+            continue;
+
+        sent++;
+        task_send_signal(task, sig, code);
+        if (task->state == TASK_BLOCKING || task->state == TASK_READING_STDIO ||
+            task->state == TASK_UNINTERRUPTABLE || task->block_preparing) {
+            task_unblock(task, EOK);
+        }
+    }
+
+    return sent;
+}
+
+int task_kill_thread_group(uint64_t tgid, int sig) {
+    int sent;
+
+    spin_lock(&task_queue_lock);
+    sent = task_kill_thread_group_locked(tgid, sig, SI_USER, true);
+    spin_unlock(&task_queue_lock);
+
+    return sent;
+}
+
 int task_kill_all(int sig) {
     int sent = 0;
 
@@ -1249,7 +1365,12 @@ int task_kill_all(int sig) {
 
             sent++;
             if (sig != 0) {
-                task_send_signal(task, sig, SI_USER);
+                if (task_signal_forces_group_exit(sig)) {
+                    task_kill_thread_group_locked(task_effective_tgid(task),
+                                                  sig, SI_USER, true);
+                } else {
+                    task_send_signal(task, sig, SI_USER);
+                }
             }
         }
     }
@@ -2398,7 +2519,12 @@ static int task_kill_process_group_internal(int pgid, int sig,
             }
             sent++;
             if (sig != 0) {
-                task_send_signal(task, sig, SI_USER);
+                if (task_signal_forces_group_exit(sig)) {
+                    task_kill_thread_group_locked(task_effective_tgid(task),
+                                                  sig, SI_USER, skip_kernel);
+                } else {
+                    task_send_signal(task, sig, SI_USER);
+                }
             }
         }
     }

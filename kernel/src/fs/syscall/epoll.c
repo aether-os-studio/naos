@@ -21,6 +21,7 @@ static const struct vfs_super_operations epollfs_super_ops;
 static const struct vfs_file_operations epollfs_dir_file_ops;
 static const struct vfs_file_operations epollfs_file_ops;
 static mutex_t epollfs_mount_lock;
+static mutex_t epoll_watch_lifecycle_lock;
 static struct vfs_mount *epollfs_internal_mnt;
 
 static inline epollfs_info_t *epollfs_sb_info(struct vfs_super_block *sb) {
@@ -102,7 +103,6 @@ static void epoll_watch_disarm(epoll_watch_t *watch) {
 
     wait_queue_remove(&watch->file->f_inode->poll_wait, &watch->wait);
     watch->wait_armed = false;
-    watch->owner = NULL;
 }
 
 static void epoll_watch_update_events(epoll_t *epoll, epoll_watch_t *watch,
@@ -120,18 +120,114 @@ static void epoll_watch_update_events(epoll_t *epoll, epoll_watch_t *watch,
         epoll_watch_arm(epoll, watch);
 }
 
+static void epoll_watch_link_file(epoll_watch_t *watch) {
+    struct vfs_file *file = watch ? watch->file : NULL;
+
+    if (!file)
+        return;
+
+    spin_lock(&file->epoll_watches_lock);
+    if (llist_empty(&watch->file_node))
+        llist_append(&file->epoll_watches, &watch->file_node);
+    spin_unlock(&file->epoll_watches_lock);
+}
+
+static void epoll_watch_unlink_file(epoll_watch_t *watch) {
+    struct vfs_file *file = watch ? watch->file : NULL;
+
+    if (!file)
+        return;
+
+    spin_lock(&file->epoll_watches_lock);
+    if (!llist_empty(&watch->file_node))
+        llist_delete(&watch->file_node);
+    spin_unlock(&file->epoll_watches_lock);
+}
+
+static void epoll_watch_destroy(epoll_watch_t *watch) {
+    struct vfs_file *file;
+
+    if (!watch)
+        return;
+
+    epoll_watch_disarm(watch);
+    epoll_watch_unlink_file(watch);
+    if (!llist_empty(&watch->node))
+        llist_delete(&watch->node);
+
+    file = watch->file;
+    watch->file = NULL;
+    watch->owner = NULL;
+    free(watch);
+    if (file)
+        vfs_file_put(file);
+}
+
+void epoll_on_file_close(struct vfs_file *file) {
+    struct llist_header drop_watches;
+    struct llist_header *node;
+    int watch_count = 0;
+
+    if (!file)
+        return;
+
+    if (vfs_file_fd_ref_read(file) > 0)
+        return;
+
+    llist_init_head(&drop_watches);
+    mutex_lock(&epoll_watch_lifecycle_lock);
+
+    spin_lock(&file->epoll_watches_lock);
+    node = file->epoll_watches.next;
+    while (node != &file->epoll_watches) {
+        watch_count++;
+        node = node->next;
+    }
+
+    if (watch_count <= 0 || vfs_file_fd_ref_read(file) > 0) {
+        spin_unlock(&file->epoll_watches_lock);
+        mutex_unlock(&epoll_watch_lifecycle_lock);
+        return;
+    }
+
+    while (!llist_empty(&file->epoll_watches)) {
+        node = file->epoll_watches.next;
+        llist_delete(node);
+        llist_append(&drop_watches, node);
+    }
+    spin_unlock(&file->epoll_watches_lock);
+
+    while (!llist_empty(&drop_watches)) {
+        epoll_watch_t *drop =
+            list_entry(drop_watches.next, epoll_watch_t, file_node);
+        epoll_t *owner = drop->owner;
+
+        llist_delete(&drop->file_node);
+
+        if (owner)
+            mutex_lock(&owner->lock);
+        epoll_watch_destroy(drop);
+        if (owner)
+            mutex_unlock(&owner->lock);
+    }
+    mutex_unlock(&epoll_watch_lifecycle_lock);
+}
+
 static bool epoll_contains_file(epoll_t *epoll, struct vfs_file *needle,
                                 unsigned int depth) {
-    epoll_watch_t *watch, *tmp;
+    struct llist_header *node;
 
     if (!epoll || !needle)
         return false;
     if (depth > 32)
         return true;
 
-    llist_for_each(watch, tmp, &epoll->watches, node) {
+    node = epoll->watches.next;
+    while (node != &epoll->watches) {
+        epoll_watch_t *watch = list_entry(node, epoll_watch_t, node);
         epoll_t *nested;
 
+        node = node->next;
         if (!watch->file)
             continue;
         if (watch->file == needle)
@@ -149,7 +245,7 @@ static int epoll_collect_ready_locked(epoll_t *epoll,
                                       struct epoll_event *events, int maxevents,
                                       struct vfs_poll_table *pt, bool consume) {
     int ready = 0;
-    epoll_watch_t *browse, *tmp;
+    struct llist_header *node;
 
     /*
      * epoll readiness is collected from the watched file objects, not from fd
@@ -157,7 +253,11 @@ static int epoll_collect_ready_locked(epoll_t *epoll,
      * move integer descriptors around while the underlying open file
      * description being watched stays the same.
      */
-    llist_for_each(browse, tmp, &epoll->watches, node) {
+    node = epoll->watches.next;
+    while (node != &epoll->watches) {
+        epoll_watch_t *browse = list_entry(node, epoll_watch_t, node);
+
+        node = node->next;
         if (browse->disabled)
             continue;
         if (ready >= maxevents)
@@ -200,19 +300,18 @@ static int epoll_collect_ready_locked(epoll_t *epoll,
 
 static int epollfs_release(struct vfs_inode *inode, struct vfs_file *file) {
     epoll_t *epoll = epoll_file_handle(file);
-    epoll_watch_t *browse, *tmp;
 
     (void)inode;
     if (!epoll)
         return 0;
 
-    llist_for_each(browse, tmp, &epoll->watches, node) {
-        epoll_watch_disarm(browse);
-        if (browse->file)
-            vfs_file_put(browse->file);
-        llist_delete(&browse->node);
-        free(browse);
-    }
+    mutex_lock(&epoll_watch_lifecycle_lock);
+    mutex_lock(&epoll->lock);
+    while (!llist_empty(&epoll->watches))
+        epoll_watch_destroy(
+            list_entry(epoll->watches.next, epoll_watch_t, node));
+    mutex_unlock(&epoll->lock);
+    mutex_unlock(&epoll_watch_lifecycle_lock);
 
     free(epoll);
     file->private_data = NULL;
@@ -525,7 +624,7 @@ static size_t epoll_ctl_file(struct vfs_file *epoll_file, int op, int fd,
     struct vfs_file *target;
     epoll_t *epoll;
     epoll_watch_t *existing = NULL;
-    epoll_watch_t *b, *t;
+    struct llist_header *node;
     int ret = 0;
 
     if (op != EPOLL_CTL_ADD && op != EPOLL_CTL_DEL && op != EPOLL_CTL_MOD)
@@ -554,7 +653,12 @@ static size_t epoll_ctl_file(struct vfs_file *epoll_file, int op, int fd,
         return (uint64_t)-EPERM;
     }
 
+    mutex_lock(&epoll_watch_lifecycle_lock);
     mutex_lock(&epoll->lock);
+    if (vfs_file_fd_ref_read(target) <= 0) {
+        ret = -EBADF;
+        goto out_unlock;
+    }
     if (op == EPOLL_CTL_ADD && epoll_file_is_epoll(target)) {
         epoll_t *target_epoll = epoll_file_handle(target);
 
@@ -564,7 +668,11 @@ static size_t epoll_ctl_file(struct vfs_file *epoll_file, int op, int fd,
         }
     }
 
-    llist_for_each(b, t, &epoll->watches, node) {
+    node = epoll->watches.next;
+    while (node != &epoll->watches) {
+        epoll_watch_t *b = list_entry(node, epoll_watch_t, node);
+
+        node = node->next;
         if (b->file == target) {
             existing = b;
             break;
@@ -591,13 +699,16 @@ static size_t epoll_ctl_file(struct vfs_file *epoll_file, int op, int fd,
             break;
         }
         new_watch->file = vfs_file_get(target);
+        new_watch->owner = epoll;
         new_watch->events = epoll_filter_events(event->events);
         new_watch->data = event->data.u64;
         new_watch->edge_triggered = (event->events & EPOLLET) != 0;
         new_watch->one_shot = (event->events & EPOLLONESHOT) != 0;
         llist_init_head(&new_watch->node);
+        llist_init_head(&new_watch->file_node);
         llist_init_head(&new_watch->wait.node);
         llist_append(&epoll->watches, &new_watch->node);
+        epoll_watch_link_file(new_watch);
         epoll_watch_arm(epoll, new_watch);
         if (vfs_poll(new_watch->file, new_watch->events | EPOLL_ALWAYS_EVENTS) >
             0) {
@@ -610,11 +721,7 @@ static size_t epoll_ctl_file(struct vfs_file *epoll_file, int op, int fd,
             ret = -ENOENT;
             break;
         }
-        epoll_watch_disarm(existing);
-        if (existing->file)
-            vfs_file_put(existing->file);
-        llist_delete(&existing->node);
-        free(existing);
+        epoll_watch_destroy(existing);
         break;
     case EPOLL_CTL_MOD:
         if (!existing) {
@@ -640,6 +747,7 @@ static size_t epoll_ctl_file(struct vfs_file *epoll_file, int op, int fd,
 
 out_unlock:
     mutex_unlock(&epoll->lock);
+    mutex_unlock(&epoll_watch_lifecycle_lock);
     vfs_file_put(target);
     return (uint64_t)ret;
 }
@@ -838,5 +946,6 @@ uint64_t sys_epoll_create1(int flags) { return epoll_create1(flags); }
 
 void epoll_init(void) {
     mutex_init(&epollfs_mount_lock);
+    mutex_init(&epoll_watch_lifecycle_lock);
     vfs_register_filesystem(&epollfs_fs_type);
 }

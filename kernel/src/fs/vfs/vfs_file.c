@@ -2,6 +2,7 @@
 #include "fs/vfs/notify.h"
 #include "task/task.h"
 #include <arch/arch.h>
+#include <fs/fs_syscall.h>
 #include <mm/mm.h>
 #include <task/signal.h>
 
@@ -61,12 +62,13 @@ void vfs_poll_wait_table_init(vfs_poll_wait_table_t *table, task_t *task) {
 }
 
 void vfs_poll_wait_table_cleanup(vfs_poll_wait_table_t *table) {
-    vfs_poll_wait_entry_t *entry, *tmp;
-
     if (!table)
         return;
 
-    llist_for_each(entry, tmp, &table->entries, node) {
+    while (!llist_empty(&table->entries)) {
+        vfs_poll_wait_entry_t *entry =
+            list_entry(table->entries.next, vfs_poll_wait_entry_t, node);
+
         wait_queue_remove(&entry->inode->poll_wait, &entry->wait);
         llist_delete(&entry->node);
         vfs_iput(entry->inode);
@@ -148,6 +150,9 @@ struct vfs_file *vfs_alloc_file(const struct vfs_path *path,
     file->f_flags = open_flags;
     mutex_init(&file->f_pos_lock);
     spin_init(&file->f_lock);
+    file->f_fd_refs = 0;
+    spin_init(&file->epoll_watches_lock);
+    llist_init_head(&file->epoll_watches);
     vfs_ref_init(&file->f_ref, 1);
     return file;
 }
@@ -200,8 +205,11 @@ void vfs_file_put(struct vfs_file *file) {
         spin_unlock(&flock->spin);
 
         spin_lock(&file->f_inode->file_locks_lock);
-        vfs_file_lock_t *lock = NULL, *tmp = NULL;
-        llist_for_each(lock, tmp, &file->f_inode->file_locks, node) {
+        struct llist_header *node = file->f_inode->file_locks.next;
+        while (node != &file->f_inode->file_locks) {
+            vfs_file_lock_t *lock = list_entry(node, vfs_file_lock_t, node);
+
+            node = node->next;
             if (!lock->ofd || lock->owner != (uintptr_t)file)
                 continue;
             llist_delete(&lock->node);
@@ -501,8 +509,11 @@ int vfs_close_file_for_task(struct vfs_file *file, struct task *task) {
         bool changed = false;
 
         spin_lock(&file->f_inode->file_locks_lock);
-        vfs_file_lock_t *lock = NULL, *tmp = NULL;
-        llist_for_each(lock, tmp, &file->f_inode->file_locks, node) {
+        struct llist_header *node = file->f_inode->file_locks.next;
+        while (node != &file->f_inode->file_locks) {
+            vfs_file_lock_t *lock = list_entry(node, vfs_file_lock_t, node);
+
+            node = node->next;
             if (lock->ofd || lock->pid != owner_pid)
                 continue;
             llist_delete(&lock->node);
@@ -510,9 +521,12 @@ int vfs_close_file_for_task(struct vfs_file *file, struct task *task) {
             changed = true;
         }
         if (changed) {
-            vfs_file_lock_waiter_t *waiter = NULL, *waiter_tmp = NULL;
-            llist_for_each(waiter, waiter_tmp,
-                           &file->f_inode->file_lock_waiters, node) {
+            node = file->f_inode->file_lock_waiters.next;
+            while (node != &file->f_inode->file_lock_waiters) {
+                vfs_file_lock_waiter_t *waiter =
+                    list_entry(node, vfs_file_lock_waiter_t, node);
+
+                node = node->next;
                 if (waiter->task)
                     task_unblock(waiter->task, EOK);
             }
@@ -521,6 +535,7 @@ int vfs_close_file_for_task(struct vfs_file *file, struct task *task) {
     }
     if (file->f_op && file->f_op->flush)
         file->f_op->flush(file);
+    epoll_on_file_close(file);
     close_mask = ((file->f_flags & O_ACCMODE_FLAGS) == O_RDONLY)
                      ? IN_CLOSE_NOWRITE
                      : IN_CLOSE_WRITE;

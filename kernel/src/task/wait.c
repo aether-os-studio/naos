@@ -84,7 +84,6 @@ int wait_queue_wake_entry(wait_queue_entry_t *entry, uint32_t events,
 
 int wait_queue_wake(wait_queue_head_t *queue, uint32_t events, int nr,
                     int reason) {
-    wait_queue_entry_t *entry, *tmp;
     task_t *wake_tasks[64] = {0};
     int woke = 0;
 
@@ -96,8 +95,13 @@ int wait_queue_wake(wait_queue_head_t *queue, uint32_t events, int nr,
         int wake_count = 0;
 
         spin_lock(&queue->lock);
-        llist_for_each(entry, tmp, &queue->entries, node) {
+        struct llist_header *node = queue->entries.next;
+        while (node != &queue->entries) {
+            wait_queue_entry_t *entry =
+                list_entry(node, wait_queue_entry_t, node);
             task_t *task;
+
+            node = node->next;
 
             if (!wait_queue_events_match(entry->events, events))
                 continue;

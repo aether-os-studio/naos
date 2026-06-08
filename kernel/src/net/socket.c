@@ -2308,7 +2308,9 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
         server_peer = server_sock->peer;
         unix_socket_get(server_peer);
         if (mutex_trylock(&server_peer->lock)) {
-            if (server_peer->closed || server_peer->shut_wr)
+            if (server_peer->closed)
+                replay_events |= EPOLLIN | EPOLLRDNORM | EPOLLRDHUP | EPOLLHUP;
+            else if (server_peer->shut_wr)
                 replay_events |= EPOLLIN | EPOLLRDNORM | EPOLLRDHUP;
             mutex_unlock(&server_peer->lock);
         }
@@ -2981,7 +2983,9 @@ int socket_poll(fd_t *fd, size_t events) {
             unix_socket_get(peer);
         if (peer) {
             if (mutex_trylock(&peer->lock)) {
-                if (peer->closed || peer->shut_wr)
+                if (peer->closed)
+                    revents |= EPOLLHUP | EPOLLRDHUP;
+                else if (peer->shut_wr)
                     revents |= EPOLLRDHUP;
                 if (socket_wants_output(want) && !sock->shut_wr &&
                     !peer->closed && unix_socket_recv_space_locked(peer) > 0)
@@ -3717,12 +3721,14 @@ static long sockfs_ioctl(struct vfs_file *file, unsigned long cmd,
 
 static __poll_t sockfs_poll(struct vfs_file *file, struct vfs_poll_table *pt) {
     socket_handle_t *handle = sockfs_file_handle(file);
+    uint32_t events = EPOLLIN | EPOLLOUT | EPOLLPRI | EPOLLERR | EPOLLHUP |
+                      EPOLLNVAL | EPOLLRDHUP;
 
-    (void)pt;
     if (!handle || !handle->poll_op)
         return EPOLLNVAL;
-    return handle->poll_op(file, EPOLLIN | EPOLLOUT | EPOLLPRI | EPOLLERR |
-                                     EPOLLHUP | EPOLLNVAL | EPOLLRDHUP);
+    if (pt && pt->events)
+        events = pt->events;
+    return handle->poll_op(file, events);
 }
 
 static const struct vfs_file_operations sockfs_dir_file_ops = {

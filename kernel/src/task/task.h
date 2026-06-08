@@ -340,6 +340,7 @@ task_t *task_find_by_pid(uint64_t pid);
 void task_complete_vfork(task_t *task);
 size_t task_count(void);
 int task_kill_all(int sig);
+int task_kill_thread_group(uint64_t tgid, int sig);
 int task_kill_process_group(int pgid, int sig);
 size_t task_reap_deferred(size_t budget);
 extern spinlock_t task_queue_lock;

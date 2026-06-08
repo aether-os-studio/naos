@@ -537,6 +537,9 @@ struct vfs_file {
     mutex_t f_pos_lock;
     spinlock_t f_lock;
     vfs_ref_t f_ref;
+    volatile int f_fd_refs;
+    spinlock_t epoll_watches_lock;
+    struct llist_header epoll_watches;
     struct vfs_inode *node;
 };
 
@@ -613,6 +616,24 @@ static inline bool vfs_ref_put(vfs_ref_t *ref) {
     if (!ref)
         return false;
     return __atomic_sub_fetch(&ref->refs, 1, __ATOMIC_ACQ_REL) == 0;
+}
+
+static inline void vfs_file_fd_ref_get(struct vfs_file *file) {
+    if (!file)
+        return;
+    __atomic_add_fetch(&file->f_fd_refs, 1, __ATOMIC_ACQ_REL);
+}
+
+static inline void vfs_file_fd_ref_put(struct vfs_file *file) {
+    if (!file)
+        return;
+    __atomic_sub_fetch(&file->f_fd_refs, 1, __ATOMIC_ACQ_REL);
+}
+
+static inline int vfs_file_fd_ref_read(const struct vfs_file *file) {
+    if (!file)
+        return 0;
+    return __atomic_load_n(&file->f_fd_refs, __ATOMIC_ACQUIRE);
 }
 
 static inline void vfs_lockref_init(vfs_lockref_t *lockref, int value) {

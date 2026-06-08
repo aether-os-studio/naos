@@ -269,6 +269,7 @@ __attribute__((__packed__))
 
 typedef struct epoll_watch {
     struct llist_header node;
+    struct llist_header file_node;
     struct vfs_file *file;
     struct epoll *owner;
     wait_queue_entry_t wait;
@@ -954,6 +955,7 @@ uint64_t sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
  * Linux contract: create an epoll instance with flags.
  */
 uint64_t sys_epoll_create1(int flags);
+void epoll_on_file_close(struct vfs_file *file);
 
 /**
  * Linux contract: create an eventfd with flags.

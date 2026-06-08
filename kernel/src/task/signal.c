@@ -210,8 +210,11 @@ static bool signal_has_signalfd_waiter(task_t *task, int sig) {
 
     with_fd_info_lock(
         fd_info, ({
-            signalfd_ref_t *ref, *tmp;
-            llist_for_each(ref, tmp, &fd_info->signalfd_refs, node) {
+            struct llist_header *node = fd_info->signalfd_refs.next;
+            while (node != &fd_info->signalfd_refs) {
+                signalfd_ref_t *ref = list_entry(node, signalfd_ref_t, node);
+
+                node = node->next;
                 if (ref->file && signalfd_mask_contains(ref->file, sig)) {
                     matched = true;
                     break;
@@ -235,8 +238,11 @@ static void signal_notify_signalfd_waiters(task_t *task, int sig) {
 
     with_fd_info_lock(
         fd_info, ({
-            signalfd_ref_t *ref, *tmp;
-            llist_for_each(ref, tmp, &fd_info->signalfd_refs, node) {
+            struct llist_header *node = fd_info->signalfd_refs.next;
+            while (node != &fd_info->signalfd_refs) {
+                signalfd_ref_t *ref = list_entry(node, signalfd_ref_t, node);
+
+                node = node->next;
                 if (ref->file && signalfd_mask_contains(ref->file, sig))
                     vfs_poll_notify_file(ref->file, EPOLLIN | EPOLLRDNORM);
             }
@@ -993,8 +999,9 @@ uint64_t sys_kill(int pid, int sig) {
         if (sig == 0) {
             return 0;
         }
-        task_send_signal(target, sig, SI_USER);
-        return 0;
+        return task_kill_thread_group(task_effective_tgid(target), sig) > 0
+                   ? 0
+                   : (uint64_t)-ESRCH;
     }
 
     int sent = 0;
