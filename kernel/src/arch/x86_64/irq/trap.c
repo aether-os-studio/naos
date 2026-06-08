@@ -292,6 +292,10 @@ spinlock_t dump_lock = SPIN_INIT;
 extern tty_t *kernel_session;
 
 void dump_regs(struct pt_regs *regs, const char *error_str, ...) {
+    if (!raw_spin_trylock(&dump_lock)) {
+        return;
+    }
+
     arch_disable_interrupt();
     can_schedule = false;
 
@@ -304,8 +308,6 @@ void dump_regs(struct pt_regs *regs, const char *error_str, ...) {
         old_mode = kernel_session->current_vt_mode.mode;
         kernel_session->current_vt_mode.mode = VT_AUTO;
     }
-
-    raw_spin_lock(&dump_lock);
 
     char buf[128];
     vsprintf(buf, error_str, args);

@@ -1,13 +1,8 @@
 #!/bin/sh
 
-export HOME="/root"
-export SHELL="/bin/bash"
 export XDG_SESSION_TYPE="wayland"
 export XDG_CONFIG_DIRS="/etc/xdg"
-export XDG_RUNTIME_DIR="/run/user/0"
 export NO_AT_BRIDGE=1
-export LANG=en_US.UTF-8
-export PATH="/bin:/usr/bin:/usr/sbin:/sbin:/bin:/usr/local/bin:/usr/local/sbin"
 export XCURSOR_THEME="Adwaita"
 export XCURSOR_SIZE="24"
 export XCURSOR_PATH="/usr/share/icons:/usr/share/pixmaps"
@@ -17,4 +12,4 @@ export LIBGL_ALWAYS_SOFTWARE=1
 export WLR_RENDERER_ALLOW_SOFTWARE=1
 export WLR_RENDERER=pixman
 
-exec dbus-run-session -- startxfce4 --wayland
+exec dbus-run-session -- seatd-launch -- startxfce4 --wayland

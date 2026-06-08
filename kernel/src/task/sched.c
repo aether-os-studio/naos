@@ -6,7 +6,6 @@ extern sched_rq_t schedulers[MAX_CPU_NUM];
 #define SCHED_NICE_MIN (-20)
 #define SCHED_NICE_MAX 19
 #define SCHED_NICE_0_LOAD 1024ULL
-#define SCHED_WAKEUP_GRANULARITY_NS 100000ULL
 #define SCHED_WAKEUP_PREEMPT_GRANULARITY_NS 250000ULL
 #define SCHED_LATENCY_NS 6000000ULL
 #define SCHED_MIN_GRANULARITY_NS 750000ULL
@@ -77,9 +76,9 @@ static inline uint64_t sched_entity_deadline_locked(sched_rq_t *scheduler,
     return se->vruntime + sched_calc_delta_fair(slice, se->task);
 }
 
-static inline bool sched_entity_eligible_locked(sched_rq_t *scheduler,
+static inline bool sched_entity_eligible_locked(uint64_t min_vruntime,
                                                 struct sched_entity *se) {
-    return se->vruntime <= scheduler->min_vruntime;
+    return se->vruntime <= min_vruntime;
 }
 
 static inline void sched_run_node_reset(rb_node_t *node) {
@@ -317,8 +316,6 @@ static void sched_add_entity(task_t *task, sched_rq_t *scheduler, bool wakeup) {
     }
 
     uint64_t placement = scheduler->min_vruntime;
-    if (wakeup && placement > SCHED_WAKEUP_GRANULARITY_NS)
-        placement -= SCHED_WAKEUP_GRANULARITY_NS;
     if (entity->vruntime < placement)
         entity->vruntime = placement;
 
@@ -481,6 +478,28 @@ static struct sched_entity *sched_pick_eevdf_locked(sched_rq_t *scheduler,
 
     bool scan_min_vruntime = min_vruntime == NULL;
 
+    if (scan_min_vruntime) {
+        for (rb_node_t *node = rb_first(&scheduler->run_tree); node;
+             node = rb_next(node)) {
+            struct sched_entity *se =
+                rb_entry(node, struct sched_entity, run_node);
+            task_t *candidate = se ? se->task : NULL;
+
+            if (!candidate || candidate->state != TASK_READY) {
+                scheduler->cleanup_queued = true;
+                continue;
+            }
+            if (candidate == excluded)
+                continue;
+            if (!min_vruntime || se->vruntime < min_vruntime->vruntime)
+                min_vruntime = se;
+        }
+    }
+
+    uint64_t effective_min_vruntime = scheduler->min_vruntime;
+    if (min_vruntime && min_vruntime->vruntime > effective_min_vruntime)
+        effective_min_vruntime = min_vruntime->vruntime;
+
     for (rb_node_t *node = rb_first(&scheduler->run_tree); node;
          node = rb_next(node)) {
         struct sched_entity *se = rb_entry(node, struct sched_entity, run_node);
@@ -492,10 +511,7 @@ static struct sched_entity *sched_pick_eevdf_locked(sched_rq_t *scheduler,
         }
         if (candidate == excluded)
             continue;
-        if (scan_min_vruntime &&
-            (!min_vruntime || se->vruntime < min_vruntime->vruntime))
-            min_vruntime = se;
-        if (sched_entity_eligible_locked(scheduler, se)) {
+        if (sched_entity_eligible_locked(effective_min_vruntime, se)) {
             best = se;
             break;
         }
@@ -506,7 +522,7 @@ static struct sched_entity *sched_pick_eevdf_locked(sched_rq_t *scheduler,
 
 static void sched_drop_dead_queued_locked(sched_rq_t *scheduler) {
     rb_node_t *node = rb_first(&scheduler->run_tree);
-    bool rebuild_min_vruntime = false;
+    bool dropped = false;
 
     while (node) {
         struct sched_entity *se = rb_entry(node, struct sched_entity, run_node);
@@ -514,7 +530,7 @@ static void sched_drop_dead_queued_locked(sched_rq_t *scheduler) {
         task_t *task = se ? se->task : NULL;
 
         if (!task || task->state != TASK_READY) {
-            rebuild_min_vruntime |= scheduler->min_vruntime_entity == se;
+            dropped = true;
             sched_entity_dequeue_locked(scheduler, se, false);
             node = next;
             continue;
@@ -523,7 +539,7 @@ static void sched_drop_dead_queued_locked(sched_rq_t *scheduler) {
         node = next;
     }
 
-    if (rebuild_min_vruntime) {
+    if (dropped) {
         sched_rebuild_min_vruntime_entity_locked(scheduler);
         sched_update_min_vruntime_locked(scheduler);
     }

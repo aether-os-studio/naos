@@ -99,8 +99,6 @@ void vfs_iput(struct vfs_inode *inode) {
         sb->s_op->evict_inode(inode);
     if (sb && sb->s_op && sb->s_op->destroy_inode)
         sb->s_op->destroy_inode(inode);
-    else
-        free(inode);
     if (sb)
         vfs_put_super(sb);
 }
