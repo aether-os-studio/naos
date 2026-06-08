@@ -60,5 +60,6 @@ uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr);
 uint64_t unmap_page_defer_release(uint64_t *pgdir, uint64_t vaddr,
                                   unmap_release_batch_t *batch);
 void unmap_release_batch_commit(unmap_release_batch_t *batch);
+void unmap_release_deferred_drain(void);
 
 void page_table_init();

@@ -16,9 +16,7 @@ void page_init() {
     memset(page_maps, 0, page_maps_size);
 }
 
-page_t *get_page_by_addr(uint64_t addr) {
-    return page_maps + (addr / PAGE_SIZE);
-}
+page_t *get_page_by_addr(uint64_t addr) { return phys_to_page(addr); }
 
 int page_refcount_read(page_t *page) {
     if (!page)

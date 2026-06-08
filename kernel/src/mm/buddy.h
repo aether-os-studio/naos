@@ -3,9 +3,8 @@
 #include <libs/klibc.h>
 #include <mm/hhdm.h>
 
-#define MAX_ORDER 31
-#define MIN_ORDER 12 // 4KB = 2^12
-#define ORDER_COUNT (MAX_ORDER - MIN_ORDER)
+#define MAX_ORDER 19
+#define ORDER_COUNT MAX_ORDER
 
 typedef struct free_area {
     uint64_t head_pfn;
@@ -50,7 +49,15 @@ void add_memory_region(uintptr_t start, uintptr_t end, enum zone_type type);
 
 // 分配/释放（底层接口）
 uintptr_t buddy_alloc_zone(zone_t *zone, size_t count);
+uintptr_t buddy_alloc_zone_pages(zone_t *zone, size_t count,
+                                 size_t *allocated_pages);
 void buddy_free_zone(zone_t *zone, uintptr_t addr, size_t order);
+/*
+ * Internal allocator handoff only: addr must be an allocator-owned block whose
+ * head page was atomically claimed with PAGE_FLAG_FREEING. Normal frame frees
+ * must use buddy_free_zone/free_frames so public double-free checks still run.
+ */
+void buddy_free_zone_claimed(zone_t *zone, uintptr_t addr, size_t order);
 
 // 辅助函数
 zone_t *get_zone(enum zone_type type);

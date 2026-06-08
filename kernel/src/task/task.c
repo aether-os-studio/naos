@@ -1156,6 +1156,8 @@ static void task_reap_softirq(void) {
     size_t reaped = task_reap_deferred(reap_budget);
     size_t mm_reaped = 0;
 
+    unmap_release_deferred_drain();
+
     for (size_t i = 0; i < mm_reap_budget; i++) {
         task_mm_info_t *mm = task_dequeue_mm_free();
         if (!mm)

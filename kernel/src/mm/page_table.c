@@ -45,6 +45,18 @@ uint64_t *kernel_page_dir = NULL;
 
 uint64_t *get_kernel_page_dir() { return kernel_page_dir; }
 
+typedef struct deferred_unmap_release {
+    struct deferred_unmap_release *next;
+    uint64_t page_addrs[UNMAP_RELEASE_BATCH_MAX];
+    size_t page_count;
+    uint64_t table_addrs[UNMAP_RELEASE_TABLE_BATCH_MAX];
+    size_t table_count;
+    task_mm_info_t *mm;
+} deferred_unmap_release_t;
+
+static spinlock_t deferred_unmap_lock = SPIN_INIT;
+static deferred_unmap_release_t *deferred_unmap_head;
+
 static inline void unmap_release_page(uint64_t paddr) {
     if (paddr)
         address_release(paddr);
@@ -71,6 +83,76 @@ static inline void unmap_batch_queue_table(unmap_release_batch_t *batch,
 
     ASSERT(batch->table_count < UNMAP_RELEASE_TABLE_BATCH_MAX);
     batch->table_addrs[batch->table_count++] = table_phys_addr;
+}
+
+static void unmap_release_addrs(uint64_t *pages, size_t page_count,
+                                uint64_t *tables, size_t table_count) {
+    for (size_t i = 0; i < page_count; i++)
+        unmap_release_page(pages[i]);
+
+    for (size_t i = 0; i < table_count; i++)
+        unmap_release_table(tables[i]);
+}
+
+static bool unmap_release_can_wait(void) {
+    task_t *self = current_task;
+    return arch_interrupt_enabled() && (!self || self->preempt_count == 0);
+}
+
+static void unmap_defer_release(unmap_release_batch_t *batch) {
+    if (!batch || (!batch->page_count && !batch->table_count))
+        return;
+
+    deferred_unmap_release_t *entry = malloc(sizeof(*entry));
+    ASSERT(entry != NULL);
+
+    entry->next = NULL;
+    entry->page_count = batch->page_count;
+    entry->table_count = batch->table_count;
+    entry->mm = batch->mm;
+    if (entry->mm)
+        __atomic_add_fetch(&entry->mm->ref_count, 1, __ATOMIC_ACQ_REL);
+    memcpy(entry->page_addrs, batch->page_addrs,
+           batch->page_count * sizeof(batch->page_addrs[0]));
+    memcpy(entry->table_addrs, batch->table_addrs,
+           batch->table_count * sizeof(batch->table_addrs[0]));
+
+    spin_lock(&deferred_unmap_lock);
+    entry->next = deferred_unmap_head;
+    deferred_unmap_head = entry;
+    spin_unlock(&deferred_unmap_lock);
+}
+
+void unmap_release_deferred_drain(void) {
+    if (!unmap_release_can_wait())
+        return;
+
+    while (true) {
+        spin_lock(&deferred_unmap_lock);
+        deferred_unmap_release_t *entry = deferred_unmap_head;
+        if (entry)
+            deferred_unmap_head = entry->next;
+        spin_unlock(&deferred_unmap_lock);
+
+        if (!entry)
+            break;
+
+        if (!entry->mm || task_mm_flush_tlb_all(entry->mm)) {
+            unmap_release_addrs(entry->page_addrs, entry->page_count,
+                                entry->table_addrs, entry->table_count);
+            task_mm_info_t *mm = entry->mm;
+            free(entry);
+            if (mm)
+                free_page_table(mm);
+            continue;
+        }
+
+        spin_lock(&deferred_unmap_lock);
+        entry->next = deferred_unmap_head;
+        deferred_unmap_head = entry;
+        spin_unlock(&deferred_unmap_lock);
+        break;
+    }
 }
 
 uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
@@ -528,30 +610,20 @@ void unmap_release_batch_commit(unmap_release_batch_t *batch) {
     if (!batch)
         return;
 
+    unmap_release_deferred_drain();
+
     bool can_release = true;
     if (batch->mm && (batch->page_count || batch->table_count)) {
-        task_t *self = current_task;
-        bool can_wait =
-            arch_interrupt_enabled() && (!self || self->preempt_count == 0);
-
-        if (can_wait) {
-            can_release = task_mm_flush_tlb_all(batch->mm);
-        } else {
-            task_mm_flush_tlb_all(batch->mm);
-            can_release = false;
-        }
+        can_release = task_mm_flush_tlb_all(batch->mm);
     }
 
-    if (!can_release)
+    if (!can_release) {
+        unmap_defer_release(batch);
         goto out;
-
-    for (size_t i = 0; i < batch->page_count; i++) {
-        unmap_release_page(batch->page_addrs[i]);
     }
 
-    for (size_t i = 0; i < batch->table_count; i++) {
-        unmap_release_table(batch->table_addrs[i]);
-    }
+    unmap_release_addrs(batch->page_addrs, batch->page_count,
+                        batch->table_addrs, batch->table_count);
 
 out:
     batch->page_count = 0;
