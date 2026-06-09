@@ -78,9 +78,17 @@ void initramfs_init() {
         return;
     }
     if (!vfs_root_path.mnt) {
-        vfs_root_path.mnt = vfs_mntget(root_mnt);
-        vfs_root_path.dentry = vfs_dget(root_mnt->mnt_root);
+        if (!vfs_path_set(&vfs_root_path, root_mnt, root_mnt->mnt_root)) {
+            printk("Failed to pin init root path\n");
+            vfs_mntput(root_mnt);
+            return;
+        }
         vfs_init_mnt_ns.root = vfs_mntget(root_mnt);
+        if (!vfs_init_mnt_ns.root) {
+            vfs_path_put(&vfs_root_path);
+            vfs_mntput(root_mnt);
+            return;
+        }
     }
 
     struct header {

@@ -142,9 +142,17 @@ struct vfs_file *vfs_alloc_file(const struct vfs_path *path,
     if (!file)
         return NULL;
 
-    vfs_path_get((struct vfs_path *)path);
+    if (!vfs_path_get((struct vfs_path *)path)) {
+        free(file);
+        return NULL;
+    }
     file->f_path = *path;
     file->f_inode = vfs_igrab(path->dentry->d_inode);
+    if (!file->f_inode) {
+        vfs_path_put(&file->f_path);
+        free(file);
+        return NULL;
+    }
     file->node = file->f_inode;
     file->f_op = file->f_inode->i_fop;
     file->f_flags = open_flags;
@@ -160,7 +168,8 @@ struct vfs_file *vfs_alloc_file(const struct vfs_path *path,
 struct vfs_file *vfs_file_get(struct vfs_file *file) {
     if (!file)
         return NULL;
-    vfs_ref_get(&file->f_ref);
+    if (!vfs_ref_try_get(&file->f_ref))
+        return NULL;
     return file;
 }
 
@@ -257,8 +266,8 @@ int vfs_open_from(struct vfs_path *start, const char *name,
     if (!start)
         return -EINVAL;
 
-    vfs_path_get(start);
-    root = *start;
+    if (!vfs_path_copy(&root, start))
+        return -ENOENT;
     ret = vfs_open_from_root(start, &root, name, how, out, kernel);
     vfs_path_put(&root);
     return ret;
@@ -366,8 +375,10 @@ static int vfs_open_from_root(struct vfs_path *start, struct vfs_path *root,
     if (!created) {
         struct vfs_path mounted = {0};
 
-        vfs_path_get(open_path);
-        mounted = *open_path;
+        if (!vfs_path_copy(&mounted, open_path)) {
+            ret = -ENOENT;
+            goto out;
+        }
         vfs_follow_mount(&mounted);
         if (mounted.mnt != parent.mnt || mounted.dentry != dentry) {
             target = mounted;

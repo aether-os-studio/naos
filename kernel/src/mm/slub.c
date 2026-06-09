@@ -27,9 +27,6 @@ static const size_t kmalloc_cache_sizes[] = {
     (sizeof(kmalloc_cache_sizes) / sizeof(kmalloc_cache_sizes[0]))
 
 static kmem_cache_t kmalloc_caches[KMALLOC_NR_CACHES];
-static spinlock_t kmalloc_init_lock = SPIN_INIT;
-static bool kmalloc_ready;
-static bool kmalloc_initializing;
 
 static size_t malloc_requested_size(void *ptr);
 static void malloc_set_requested_size(void *ptr, size_t size);
@@ -203,44 +200,22 @@ static size_t cache_order_for_size(size_t object_size) {
     return MAX_ORDER;
 }
 
-static bool kmalloc_bootstrap(void) {
-    if (kmalloc_ready)
-        return true;
-
-    spin_lock(&kmalloc_init_lock);
-    if (kmalloc_ready) {
-        spin_unlock(&kmalloc_init_lock);
-        return true;
-    }
-
-    if (kmalloc_initializing) {
-        spin_unlock(&kmalloc_init_lock);
-        return false;
-    }
-
+void kmalloc_init(void) {
     zone_t *zone = get_zone(ZONE_NORMAL);
     if (!zone || !zone_has_memory(zone)) {
-        spin_unlock(&kmalloc_init_lock);
-        return false;
+        return;
     }
 
-    kmalloc_initializing = true;
     for (size_t i = 0; i < KMALLOC_NR_CACHES; i++) {
         kmem_cache_t *cache = &kmalloc_caches[i];
         cache->object_size = kmalloc_cache_sizes[i];
         cache->order = cache_order_for_size(cache->object_size);
         if (cache->order >= MAX_ORDER) {
-            kmalloc_initializing = false;
-            spin_unlock(&kmalloc_init_lock);
-            return false;
+            return;
         }
         cache->partial_head_pfn = PAGE_LIST_NONE;
         spin_init(&cache->lock);
     }
-    kmalloc_ready = true;
-    kmalloc_initializing = false;
-    spin_unlock(&kmalloc_init_lock);
-    return true;
 }
 
 static int cache_index_for_size(size_t size) {
@@ -494,8 +469,6 @@ static void large_free(page_t *page, void *ptr) {
 void *malloc(size_t size) {
     if (size == 0)
         size = 1;
-    if (!kmalloc_bootstrap())
-        return NULL;
 
     int cache_index = cache_index_for_size(size);
     if (cache_index >= 0)
@@ -635,8 +608,6 @@ size_t malloc_usable_size(void *ptr) {
 void *memalign(size_t alignment, size_t size) {
     if (alignment <= KMALLOC_ALIGN)
         return malloc(size);
-    if (!kmalloc_bootstrap())
-        return NULL;
     return large_alloc_aligned(size, alignment);
 }
 

@@ -23,6 +23,7 @@ typedef struct naos_lwip_mbox {
     u32_t size;
     u32_t head;
     u32_t tail;
+    u32_t count;
     sys_sem_t not_empty;
     sys_sem_t not_full;
     sys_mutex_t lock;

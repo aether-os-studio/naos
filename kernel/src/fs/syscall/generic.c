@@ -540,10 +540,7 @@ static int generic_get_fd_path(int fd, struct vfs_path *path) {
     if (ret == -EINVAL)
         ret = fsfd_mount_get_path(file, path);
     if (ret == -EINVAL) {
-        path->mnt = file->f_path.mnt;
-        path->dentry = file->f_path.dentry;
-        vfs_path_get(path);
-        ret = 0;
+        ret = vfs_path_copy(path, &file->f_path) ? 0 : -ENOENT;
     }
     vfs_file_put(file);
     return ret;
@@ -770,10 +767,7 @@ static int generic_get_empty_path(int dfd, struct vfs_path *path) {
     if (!pwd || !pwd->mnt || !pwd->dentry)
         return -ENOENT;
 
-    path->mnt = pwd->mnt;
-    path->dentry = pwd->dentry;
-    vfs_path_get(path);
-    return 0;
+    return vfs_path_copy(path, pwd) ? 0 : -ENOENT;
 }
 
 static int generic_do_utimensat(int dfd, const char *pathname,
@@ -2561,7 +2555,8 @@ uint64_t sys_pivot_root(const char *new_root_user, const char *put_old_user) {
     old_root = *task_fs_root_path(current_task);
     if (!old_root.mnt || !old_root.dentry)
         return (uint64_t)-EINVAL;
-    vfs_path_get(&old_root);
+    if (!vfs_path_get(&old_root))
+        return (uint64_t)-ENOENT;
 
     ret =
         vfs_filename_lookup(AT_FDCWD, new_root_name, LOOKUP_FOLLOW, &new_root);
@@ -3575,9 +3570,10 @@ static int resolve_linkat_source_path(uint64_t olddirfd, const char *oldpath,
         fd_t *file = task_get_file(current_task, (int)olddirfd);
         if (!file)
             return -EBADF;
-        source_out->mnt = file->f_path.mnt;
-        source_out->dentry = file->f_path.dentry;
-        vfs_path_get(source_out);
+        if (!vfs_path_copy(source_out, &file->f_path)) {
+            vfs_file_put(file);
+            return -ENOENT;
+        }
         vfs_file_put(file);
         return 1;
     }
@@ -3588,9 +3584,10 @@ static int resolve_linkat_source_path(uint64_t olddirfd, const char *oldpath,
             fd_t *file = task_get_file(current_task, fd);
             if (fd < 0 || !file)
                 return -ENOENT;
-            source_out->mnt = file->f_path.mnt;
-            source_out->dentry = file->f_path.dentry;
-            vfs_path_get(source_out);
+            if (!vfs_path_copy(source_out, &file->f_path)) {
+                vfs_file_put(file);
+                return -ENOENT;
+            }
             vfs_file_put(file);
             return 1;
         }

@@ -3,6 +3,7 @@
 #include <init/callbacks.h>
 #include <drivers/logger.h>
 #include <mm/mm.h>
+#include <mm/slub.h>
 #include <arch/arch.h>
 #include <irq/irq_manager.h>
 #include <dev/device.h>
@@ -80,6 +81,8 @@ void kmain(void) {
     boot_init();
 
     frame_init();
+
+    kmalloc_init();
 
     page_table_init();
 

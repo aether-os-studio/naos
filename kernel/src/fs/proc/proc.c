@@ -392,10 +392,7 @@ static bool procfs_get_namespace_root(task_t *task, struct vfs_path *path) {
     if (!root_mnt || !root_mnt->mnt_root)
         return false;
 
-    path->mnt = root_mnt;
-    path->dentry = root_mnt->mnt_root;
-    vfs_path_get(path);
-    return true;
+    return vfs_path_set(path, root_mnt, root_mnt->mnt_root);
 }
 
 static char *procfs_path_to_task_view(task_t *task,
@@ -625,19 +622,21 @@ static const char *procfs_get_link(struct vfs_dentry *dentry,
 
                 if (!root || !root->mnt || !root->dentry)
                     return ERR_PTR(-ENOENT);
-                nd->path.mnt = vfs_mntget(root->mnt);
-                nd->path.dentry = vfs_dget(root->dentry);
+                if (!vfs_path_copy(&nd->path, root))
+                    return ERR_PTR(-ENOENT);
             } else if (!strcmp(info->dispatch_name, "proc_exe")) {
                 if (!task->exec_file)
                     return ERR_PTR(-ENOENT);
-                nd->path.mnt = vfs_mntget(task->exec_file->f_path.mnt);
-                nd->path.dentry = vfs_dget(task->exec_file->f_path.dentry);
+                if (!vfs_path_copy(&nd->path, &task->exec_file->f_path))
+                    return ERR_PTR(-ENOENT);
             } else if (!strcmp(info->dispatch_name, "proc_fd")) {
                 fd = procfs_dup_task_fd(task, info->fd_num);
                 if (!fd)
                     return ERR_PTR(-ENOENT);
-                nd->path.mnt = vfs_mntget(fd->f_path.mnt);
-                nd->path.dentry = vfs_dget(fd->f_path.dentry);
+                if (!vfs_path_copy(&nd->path, &fd->f_path)) {
+                    vfs_close_file(fd);
+                    return ERR_PTR(-ENOENT);
+                }
                 vfs_close_file(fd);
             }
         }

@@ -106,6 +106,8 @@ vfs_find_mount_child_by_source(struct vfs_mount *parent,
 static void vfs_rebind_task_root_paths(const struct vfs_path *old_root,
                                        struct vfs_mount *new_mnt) {
     struct vfs_process_fs *fs;
+    struct vfs_path new_root = {0};
+    struct vfs_path new_pwd = {0};
     bool replace_root;
     bool replace_pwd;
 
@@ -126,16 +128,14 @@ static void vfs_rebind_task_root_paths(const struct vfs_path *old_root,
     if (!replace_root && !replace_pwd)
         goto out;
 
-    if (replace_root) {
-        vfs_path_put(&fs->root);
-        fs->root.mnt = vfs_mntget(new_mnt);
-        fs->root.dentry = vfs_dget(new_mnt->mnt_root);
-    }
-    if (replace_pwd) {
-        vfs_path_put(&fs->pwd);
-        fs->pwd.mnt = vfs_mntget(new_mnt);
-        fs->pwd.dentry = vfs_dget(new_mnt->mnt_root);
-    }
+    if (replace_root && !vfs_path_set(&new_root, new_mnt, new_mnt->mnt_root))
+        replace_root = false;
+    if (replace_pwd && !vfs_path_set(&new_pwd, new_mnt, new_mnt->mnt_root))
+        replace_pwd = false;
+    if (replace_root)
+        vfs_path_move(&fs->root, &new_root);
+    if (replace_pwd)
+        vfs_path_move(&fs->pwd, &new_pwd);
     fs->seq++;
 out:
     spin_unlock(&fs->lock);
@@ -158,15 +158,20 @@ static void vfs_rebind_namespace_root(const struct vfs_path *old_root,
 
     if (vfs_root_path.mnt == old_root->mnt &&
         vfs_root_path.dentry == old_root->dentry) {
-        vfs_path_put(&vfs_root_path);
-        vfs_root_path.mnt = vfs_mntget(new_mnt);
-        vfs_root_path.dentry = vfs_dget(new_mnt->mnt_root);
+        struct vfs_path new_root = {0};
+
+        if (vfs_path_set(&new_root, new_mnt, new_mnt->mnt_root))
+            vfs_path_move(&vfs_root_path, &new_root);
     }
 
     if (vfs_init_mnt_ns.root == old_root->mnt) {
-        vfs_mntput(vfs_init_mnt_ns.root);
-        vfs_init_mnt_ns.root = vfs_mntget(new_mnt);
-        vfs_init_mnt_ns.seq++;
+        struct vfs_mount *new_root = vfs_mntget(new_mnt);
+
+        if (new_root) {
+            vfs_mntput(vfs_init_mnt_ns.root);
+            vfs_init_mnt_ns.root = new_root;
+            vfs_init_mnt_ns.seq++;
+        }
     }
 }
 
@@ -594,6 +599,10 @@ struct vfs_mount *vfs_mount_alloc(struct vfs_super_block *sb,
 
     mnt->mnt_parent = mnt;
     mnt->mnt_root = vfs_dget(sb->s_root);
+    if (!mnt->mnt_root) {
+        free(mnt);
+        return NULL;
+    }
     mnt->mnt_sb = sb;
     mnt->mnt_flags = mnt_flags;
     mnt->mnt_propagation = VFS_MNT_PROP_PRIVATE;
@@ -605,7 +614,11 @@ struct vfs_mount *vfs_mount_alloc(struct vfs_super_block *sb,
     llist_init_head(&mnt->mnt_child);
     llist_init_head(&mnt->mnt_mounts);
 
-    vfs_get_super(sb);
+    if (!vfs_get_super(sb)) {
+        vfs_dput(mnt->mnt_root);
+        free(mnt);
+        return NULL;
+    }
     spin_lock(&sb->s_mount_lock);
     llist_append(&sb->s_mounts, &mnt->mnt_sb_link);
     spin_unlock(&sb->s_mount_lock);
@@ -616,7 +629,8 @@ struct vfs_mount *vfs_mount_alloc(struct vfs_super_block *sb,
 struct vfs_mount *vfs_mntget(struct vfs_mount *mnt) {
     if (!mnt)
         return NULL;
-    vfs_ref_get(&mnt->mnt_ref);
+    if (!vfs_ref_try_get(&mnt->mnt_ref))
+        return NULL;
     return mnt;
 }
 
@@ -1566,8 +1580,8 @@ int vfs_reconfigure_mount(struct vfs_mount *mnt, const struct vfs_path *to_path,
     replacing_namespace_root = !detached && active_root == to_path->mnt &&
                                to_path->dentry == to_path->mnt->mnt_root;
 
-    old_root = *to_path;
-    vfs_path_get(&old_root);
+    if (!vfs_path_copy(&old_root, to_path))
+        return -ENOENT;
 
     mutex_lock(&vfs_mount_lock);
 

@@ -53,6 +53,21 @@ static void vfs_dentry_rehash(struct vfs_dentry *dentry) {
     spin_unlock(&bucket->lock);
 }
 
+static void vfs_dentry_detach_alias(struct vfs_dentry *dentry) {
+    struct vfs_inode *inode;
+
+    if (!dentry || llist_empty(&dentry->d_alias))
+        return;
+
+    inode = dentry->d_inode;
+    if (inode)
+        spin_lock(&inode->i_lock);
+    if (!llist_empty(&dentry->d_alias))
+        llist_delete(&dentry->d_alias);
+    if (inode)
+        spin_unlock(&inode->i_lock);
+}
+
 void vfs_dentry_unhash(struct vfs_dentry *dentry) {
     struct vfs_dcache_bucket *bucket;
     bool had_cache_ref = false;
@@ -128,7 +143,8 @@ struct vfs_dentry *vfs_d_alloc(struct vfs_super_block *sb,
 struct vfs_dentry *vfs_dget(struct vfs_dentry *dentry) {
     if (!dentry)
         return NULL;
-    vfs_lockref_get(&dentry->d_lockref);
+    if (!vfs_lockref_try_get(&dentry->d_lockref))
+        return NULL;
     return dentry;
 }
 
@@ -154,8 +170,10 @@ void vfs_dput(struct vfs_dentry *dentry) {
     if (dentry->d_flags & VFS_DENTRY_HASHED)
         vfs_dentry_unhash(dentry);
 
-    if (dentry->d_inode)
+    if (dentry->d_inode) {
+        vfs_dentry_detach_alias(dentry);
         vfs_iput(dentry->d_inode);
+    }
 
     parent = dentry->d_parent;
     if (dentry->d_name.name)
@@ -186,15 +204,19 @@ void vfs_d_add(struct vfs_dentry *parent, struct vfs_dentry *dentry) {
 void vfs_d_instantiate(struct vfs_dentry *dentry, struct vfs_inode *inode) {
     if (!dentry)
         return;
-    if (dentry->d_inode)
+    if (dentry->d_inode) {
+        vfs_dentry_detach_alias(dentry);
         vfs_iput(dentry->d_inode);
+    }
 
     dentry->d_inode = vfs_igrab(inode);
     if (inode) {
         vfs_sync_inode_compat(inode);
         dentry->d_flags &= ~VFS_DENTRY_NEGATIVE;
+        spin_lock(&inode->i_lock);
         if (llist_empty(&dentry->d_alias))
             llist_append(&inode->i_dentry_aliases, &dentry->d_alias);
+        spin_unlock(&inode->i_lock);
     } else {
         dentry->d_flags |= VFS_DENTRY_NEGATIVE;
     }

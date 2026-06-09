@@ -819,6 +819,7 @@ static int lwip_socket_install_fd(lwip_socket_state_t *sock, int open_type,
         ((open_type | accept_flags) & O_CLOEXEC) ? FD_CLOEXEC : 0, 0);
     vfs_file_put(file);
     if (ret < 0) {
+        lwip_socket_handle_release(handle);
         return ret;
     }
 

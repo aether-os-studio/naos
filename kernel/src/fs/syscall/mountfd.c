@@ -48,9 +48,7 @@ int mountfd_get_path(struct vfs_file *file, struct vfs_path *path) {
         return -EINVAL;
 
     memset(path, 0, sizeof(*path));
-    path->mnt = vfs_mntget(ctx->mnt);
-    path->dentry = vfs_dget(ctx->root);
-    return 0;
+    return vfs_path_set(path, ctx->mnt, ctx->root) ? 0 : -ENOENT;
 }
 
 static loff_t mountfd_llseek(struct vfs_file *file, loff_t offset, int whence) {
@@ -269,6 +267,11 @@ int mountfd_create_file(struct vfs_mount *mnt, struct vfs_dentry *root,
 
     ctx->mnt = mnt;
     ctx->root = vfs_dget(root);
+    if (!ctx->root) {
+        free(ctx);
+        vfs_mntput(internal_mnt);
+        return -ENOENT;
+    }
     ctx->detached = detached;
 
     sb = internal_mnt->mnt_sb;
@@ -318,9 +321,14 @@ int mountfd_create_file(struct vfs_mount *mnt, struct vfs_dentry *root,
         return -ENOMEM;
     }
 
-    vfs_path_put(&file->f_path);
-    file->f_path.mnt = vfs_mntget(mnt);
-    file->f_path.dentry = vfs_dget(root);
+    if (!vfs_path_update(&file->f_path,
+                         &(struct vfs_path){.mnt = mnt, .dentry = root})) {
+        vfs_file_put(file);
+        vfs_dput(dentry);
+        vfs_iput(inode);
+        vfs_mntput(internal_mnt);
+        return -ENOENT;
+    }
 
     file->private_data = ctx;
     *out_file = file;

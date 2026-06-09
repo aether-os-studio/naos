@@ -1654,11 +1654,10 @@ static int task_execve_load_interpreter_chain(
     if (interp_path[0] == '/') {
         ret = vfs_openat(AT_FDCWD, interp_path, &exec_how, &file, true);
     } else {
-        struct vfs_path start = {
-            .mnt = vfs_mntget(from_path->mnt),
-            .dentry = vfs_dget(from_path->dentry->d_parent),
-        };
+        struct vfs_path start = {0};
 
+        if (!vfs_path_set(&start, from_path->mnt, from_path->dentry->d_parent))
+            return -ENOENT;
         ret = vfs_open_from(&start, interp_path, &exec_how, &file, true);
         vfs_path_put(&start);
     }

@@ -537,8 +537,8 @@ int vfs_do_mount(int dfd, const char *pathname, const char *fs_name,
 
     ret = vfs_mount_attach(target.mnt, target.dentry, mnt);
     if (ret == 0 && !vfs_root_path.mnt) {
-        vfs_root_path.mnt = vfs_mntget(mnt);
-        vfs_root_path.dentry = vfs_dget(mnt->mnt_root);
+        if (!vfs_path_set(&vfs_root_path, mnt, mnt->mnt_root))
+            ret = -ENOENT;
     }
 
 out:

@@ -460,6 +460,7 @@ static int tmpfs_tmpfile(struct vfs_inode *dir, struct vfs_file *file,
     struct vfs_qstr name = {.name = "", .len = 0, .hash = 0};
     struct vfs_path old_path;
     struct vfs_path new_path;
+    struct vfs_inode *new_inode;
 
     if (!dir || !file || !file->f_path.dentry || !S_ISDIR(dir->i_mode))
         return -EINVAL;
@@ -481,17 +482,26 @@ static int tmpfs_tmpfile(struct vfs_inode *dir, struct vfs_file *file,
     vfs_d_instantiate(dentry, inode);
     vfs_iput(inode);
 
-    old_path = file->f_path;
-    new_path.mnt = vfs_mntget(old_path.mnt);
-    new_path.dentry = dentry;
-    vfs_path_put(&old_path);
+    if (!vfs_path_set(&new_path, file->f_path.mnt, dentry)) {
+        vfs_dput(dentry);
+        return -ENOENT;
+    }
+    new_inode = vfs_igrab(dentry->d_inode);
+    if (!new_inode) {
+        vfs_path_put(&new_path);
+        vfs_dput(dentry);
+        return -ENOENT;
+    }
 
+    old_path = file->f_path;
     file->f_path = new_path;
+    vfs_path_put(&old_path);
     if (file->f_inode)
         vfs_iput(file->f_inode);
-    file->f_inode = vfs_igrab(dentry->d_inode);
+    file->f_inode = new_inode;
     file->node = file->f_inode;
     file->f_op = file->f_inode->i_fop;
+    vfs_dput(dentry);
     return 0;
 }
 

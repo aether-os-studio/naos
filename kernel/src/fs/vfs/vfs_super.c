@@ -18,10 +18,10 @@ struct vfs_super_block *vfs_alloc_super(struct vfs_file_system_type *type,
     return sb;
 }
 
-void vfs_get_super(struct vfs_super_block *sb) {
+bool vfs_get_super(struct vfs_super_block *sb) {
     if (!sb)
-        return;
-    vfs_ref_get(&sb->s_ref);
+        return false;
+    return vfs_ref_try_get(&sb->s_ref);
 }
 
 void vfs_put_super(struct vfs_super_block *sb) {

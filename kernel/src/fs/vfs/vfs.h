@@ -612,10 +612,34 @@ static inline int vfs_ref_get(vfs_ref_t *ref) {
     return __atomic_add_fetch(&ref->refs, 1, __ATOMIC_ACQ_REL);
 }
 
-static inline bool vfs_ref_put(vfs_ref_t *ref) {
+static inline bool vfs_ref_try_get(vfs_ref_t *ref) {
+    int old;
+
     if (!ref)
         return false;
-    return __atomic_sub_fetch(&ref->refs, 1, __ATOMIC_ACQ_REL) == 0;
+    old = __atomic_load_n(&ref->refs, __ATOMIC_ACQUIRE);
+    while (old > 0) {
+        int new = old + 1;
+        if (__atomic_compare_exchange_n(&ref->refs, &old, new, false,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            return true;
+    }
+    return false;
+}
+
+static inline bool vfs_ref_put(vfs_ref_t *ref) {
+    int old;
+
+    if (!ref)
+        return false;
+    old = __atomic_load_n(&ref->refs, __ATOMIC_ACQUIRE);
+    while (old > 0) {
+        int new = old - 1;
+        if (__atomic_compare_exchange_n(&ref->refs, &old, new, false,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            return new == 0;
+    }
+    return false;
 }
 
 static inline void vfs_file_fd_ref_get(struct vfs_file *file) {
@@ -649,10 +673,34 @@ static inline int vfs_lockref_get(vfs_lockref_t *lockref) {
     return __atomic_add_fetch(&lockref->count, 1, __ATOMIC_ACQ_REL);
 }
 
-static inline bool vfs_lockref_put(vfs_lockref_t *lockref) {
+static inline bool vfs_lockref_try_get(vfs_lockref_t *lockref) {
+    int old;
+
     if (!lockref)
         return false;
-    return __atomic_sub_fetch(&lockref->count, 1, __ATOMIC_ACQ_REL) == 0;
+    old = __atomic_load_n(&lockref->count, __ATOMIC_ACQUIRE);
+    while (old > 0) {
+        int new = old + 1;
+        if (__atomic_compare_exchange_n(&lockref->count, &old, new, false,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            return true;
+    }
+    return false;
+}
+
+static inline bool vfs_lockref_put(vfs_lockref_t *lockref) {
+    int old;
+
+    if (!lockref)
+        return false;
+    old = __atomic_load_n(&lockref->count, __ATOMIC_ACQUIRE);
+    while (old > 0) {
+        int new = old - 1;
+        if (__atomic_compare_exchange_n(&lockref->count, &old, new, false,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            return new == 0;
+    }
+    return false;
 }
 
 static inline uint64_t fd_get_offset(const fd_t *fd) {
@@ -709,7 +757,7 @@ struct vfs_file_system_type *vfs_get_fs_type(const char *name);
  */
 struct vfs_super_block *vfs_alloc_super(struct vfs_file_system_type *type,
                                         unsigned long sb_flags);
-void vfs_get_super(struct vfs_super_block *sb);
+bool vfs_get_super(struct vfs_super_block *sb);
 void vfs_put_super(struct vfs_super_block *sb);
 
 /**
@@ -781,8 +829,14 @@ bool vfs_mount_is_shared(const struct vfs_mount *mnt);
 unsigned int vfs_mount_peer_group_id(const struct vfs_mount *mnt);
 unsigned int vfs_mount_master_group_id(const struct vfs_mount *mnt);
 
-void vfs_path_get(struct vfs_path *path);
+bool vfs_path_get(struct vfs_path *path);
 void vfs_path_put(struct vfs_path *path);
+void vfs_path_init(struct vfs_path *path);
+bool vfs_path_set(struct vfs_path *path, struct vfs_mount *mnt,
+                  struct vfs_dentry *dentry);
+bool vfs_path_copy(struct vfs_path *dst, const struct vfs_path *src);
+bool vfs_path_update(struct vfs_path *dst, const struct vfs_path *src);
+void vfs_path_move(struct vfs_path *dst, struct vfs_path *src);
 bool vfs_path_equal(const struct vfs_path *a, const struct vfs_path *b);
 
 /**

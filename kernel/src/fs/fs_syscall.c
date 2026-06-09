@@ -67,9 +67,7 @@ char *at_resolve_pathname(int dirfd, char *pathname) {
                     vfs_file_put(file);
                     return NULL;
                 }
-                vfs_path_get(&file->f_path);
-                path = file->f_path;
-                ret = 0;
+                ret = vfs_path_copy(&path, &file->f_path) ? 0 : -ENOENT;
             }
             vfs_file_put(file);
             if (ret < 0)

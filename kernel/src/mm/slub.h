@@ -2,6 +2,8 @@
 
 #include <libs/klibc.h>
 
+void kmalloc_init(void);
+
 struct mallinfo {
     size_t arena;
     size_t ordblks;

@@ -34,10 +34,8 @@ static bool vfs_process_path_get(struct vfs_process_fs *fs, bool root,
     memset(out, 0, sizeof(*out));
     spin_lock(&fs->lock);
     src = root ? &fs->root : &fs->pwd;
-    if (src->mnt && src->dentry) {
-        out->mnt = vfs_mntget(src->mnt);
-        out->dentry = vfs_dget(src->dentry);
-    }
+    if (src->mnt && src->dentry)
+        (void)vfs_path_copy(out, src);
     spin_unlock(&fs->lock);
 
     return out->mnt && out->dentry;
@@ -78,11 +76,13 @@ static bool vfs_mount_is_same_or_descendant(const struct vfs_mount *root,
 
 static void vfs_path_replace(struct vfs_path *dst, struct vfs_mount *mnt,
                              struct vfs_dentry *dentry) {
+    struct vfs_path tmp = {0};
+
     if (!dst)
         return;
-    vfs_path_put(dst);
-    dst->mnt = vfs_mntget(mnt);
-    dst->dentry = vfs_dget(dentry);
+    if (!vfs_path_set(&tmp, mnt, dentry))
+        return;
+    vfs_path_move(dst, &tmp);
 }
 
 static int vfs_follow_mount_checked(struct vfs_path *path,
@@ -136,9 +136,7 @@ static int vfs_get_scoped_start(struct vfs_process_fs *fs,
     if (ret == -EINVAL)
         ret = fsfd_mount_get_path(file, scoped);
     if (ret == -EINVAL) {
-        vfs_path_get(&file->f_path);
-        *scoped = file->f_path;
-        ret = 0;
+        ret = vfs_path_copy(scoped, &file->f_path) ? 0 : -ENOENT;
     }
     vfs_file_put(file);
     return ret;
@@ -162,8 +160,8 @@ int vfs_get_fs_start(int dfd, const char *name, unsigned int lookup_flags,
     if (!fs) {
         if (!vfs_root_path.mnt || !vfs_root_path.dentry)
             return -ENOENT;
-        vfs_path_get(&vfs_root_path);
-        *root = vfs_root_path;
+        if (!vfs_path_copy(root, &vfs_root_path))
+            return -ENOENT;
         if (vfs_follow_mount_checked(root, lookup_flags) < 0) {
             vfs_path_put(root);
             return -EXDEV;
@@ -173,13 +171,17 @@ int vfs_get_fs_start(int dfd, const char *name, unsigned int lookup_flags,
                 vfs_path_put(root);
                 return -EXDEV;
             }
-            vfs_path_get(root);
-            *start = *root;
+            if (!vfs_path_copy(start, root)) {
+                vfs_path_put(root);
+                return -ENOENT;
+            }
             return 0;
         }
         if (vfs_path_is_absolute(name) || dfd == AT_FDCWD) {
-            vfs_path_get(root);
-            *start = *root;
+            if (!vfs_path_copy(start, root)) {
+                vfs_path_put(root);
+                return -ENOENT;
+            }
             return 0;
         }
         vfs_path_put(root);
@@ -189,11 +191,11 @@ int vfs_get_fs_start(int dfd, const char *name, unsigned int lookup_flags,
     if (vfs_process_path_get_if_visible(fs, true, ns_root_mnt, &fs_path)) {
         *root = fs_path;
     } else if (ns_root_mnt && ns_root_mnt->mnt_root) {
-        root->mnt = vfs_mntget(ns_root_mnt);
-        root->dentry = vfs_dget(ns_root_mnt->mnt_root);
+        if (!vfs_path_set(root, ns_root_mnt, ns_root_mnt->mnt_root))
+            return -ENOENT;
     } else if (vfs_root_path.mnt && vfs_root_path.dentry) {
-        vfs_path_get(&vfs_root_path);
-        *root = vfs_root_path;
+        if (!vfs_path_copy(root, &vfs_root_path))
+            return -ENOENT;
     } else {
         return -ENOENT;
     }
@@ -223,16 +225,19 @@ int vfs_get_fs_start(int dfd, const char *name, unsigned int lookup_flags,
             return -EXDEV;
         }
 
-        vfs_path_put(root);
-        *root = scoped;
-        vfs_path_get(root);
-        *start = *root;
+        vfs_path_move(root, &scoped);
+        if (!vfs_path_copy(start, root)) {
+            vfs_path_put(root);
+            return -ENOENT;
+        }
         return 0;
     }
 
     if (vfs_path_is_absolute(name)) {
-        vfs_path_get(root);
-        *start = *root;
+        if (!vfs_path_copy(start, root)) {
+            vfs_path_put(root);
+            return -ENOENT;
+        }
         return 0;
     }
 
@@ -240,8 +245,10 @@ int vfs_get_fs_start(int dfd, const char *name, unsigned int lookup_flags,
         if (vfs_process_path_get_if_visible(fs, false, ns_root_mnt, &fs_path)) {
             *start = fs_path;
         } else {
-            vfs_path_get(root);
-            *start = *root;
+            if (!vfs_path_copy(start, root)) {
+                vfs_path_put(root);
+                return -ENOENT;
+            }
         }
         return 0;
     }
@@ -254,9 +261,7 @@ int vfs_get_fs_start(int dfd, const char *name, unsigned int lookup_flags,
     if (fd_path_ret == -EINVAL)
         fd_path_ret = fsfd_mount_get_path(file, start);
     if (fd_path_ret == -EINVAL) {
-        vfs_path_get(&file->f_path);
-        *start = file->f_path;
-        fd_path_ret = 0;
+        fd_path_ret = vfs_path_copy(start, &file->f_path) ? 0 : -ENOENT;
     }
     vfs_file_put(file);
     if (fd_path_ret < 0)
@@ -405,11 +410,15 @@ static int vfs_follow_symlink(struct vfs_path *parent,
             free(pathbuf);
             return -EXDEV;
         }
-        vfs_path_get((struct vfs_path *)root);
-        next = *root;
+        if (!vfs_path_copy(&next, root)) {
+            free(pathbuf);
+            return -ENOENT;
+        }
     } else {
-        vfs_path_get(parent);
-        next = *parent;
+        if (!vfs_path_copy(&next, parent)) {
+            free(pathbuf);
+            return -ENOENT;
+        }
         ret = vfs_follow_mount_checked(&next, lookup_flags);
         if (ret < 0) {
             vfs_path_put(&next);
@@ -440,8 +449,8 @@ static int __vfs_filename_lookup(struct vfs_path *start,
 
     if (lookup_flags & LOOKUP_EMPTY) {
         if (!name[0]) {
-            vfs_path_get(start);
-            *out = *start;
+            if (!vfs_path_copy(out, start))
+                return -ENOENT;
             return 0;
         }
     } else if (!name[0]) {
@@ -449,8 +458,8 @@ static int __vfs_filename_lookup(struct vfs_path *start,
     }
 
     memset(&path, 0, sizeof(path));
-    vfs_path_get(start);
-    path = *start;
+    if (!vfs_path_copy(&path, start))
+        return -ENOENT;
     ret = vfs_follow_mount_checked(&path, lookup_flags);
     if (ret < 0)
         goto out_no_path;
@@ -631,8 +640,10 @@ int vfs_path_parent_lookup_from(const struct vfs_path *start,
 
     slash = strrchr(copy, '/');
     if (!slash) {
-        vfs_path_get((struct vfs_path *)start);
-        *parent = *start;
+        if (!vfs_path_copy(parent, start)) {
+            free(copy);
+            return -ENOENT;
+        }
         ret = vfs_follow_mount_checked(parent, lookup_flags);
         if (ret < 0) {
             vfs_path_put(parent);

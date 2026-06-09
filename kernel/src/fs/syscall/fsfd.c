@@ -105,9 +105,7 @@ int fsfd_mount_get_path(struct vfs_file *file, struct vfs_path *path) {
         return -EINVAL;
 
     memset(path, 0, sizeof(*path));
-    path->mnt = vfs_mntget(mnt->mnt);
-    path->dentry = vfs_dget(mnt->mnt->mnt_root);
-    return 0;
+    return vfs_path_set(path, mnt->mnt, mnt->mnt->mnt_root) ? 0 : -ENOENT;
 }
 
 static struct vfs_inode *fsfdfs_alloc_inode(struct vfs_super_block *sb) {
@@ -697,8 +695,10 @@ uint64_t sys_fstatfs(int fd, struct statfs *buf) {
     if (!file)
         return -EBADF;
 
-    path = file->f_path;
-    vfs_path_get(&path);
+    if (!vfs_path_copy(&path, &file->f_path)) {
+        vfs_file_put(file);
+        return -ENOENT;
+    }
     vfs_file_put(file);
 
     ret = fsfd_fill_statfs(&path, &kbuf);
@@ -1011,8 +1011,10 @@ uint64_t sys_move_mount(int from_dfd, const char *from_pathname_user,
             ret = -EBADF;
             goto out;
         }
-        to_path = to_file->f_path;
-        vfs_path_get(&to_path);
+        if (!vfs_path_copy(&to_path, &to_file->f_path)) {
+            ret = -ENOENT;
+            goto out;
+        }
     }
 
     if (!to_path.dentry || !to_path.dentry->d_inode ||

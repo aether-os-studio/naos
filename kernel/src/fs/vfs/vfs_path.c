@@ -1,13 +1,71 @@
 #include "fs/vfs/vfs_internal.h"
 #include "mm/mm.h"
 
-void vfs_path_get(struct vfs_path *path) {
+bool vfs_path_get(struct vfs_path *path) {
+    struct vfs_mount *mnt = NULL;
+    struct vfs_dentry *dentry = NULL;
+
+    if (!path)
+        return false;
+    if (path->mnt)
+        mnt = vfs_mntget(path->mnt);
+    if (path->dentry)
+        dentry = vfs_dget(path->dentry);
+    if ((path->mnt && !mnt) || (path->dentry && !dentry)) {
+        if (dentry)
+            vfs_dput(dentry);
+        if (mnt)
+            vfs_mntput(mnt);
+        return false;
+    }
+    return true;
+}
+
+void vfs_path_init(struct vfs_path *path) {
     if (!path)
         return;
-    if (path->mnt)
-        vfs_mntget(path->mnt);
-    if (path->dentry)
-        vfs_dget(path->dentry);
+    path->mnt = NULL;
+    path->dentry = NULL;
+}
+
+bool vfs_path_set(struct vfs_path *path, struct vfs_mount *mnt,
+                  struct vfs_dentry *dentry) {
+    struct vfs_path tmp;
+
+    if (!path)
+        return false;
+    tmp.mnt = mnt;
+    tmp.dentry = dentry;
+    if (!vfs_path_get(&tmp))
+        return false;
+    *path = tmp;
+    return true;
+}
+
+bool vfs_path_copy(struct vfs_path *dst, const struct vfs_path *src) {
+    if (!dst || !src)
+        return false;
+    return vfs_path_set(dst, src->mnt, src->dentry);
+}
+
+bool vfs_path_update(struct vfs_path *dst, const struct vfs_path *src) {
+    struct vfs_path tmp = {0};
+
+    if (!dst || !src)
+        return false;
+    if (!vfs_path_copy(&tmp, src))
+        return false;
+    vfs_path_put(dst);
+    *dst = tmp;
+    return true;
+}
+
+void vfs_path_move(struct vfs_path *dst, struct vfs_path *src) {
+    if (!dst || !src || dst == src)
+        return;
+    vfs_path_put(dst);
+    *dst = *src;
+    vfs_path_init(src);
 }
 
 void vfs_path_put(struct vfs_path *path) {
@@ -63,14 +121,18 @@ char *vfs_path_to_string(const struct vfs_path *path,
     if (!path || !path->mnt || !path->dentry)
         return strdup("/");
 
-    cursor.mnt = vfs_mntget(path->mnt);
-    cursor.dentry = vfs_dget(path->dentry);
+    if (!vfs_path_copy(&cursor, path))
+        return strdup("/");
     if (root && root->mnt && root->dentry) {
-        limit.mnt = vfs_mntget(root->mnt);
-        limit.dentry = vfs_dget(root->dentry);
+        if (!vfs_path_copy(&limit, root)) {
+            vfs_path_put(&cursor);
+            return strdup("/");
+        }
     } else if (vfs_root_path.mnt && vfs_root_path.dentry) {
-        limit.mnt = vfs_mntget(vfs_root_path.mnt);
-        limit.dentry = vfs_dget(vfs_root_path.dentry);
+        if (!vfs_path_copy(&limit, &vfs_root_path)) {
+            vfs_path_put(&cursor);
+            return strdup("/");
+        }
     }
 
     buf = calloc(1, VFS_PATH_MAX);
@@ -94,6 +156,13 @@ char *vfs_path_to_string(const struct vfs_path *path,
             struct vfs_dentry *next_dentry =
                 vfs_dget(cursor.mnt->mnt_mountpoint);
 
+            if (!next_mnt || !next_dentry) {
+                if (next_dentry)
+                    vfs_dput(next_dentry);
+                if (next_mnt)
+                    vfs_mntput(next_mnt);
+                break;
+            }
             vfs_path_put(&cursor);
             cursor.mnt = next_mnt;
             cursor.dentry = next_dentry;
@@ -128,6 +197,8 @@ char *vfs_path_to_string(const struct vfs_path *path,
         {
             struct vfs_dentry *parent = vfs_dget(cursor.dentry->d_parent);
 
+            if (!parent)
+                break;
             vfs_dput(cursor.dentry);
             cursor.dentry = parent;
         }
@@ -154,10 +225,12 @@ bool vfs_path_is_ancestor(const struct vfs_path *ancestor,
         return false;
     }
 
-    stable_ancestor.mnt = vfs_mntget(ancestor->mnt);
-    stable_ancestor.dentry = vfs_dget(ancestor->dentry);
-    cursor.mnt = vfs_mntget(path->mnt);
-    cursor.dentry = vfs_dget(path->dentry);
+    if (!vfs_path_copy(&stable_ancestor, ancestor))
+        return false;
+    if (!vfs_path_copy(&cursor, path)) {
+        vfs_path_put(&stable_ancestor);
+        return false;
+    }
 
     while (cursor.mnt && cursor.dentry) {
         if (vfs_path_equal(&stable_ancestor, &cursor)) {
@@ -172,6 +245,13 @@ bool vfs_path_is_ancestor(const struct vfs_path *ancestor,
             struct vfs_dentry *next_dentry =
                 vfs_dget(cursor.mnt->mnt_mountpoint);
 
+            if (!next_mnt || !next_dentry) {
+                if (next_dentry)
+                    vfs_dput(next_dentry);
+                if (next_mnt)
+                    vfs_mntput(next_mnt);
+                break;
+            }
             vfs_path_put(&cursor);
             cursor.mnt = next_mnt;
             cursor.dentry = next_dentry;
@@ -186,6 +266,8 @@ bool vfs_path_is_ancestor(const struct vfs_path *ancestor,
         {
             struct vfs_dentry *parent = vfs_dget(cursor.dentry->d_parent);
 
+            if (!parent)
+                break;
             vfs_dput(cursor.dentry);
             cursor.dentry = parent;
         }

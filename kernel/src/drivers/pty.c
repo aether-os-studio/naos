@@ -435,7 +435,14 @@ devpts_create_first_mounted_inode(pty_pair_t *pair,
                              mnt_sb_link);
             mnt = vfs_mntget(mnt);
             sb = fsi->sb;
-            vfs_get_super(sb);
+            if (!mnt || !vfs_get_super(sb)) {
+                if (mnt)
+                    vfs_mntput(mnt);
+                mnt = NULL;
+                sb = NULL;
+                spin_unlock(&fsi->sb->s_mount_lock);
+                continue;
+            }
             spin_unlock(&fsi->sb->s_mount_lock);
             break;
         }

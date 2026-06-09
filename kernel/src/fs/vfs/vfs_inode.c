@@ -34,7 +34,8 @@ struct vfs_inode *vfs_alloc_inode(struct vfs_super_block *sb) {
 
     if (!sb)
         return NULL;
-    vfs_get_super(sb);
+    if (!vfs_get_super(sb))
+        return NULL;
     if (sb->s_op && sb->s_op->alloc_inode)
         inode = sb->s_op->alloc_inode(sb);
     if (!inode)
@@ -76,7 +77,8 @@ struct vfs_inode *vfs_alloc_inode(struct vfs_super_block *sb) {
 struct vfs_inode *vfs_igrab(struct vfs_inode *inode) {
     if (!inode)
         return NULL;
-    vfs_ref_get(&inode->i_ref);
+    if (!vfs_ref_try_get(&inode->i_ref))
+        return NULL;
     return inode;
 }
 

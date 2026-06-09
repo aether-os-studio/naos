@@ -39,26 +39,25 @@ static int task_fs_rebind_mount_namespace(task_fs_t *fs,
     if (!fs || !old_root || !new_root || !new_root->mnt_root)
         return -EINVAL;
 
-    old_root_path.mnt = old_root;
-    old_root_path.dentry = old_root->mnt_root;
+    if (!vfs_path_set(&old_root_path, old_root, old_root->mnt_root))
+        return -ENOENT;
     old_pwd_path = fs->vfs.pwd;
     if (vfs_translate_path_between_roots(&old_root_path, &fs->vfs.root,
                                          new_root, &translated_root) < 0 ||
         vfs_translate_path_between_roots(&old_root_path, &old_pwd_path,
                                          new_root, &translated_pwd) < 0) {
+        vfs_path_put(&old_root_path);
         vfs_path_put(&translated_root);
         vfs_path_put(&translated_pwd);
         return -ENOENT;
     }
 
     spin_lock(&fs->vfs.lock);
-    vfs_path_put(&fs->vfs.root);
-    fs->vfs.root = translated_root;
-
-    vfs_path_put(&fs->vfs.pwd);
-    fs->vfs.pwd = translated_pwd;
+    vfs_path_move(&fs->vfs.root, &translated_root);
+    vfs_path_move(&fs->vfs.pwd, &translated_pwd);
     fs->vfs.seq++;
     spin_unlock(&fs->vfs.lock);
+    vfs_path_put(&old_root_path);
     return 0;
 }
 
@@ -78,15 +77,23 @@ task_fs_t *task_fs_create(const struct vfs_path *root,
     spin_init(&fs->vfs.lock);
     fs->vfs.seq = 1;
 
-    fs->vfs.root = *root;
-    vfs_path_get(&fs->vfs.root);
+    if (!vfs_path_copy(&fs->vfs.root, root)) {
+        free(fs);
+        return NULL;
+    }
 
     if (pwd && pwd->mnt && pwd->dentry) {
-        fs->vfs.pwd = *pwd;
-        vfs_path_get(&fs->vfs.pwd);
+        if (!vfs_path_copy(&fs->vfs.pwd, pwd)) {
+            vfs_path_put(&fs->vfs.root);
+            free(fs);
+            return NULL;
+        }
     } else {
-        fs->vfs.pwd = fs->vfs.root;
-        vfs_path_get(&fs->vfs.pwd);
+        if (!vfs_path_copy(&fs->vfs.pwd, &fs->vfs.root)) {
+            vfs_path_put(&fs->vfs.root);
+            free(fs);
+            return NULL;
+        }
     }
 
     return fs;
@@ -124,30 +131,34 @@ task_fs_t *task_fs_clone(task_t *task, uint64_t clone_flags) {
 }
 
 int task_fs_chdir(task_t *task, const struct vfs_path *pwd) {
+    struct vfs_path new_pwd = {0};
+
     if (!task || !task->fs || !pwd || !pwd->mnt || !pwd->dentry)
         return -EINVAL;
     if (!pwd->dentry->d_inode || !S_ISDIR(pwd->dentry->d_inode->i_mode))
         return -ENOTDIR;
+    if (!vfs_path_copy(&new_pwd, pwd))
+        return -ENOENT;
 
     spin_lock(&task->fs->vfs.lock);
-    vfs_path_put(&task->fs->vfs.pwd);
-    task->fs->vfs.pwd = *pwd;
-    vfs_path_get(&task->fs->vfs.pwd);
+    vfs_path_move(&task->fs->vfs.pwd, &new_pwd);
     task->fs->vfs.seq++;
     spin_unlock(&task->fs->vfs.lock);
     return 0;
 }
 
 int task_fs_chroot(task_t *task, const struct vfs_path *root) {
+    struct vfs_path new_root = {0};
+
     if (!task || !task->fs || !root || !root->mnt || !root->dentry)
         return -EINVAL;
     if (!root->dentry->d_inode || !S_ISDIR(root->dentry->d_inode->i_mode))
         return -ENOTDIR;
+    if (!vfs_path_copy(&new_root, root))
+        return -ENOENT;
 
     spin_lock(&task->fs->vfs.lock);
-    vfs_path_put(&task->fs->vfs.root);
-    task->fs->vfs.root = *root;
-    vfs_path_get(&task->fs->vfs.root);
+    vfs_path_move(&task->fs->vfs.root, &new_root);
     task->fs->vfs.seq++;
     spin_unlock(&task->fs->vfs.lock);
     return 0;
@@ -156,6 +167,8 @@ int task_fs_chroot(task_t *task, const struct vfs_path *root) {
 static void task_fs_replace_root_refs(task_fs_t *fs,
                                       const struct vfs_path *old_root,
                                       const struct vfs_path *new_root) {
+    struct vfs_path replacement_root = {0};
+    struct vfs_path replacement_pwd = {0};
     bool replace_root;
     bool replace_pwd;
 
@@ -165,15 +178,15 @@ static void task_fs_replace_root_refs(task_fs_t *fs,
     spin_lock(&fs->vfs.lock);
     replace_root = vfs_path_equal(&fs->vfs.root, old_root);
     replace_pwd = vfs_path_equal(&fs->vfs.pwd, old_root);
+    if (replace_root && !vfs_path_copy(&replacement_root, new_root))
+        replace_root = false;
+    if (replace_pwd && !vfs_path_copy(&replacement_pwd, new_root))
+        replace_pwd = false;
     if (replace_root) {
-        vfs_path_put(&fs->vfs.root);
-        fs->vfs.root.mnt = vfs_mntget(new_root->mnt);
-        fs->vfs.root.dentry = vfs_dget(new_root->dentry);
+        vfs_path_move(&fs->vfs.root, &replacement_root);
     }
     if (replace_pwd) {
-        vfs_path_put(&fs->vfs.pwd);
-        fs->vfs.pwd.mnt = vfs_mntget(new_root->mnt);
-        fs->vfs.pwd.dentry = vfs_dget(new_root->dentry);
+        vfs_path_move(&fs->vfs.pwd, &replacement_pwd);
     }
     if (replace_root || replace_pwd)
         fs->vfs.seq++;
@@ -426,6 +439,7 @@ struct vfs_mount *task_mount_namespace_root(task_t *task) {
 
 int task_mount_namespace_set_root(task_t *task, struct vfs_mount *root) {
     task_mount_namespace_t *mnt_ns;
+    struct vfs_mount *new_root;
 
     if (!task || !task->nsproxy || !task->nsproxy->mnt_ns || !root)
         return -EINVAL;
@@ -434,9 +448,13 @@ int task_mount_namespace_set_root(task_t *task, struct vfs_mount *root) {
     if (mnt_ns->root == root)
         return 0;
 
+    new_root = vfs_mntget(root);
+    if (!new_root)
+        return -ENOENT;
+
     if (mnt_ns->root)
         vfs_mntput(mnt_ns->root);
-    mnt_ns->root = vfs_mntget(root);
+    mnt_ns->root = new_root;
     mnt_ns->seq++;
     return 0;
 }
@@ -445,6 +463,12 @@ int task_mount_namespace_pivot_root(task_t *task,
                                     const struct vfs_path *old_root,
                                     const struct vfs_path *new_root) {
     task_mount_namespace_t *mnt_ns;
+    struct vfs_mount *new_ns_root = NULL;
+    struct vfs_path new_global_root = {0};
+    struct vfs_mount *new_init_root = NULL;
+    bool replace_ns_root;
+    bool replace_global_root;
+    bool replace_init_root;
 
     if (!task || !task->nsproxy || !task->nsproxy->mnt_ns || !old_root ||
         !old_root->mnt || !old_root->dentry || !new_root || !new_root->mnt ||
@@ -453,23 +477,44 @@ int task_mount_namespace_pivot_root(task_t *task,
     }
 
     mnt_ns = task->nsproxy->mnt_ns;
-    if (mnt_ns->root != new_root->mnt) {
+    replace_ns_root = mnt_ns->root != new_root->mnt;
+    replace_global_root = vfs_root_path.mnt == old_root->mnt &&
+                          vfs_root_path.dentry == old_root->dentry;
+    replace_init_root = vfs_init_mnt_ns.root == old_root->mnt;
+
+    if (replace_ns_root) {
+        new_ns_root = vfs_mntget(new_root->mnt);
+        if (!new_ns_root)
+            return -ENOENT;
+    }
+    if (replace_global_root && !vfs_path_copy(&new_global_root, new_root)) {
+        if (new_ns_root)
+            vfs_mntput(new_ns_root);
+        return -ENOENT;
+    }
+    if (replace_init_root) {
+        new_init_root = vfs_mntget(new_root->mnt);
+        if (!new_init_root) {
+            if (new_ns_root)
+                vfs_mntput(new_ns_root);
+            vfs_path_put(&new_global_root);
+            return -ENOENT;
+        }
+    }
+
+    if (replace_ns_root) {
         if (mnt_ns->root)
             vfs_mntput(mnt_ns->root);
-        mnt_ns->root = vfs_mntget(new_root->mnt);
+        mnt_ns->root = new_ns_root;
         mnt_ns->seq++;
     }
 
-    if (vfs_root_path.mnt == old_root->mnt &&
-        vfs_root_path.dentry == old_root->dentry) {
-        vfs_path_put(&vfs_root_path);
-        vfs_root_path.mnt = vfs_mntget(new_root->mnt);
-        vfs_root_path.dentry = vfs_dget(new_root->dentry);
-    }
+    if (replace_global_root)
+        vfs_path_move(&vfs_root_path, &new_global_root);
 
-    if (vfs_init_mnt_ns.root == old_root->mnt) {
+    if (replace_init_root) {
         vfs_mntput(vfs_init_mnt_ns.root);
-        vfs_init_mnt_ns.root = vfs_mntget(new_root->mnt);
+        vfs_init_mnt_ns.root = new_init_root;
         vfs_init_mnt_ns.seq++;
     }
 
