@@ -1,5 +1,6 @@
 #include <mm/fault.h>
 #include <mm/mm_syscall.h>
+#include <mm/cache.h>
 #include <fs/fs_syscall.h>
 #include <fs/vfs/vfs.h>
 #include <irq/irq_manager.h>
@@ -129,8 +130,36 @@ static uint64_t writeback_vma_file_range(vma_t *vma, uint64_t start,
     if (!vma_needs_file_writeback(vma) || start >= end)
         return 0;
 
-    return msync_writeback_file_range(vma->node, vma->vm_start, vma->vm_offset,
-                                      start, end);
+    uint64_t delta = start - vma->vm_start;
+    uint64_t file_start = (uint64_t)vma->vm_offset + delta;
+    uint64_t file_end = file_start + (end - start);
+    int ret = page_cache_writeback_range(&vma->node->i_mapping, file_start,
+                                         file_end, false);
+    return ret < 0 ? (uint64_t)ret : 0;
+}
+
+static bool vma_uses_page_cache_mapping(vma_t *vma) {
+    return vma && vma->vm_type == VMA_TYPE_FILE && vma->node &&
+           (vma->vm_flags & VMA_SHARED) && !(vma->vm_flags & VMA_DEVICE) &&
+           vma->vm_offset >= 0;
+}
+
+static void unmap_vma_resident_range(task_mm_info_t *mm, vma_t *vma,
+                                     uint64_t start, uint64_t end) {
+    if (!mm || !vma || start >= end)
+        return;
+
+    if (vma_uses_page_cache_mapping(vma)) {
+        uint64_t file_start =
+            (uint64_t)vma->vm_offset + (start - vma->vm_start);
+        page_cache_unmap_shared_range(&vma->node->i_mapping, mm, start,
+                                      file_start, end - start);
+        return;
+    }
+
+    spin_lock(&mm->lock);
+    unmap_page_range_mm(mm, start, end - start);
+    spin_unlock(&mm->lock);
 }
 
 static uint64_t vm_flags_to_pt_flags(uint64_t vm_flags) {
@@ -926,10 +955,8 @@ static uint64_t do_munmap_locked(uint64_t addr, uint64_t size) {
 
         if (vma_remove(mgr, vma) != 0)
             return (uint64_t)-ENOMEM;
+        unmap_vma_resident_range(mm, vma, unmap_start, unmap_start + unmap_len);
         vma_free(vma);
-        spin_lock(&mm->lock);
-        unmap_page_range_mm(mm, unmap_start, unmap_len);
-        spin_unlock(&mm->lock);
     }
 
     return 0;
@@ -1267,7 +1294,10 @@ static bool mremap_get_mapped_page(uint64_t *pgdir, uint64_t vaddr,
 }
 
 static uint64_t mremap_map_resident_pages(task_mm_info_t *mm, uint64_t old_addr,
-                                          uint64_t new_addr, uint64_t size) {
+                                          uint64_t new_addr, uint64_t size,
+                                          uint64_t *mapped_out) {
+    if (mapped_out)
+        *mapped_out = 0;
     if (size == 0)
         return 0;
 
@@ -1304,7 +1334,37 @@ static uint64_t mremap_map_resident_pages(task_mm_info_t *mm, uint64_t old_addr,
         __atomic_add_fetch(&mm->resident_pages, mapped, __ATOMIC_RELAXED);
 
     spin_unlock(&mm->lock);
+    if (mapped_out)
+        *mapped_out = mapped;
     return 0;
+}
+
+static void mremap_account_shared_file_pages(vma_t *vma, uint64_t old_addr,
+                                             uint64_t new_addr, uint64_t size,
+                                             uint64_t max_pages) {
+    if (!vma || vma->vm_type != VMA_TYPE_FILE || !vma->node ||
+        !(vma->vm_flags & VMA_SHARED) || vma->vm_offset < 0 || size == 0 ||
+        max_pages == 0)
+        return;
+
+    task_mm_info_t *mm = current_task ? current_task->mm : NULL;
+    uint64_t *pgdir = task_mm_pgdir(mm);
+    uint64_t accounted = 0;
+    if (!pgdir)
+        return;
+
+    spin_lock(&mm->lock);
+    for (uint64_t off = 0; off < size && accounted < max_pages;
+         off += PAGE_SIZE) {
+        if (!translate_address(pgdir, new_addr + off))
+            continue;
+        uint64_t source_delta =
+            old_addr + off > vma->vm_start ? old_addr + off - vma->vm_start : 0;
+        uint64_t file_off = (uint64_t)vma->vm_offset + source_delta;
+        page_cache_mmap_inc_page(&vma->node->i_mapping, file_off / PAGE_SIZE);
+        accounted++;
+    }
+    spin_unlock(&mm->lock);
 }
 
 static void mremap_unmap_resident_pages(task_mm_info_t *mm, uint64_t addr,
@@ -1400,8 +1460,8 @@ static uint64_t mremap_expand_inplace_locked(task_mm_info_t *mm,
         if (!fd.f_op || !fd.f_op->mmap)
             return (uint64_t)-ENOSYS;
         uint64_t ret = (uint64_t)fd.f_op->mmap(
-            &fd, (void *)old_end, grow, vm_flags_to_prot(vma->vm_flags),
-            map_flags, (uint64_t)vma->vm_offset + old_size);
+            &fd, (void *)old_end, (uint64_t)vma->vm_offset + old_size, grow,
+            vm_flags_to_prot(vma->vm_flags), map_flags);
         if ((int64_t)ret < 0)
             return ret;
     }
@@ -1465,8 +1525,9 @@ static uint64_t mremap_move_locked(task_mm_info_t *mm, vma_manager_t *mgr,
     uint64_t copy_len = duplicate_mapping
                             ? new_size
                             : (old_size < new_size ? old_size : new_size);
-    uint64_t resident_ret =
-        mremap_map_resident_pages(mm, old_addr, target, copy_len);
+    uint64_t mapped_pages = 0;
+    uint64_t resident_ret = mremap_map_resident_pages(mm, old_addr, target,
+                                                      copy_len, &mapped_pages);
     if ((int64_t)resident_ret < 0) {
         spin_lock(&mm->lock);
         unmap_page_range_mm(mm, target, new_size);
@@ -1475,6 +1536,8 @@ static uint64_t mremap_move_locked(task_mm_info_t *mm, vma_manager_t *mgr,
         vma_free(new_vma);
         return resident_ret;
     }
+    mremap_account_shared_file_pages(old_vma, old_addr, target, copy_len,
+                                     mapped_pages);
 
     if (duplicate_mapping) {
         /* old_size == 0 duplicates a shareable mapping and leaves source live.
@@ -1668,8 +1731,8 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
 
     while (remaining > 0) {
         loff_t pos = (loff_t)file_off;
-        ssize_t ret = vfs_read_file(file, (void *)(addr + (len - remaining)),
-                                    remaining, &pos);
+        ssize_t ret = vfs_read_kernel_file(
+            file, (void *)(addr + (len - remaining)), remaining, &pos);
         if (ret < 0) {
             spin_lock(&mm->lock);
             unmap_page_range_mm(mm, map_addr, map_len);
@@ -1701,82 +1764,27 @@ static uint64_t msync_writeback_file_range(vfs_node_t *node, uint64_t vm_start,
     if (!node || sync_start >= sync_end || vm_offset < 0)
         return 0;
 
-    if (!node || !node->i_fop || !node->i_fop->write)
+    if (!node || !node->i_fop)
         return 0;
 
-    task_mm_info_t *mm = current_task->mm;
-    uint64_t *pgdir = mm_pgdir(mm);
-    uint64_t cursor = sync_start;
-    uint64_t file_size = node->i_size;
-    uint8_t *bounce = alloc_frames_bytes(PAGE_SIZE);
-    if (!bounce)
-        return (uint64_t)-ENOMEM;
+    uint64_t delta = sync_start - vm_start;
+    if ((uint64_t)vm_offset > UINT64_MAX - delta)
+        return (uint64_t)-EINVAL;
 
-    while (cursor < sync_end) {
-        uint64_t page_va = PADDING_DOWN(cursor, PAGE_SIZE);
-        uint64_t in_page = cursor - page_va;
-        uint64_t scan_chunk = MIN(sync_end - cursor, PAGE_SIZE - in_page);
-        uint64_t vma_delta = cursor - vm_start;
+    uint64_t file_start = (uint64_t)vm_offset + delta;
+    uint64_t file_end = file_start + (sync_end - sync_start);
+    int ret = page_cache_writeback_range(&node->i_mapping, file_start, file_end,
+                                         false);
+    if (ret < 0)
+        return (uint64_t)ret;
 
-        if ((uint64_t)vm_offset > UINT64_MAX - vma_delta) {
-            free_frames_bytes(bounce, PAGE_SIZE);
-            return (uint64_t)-EINVAL;
-        }
-
-        uint64_t file_off = (uint64_t)vm_offset + vma_delta;
-        if (file_off >= file_size)
-            break;
-
-        uint64_t io_chunk = MIN(scan_chunk, file_size - file_off);
-        uint64_t page_paddr = 0;
-
-        spin_lock(&mm->lock);
-        page_paddr = translate_address(pgdir, page_va);
-        if (page_paddr) {
-            memcpy(bounce, (void *)(phys_to_virt(page_paddr) + in_page),
-                   io_chunk);
-        }
-        spin_unlock(&mm->lock);
-
-        if (!page_paddr) {
-            cursor += scan_chunk;
-            continue;
-        }
-
-        uint64_t written = 0;
-        fd_t fd = {
+    int sync_ret = vfs_fsync_file_range(
+        &(fd_t){
             .f_op = node->i_fop,
             .f_inode = node,
             .node = node,
-            .f_flags = O_WRONLY,
-        };
-        loff_t pos = (loff_t)file_off;
-        while (written < io_chunk) {
-            ssize_t ret =
-                vfs_write_file(&fd, bounce + written, io_chunk - written, &pos);
-            if (ret < 0) {
-                free_frames_bytes(bounce, PAGE_SIZE);
-                return (uint64_t)ret;
-            }
-            if (ret == 0) {
-                free_frames_bytes(bounce, PAGE_SIZE);
-                return (uint64_t)-EIO;
-            }
-            written += (uint64_t)ret;
-        }
-
-        cursor += scan_chunk;
-        if (io_chunk < scan_chunk)
-            break;
-    }
-
-    free_frames_bytes(bounce, PAGE_SIZE);
-
-    int sync_ret = vfs_fsync_file(&(fd_t){
-        .f_op = node->i_fop,
-        .f_inode = node,
-        .node = node,
-    });
+        },
+        (loff_t)file_start, (loff_t)file_end, 0);
     return sync_ret < 0 ? (sync_ret == -ENOSYS ? 0 : (uint64_t)sync_ret) : 0;
 }
 
@@ -2000,15 +2008,11 @@ static uint64_t madvise_dontneed_range(uint64_t addr, uint64_t len) {
             return ret;
         }
 
+        unmap_vma_resident_range(current_task->mm, vma, cursor, range_end);
         cursor = range_end;
     }
     spin_unlock(&mgr->lock);
 
-    task_mm_info_t *mm = current_task->mm;
-    spin_lock(&mm->lock);
-    unmap_page_range_mm(mm, addr, len);
-    spin_unlock(&mm->lock);
-    task_mm_flush_tlb_all(mm);
     return 0;
 }
 

@@ -4,6 +4,7 @@
 #include <net/socket.h>
 #include <drivers/logger.h>
 #include <fs/vfs/notify.h>
+#include <mm/cache.h>
 #include <task/ns.h>
 #include <task/task_syscall.h>
 
@@ -27,6 +28,12 @@
 #define RWF_APPEND 0x00000010
 #define RWF_SUPPORTED                                                          \
     (RWF_HIPRI | RWF_DSYNC | RWF_SYNC | RWF_NOWAIT | RWF_APPEND)
+#define POSIX_FADV_NORMAL 0
+#define POSIX_FADV_RANDOM 1
+#define POSIX_FADV_SEQUENTIAL 2
+#define POSIX_FADV_WILLNEED 3
+#define POSIX_FADV_DONTNEED 4
+#define POSIX_FADV_NOREUSE 5
 
 static uint64_t do_unlink(const char *name);
 static volatile uint64_t tmpfile_seq = 1;
@@ -1561,6 +1568,18 @@ uint64_t sys_fsync(uint64_t fd) {
     return ret < 0 ? (uint64_t)ret : 0;
 }
 
+uint64_t sys_fdatasync(uint64_t fd) {
+    struct vfs_file *file = task_get_file(current_task, (int)fd);
+    int ret;
+
+    if (!file)
+        return (uint64_t)-EBADF;
+
+    ret = vfs_fsync_file_range(file, 0, (loff_t)file->f_inode->i_size, 1);
+    vfs_file_put(file);
+    return ret < 0 ? (uint64_t)ret : 0;
+}
+
 uint64_t sys_close(uint64_t fd) {
     task_t *self = current_task;
     fd_info_t *fd_info;
@@ -1779,8 +1798,6 @@ uint64_t sys_copy_file_range(uint64_t fd_in, int *offset_in_user,
     vfs_file_put(out_fd);
     return copy_total;
 }
-
-#define RW_BOUNCE_CHUNK (64 * 1024)
 
 uint64_t sys_read(uint64_t fd, void *buf, uint64_t len) {
     struct vfs_file *file;
@@ -2183,26 +2200,18 @@ static uint64_t generic_do_preadv(uint64_t fd, struct iovec *iovec,
 
     for (uint64_t i = 0; i < count; i++) {
         size_t len = kiov[i].len;
-        uint8_t *bounce = NULL;
         size_t iov_done = 0;
 
         if (len > MAX_RW_COUNT - (size_t)total_read)
             len = MAX_RW_COUNT - (size_t)total_read;
         if (kiov[i].iov_base == NULL)
             continue;
-        bounce = malloc(MIN(len, (size_t)RW_BOUNCE_CHUNK));
-        if (!bounce) {
-            vfs_file_put(file);
-            free(kiov);
-            return total_read ? (uint64_t)total_read : (uint64_t)-ENOMEM;
-        }
 
         while (iov_done < len) {
-            size_t chunk = MIN(len - iov_done, (size_t)RW_BOUNCE_CHUNK);
-            ssize_t io_ret = (ssize_t)vfs_read_file(file, bounce, chunk,
-                                                    use_f_pos ? NULL : &pos);
+            ssize_t io_ret = (ssize_t)vfs_read_file(
+                file, (uint8_t *)kiov[i].iov_base + iov_done, len - iov_done,
+                use_f_pos ? NULL : &pos);
             if (io_ret < 0) {
-                free(bounce);
                 if (total_read > 0 &&
                     (io_ret == -EAGAIN || io_ret == -EWOULDBLOCK ||
                      io_ret == -EINTR)) {
@@ -2216,19 +2225,11 @@ static uint64_t generic_do_preadv(uint64_t fd, struct iovec *iovec,
             }
             if (io_ret == 0)
                 break;
-            if (copy_to_user((uint8_t *)kiov[i].iov_base + iov_done, bounce,
-                             (size_t)io_ret)) {
-                free(bounce);
-                vfs_file_put(file);
-                free(kiov);
-                return total_read ? (uint64_t)total_read : (uint64_t)-EFAULT;
-            }
             iov_done += (size_t)io_ret;
             total_read += io_ret;
-            if ((size_t)io_ret < chunk || (size_t)total_read >= MAX_RW_COUNT)
+            if ((size_t)total_read >= MAX_RW_COUNT)
                 break;
         }
-        free(bounce);
         if (iov_done < len || (size_t)total_read >= MAX_RW_COUNT)
             break;
     }
@@ -2279,7 +2280,6 @@ static uint64_t generic_do_pwritev(uint64_t fd, struct iovec *iovec,
     for (uint64_t i = 0; i < count; i++) {
         size_t len = kiov[i].len;
         loff_t *ppos = use_f_pos ? NULL : &pos;
-        uint8_t *bounce = NULL;
         size_t iov_done = 0;
 
         if (len > MAX_RW_COUNT - (size_t)total_written)
@@ -2290,23 +2290,12 @@ static uint64_t generic_do_pwritev(uint64_t fd, struct iovec *iovec,
             pos = (loff_t)file->f_inode->i_size;
             ppos = &pos;
         }
-        bounce = malloc(MIN(len, (size_t)RW_BOUNCE_CHUNK));
-        if (!bounce) {
-            total_written = total_written ? total_written : -ENOMEM;
-            break;
-        }
 
         while (iov_done < len) {
-            size_t chunk = MIN(len - iov_done, (size_t)RW_BOUNCE_CHUNK);
-            if (copy_from_user(bounce, (uint8_t *)kiov[i].iov_base + iov_done,
-                               chunk)) {
-                free(bounce);
-                total_written = total_written ? total_written : -EFAULT;
-                goto out_writev;
-            }
-            ssize_t io_ret = (ssize_t)vfs_write_file(file, bounce, chunk, ppos);
+            ssize_t io_ret = (ssize_t)vfs_write_file(
+                file, (uint8_t *)kiov[i].iov_base + iov_done, len - iov_done,
+                ppos);
             if (io_ret < 0) {
-                free(bounce);
                 if (total_written > 0 &&
                     (io_ret == -EAGAIN || io_ret == -EWOULDBLOCK ||
                      io_ret == -EINTR)) {
@@ -2317,10 +2306,9 @@ static uint64_t generic_do_pwritev(uint64_t fd, struct iovec *iovec,
             }
             iov_done += (size_t)io_ret;
             total_written += io_ret;
-            if ((size_t)io_ret < chunk || (size_t)total_written >= MAX_RW_COUNT)
+            if (io_ret == 0 || (size_t)total_written >= MAX_RW_COUNT)
                 break;
         }
-        free(bounce);
         if (iov_done < len || (size_t)total_written >= MAX_RW_COUNT)
             break;
     }
@@ -3332,6 +3320,8 @@ uint64_t do_readlink(char *path, char *buf, uint64_t size) {
 
     len = MIN((size_t)size, strlen(target));
     memcpy(buf, target, len);
+    if (vpath.dentry->d_inode->i_op->put_link)
+        vpath.dentry->d_inode->i_op->put_link(vpath.dentry->d_inode, target);
     vfs_path_put(&vpath);
     return len;
 }
@@ -3401,6 +3391,8 @@ uint64_t sys_readlinkat(int dfd, char *path_user, char *buf_user,
     }
     len = MIN((size_t)size, strlen(target));
     ret = copy_to_user(buf_user, target, len);
+    if (vpath.dentry->d_inode->i_op->put_link)
+        vpath.dentry->d_inode->i_op->put_link(vpath.dentry->d_inode, target);
     vfs_path_put(&vpath);
     return ret ? (uint64_t)-EFAULT : (uint64_t)len;
 }
@@ -3902,13 +3894,32 @@ uint64_t sys_fadvise64(int fd, uint64_t offset, uint64_t len, int advice) {
     fd_t *file = task_get_file(current_task, fd);
     if (fd < 0 || !file)
         return -EBADF;
+
+    if (advice == POSIX_FADV_WILLNEED || advice == POSIX_FADV_SEQUENTIAL)
+        (void)page_cache_readahead(file, offset, len ? len : PAGE_SIZE * 32);
+    if (advice == POSIX_FADV_DONTNEED && file->f_inode)
+        (void)page_cache_invalidate_range(&file->f_inode->i_mapping, offset,
+                                          len ? offset + len : UINT64_MAX,
+                                          true);
+
     vfs_file_put(file);
-
-    (void)offset;
-    (void)len;
-    (void)advice;
-
     return 0;
+}
+
+uint64_t sys_readahead(int fd, uint64_t offset, uint64_t count) {
+    fd_t *file = task_get_file(current_task, fd);
+    int ret;
+
+    if (fd < 0 || !file)
+        return (uint64_t)-EBADF;
+    if (!file->f_inode || !S_ISREG(file->f_inode->i_mode)) {
+        vfs_file_put(file);
+        return 0;
+    }
+
+    ret = page_cache_readahead(file, offset, count);
+    vfs_file_put(file);
+    return ret < 0 ? (uint64_t)ret : 0;
 }
 
 uint64_t sys_utimensat(int dfd, const char *pathname, struct timespec *ntimes,

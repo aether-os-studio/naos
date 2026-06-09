@@ -1,5 +1,6 @@
 #include <mm/slub.h>
 #include <mm/buddy.h>
+#include <mm/cache.h>
 #include <mm/hhdm.h>
 #include <mm/mm.h>
 #include <mm/page.h>
@@ -281,7 +282,9 @@ static page_t *cache_grow(kmem_cache_t *cache) {
 
 static void *cache_alloc(size_t size, size_t cache_index) {
     kmem_cache_t *cache = &kmalloc_caches[cache_index];
+    bool reclaimed = false;
 
+retry:
     spin_lock(&cache->lock);
 
     page_t *slab = page_from_pfn(cache->partial_head_pfn);
@@ -289,6 +292,11 @@ static void *cache_alloc(size_t size, size_t cache_index) {
         slab = cache_grow(cache);
         if (!slab) {
             spin_unlock(&cache->lock);
+            if (!reclaimed) {
+                reclaimed = true;
+                (void)page_cache_reclaim_half();
+                goto retry;
+            }
             return NULL;
         }
         list_push(cache, slab);
@@ -428,6 +436,11 @@ static void *large_alloc_aligned(size_t size, size_t alignment) {
     zone_t *zone = get_zone(ZONE_NORMAL);
     uintptr_t phys =
         buddy_alloc_zone_pages(zone, order_pages(order), &allocated_pages);
+    if (!phys || allocated_pages != order_pages(order)) {
+        (void)page_cache_reclaim_half();
+        phys =
+            buddy_alloc_zone_pages(zone, order_pages(order), &allocated_pages);
+    }
     if (!phys || allocated_pages != order_pages(order))
         return NULL;
 

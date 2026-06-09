@@ -293,7 +293,7 @@ static int read_task_file_into_user_memory(task_t *task, vfs_node_t *node,
         };
         while (loaded < chunk) {
             loff_t pos = (loff_t)(file_off + loaded);
-            ssize_t ret = vfs_read_file(
+            ssize_t ret = vfs_read_kernel_file(
                 &fd, (void *)(phys_to_virt(pa) + in_page + loaded),
                 chunk - loaded, &pos);
             if (ret < 0)
@@ -1513,7 +1513,7 @@ static int task_execve_read_interp_path(struct vfs_file *file,
         return -ENOMEM;
 
     loff_t pos = (loff_t)phdr->p_offset;
-    if (vfs_read_file(file, path, phdr->p_filesz, &pos) !=
+    if (vfs_read_kernel_file(file, path, phdr->p_filesz, &pos) !=
         (ssize_t)phdr->p_filesz) {
         free(path);
         return -ENOEXEC;
@@ -1549,7 +1549,8 @@ static int task_execve_read_elf_phdrs(struct vfs_file *file,
         return -ENOMEM;
 
     loff_t pos = (loff_t)ehdr->e_phoff;
-    if (vfs_read_file(file, phdr, phdr_size, &pos) != (ssize_t)phdr_size) {
+    if (vfs_read_kernel_file(file, phdr, phdr_size, &pos) !=
+        (ssize_t)phdr_size) {
         free(phdr);
         return -ENOEXEC;
     }
@@ -1666,7 +1667,7 @@ static int task_execve_load_interpreter_chain(
 
     Elf64_Ehdr ehdr;
     loff_t hdr_pos = 0;
-    if (vfs_read_file(file, &ehdr, sizeof(ehdr), &hdr_pos) !=
+    if (vfs_read_kernel_file(file, &ehdr, sizeof(ehdr), &hdr_pos) !=
         (ssize_t)sizeof(ehdr)) {
         ret = -ENOEXEC;
         goto out_close;
@@ -2013,8 +2014,8 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
 
     while (true) {
         loff_t header_pos = 0;
-        header_read = vfs_read_file(exec_file, header_buf, sizeof(header_buf),
-                                    &header_pos);
+        header_read = vfs_read_kernel_file(exec_file, header_buf,
+                                           sizeof(header_buf), &header_pos);
 
         if (header_read < 2 || header_buf[0] != '#' || header_buf[1] != '!') {
             break;
@@ -2265,8 +2266,8 @@ static uint64_t task_do_execve(int dirfd, const char *path_user,
         shell_fallback_used = true;
 
         loff_t shell_header_pos = 0;
-        header_read = vfs_read_file(exec_file, header_buf, sizeof(header_buf),
-                                    &shell_header_pos);
+        header_read = vfs_read_kernel_file(
+            exec_file, header_buf, sizeof(header_buf), &shell_header_pos);
         if (header_read < (ssize_t)sizeof(Elf64_Ehdr) ||
             !arch_check_elf((const Elf64_Ehdr *)header_buf)) {
             task_execve_free_string_array(new_argv, argv_count);
@@ -2333,7 +2334,7 @@ shell_fallback_done:
         }
         phdr_allocated = true;
         loff_t phdr_pos = (loff_t)ehdr->e_phoff;
-        if (vfs_read_file(exec_file, phdr, phdr_size, &phdr_pos) !=
+        if (vfs_read_kernel_file(exec_file, phdr, phdr_size, &phdr_pos) !=
             (ssize_t)phdr_size) {
             free(phdr);
             task_execve_free_string_array(new_argv, argv_count);

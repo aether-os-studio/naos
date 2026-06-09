@@ -380,8 +380,8 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_FCNTL, (syscall_handle_t)sys_fcntl);
     regist_syscall_handler(SYS_FLOCK, (syscall_handle_t)sys_flock);
     regist_syscall_handler(SYS_FSYNC, (syscall_handle_t)sys_fsync);
-    regist_syscall_handler(SYS_FDATASYNC,
-                           (syscall_handle_t)dummy_syscall_handler);
+    regist_syscall_handler(SYS_FDATASYNC, (syscall_handle_t)sys_fdatasync);
+    regist_syscall_handler(SYS_READAHEAD, (syscall_handle_t)sys_readahead);
     regist_syscall_handler(SYS_TRUNCATE, (syscall_handle_t)sys_truncate);
     regist_syscall_handler(SYS_FTRUNCATE, (syscall_handle_t)sys_ftruncate);
     regist_syscall_handler(SYS_GETDENTS64, (syscall_handle_t)sys_getdents64);

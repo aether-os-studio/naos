@@ -448,6 +448,8 @@ static int vfs_open_from_root(struct vfs_path *start, struct vfs_path *root,
     }
     if (vfs_open_flags_want_write((unsigned int)local_how.flags))
         file->f_mode |= VFS_FMODE_WRITE_ACCESS;
+    if (kernel)
+        file->f_mode |= VFS_FMODE_KERNEL_IO;
 
     if (((how ? how->flags : 0) & O_TMPFILE) == O_TMPFILE) {
         if (!dentry->d_inode->i_op || !dentry->d_inode->i_op->tmpfile) {
@@ -629,6 +631,77 @@ ssize_t vfs_write_file(struct vfs_file *file, const void *buf, size_t count,
     return ret;
 }
 
+ssize_t vfs_read_kernel_file(struct vfs_file *file, void *buf, size_t count,
+                             loff_t *ppos) {
+    ssize_t ret;
+    loff_t pos;
+    loff_t new_pos;
+
+    if (!file)
+        return -EINVAL;
+    if (!file->f_op || !file->f_op->read)
+        return -EINVAL;
+
+    struct vfs_file kernel_file = *file;
+    kernel_file.f_mode |= VFS_FMODE_KERNEL_IO;
+
+    bool lock_pos = !ppos && !(file->f_mode & VFS_FMODE_NO_POS_LOCK);
+    if (lock_pos)
+        spin_lock(&file->f_pos_lock);
+    pos = ppos ? *ppos : file->f_pos;
+
+    new_pos = pos;
+    ret = kernel_file.f_op->read(&kernel_file, buf, count, &new_pos);
+    if (ret >= 0) {
+        if (ppos)
+            *ppos = new_pos;
+        else
+            file->f_pos = new_pos;
+    }
+
+    if (lock_pos)
+        spin_unlock(&file->f_pos_lock);
+    return ret;
+}
+
+ssize_t vfs_write_kernel_file(struct vfs_file *file, const void *buf,
+                              size_t count, loff_t *ppos) {
+    ssize_t ret;
+    loff_t pos;
+    loff_t new_pos;
+
+    if (!file)
+        return -EINVAL;
+    if (!file->f_op || !file->f_op->write)
+        return -EINVAL;
+
+    struct vfs_file kernel_file = *file;
+    kernel_file.f_mode |= VFS_FMODE_KERNEL_IO;
+
+    bool lock_pos = !ppos && !(file->f_mode & VFS_FMODE_NO_POS_LOCK);
+    if (lock_pos)
+        spin_lock(&file->f_pos_lock);
+    pos = ppos ? *ppos : file->f_pos;
+    if (!ppos && (file->f_flags & O_APPEND))
+        pos = (loff_t)file->f_inode->i_size;
+
+    new_pos = pos;
+    ret = kernel_file.f_op->write(&kernel_file, buf, count, &new_pos);
+    if (ret >= 0) {
+        if (ppos)
+            *ppos = new_pos;
+        else
+            file->f_pos = new_pos;
+        if (ret > 0)
+            notifyfs_queue_inode_event(file->f_inode, file->f_inode, NULL,
+                                       IN_MODIFY, 0);
+    }
+
+    if (lock_pos)
+        spin_unlock(&file->f_pos_lock);
+    return ret;
+}
+
 loff_t vfs_llseek_file(struct vfs_file *file, loff_t offset, int whence) {
     loff_t new_pos;
 
@@ -681,11 +754,18 @@ long vfs_ioctl_file(struct vfs_file *file, unsigned long cmd,
 }
 
 int vfs_fsync_file(struct vfs_file *file) {
+    if (!file || !file->f_inode)
+        return -EBADF;
+    return vfs_fsync_file_range(file, 0, (loff_t)file->f_inode->i_size, 0);
+}
+
+int vfs_fsync_file_range(struct vfs_file *file, loff_t start, loff_t end,
+                         int datasync) {
     if (!file)
         return -EBADF;
     if (!file->f_op || !file->f_op->fsync)
         return 0;
-    return file->f_op->fsync(file, 0, (loff_t)file->f_inode->i_size, 0);
+    return file->f_op->fsync(file, start, end, datasync);
 }
 
 int vfs_poll(struct vfs_file *file, uint32_t events) {

@@ -1,4 +1,5 @@
 #include <arch/arch.h>
+#include <mm/cache.h>
 #include <mm/mm.h>
 #include <mm/page.h>
 #include <task/task.h>
@@ -386,6 +387,43 @@ static bool vma_is_private_mapping(vma_t *vma) {
     return vma && !(vma->vm_flags & (VMA_SHARED | VMA_SHM | VMA_DEVICE));
 }
 
+static bool vma_is_shared_file_mapping(vma_t *vma) {
+    return vma && vma->vm_type == VMA_TYPE_FILE && vma->node &&
+           (vma->vm_flags & VMA_SHARED) && !(vma->vm_flags & VMA_DEVICE) &&
+           vma->vm_offset >= 0;
+}
+
+static void page_table_account_shared_file_mappings(task_mm_info_t *mm,
+                                                    bool add) {
+    if (!mm)
+        return;
+
+    uint64_t *pgdir = task_mm_pgdir(mm);
+    if (!pgdir)
+        return;
+
+    vma_manager_t *mgr = &mm->task_vma_mgr;
+    rb_node_t *node = rb_first(&mgr->vma_tree);
+    while (node) {
+        vma_t *vma = rb_entry(node, vma_t, vm_rb);
+        node = rb_next(node);
+        if (!vma_is_shared_file_mapping(vma))
+            continue;
+
+        for (uint64_t va = vma->vm_start; va < vma->vm_end; va += PAGE_SIZE) {
+            if (!translate_address(pgdir, va))
+                continue;
+            uint64_t file_off = (uint64_t)vma->vm_offset + (va - vma->vm_start);
+            if (add)
+                page_cache_mmap_inc_page(&vma->node->i_mapping,
+                                         file_off / PAGE_SIZE);
+            else
+                page_cache_mmap_dec_page(&vma->node->i_mapping,
+                                         file_off / PAGE_SIZE);
+        }
+    }
+}
+
 static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level,
                                            uint64_t base_vaddr,
                                            vma_manager_t *mgr) {
@@ -548,6 +586,8 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
         return NULL;
     }
 
+    page_table_account_shared_file_mappings(new_mm, true);
+
     spin_unlock(&old->lock);
     spin_unlock(&mgr->lock);
 
@@ -589,6 +629,7 @@ void free_page_table(task_mm_info_t *directory) {
     }
 
     spin_lock(&mgr->lock);
+    page_table_account_shared_file_mappings(directory, false);
     vma_manager_exit_cleanup(mgr);
     spin_unlock(&mgr->lock);
 

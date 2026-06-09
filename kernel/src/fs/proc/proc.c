@@ -32,7 +32,6 @@ typedef struct procfs_inode_info {
     task_mount_namespace_t *mnt_ns;
     task_user_namespace_t *user_ns;
     char *dispatch_name;
-    char *link_target;
 } procfs_inode_info_t;
 
 typedef struct procfs_task_snapshot {
@@ -229,13 +228,11 @@ static void procfs_evict_inode(struct vfs_inode *inode) {
     if (!info)
         return;
     free(info->dispatch_name);
-    free(info->link_target);
     task_mount_namespace_put(info->mnt_ns);
     task_user_namespace_put(info->user_ns);
     info->mnt_ns = NULL;
     info->user_ns = NULL;
     info->dispatch_name = NULL;
-    info->link_target = NULL;
 }
 
 static int procfs_init_fs_context(struct vfs_fs_context *fc) {
@@ -601,11 +598,21 @@ static const char *procfs_get_link(struct vfs_dentry *dentry,
     task_t *task;
     fd_t *fd;
     char buf[512];
+    char *target;
     ssize_t len;
 
     (void)dentry;
     if (!info)
         return ERR_PTR(-EINVAL);
+
+    len = procfs_dynamic_readlink(info, buf, 0, sizeof(buf) - 1);
+    if (len < 0)
+        return ERR_PTR((intptr_t)len);
+    buf[len] = '\0';
+
+    target = strdup(buf);
+    if (!target)
+        return ERR_PTR(-ENOMEM);
 
     if (nd) {
         memset(&nd->path, 0, sizeof(nd->path));
@@ -613,28 +620,41 @@ static const char *procfs_get_link(struct vfs_dentry *dentry,
         if (!task)
             task = current_task;
 
-        if (!task)
+        if (!task) {
+            free(target);
             return ERR_PTR(-ENOENT);
+        }
 
         if (info->kind == PROCFS_INO_SYMLINK && info->dispatch_name) {
             if (!strcmp(info->dispatch_name, "proc_root")) {
                 const struct vfs_path *root = task_fs_root_path(task);
 
-                if (!root || !root->mnt || !root->dentry)
+                if (!root || !root->mnt || !root->dentry) {
+                    free(target);
                     return ERR_PTR(-ENOENT);
-                if (!vfs_path_copy(&nd->path, root))
+                }
+                if (!vfs_path_copy(&nd->path, root)) {
+                    free(target);
                     return ERR_PTR(-ENOENT);
+                }
             } else if (!strcmp(info->dispatch_name, "proc_exe")) {
-                if (!task->exec_file)
+                if (!task->exec_file) {
+                    free(target);
                     return ERR_PTR(-ENOENT);
-                if (!vfs_path_copy(&nd->path, &task->exec_file->f_path))
+                }
+                if (!vfs_path_copy(&nd->path, &task->exec_file->f_path)) {
+                    free(target);
                     return ERR_PTR(-ENOENT);
+                }
             } else if (!strcmp(info->dispatch_name, "proc_fd")) {
                 fd = procfs_dup_task_fd(task, info->fd_num);
-                if (!fd)
+                if (!fd) {
+                    free(target);
                     return ERR_PTR(-ENOENT);
+                }
                 if (!vfs_path_copy(&nd->path, &fd->f_path)) {
                     vfs_close_file(fd);
+                    free(target);
                     return ERR_PTR(-ENOENT);
                 }
                 vfs_close_file(fd);
@@ -642,16 +662,12 @@ static const char *procfs_get_link(struct vfs_dentry *dentry,
         }
     }
 
-    len = procfs_dynamic_readlink(info, buf, 0, sizeof(buf) - 1);
-    if (len < 0)
-        return ERR_PTR((intptr_t)len);
-    buf[len] = '\0';
+    return target;
+}
 
-    free(info->link_target);
-    info->link_target = strdup(buf);
-    if (!info->link_target)
-        return ERR_PTR(-ENOMEM);
-    return info->link_target;
+static void procfs_put_link(struct vfs_inode *inode, const char *link) {
+    (void)inode;
+    free((void *)link);
 }
 
 static int procfs_d_revalidate(struct vfs_dentry *dentry, unsigned int flags) {
@@ -1335,6 +1351,7 @@ static const struct vfs_dentry_operations procfs_dentry_ops = {
 static const struct vfs_inode_operations procfs_inode_ops = {
     .lookup = procfs_lookup,
     .get_link = procfs_get_link,
+    .put_link = procfs_put_link,
     .permission = procfs_permission,
     .getattr = procfs_getattr,
 };

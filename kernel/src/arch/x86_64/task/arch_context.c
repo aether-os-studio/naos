@@ -8,6 +8,10 @@ static uint64_t x64_fpu_state_bytes = sizeof(fpu_context_t);
 static uint64_t x64_fpu_xsave_mask = 0;
 static bool x64_fpu_use_xsave = false;
 
+static uint64_t x64_fpu_initial_xstate_bv(void) {
+    return x64_fpu_xsave_mask & (X64_XSTATE_X87 | X64_XSTATE_SSE);
+}
+
 uint64_t x64_fpu_state_size(void) { return x64_fpu_state_bytes; }
 
 bool x64_fpu_xsave_enabled(void) { return x64_fpu_use_xsave; }
@@ -25,12 +29,13 @@ void x64_fpu_state_init(fpu_context_t *fpu_ctx) {
 
     memset(fpu_ctx, 0, x64_fpu_state_bytes);
     fpu_ctx->mxcsr = 0x1f80;
+    fpu_ctx->mxcr_mask = 0xffff;
     fpu_ctx->cwd = 0x037f;
 
     if (x64_fpu_use_xsave && x64_fpu_state_bytes > X64_XSAVE_HDR_OFFSET) {
         x64_xsave_header_t *hdr =
             (x64_xsave_header_t *)((uint8_t *)fpu_ctx + X64_XSAVE_HDR_OFFSET);
-        hdr->xstate_bv = x64_fpu_xsave_mask;
+        hdr->xstate_bv = x64_fpu_initial_xstate_bv();
     }
 }
 

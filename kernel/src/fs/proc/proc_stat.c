@@ -20,8 +20,17 @@ typedef struct proc_stat_snapshot {
     size_t blocked;
 } proc_stat_snapshot_t;
 
+static proc_stat_cpu_times_t proc_stat_last_raw[MAX_CPU_NUM];
+static proc_stat_cpu_times_t proc_stat_published[MAX_CPU_NUM];
+static bool proc_stat_has_sample[MAX_CPU_NUM];
+static spinlock_t proc_stat_lock = SPIN_INIT;
+
 static unsigned long long proc_stat_ns_to_ticks(uint64_t ns) {
     return (unsigned long long)(ns / (1000000000ULL / SCHED_HZ));
+}
+
+static uint64_t proc_stat_delta(uint64_t now, uint64_t old) {
+    return now > old ? now - old : 0;
 }
 
 static void proc_stat_collect(proc_stat_snapshot_t *stat, size_t cpu_slots,
@@ -76,6 +85,33 @@ static void proc_stat_collect(proc_stat_snapshot_t *stat, size_t cpu_slots,
     irq_stat_read(stat->irq_counts, ARCH_MAX_IRQ_NUM, &stat->irq_total);
 }
 
+static void proc_stat_make_cpu_times_monotonic(proc_stat_snapshot_t *stat,
+                                               size_t cpu_slots) {
+    if (!stat)
+        return;
+
+    spin_lock(&proc_stat_lock);
+    for (size_t cpu = 0; cpu < cpu_slots && cpu < MAX_CPU_NUM; cpu++) {
+        proc_stat_cpu_times_t raw = stat->cpu_times[cpu];
+
+        if (!proc_stat_has_sample[cpu]) {
+            proc_stat_published[cpu] = raw;
+            proc_stat_has_sample[cpu] = true;
+        } else {
+            proc_stat_published[cpu].user_ns +=
+                proc_stat_delta(raw.user_ns, proc_stat_last_raw[cpu].user_ns);
+            proc_stat_published[cpu].nice_ns +=
+                proc_stat_delta(raw.nice_ns, proc_stat_last_raw[cpu].nice_ns);
+            proc_stat_published[cpu].system_ns += proc_stat_delta(
+                raw.system_ns, proc_stat_last_raw[cpu].system_ns);
+        }
+
+        proc_stat_last_raw[cpu] = raw;
+        stat->cpu_times[cpu] = proc_stat_published[cpu];
+    }
+    spin_unlock(&proc_stat_lock);
+}
+
 static void proc_stat_append_cpu_line(string_builder_t *builder,
                                       const char *name,
                                       proc_stat_cpu_times_t times,
@@ -108,6 +144,7 @@ static char *proc_gen_stat(size_t *content_len) {
         return NULL;
     }
     proc_stat_collect(stat, online_cpus, now_ns);
+    proc_stat_make_cpu_times_monotonic(stat, online_cpus);
 
     for (uint64_t cpu = 0; cpu < online_cpus; cpu++) {
         total.user_ns += stat->cpu_times[cpu].user_ns;

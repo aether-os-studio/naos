@@ -364,6 +364,7 @@ static int vfs_follow_symlink(struct vfs_path *parent,
     int ret;
     struct vfs_path next;
     struct vfs_nameidata nd = {0};
+    struct vfs_inode *inode;
 
     if (depth >= VFS_MAX_SYMLINKS)
         return -ELOOP;
@@ -372,28 +373,35 @@ static int vfs_follow_symlink(struct vfs_path *parent,
         return -ELOOP;
     }
 
-    target = link_dentry->d_inode->i_op->get_link(link_dentry,
-                                                  link_dentry->d_inode, &nd);
+    inode = link_dentry->d_inode;
+    target = inode->i_op->get_link(link_dentry, inode, &nd);
     if (IS_ERR_OR_NULL(target))
         return target ? (int)PTR_ERR(target) : -ENOENT;
 
     if (nd.path.mnt && nd.path.dentry) {
         if (!remaining || !remaining[0]) {
             *out = nd.path;
+            if (inode->i_op->put_link)
+                inode->i_op->put_link(inode, target);
             return 0;
         }
 
         ret = __vfs_filename_lookup(&nd.path, &nd.path, remaining, lookup_flags,
                                     depth + 1, out);
         vfs_path_put(&nd.path);
+        if (inode->i_op->put_link)
+            inode->i_op->put_link(inode, target);
         return ret;
     }
 
     target_len = strlen(target);
     rest_len = remaining ? strlen(remaining) : 0;
     pathbuf = malloc(target_len + (rest_len ? 1 + rest_len : 0) + 1);
-    if (!pathbuf)
+    if (!pathbuf) {
+        if (inode->i_op->put_link)
+            inode->i_op->put_link(inode, target);
         return -ENOMEM;
+    }
 
     memcpy(pathbuf, target, target_len);
     if (rest_len) {
@@ -407,21 +415,29 @@ static int vfs_follow_symlink(struct vfs_path *parent,
     memset(&next, 0, sizeof(next));
     if (target[0] == '/') {
         if (lookup_flags & LOOKUP_BENEATH) {
+            if (inode->i_op->put_link)
+                inode->i_op->put_link(inode, target);
             free(pathbuf);
             return -EXDEV;
         }
         if (!vfs_path_copy(&next, root)) {
+            if (inode->i_op->put_link)
+                inode->i_op->put_link(inode, target);
             free(pathbuf);
             return -ENOENT;
         }
     } else {
         if (!vfs_path_copy(&next, parent)) {
+            if (inode->i_op->put_link)
+                inode->i_op->put_link(inode, target);
             free(pathbuf);
             return -ENOENT;
         }
         ret = vfs_follow_mount_checked(&next, lookup_flags);
         if (ret < 0) {
             vfs_path_put(&next);
+            if (inode->i_op->put_link)
+                inode->i_op->put_link(inode, target);
             free(pathbuf);
             return ret;
         }
@@ -430,6 +446,8 @@ static int vfs_follow_symlink(struct vfs_path *parent,
     ret = __vfs_filename_lookup(&next, root, pathbuf, lookup_flags, depth + 1,
                                 out);
     vfs_path_put(&next);
+    if (inode->i_op->put_link)
+        inode->i_op->put_link(inode, target);
     free(pathbuf);
     return ret;
 }

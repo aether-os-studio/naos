@@ -566,6 +566,8 @@ uint64_t sys_inotify_rm_watch(uint64_t watchfd, uint64_t wd);
  * implementation.
  */
 uint64_t sys_fsync(uint64_t fd);
+uint64_t sys_fdatasync(uint64_t fd);
+uint64_t sys_readahead(int fd, uint64_t offset, uint64_t count);
 /**
  * Linux contract: close a file descriptor and release the underlying file.
  * Current kernel: removes the fd table entry first, then runs close callbacks

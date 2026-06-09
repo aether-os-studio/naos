@@ -1,5 +1,6 @@
 #include <mm/fault.h>
 #include <mm/mm.h>
+#include <mm/cache.h>
 #include <mm/page.h>
 #include <mm/shm.h>
 #include <fs/vfs/vfs.h>
@@ -166,6 +167,21 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
         return PF_RES_SEGF;
 
     uint64_t file_off = (uint64_t)snapshot->vm_offset + page_off_in_vma;
+    if (snapshot->vm_flags & VMA_SHARED) {
+        fd_t fd = {
+            .f_op = snapshot->node->i_fop,
+            .f_inode = snapshot->node,
+            .node = snapshot->node,
+            .f_flags = (unsigned int)snapshot->vm_file_flags,
+        };
+        uint64_t aligned_file_off = PADDING_DOWN(file_off, PAGE_SIZE);
+        uint64_t ret = page_cache_map_fault(&fd, aligned_vaddr,
+                                            aligned_file_off, final_pt_flags);
+        if ((int64_t)ret < 0)
+            return ret == (uint64_t)-ENOMEM ? PF_RES_NOMEM : PF_RES_SEGF;
+        return PF_RES_OK;
+    }
+
     uint64_t file_bytes_left = 0;
     uint64_t read_size = snapshot->vm_end - aligned_vaddr;
     if (snapshot->vm_file_len > page_off_in_vma)
@@ -188,9 +204,9 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
     };
     loff_t pos = (loff_t)file_off;
     while (loaded < read_size) {
-        ssize_t ret =
-            vfs_read_file(&fd, (void *)(phys_to_virt(page_paddr) + loaded),
-                          read_size - loaded, &pos);
+        ssize_t ret = vfs_read_kernel_file(
+            &fd, (void *)(phys_to_virt(page_paddr) + loaded),
+            read_size - loaded, &pos);
         if (ret < 0) {
             address_release(page_paddr);
             return PF_RES_SEGF;

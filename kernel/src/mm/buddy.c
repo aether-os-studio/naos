@@ -1,5 +1,6 @@
 #include <mm/buddy.h>
 #include <mm/bitmap.h>
+#include <mm/cache.h>
 #include <mm/page.h>
 #include <task/task.h>
 
@@ -577,7 +578,7 @@ uintptr_t alloc_frames(size_t count) {
     uintptr_t addr = 0;
     zone_t *zone = get_zone(ZONE_NORMAL);
 
-    for (int attempt = 0; attempt < 2; attempt++) {
+    for (int attempt = 0; attempt < 3; attempt++) {
         if (zone) {
             addr = buddy_alloc_zone(zone, count);
             if (addr)
@@ -586,6 +587,8 @@ uintptr_t alloc_frames(size_t count) {
 
         if (attempt == 0)
             task_reap_deferred(512);
+        else if (attempt == 1)
+            (void)page_cache_reclaim_half();
     }
 
     if (!addr)

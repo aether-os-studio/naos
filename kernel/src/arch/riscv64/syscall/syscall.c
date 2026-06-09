@@ -430,7 +430,7 @@ void syscall_handler_init() {
     syscall_handlers[SYS_FCNTL] = (syscall_handle_t)sys_fcntl;
     syscall_handlers[SYS_FLOCK] = (syscall_handle_t)sys_flock;
     syscall_handlers[SYS_FSYNC] = (syscall_handle_t)sys_fsync;
-    syscall_handlers[SYS_FDATASYNC] = (syscall_handle_t)dummy_syscall_handler;
+    syscall_handlers[SYS_FDATASYNC] = (syscall_handle_t)sys_fdatasync;
     syscall_handlers[SYS_TRUNCATE] = (syscall_handle_t)sys_truncate;
     syscall_handlers[SYS_FTRUNCATE] = (syscall_handle_t)sys_ftruncate;
     syscall_handlers[SYS_GETDENTS64] = (syscall_handle_t)sys_getdents64;
@@ -537,7 +537,7 @@ void syscall_handler_init() {
     // syscall_handlers[SYS_TUXCALL] = (syscall_handle_t)sys_tuxcall;
     // syscall_handlers[SYS_SECURITY] = (syscall_handle_t)sys_security;
     syscall_handlers[SYS_GETTID] = (syscall_handle_t)sys_gettid;
-    // syscall_handlers[SYS_READAHEAD] = (syscall_handle_t)sys_readahead;
+    syscall_handlers[SYS_READAHEAD] = (syscall_handle_t)sys_readahead;
     // syscall_handlers[SYS_SETXATTR] = (syscall_handle_t)sys_setxattr;
     // syscall_handlers[SYS_LSETXATTR] = (syscall_handle_t)sys_lsetxattr;
     // syscall_handlers[SYS_FSETXATTR] = (syscall_handle_t)sys_fsetxattr;

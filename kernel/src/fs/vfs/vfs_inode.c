@@ -50,6 +50,12 @@ struct vfs_inode *vfs_alloc_inode(struct vfs_super_block *sb) {
     inode->i_state = VFS_I_NEW;
     inode->i_mapping.host = inode;
     spin_init(&inode->i_mapping.lock);
+    inode->i_mapping.pages = RB_ROOT_INIT;
+    inode->i_mapping.cached_pages = 0;
+    inode->i_mapping.dirty_pages = 0;
+    inode->i_mapping.mmap_pages = 0;
+    inode->i_mapping.readahead_window = 2;
+    inode->i_mapping.readahead_last_index = UINT64_MAX;
     inode->inode = 0;
     inode->rw_hint = 0;
     spin_init(&inode->i_lock);

@@ -481,8 +481,7 @@ void syscall_handler_init() {
     regist_syscall_handler(SYS_FCNTL, (syscall_handle_t)sys_fcntl);
     regist_syscall_handler(SYS_FLOCK, (syscall_handle_t)sys_flock);
     regist_syscall_handler(SYS_FSYNC, (syscall_handle_t)sys_fsync);
-    regist_syscall_handler(SYS_FDATASYNC,
-                           (syscall_handle_t)dummy_syscall_handler);
+    regist_syscall_handler(SYS_FDATASYNC, (syscall_handle_t)sys_fdatasync);
     regist_syscall_handler(SYS_TRUNCATE, (syscall_handle_t)sys_truncate);
     regist_syscall_handler(SYS_FTRUNCATE, (syscall_handle_t)sys_ftruncate);
     regist_syscall_handler(SYS_GETDENTS, (syscall_handle_t)sys_getdents);
@@ -616,8 +615,7 @@ void syscall_handler_init() {
     // (syscall_handle_t)sys_tuxcall); regist_syscall_handler(SYS_SECURITY,
     // (syscall_handle_t)sys_security);
     regist_syscall_handler(SYS_GETTID, (syscall_handle_t)sys_gettid);
-    regist_syscall_handler(SYS_READAHEAD,
-                           (syscall_handle_t)dummy_syscall_handler);
+    regist_syscall_handler(SYS_READAHEAD, (syscall_handle_t)sys_readahead);
     regist_syscall_handler(SYS_SETXATTR,
                            (syscall_handle_t)dummy_syscall_handler);
     regist_syscall_handler(SYS_LSETXATTR,
@@ -923,6 +921,8 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
         goto done;
     }
 
+    x64_fpu_save(self->arch_context->fpu_ctx);
+
     regs->rax = self->last_syscall_ret;
     ptrace_on_syscall_enter(regs);
 
@@ -990,4 +990,6 @@ done:
         regs->rcx = regs->rip;
         regs->r11 = regs->rflags;
     }
+
+    x64_fpu_restore(self->arch_context->fpu_ctx);
 }

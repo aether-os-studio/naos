@@ -316,6 +316,12 @@ struct vfs_address_space {
     struct vfs_inode *host;
     const struct vfs_address_space_operations *a_ops;
     spinlock_t lock;
+    rb_root_t pages;
+    uint64_t cached_pages;
+    uint64_t dirty_pages;
+    uint64_t mmap_pages;
+    uint64_t readahead_window;
+    uint64_t readahead_last_index;
 };
 
 /**
@@ -376,6 +382,7 @@ struct vfs_inode_operations {
     int (*rename)(struct vfs_rename_ctx *ctx);
     const char *(*get_link)(struct vfs_dentry *dentry, struct vfs_inode *inode,
                             struct vfs_nameidata *nd);
+    void (*put_link)(struct vfs_inode *inode, const char *link);
     int (*permission)(struct vfs_inode *inode, int mask);
     int (*getattr)(const struct vfs_path *path, struct vfs_kstat *stat,
                    uint32_t request_mask, unsigned int flags);
@@ -474,6 +481,7 @@ struct vfs_inode {
 #define VFS_FMODE_WRITE_ACCESS (1U << 0)
 #define VFS_FMODE_EXEC_ACCESS (1U << 1)
 #define VFS_FMODE_NO_POS_LOCK (1U << 2)
+#define VFS_FMODE_KERNEL_IO (1U << 3)
 
 /**
  * Directory cache entry. Dentries name filesystem objects and may exist without
@@ -905,11 +913,17 @@ ssize_t vfs_read_file(struct vfs_file *file, void *buf, size_t count,
                       loff_t *ppos);
 ssize_t vfs_write_file(struct vfs_file *file, const void *buf, size_t count,
                        loff_t *ppos);
+ssize_t vfs_read_kernel_file(struct vfs_file *file, void *buf, size_t count,
+                             loff_t *ppos);
+ssize_t vfs_write_kernel_file(struct vfs_file *file, const void *buf,
+                              size_t count, loff_t *ppos);
 loff_t vfs_llseek_file(struct vfs_file *file, loff_t offset, int whence);
 int vfs_iterate_dir(struct vfs_file *file, struct vfs_dir_context *ctx);
 long vfs_ioctl_file(struct vfs_file *file, unsigned long cmd,
                     unsigned long arg);
 int vfs_fsync_file(struct vfs_file *file);
+int vfs_fsync_file_range(struct vfs_file *file, loff_t start, loff_t end,
+                         int datasync);
 int vfs_truncate_path(const struct vfs_path *path, uint64_t size);
 int vfs_poll(struct vfs_file *file, uint32_t events);
 int vfs_poll_with_table(struct vfs_file *file, uint32_t events,

@@ -113,7 +113,7 @@ static int collect_module_actor(struct vfs_dir_context *ctx, const char *name,
     }
 
     loff_t file_pos = 0;
-    vfs_read_file(file, module->data, module->size, &file_pos);
+    vfs_read_kernel_file(file, module->data, module->size, &file_pos);
     vfs_close_file(file);
     (*collect->count)++;
     return 0;
