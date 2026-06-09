@@ -963,6 +963,8 @@ uint64_t sys_sigsuspend(const sigset_t *mask, size_t sigsetsize) {
         }
 
         int ret = task_block(current_task, TASK_BLOCKING, -1, "sigsuspend");
+        if (ret < 0)
+            return (uint64_t)ret;
         if (ret == EOK || ret == ETIMEDOUT || ret >= 128) {
             continue;
         }

@@ -4,7 +4,6 @@
 #include <fs/vfs/utils.h>
 #include <libs/klibc.h>
 #include <libs/llist.h>
-#include <libs/mutex.h>
 #include <libs/rbtree.h>
 #include <task/wait.h>
 
@@ -458,7 +457,7 @@ struct vfs_inode {
     struct vfs_timespec64 i_mtime;
     unsigned long i_state;
     uint64_t i_version;
-    mutex_t i_rwsem;
+    spinlock_t i_rwsem;
     spinlock_t i_lock;
     vfs_bsd_lock_t flock_lock;
     spinlock_t file_locks_lock;
@@ -534,7 +533,7 @@ struct vfs_file {
     unsigned int f_mode;
     unsigned int f_flags;
     loff_t f_pos;
-    mutex_t f_pos_lock;
+    spinlock_t f_pos_lock;
     spinlock_t f_lock;
     vfs_ref_t f_ref;
     volatile int f_fd_refs;
@@ -587,7 +586,7 @@ struct vfs_process_fs {
 
 struct vfs_mount_namespace {
     struct vfs_mount *root;
-    mutex_t lock;
+    spinlock_t lock;
     uint64_t seq;
 };
 

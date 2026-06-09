@@ -400,8 +400,8 @@ static volatile u8_t mem_free_count;
 
 /* Protect the heap only by using a mutex */
 #define LWIP_MEM_FREE_DECL_PROTECT()
-#define LWIP_MEM_FREE_PROTECT() sys_mutex_lock(&mem_mutex)
-#define LWIP_MEM_FREE_UNPROTECT() sys_mutex_unlock(&mem_mutex)
+#define LWIP_MEM_FREE_PROTECT() sys_spin_lock(&mem_mutex)
+#define LWIP_MEM_FREE_UNPROTECT() sys_spin_unlock(&mem_mutex)
 /* mem_malloc is protected using mutex AND LWIP_MEM_ALLOC_PROTECT */
 #define LWIP_MEM_ALLOC_DECL_PROTECT()
 #define LWIP_MEM_ALLOC_PROTECT()
@@ -852,7 +852,7 @@ void *mem_malloc(mem_size_t size_in) {
     }
 
     /* protect the heap from concurrent access */
-    sys_mutex_lock(&mem_mutex);
+    sys_spin_lock(&mem_mutex);
     LWIP_MEM_ALLOC_PROTECT();
 #if LWIP_ALLOW_MEM_FREE_FROM_OTHER_CONTEXT
     /* run as long as a mem_free disturbed mem_malloc or mem_trim */
@@ -954,7 +954,7 @@ void *mem_malloc(mem_size_t size_in) {
                                 ((lfree == ram_end) || (!lfree->used)));
                 }
                 LWIP_MEM_ALLOC_UNPROTECT();
-                sys_mutex_unlock(&mem_mutex);
+                sys_spin_unlock(&mem_mutex);
                 LWIP_ASSERT("mem_malloc: allocated memory not above ram_end.",
                             (mem_ptr_t)mem + SIZEOF_STRUCT_MEM + size <=
                                 (mem_ptr_t)ram_end);
@@ -977,7 +977,7 @@ void *mem_malloc(mem_size_t size_in) {
 #endif /* LWIP_ALLOW_MEM_FREE_FROM_OTHER_CONTEXT */
     MEM_STATS_INC(err);
     LWIP_MEM_ALLOC_UNPROTECT();
-    sys_mutex_unlock(&mem_mutex);
+    sys_spin_unlock(&mem_mutex);
     LWIP_DEBUGF(
         MEM_DEBUG | LWIP_DBG_LEVEL_SERIOUS,
         ("mem_malloc: could not allocate %" S16_F " bytes\n", (s16_t)size));

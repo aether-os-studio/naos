@@ -7,6 +7,7 @@
 #include <irq/softirq.h>
 #include <init/callbacks.h>
 #include <drivers/deadline.h>
+#include <task/watchdog.h>
 
 irq_action_t actions[ARCH_MAX_IRQ_NUM] = {0};
 irq_ipi_send_fn_t ipi_send_fns[ARCH_MAX_IRQ_NUM] = {0};
@@ -16,6 +17,11 @@ static uint64_t irq_counts[MAX_CPU_NUM][ARCH_MAX_IRQ_NUM] = {0};
 extern bool system_initialized;
 extern bool can_schedule;
 extern sched_rq_t schedulers[MAX_CPU_NUM];
+
+static inline bool irq_is_sched_ipi(uint64_t irq_num) {
+    uint64_t sched_irq = __atomic_load_n(&sched_ipi_irq, __ATOMIC_ACQUIRE);
+    return irq_num == sched_irq && sched_irq < ARCH_MAX_IRQ_NUM;
+}
 
 void do_irq(struct pt_regs *regs, uint64_t irq_num) {
     arch_disable_interrupt();
@@ -57,15 +63,20 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num) {
         }
     }
 
+    if (irq_is_sched_ipi(irq_num)) {
+        deadline_reprogram_local();
+        sched_check_wakeup();
+    }
+
     if (can_schedule) {
         if (self &&
             sched_should_preempt(&schedulers[self->cpu_id], self, now_ns))
-            task_set_need_resched(self);
+            sched_request_resched(self);
 
         sched_resched_if_needed();
     }
 
-    if (irq_num == ARCH_TIMER_IRQ) {
+    if (irq_num == ARCH_TIMER_IRQ || irq_is_sched_ipi(irq_num)) {
         sched_refresh_preempt_deadline(cpu_id, self, nano_time());
         deadline_reprogram_local();
     }

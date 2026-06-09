@@ -3,7 +3,6 @@
 #include <libs/klibc.h>
 #include <fs/fs_syscall.h>
 #include <net/real_socket.h>
-#include <libs/mutex.h>
 #include <libs/skb_buff.h>
 
 #define MAX_SOCKETS 256
@@ -80,7 +79,7 @@ typedef struct socket {
     int protocol;
 
     // 接收队列（统一 skb 缓冲）
-    mutex_t lock;
+    spinlock_t lock;
     skb_queue_t recv_queue;
     size_t recv_size;
 

@@ -115,6 +115,71 @@ static wait_node_t *naos_lwip_sem_wait_dequeue_locked(sys_sem_t sem) {
     return node;
 }
 
+static void naos_lwip_mutex_wait_enqueue_locked(sys_mutex_t mutex,
+                                                wait_node_t *node) {
+    if (!mutex || !node || node->queued) {
+        return;
+    }
+
+    node->next = NULL;
+    node->queued = true;
+    if (mutex->wait_tail) {
+        mutex->wait_tail->next = node;
+    } else {
+        mutex->wait_head = node;
+    }
+    mutex->wait_tail = node;
+}
+
+static void naos_lwip_mutex_wait_remove_locked(sys_mutex_t mutex,
+                                               wait_node_t *target) {
+    wait_node_t *prev = NULL;
+    wait_node_t *curr = NULL;
+
+    if (!mutex || !target || !target->queued) {
+        return;
+    }
+
+    curr = mutex->wait_head;
+    while (curr) {
+        if (curr == target) {
+            if (prev) {
+                prev->next = curr->next;
+            } else {
+                mutex->wait_head = curr->next;
+            }
+            if (mutex->wait_tail == curr) {
+                mutex->wait_tail = prev;
+            }
+            curr->next = NULL;
+            curr->queued = false;
+            return;
+        }
+        prev = curr;
+        curr = curr->next;
+    }
+
+    target->next = NULL;
+    target->queued = false;
+}
+
+static wait_node_t *naos_lwip_mutex_wait_dequeue_locked(sys_mutex_t mutex) {
+    wait_node_t *node = NULL;
+
+    if (!mutex || !mutex->wait_head) {
+        return NULL;
+    }
+
+    node = mutex->wait_head;
+    mutex->wait_head = node->next;
+    if (!mutex->wait_head) {
+        mutex->wait_tail = NULL;
+    }
+    node->next = NULL;
+    node->queued = false;
+    return node;
+}
+
 sys_prot_t naos_lwip_protect_enter(void) {
     uintptr_t owner = naos_lwip_protect_owner_id();
     sys_prot_t level = naos_lwip_protect_depth;
@@ -306,29 +371,176 @@ err_t sys_mutex_new(sys_mutex_t *mutex) {
         return ERR_MEM;
     }
 
-    mutex_init(&created->lock);
+    spin_init(&created->lock);
+    created->wait_head = NULL;
+    created->wait_tail = NULL;
+    created->owner = 0;
+    created->depth = 0;
+    created->locked = false;
     created->valid = true;
     *mutex = created;
     return ERR_OK;
 }
 
-void sys_mutex_lock(sys_mutex_t *mutex) {
-    if (mutex && *mutex && (*mutex)->valid) {
-        mutex_lock(&(*mutex)->lock);
+void sys_spin_lock(sys_mutex_t *mutex) {
+    sys_mutex_t m = NULL;
+    wait_node_t wait_node;
+    uintptr_t owner = naos_lwip_protect_owner_id();
+
+    if (!mutex || !*mutex || !(*mutex)->valid) {
+        return;
+    }
+    m = *mutex;
+
+    if (!current_task || current_task->preempt_count) {
+        for (;;) {
+            bool acquired = false;
+
+            spin_lock(&m->lock);
+            if (!m->valid) {
+                spin_unlock(&m->lock);
+                return;
+            }
+            if (!m->locked) {
+                m->locked = true;
+                m->owner = owner;
+                m->depth = 1;
+                acquired = true;
+            } else if (m->owner == owner) {
+                m->depth++;
+                acquired = true;
+            }
+            spin_unlock(&m->lock);
+
+            if (acquired) {
+                return;
+            }
+            arch_pause();
+        }
+    }
+
+    memset(&wait_node, 0, sizeof(wait_node));
+    wait_node.task = current_task;
+
+    for (;;) {
+        int reason = EOK;
+
+        task_prepare_block(current_task);
+        spin_lock(&m->lock);
+        if (!m->valid) {
+            naos_lwip_mutex_wait_remove_locked(m, &wait_node);
+            spin_unlock(&m->lock);
+            task_cancel_block_prepare(current_task);
+            return;
+        }
+        if (!m->locked) {
+            m->locked = true;
+            m->owner = owner;
+            m->depth = 1;
+            naos_lwip_mutex_wait_remove_locked(m, &wait_node);
+            spin_unlock(&m->lock);
+            task_cancel_block_prepare(current_task);
+            return;
+        }
+        if (m->owner == owner) {
+            m->depth++;
+            naos_lwip_mutex_wait_remove_locked(m, &wait_node);
+            spin_unlock(&m->lock);
+            task_cancel_block_prepare(current_task);
+            return;
+        }
+
+        wait_node.task = current_task;
+        naos_lwip_mutex_wait_enqueue_locked(m, &wait_node);
+        spin_unlock(&m->lock);
+
+        reason = task_block(current_task, TASK_BLOCKING, -1, "lwip_mutex_lock");
+        if (reason < 0) {
+            spin_lock(&m->lock);
+            naos_lwip_mutex_wait_remove_locked(m, &wait_node);
+            spin_unlock(&m->lock);
+            task_cancel_block_prepare(current_task);
+            return;
+        }
     }
 }
 
-void sys_mutex_unlock(sys_mutex_t *mutex) {
-    if (mutex && *mutex && (*mutex)->valid) {
-        mutex_unlock(&(*mutex)->lock);
+void sys_spin_unlock(sys_mutex_t *mutex) {
+    sys_mutex_t m = NULL;
+    uintptr_t owner = naos_lwip_protect_owner_id();
+    wait_node_t *node = NULL;
+    task_t *waiter = NULL;
+
+    if (!mutex || !*mutex || !(*mutex)->valid) {
+        return;
+    }
+    m = *mutex;
+
+    spin_lock(&m->lock);
+    if (!m->locked || m->owner != owner) {
+        spin_unlock(&m->lock);
+        return;
+    }
+
+    if (m->depth > 1) {
+        m->depth--;
+        spin_unlock(&m->lock);
+        return;
+    }
+
+    while ((node = naos_lwip_mutex_wait_dequeue_locked(m))) {
+        waiter = node->task;
+        node->task = NULL;
+        if (waiter && waiter->state != TASK_DIED) {
+            break;
+        }
+        waiter = NULL;
+    }
+
+    m->locked = false;
+    m->owner = 0;
+    m->depth = 0;
+    spin_unlock(&m->lock);
+
+    if (waiter) {
+        task_unblock(waiter, EOK);
     }
 }
 
 void sys_mutex_free(sys_mutex_t *mutex) {
+    wait_node_t *node = NULL;
+    bool has_waiters = false;
+
     if (!mutex || !*mutex) {
         return;
     }
+
+    spin_lock(&(*mutex)->lock);
+    has_waiters = (*mutex)->wait_head != NULL;
     (*mutex)->valid = false;
+    (*mutex)->locked = false;
+    (*mutex)->owner = 0;
+    (*mutex)->depth = 0;
+    node = naos_lwip_mutex_wait_dequeue_locked(*mutex);
+    spin_unlock(&(*mutex)->lock);
+
+    while (node) {
+        task_t *waiter = node->task;
+        node->task = NULL;
+        if (waiter && waiter->state != TASK_DIED) {
+            task_unblock(waiter, EOK);
+        }
+
+        spin_lock(&(*mutex)->lock);
+        node = naos_lwip_mutex_wait_dequeue_locked(*mutex);
+        spin_unlock(&(*mutex)->lock);
+    }
+
+    if (has_waiters) {
+        *mutex = NULL;
+        return;
+    }
+
     free(*mutex);
     *mutex = NULL;
 }
@@ -392,16 +604,16 @@ void sys_mbox_post(sys_mbox_t *mbox, void *msg) {
         return;
     }
 
-    sys_mutex_lock(&m->lock);
+    sys_spin_lock(&m->lock);
     if (!m->valid || m->count >= m->size) {
-        sys_mutex_unlock(&m->lock);
+        sys_spin_unlock(&m->lock);
         sys_sem_signal(&m->not_full);
         return;
     }
     m->entries[m->tail] = msg;
     m->tail = (m->tail + 1U) % m->size;
     m->count++;
-    sys_mutex_unlock(&m->lock);
+    sys_spin_unlock(&m->lock);
     sys_sem_signal(&m->not_empty);
 }
 
@@ -416,16 +628,16 @@ err_t sys_mbox_trypost(sys_mbox_t *mbox, void *msg) {
         return ERR_MEM;
     }
 
-    sys_mutex_lock(&m->lock);
+    sys_spin_lock(&m->lock);
     if (!m->valid || m->count >= m->size) {
-        sys_mutex_unlock(&m->lock);
+        sys_spin_unlock(&m->lock);
         sys_sem_signal(&m->not_full);
         return ERR_VAL;
     }
     m->entries[m->tail] = msg;
     m->tail = (m->tail + 1U) % m->size;
     m->count++;
-    sys_mutex_unlock(&m->lock);
+    sys_spin_unlock(&m->lock);
     sys_sem_signal(&m->not_empty);
     return ERR_OK;
 }
@@ -454,9 +666,9 @@ u32_t sys_arch_mbox_fetch(sys_mbox_t *mbox, void **msg, u32_t timeout) {
         return SYS_ARCH_TIMEOUT;
     }
 
-    sys_mutex_lock(&m->lock);
+    sys_spin_lock(&m->lock);
     if (!m->valid || m->count == 0) {
-        sys_mutex_unlock(&m->lock);
+        sys_spin_unlock(&m->lock);
         if (msg) {
             *msg = NULL;
         }
@@ -471,7 +683,7 @@ u32_t sys_arch_mbox_fetch(sys_mbox_t *mbox, void **msg, u32_t timeout) {
     m->entries[m->head] = NULL;
     m->head = (m->head + 1U) % m->size;
     m->count--;
-    sys_mutex_unlock(&m->lock);
+    sys_spin_unlock(&m->lock);
     sys_sem_signal(&m->not_full);
 
     return waited;
@@ -494,9 +706,9 @@ u32_t sys_arch_mbox_tryfetch(sys_mbox_t *mbox, void **msg) {
         return SYS_MBOX_EMPTY;
     }
 
-    sys_mutex_lock(&m->lock);
+    sys_spin_lock(&m->lock);
     if (!m->valid || m->count == 0) {
-        sys_mutex_unlock(&m->lock);
+        sys_spin_unlock(&m->lock);
         if (msg) {
             *msg = NULL;
         }
@@ -511,7 +723,7 @@ u32_t sys_arch_mbox_tryfetch(sys_mbox_t *mbox, void **msg) {
     m->entries[m->head] = NULL;
     m->head = (m->head + 1U) % m->size;
     m->count--;
-    sys_mutex_unlock(&m->lock);
+    sys_spin_unlock(&m->lock);
     sys_sem_signal(&m->not_full);
     return 0;
 }
@@ -528,10 +740,10 @@ void sys_mbox_free(sys_mbox_t *mbox) {
     has_waiters = naos_lwip_sem_has_waiters(m->not_empty) ||
                   naos_lwip_sem_has_waiters(m->not_full);
 
-    sys_mutex_lock(&m->lock);
+    sys_spin_lock(&m->lock);
     m->valid = false;
     m->count = 0;
-    sys_mutex_unlock(&m->lock);
+    sys_spin_unlock(&m->lock);
 
     sys_sem_free(&m->not_empty);
     sys_sem_free(&m->not_full);

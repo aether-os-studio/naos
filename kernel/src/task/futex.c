@@ -235,6 +235,34 @@ static bool futex_prefault_user_word(int *uaddr, bool write) {
     return user_translate_or_fault(pgdir, (uint64_t)uaddr, write) != 0;
 }
 
+/* Bucket locks must not fault or sleep; these helpers only re-check mappings.
+ */
+static bool futex_read_user_word_locked(int *uaddr, int *value) {
+    if (!uaddr || !value || !current_task || !current_task->mm)
+        return false;
+
+    uint64_t *pgdir = get_current_page_dir(true);
+    uint64_t pa = user_translate_no_fault(pgdir, (uint64_t)uaddr, false);
+    if (!pa)
+        return false;
+
+    memcpy(value, (const void *)phys_to_virt(pa), sizeof(*value));
+    return true;
+}
+
+static bool futex_write_user_word_locked(int *uaddr, int value) {
+    if (!uaddr || !current_task || !current_task->mm)
+        return false;
+
+    uint64_t *pgdir = get_current_page_dir(true);
+    uint64_t pa = user_translate_no_fault(pgdir, (uint64_t)uaddr, true);
+    if (!pa)
+        return false;
+
+    memcpy((void *)phys_to_virt(pa), &value, sizeof(value));
+    return true;
+}
+
 static bool futex_read_user_word(int *uaddr, int *value) {
     if (!uaddr || !value)
         return false;
@@ -452,6 +480,13 @@ static int futex_wait_poll(struct futex_wait *wait, uint64_t deadline_ns,
 
         int reason =
             task_block(current_task, TASK_BLOCKING, sleep_ns, "futex_wait");
+        if (reason < 0) {
+            bucket = futex_lock_wait_bucket(wait);
+            bool removed = futex_dequeue_from_bucket_locked(bucket, wait);
+            spin_unlock(&bucket->lock);
+            task_cancel_block_prepare(current_task);
+            return removed ? reason : EOK;
+        }
         if (reason == ETIMEDOUT) {
             bucket = futex_lock_wait_bucket(wait);
             bool removed = futex_dequeue_from_bucket_locked(bucket, wait);
@@ -506,9 +541,14 @@ static uint64_t sys_futex_wait(int *uaddr, const futex_key_t *key, int val,
     uint32_t bucket_id;
     futex_bucket_t *bucket = futex_bucket_for_key(key, &bucket_id);
 
-    spin_lock(&bucket->lock);
     int uval;
-    if (!futex_read_user_word(uaddr, &uval)) {
+    if (!futex_read_user_word(uaddr, &uval))
+        return (uint64_t)-EFAULT;
+    if (uval != val)
+        return (uint64_t)-EAGAIN;
+
+    spin_lock(&bucket->lock);
+    if (!futex_read_user_word_locked(uaddr, &uval)) {
         spin_unlock(&bucket->lock);
         return (uint64_t)-EFAULT;
     }
@@ -533,6 +573,8 @@ static uint64_t sys_futex_wait(int *uaddr, const futex_key_t *key, int val,
 
     if (reason == ETIMEDOUT)
         return (uint64_t)-ETIMEDOUT;
+    if (reason < 0)
+        return (uint64_t)reason;
     if (reason != EOK)
         return (uint64_t)-EINTR;
 
@@ -649,6 +691,21 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
         futex_bucket_t *bucket1 = futex_bucket_for_key(&key1, &bucket1_id);
         futex_bucket_t *bucket2 = futex_bucket_for_key(&key2, &bucket2_id);
 
+        int oldval = 0;
+        if (!futex_read_user_word(uaddr2, &oldval))
+            return (uint64_t)-EFAULT;
+
+        switch (op_type) {
+        case FUTEX_OP_SET:
+        case FUTEX_OP_ADD:
+        case FUTEX_OP_OR:
+        case FUTEX_OP_ANDN:
+        case FUTEX_OP_XOR:
+            break;
+        default:
+            return (uint64_t)-ENOSYS;
+        }
+
         if (bucket1_id == bucket2_id) {
             spin_lock(&bucket1->lock);
         } else if (bucket1_id < bucket2_id) {
@@ -659,15 +716,14 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             spin_lock(&bucket1->lock);
         }
 
-        int oldval = 0;
-        if (!futex_read_user_word(uaddr2, &oldval)) {
+        if (!futex_read_user_word_locked(uaddr2, &oldval)) {
             if (bucket1_id != bucket2_id)
                 spin_unlock(&bucket2->lock);
             spin_unlock(&bucket1->lock);
             return (uint64_t)-EFAULT;
         }
-        int newval;
 
+        int newval;
         switch (op_type) {
         case FUTEX_OP_SET:
             newval = oparg;
@@ -691,7 +747,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             return (uint64_t)-ENOSYS;
         }
 
-        if (!futex_write_user_word(uaddr2, newval)) {
+        if (!futex_write_user_word_locked(uaddr2, newval)) {
             if (bucket1_id != bucket2_id)
                 spin_unlock(&bucket2->lock);
             spin_unlock(&bucket1->lock);
@@ -771,15 +827,18 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
         futex_bucket_t *bucket = futex_bucket_for_key(&key, &bucket_id);
 
     retry:
-        spin_lock(&bucket->lock);
         int owner = 0;
-        if (!futex_read_user_word(uaddr, &owner)) {
+        if (!futex_read_user_word(uaddr, &owner))
+            return (uint64_t)-EFAULT;
+
+        spin_lock(&bucket->lock);
+        if (!futex_read_user_word_locked(uaddr, &owner)) {
             spin_unlock(&bucket->lock);
             return (uint64_t)-EFAULT;
         }
 
         if ((owner & INT32_MAX) == 0) {
-            if (!futex_write_user_word(uaddr, (int)current_task->pid)) {
+            if (!futex_write_user_word_locked(uaddr, (int)current_task->pid)) {
                 spin_unlock(&bucket->lock);
                 return (uint64_t)-EFAULT;
             }
@@ -803,6 +862,8 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 
             if (reason == ETIMEDOUT)
                 return (uint64_t)-ETIMEDOUT;
+            if (reason < 0)
+                return (uint64_t)reason;
             if (reason != EOK)
                 return (uint64_t)-EINTR;
 
@@ -819,9 +880,12 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 
         futex_bucket_t *bucket = futex_bucket_for_key(&key, NULL);
 
-        spin_lock(&bucket->lock);
         int owner = 0;
-        if (!futex_read_user_word(uaddr, &owner)) {
+        if (!futex_read_user_word(uaddr, &owner))
+            return (uint64_t)-EFAULT;
+
+        spin_lock(&bucket->lock);
+        if (!futex_read_user_word_locked(uaddr, &owner)) {
             spin_unlock(&bucket->lock);
             return (uint64_t)-EFAULT;
         }
@@ -829,7 +893,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             spin_unlock(&bucket->lock);
             return (uint64_t)-EPERM;
         }
-        if (!futex_write_user_word(uaddr, 0)) {
+        if (!futex_write_user_word_locked(uaddr, 0)) {
             spin_unlock(&bucket->lock);
             return (uint64_t)-EFAULT;
         }
@@ -866,6 +930,13 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
         futex_bucket_t *dst_bucket =
             futex_bucket_for_key(&dst_key, &dst_bucket_id);
 
+        int uval3;
+        if (!futex_read_user_word(uaddr, &uval3))
+            return (uint64_t)-EFAULT;
+
+        if ((op & FUTEX_CMD_MASK) == FUTEX_CMP_REQUEUE && uval3 != val3)
+            return (uint64_t)-EAGAIN;
+
         if (src_bucket_id == dst_bucket_id) {
             spin_lock(&src_bucket->lock);
         } else if (src_bucket_id < dst_bucket_id) {
@@ -876,8 +947,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             spin_lock(&src_bucket->lock);
         }
 
-        int uval3;
-        if (!futex_read_user_word(uaddr, &uval3)) {
+        if (!futex_read_user_word_locked(uaddr, &uval3)) {
             if (src_bucket_id != dst_bucket_id)
                 spin_unlock(&dst_bucket->lock);
             spin_unlock(&src_bucket->lock);

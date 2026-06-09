@@ -10,6 +10,7 @@
 #include <arch/x86_64/irq/irq.h>
 #include <libs/llist_queue.h>
 #include <drivers/deadline.h>
+#include <task/watchdog.h>
 
 bool x2apic_mode = false;
 uint64_t lapic_address;
@@ -525,6 +526,9 @@ uint64_t general_ap_entry() {
     arch_set_current(idle_tasks[current_cpu_id]);
     task_mark_on_cpu(idle_tasks[current_cpu_id], true);
     task_mm_mark_cpu_active(idle_tasks[current_cpu_id]->mm, current_cpu_id);
+    sched_watchdog_note_current(current_cpu_id, idle_tasks[current_cpu_id],
+                                nano_time());
+    sched_watchdog_init_cpu(current_cpu_id);
 
     while (1) {
         arch_enable_interrupt();
@@ -590,8 +594,6 @@ static void apic_resched_ipi_handler(uint64_t irq_num, void *data,
     (void)regs;
 
     deadline_reprogram_local();
-    if (current_task)
-        task_set_need_resched(current_task);
 }
 
 static void apic_tlb_shootdown_ipi_handler(uint64_t irq_num, void *data,

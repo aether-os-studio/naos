@@ -47,7 +47,7 @@ static const struct vfs_inode_operations procfs_inode_ops;
 static const struct vfs_file_operations procfs_dir_file_ops;
 static const struct vfs_file_operations procfs_file_ops;
 
-mutex_t procfs_oplock;
+spinlock_t procfs_oplock;
 
 static inline procfs_inode_info_t *procfs_i(vfs_node_t *inode) {
     return inode ? container_of(inode, procfs_inode_info_t, vfs_inode) : NULL;
@@ -709,7 +709,7 @@ static loff_t procfs_llseek(struct vfs_file *file, loff_t offset, int whence) {
     if (!file || !file->f_inode)
         return -EBADF;
 
-    mutex_lock(&file->f_pos_lock);
+    spin_lock(&file->f_pos_lock);
     switch (whence) {
     case SEEK_SET:
         pos = offset;
@@ -721,15 +721,15 @@ static loff_t procfs_llseek(struct vfs_file *file, loff_t offset, int whence) {
         pos = (loff_t)file->f_inode->i_size + offset;
         break;
     default:
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
         return -EINVAL;
     }
     if (pos < 0) {
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
         return -EINVAL;
     }
     file->f_pos = pos;
-    mutex_unlock(&file->f_pos_lock);
+    spin_unlock(&file->f_pos_lock);
     return pos;
 }
 
@@ -1437,7 +1437,7 @@ size_t proc_fdinfo_read(proc_handle_t *handle, void *addr, size_t offset,
 }
 
 void proc_init() {
-    mutex_init(&procfs_oplock);
+    spin_init(&procfs_oplock);
     vfs_register_filesystem(&procfs_fs_type);
     procfs_nodes_init();
 }

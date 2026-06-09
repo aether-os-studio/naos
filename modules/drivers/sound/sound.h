@@ -4,7 +4,6 @@
 
 #include <dev/device.h>
 #include <fs/vfs/vfs.h>
-#include <libs/mutex.h>
 
 #define SOUND_MAX_CARDS 8
 #define SOUND_MAX_PCM_DEVICES 32
@@ -99,7 +98,7 @@ typedef struct sound_card {
     uint64_t control_dev;
     int preferred_subdevice;
     int power_state;
-    mutex_t lock;
+    spinlock_t lock;
 } sound_card_t;
 
 typedef struct sound_pcm_device {
@@ -128,7 +127,7 @@ struct sound_pcm_substream {
     sound_pcm_runtime_t runtime;
     sound_pcm_ops_t *ops;
     void *driver_data;
-    mutex_t lock;
+    spinlock_t lock;
 };
 
 typedef struct sound_pcm_create_info {

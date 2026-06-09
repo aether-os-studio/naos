@@ -13,7 +13,7 @@ static const struct vfs_super_operations memfdfs_super_ops;
 static const struct vfs_inode_operations memfdfs_inode_ops;
 static const struct vfs_file_operations memfdfs_dir_file_ops;
 static const struct vfs_file_operations memfdfs_file_ops;
-static mutex_t memfdfs_mount_lock;
+static spinlock_t memfdfs_mount_lock;
 static struct vfs_mount *memfdfs_internal_mnt;
 
 struct memfd_ctx {
@@ -162,7 +162,7 @@ static struct vfs_file_system_type memfdfs_fs_type = {
 static struct vfs_mount *memfdfs_get_internal_mount(void) {
     int ret;
 
-    mutex_lock(&memfdfs_mount_lock);
+    spin_lock(&memfdfs_mount_lock);
     if (!memfdfs_internal_mnt) {
         ret = vfs_kern_mount("memfdfs", 0, NULL, NULL, &memfdfs_internal_mnt);
         if (ret < 0)
@@ -170,7 +170,7 @@ static struct vfs_mount *memfdfs_get_internal_mount(void) {
     }
     if (memfdfs_internal_mnt)
         vfs_mntget(memfdfs_internal_mnt);
-    mutex_unlock(&memfdfs_mount_lock);
+    spin_unlock(&memfdfs_mount_lock);
     return memfdfs_internal_mnt;
 }
 
@@ -576,7 +576,7 @@ static loff_t memfdfs_llseek(struct vfs_file *file, loff_t offset, int whence) {
     if (!file || !file->f_inode)
         return -EBADF;
 
-    mutex_lock(&file->f_pos_lock);
+    spin_lock(&file->f_pos_lock);
     switch (whence) {
     case SEEK_SET:
         pos = offset;
@@ -588,15 +588,15 @@ static loff_t memfdfs_llseek(struct vfs_file *file, loff_t offset, int whence) {
         pos = (loff_t)file->f_inode->i_size + offset;
         break;
     default:
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
         return -EINVAL;
     }
     if (pos < 0) {
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
         return -EINVAL;
     }
     file->f_pos = pos;
-    mutex_unlock(&file->f_pos_lock);
+    spin_unlock(&file->f_pos_lock);
     return pos;
 }
 
@@ -736,6 +736,6 @@ uint64_t sys_memfd_create(const char *name, unsigned int flags) {
 }
 
 void memfd_init() {
-    mutex_init(&memfdfs_mount_lock);
+    spin_init(&memfdfs_mount_lock);
     vfs_register_filesystem(&memfdfs_fs_type);
 }

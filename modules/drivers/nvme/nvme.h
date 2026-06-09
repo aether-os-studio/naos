@@ -1,7 +1,6 @@
 #pragma once
 
 #include <libs/klibc.h>
-#include <libs/mutex.h>
 #include <mm/mm.h>
 #include <drivers/bus/pci.h>
 #include <irq/irq_manager.h>
@@ -336,8 +335,8 @@ typedef struct {
 
     // Locking (for multi-threaded environments)
     void *(*mutex_create)(void);
-    void (*mutex_lock)(void *mutex);
-    void (*mutex_unlock)(void *mutex);
+    void (*spin_lock)(void *mutex);
+    void (*spin_unlock)(void *mutex);
     void (*mutex_destroy)(void *mutex);
 
     // Logging

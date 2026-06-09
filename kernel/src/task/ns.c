@@ -297,7 +297,7 @@ task_user_namespace_create(const task_user_namespace_t *parent, task_t *owner) {
         return NULL;
 
     task_ns_common_init(&user_ns->common);
-    mutex_init(&user_ns->lock);
+    spin_init(&user_ns->lock);
     user_ns->setgroups_state = TASK_USERNS_SETGROUPS_ALLOW;
     if (parent) {
         user_ns->level = parent->level + 1;

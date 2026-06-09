@@ -53,7 +53,7 @@ struct vfs_inode *vfs_alloc_inode(struct vfs_super_block *sb) {
     inode->inode = 0;
     inode->rw_hint = 0;
     spin_init(&inode->i_lock);
-    mutex_init(&inode->i_rwsem);
+    spin_init(&inode->i_rwsem);
     spin_init(&inode->flock_lock.spin);
     inode->flock_lock.l_type = F_UNLCK;
     inode->flock_lock.owner = 0;

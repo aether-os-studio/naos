@@ -19,7 +19,7 @@ static struct vfs_file_system_type eventfdfs_fs_type;
 static const struct vfs_super_operations eventfdfs_super_ops;
 static const struct vfs_file_operations eventfdfs_dir_file_ops;
 static const struct vfs_file_operations eventfdfs_file_ops;
-static mutex_t eventfdfs_mount_lock;
+static spinlock_t eventfdfs_mount_lock;
 static struct vfs_mount *eventfdfs_internal_mnt;
 
 int eventfdfs_id = 0;
@@ -146,7 +146,7 @@ static struct vfs_file_system_type eventfdfs_fs_type = {
 static struct vfs_mount *eventfdfs_get_internal_mount(void) {
     int ret;
 
-    mutex_lock(&eventfdfs_mount_lock);
+    spin_lock(&eventfdfs_mount_lock);
     if (!eventfdfs_internal_mnt) {
         ret =
             vfs_kern_mount("eventfdfs", 0, NULL, NULL, &eventfdfs_internal_mnt);
@@ -155,7 +155,7 @@ static struct vfs_mount *eventfdfs_get_internal_mount(void) {
     }
     if (eventfdfs_internal_mnt)
         vfs_mntget(eventfdfs_internal_mnt);
-    mutex_unlock(&eventfdfs_mount_lock);
+    spin_unlock(&eventfdfs_mount_lock);
     return eventfdfs_internal_mnt;
 }
 
@@ -176,7 +176,7 @@ static loff_t eventfdfs_llseek(struct vfs_file *file, loff_t offset,
     if (!file || !file->f_inode)
         return -EBADF;
 
-    mutex_lock(&file->f_pos_lock);
+    spin_lock(&file->f_pos_lock);
     switch (whence) {
     case SEEK_SET:
         pos = offset;
@@ -188,15 +188,15 @@ static loff_t eventfdfs_llseek(struct vfs_file *file, loff_t offset,
         pos = (loff_t)file->f_inode->i_size + offset;
         break;
     default:
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
         return -EINVAL;
     }
     if (pos < 0) {
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
         return -EINVAL;
     }
     file->f_pos = pos;
-    mutex_unlock(&file->f_pos_lock);
+    spin_unlock(&file->f_pos_lock);
     return pos;
 }
 
@@ -430,7 +430,7 @@ uint64_t sys_eventfd2(uint64_t initial_val, uint64_t flags) {
 uint64_t sys_eventfd(uint64_t arg1) { return sys_eventfd2(arg1, 0); }
 
 void eventfd_init() {
-    mutex_init(&eventfdfs_mount_lock);
+    spin_init(&eventfdfs_mount_lock);
     vfs_register_filesystem(&eventfdfs_fs_type);
     eventfdfs_id = 1;
 }

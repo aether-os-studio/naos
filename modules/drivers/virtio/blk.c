@@ -56,9 +56,9 @@ virtio_blk_alloc_slot_locked(virtio_blk_device_t *blk_dev) {
             }
         }
 
-        mutex_unlock(&blk_dev->request_lock);
+        spin_unlock(&blk_dev->request_lock);
         schedule(SCHED_FLAG_YIELD);
-        mutex_lock(&blk_dev->request_lock);
+        spin_lock(&blk_dev->request_lock);
     }
 }
 
@@ -68,7 +68,7 @@ static void virtio_blk_release_slot(virtio_blk_device_t *blk_dev,
         return;
     }
 
-    mutex_lock(&blk_dev->request_lock);
+    spin_lock(&blk_dev->request_lock);
     if (slot->desc_idx != 0xFFFF) {
         if (slot->desc_idx < SIZE) {
             blk_dev->pending_slot_by_desc[slot->desc_idx] = -1;
@@ -78,7 +78,7 @@ static void virtio_blk_release_slot(virtio_blk_device_t *blk_dev,
     }
     slot->completed = false;
     slot->in_use = false;
-    mutex_unlock(&blk_dev->request_lock);
+    spin_unlock(&blk_dev->request_lock);
 }
 
 static int virtio_blk_wait_slot(virtio_blk_device_t *blk_dev,
@@ -88,10 +88,10 @@ static int virtio_blk_wait_slot(virtio_blk_device_t *blk_dev,
             return 0;
         }
 
-        mutex_lock(&blk_dev->request_lock);
+        spin_lock(&blk_dev->request_lock);
         virtio_blk_reap_completed_locked(blk_dev);
         bool done = __atomic_load_n(&slot->completed, __ATOMIC_ACQUIRE);
-        mutex_unlock(&blk_dev->request_lock);
+        spin_unlock(&blk_dev->request_lock);
         if (done) {
             return 0;
         }
@@ -108,9 +108,9 @@ static int virtio_blk_submit_rw(virtio_blk_device_t *blk_dev, uint32_t type,
     bool use_direct =
         total_size > 0 && !buffer_is_userspace && VIRTIO_BLK_IS_DMA_BUF(buffer);
 
-    mutex_lock(&blk_dev->request_lock);
+    spin_lock(&blk_dev->request_lock);
     virtio_blk_req_slot_t *slot = virtio_blk_alloc_slot_locked(blk_dev);
-    mutex_unlock(&blk_dev->request_lock);
+    spin_unlock(&blk_dev->request_lock);
     if (!slot) {
         return -1;
     }
@@ -161,12 +161,12 @@ static int virtio_blk_submit_rw(virtio_blk_device_t *blk_dev, uint32_t type,
     bufs[num_bufs].size = sizeof(*slot->status_byte);
     writable[num_bufs++] = true;
 
-    mutex_lock(&blk_dev->request_lock);
+    spin_lock(&blk_dev->request_lock);
     uint16_t desc_idx =
         virt_queue_add_buf(blk_dev->request_queue, bufs, num_bufs, writable);
     if (desc_idx == 0xFFFF) {
         slot->in_use = false;
-        mutex_unlock(&blk_dev->request_lock);
+        spin_unlock(&blk_dev->request_lock);
         return -1;
     }
 
@@ -175,7 +175,7 @@ static int virtio_blk_submit_rw(virtio_blk_device_t *blk_dev, uint32_t type,
 
     virt_queue_submit_buf(blk_dev->request_queue, desc_idx);
     virt_queue_notify(blk_dev->driver, blk_dev->request_queue);
-    mutex_unlock(&blk_dev->request_lock);
+    spin_unlock(&blk_dev->request_lock);
 
     if (virtio_blk_wait_slot(blk_dev, slot) != 0) {
         virtio_blk_release_slot(blk_dev, slot);
@@ -203,9 +203,9 @@ static int virtio_blk_submit_rw(virtio_blk_device_t *blk_dev, uint32_t type,
 }
 
 static int virtio_blk_submit_flush(virtio_blk_device_t *blk_dev) {
-    mutex_lock(&blk_dev->request_lock);
+    spin_lock(&blk_dev->request_lock);
     virtio_blk_req_slot_t *slot = virtio_blk_alloc_slot_locked(blk_dev);
-    mutex_unlock(&blk_dev->request_lock);
+    spin_unlock(&blk_dev->request_lock);
     if (!slot) {
         return -1;
     }
@@ -228,12 +228,12 @@ static int virtio_blk_submit_flush(virtio_blk_device_t *blk_dev) {
     bufs[1].addr = (uint64_t)slot->status_byte;
     bufs[1].size = sizeof(*slot->status_byte);
 
-    mutex_lock(&blk_dev->request_lock);
+    spin_lock(&blk_dev->request_lock);
     uint16_t desc_idx =
         virt_queue_add_buf(blk_dev->request_queue, bufs, 2, writable);
     if (desc_idx == 0xFFFF) {
         slot->in_use = false;
-        mutex_unlock(&blk_dev->request_lock);
+        spin_unlock(&blk_dev->request_lock);
         return -1;
     }
 
@@ -241,7 +241,7 @@ static int virtio_blk_submit_flush(virtio_blk_device_t *blk_dev) {
     blk_dev->pending_slot_by_desc[desc_idx] = (int16_t)(slot - blk_dev->slots);
     virt_queue_submit_buf(blk_dev->request_queue, desc_idx);
     virt_queue_notify(blk_dev->driver, blk_dev->request_queue);
-    mutex_unlock(&blk_dev->request_lock);
+    spin_unlock(&blk_dev->request_lock);
 
     if (virtio_blk_wait_slot(blk_dev, slot) != 0) {
         virtio_blk_release_slot(blk_dev, slot);
@@ -324,7 +324,7 @@ int virtio_blk_init(virtio_driver_t *driver) {
     if (blk_device->slot_count == 0) {
         blk_device->slot_count = 1;
     }
-    mutex_init(&blk_device->request_lock);
+    spin_init(&blk_device->request_lock);
 
     blk_device->slots =
         calloc(blk_device->slot_count, sizeof(virtio_blk_req_slot_t));

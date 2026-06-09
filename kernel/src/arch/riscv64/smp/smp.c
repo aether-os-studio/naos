@@ -6,6 +6,7 @@
 #include <limine.h>
 #include <mm/mm.h>
 #include <task/task.h>
+#include <task/watchdog.h>
 
 void ap_entry(uint64_t hartid);
 extern void setup_trap_vector();
@@ -150,6 +151,7 @@ void ap_entry(uint64_t hartid) {
     arch_set_current(idle_tasks[cpu_id]);
     task_mark_on_cpu(idle_tasks[cpu_id], true);
     task_mm_mark_cpu_active(idle_tasks[cpu_id]->mm, cpu_id);
+    sched_watchdog_note_current(cpu_id, idle_tasks[cpu_id], nano_time());
 
     while (!__atomic_load_n(&global_timer.initialized, __ATOMIC_ACQUIRE)) {
         asm volatile("nop" ::: "memory");

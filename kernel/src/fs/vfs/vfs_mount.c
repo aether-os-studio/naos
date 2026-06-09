@@ -2,7 +2,7 @@
 #include "fs/fs_syscall.h"
 #include "task/task.h"
 
-static mutex_t vfs_mount_lock;
+static spinlock_t vfs_mount_lock;
 static volatile unsigned int vfs_next_mnt_id = 1;
 static volatile unsigned int vfs_next_peer_group_id = 1;
 static volatile uint64_t vfs_mount_seq = 1;
@@ -42,7 +42,7 @@ static int vfs_mount_attach_tree(struct vfs_mount *parent,
                                  struct vfs_dentry *mountpoint,
                                  struct vfs_mount *child);
 
-void vfs_mount_subsys_init(void) { mutex_init(&vfs_mount_lock); }
+void vfs_mount_subsys_init(void) { spin_init(&vfs_mount_lock); }
 
 struct vfs_mount *vfs_active_namespace_root_mount(void) {
     struct vfs_mount *mnt = task_mount_namespace_root(current_task);
@@ -61,15 +61,15 @@ struct vfs_mount *vfs_child_mount_at(struct vfs_mount *parent,
     if (!parent || !mountpoint)
         return NULL;
 
-    mutex_lock(&vfs_mount_lock);
+    spin_lock(&vfs_mount_lock);
     for (mnt = mountpoint->d_mounted; mnt; mnt = mnt->mnt_stack_prev) {
         if (mnt->mnt_parent == parent) {
             mnt = vfs_mntget(mnt);
-            mutex_unlock(&vfs_mount_lock);
+            spin_unlock(&vfs_mount_lock);
             return mnt;
         }
     }
-    mutex_unlock(&vfs_mount_lock);
+    spin_unlock(&vfs_mount_lock);
     return NULL;
 }
 
@@ -957,9 +957,9 @@ int vfs_mount_attach(struct vfs_mount *parent, struct vfs_dentry *mountpoint,
     if (!mountpoint || !child)
         return -EINVAL;
 
-    mutex_lock(&vfs_mount_lock);
+    spin_lock(&vfs_mount_lock);
     ret = vfs_mount_attach_locked(parent, mountpoint, child, true);
-    mutex_unlock(&vfs_mount_lock);
+    spin_unlock(&vfs_mount_lock);
     return ret;
 }
 
@@ -1010,9 +1010,9 @@ void vfs_mount_detach(struct vfs_mount *mnt) {
     if (!mnt)
         return;
 
-    mutex_lock(&vfs_mount_lock);
+    spin_lock(&vfs_mount_lock);
     vfs_mount_detach_locked(mnt, true);
-    mutex_unlock(&vfs_mount_lock);
+    spin_unlock(&vfs_mount_lock);
 }
 
 struct vfs_mount *vfs_path_mount(const struct vfs_path *path) {
@@ -1515,7 +1515,7 @@ int vfs_pivot_root_mounts(struct vfs_mount *old_root,
         return -ENOMEM;
     }
 
-    mutex_lock(&vfs_mount_lock);
+    spin_lock(&vfs_mount_lock);
 
     vfs_mount_detach_locked(new_root, false);
     ret =
@@ -1523,13 +1523,13 @@ int vfs_pivot_root_mounts(struct vfs_mount *old_root,
     if (ret < 0) {
         (void)vfs_mount_attach_locked(new_root_parent, new_root_mountpoint,
                                       new_root, false);
-        mutex_unlock(&vfs_mount_lock);
+        spin_unlock(&vfs_mount_lock);
         vfs_mntput(new_root_parent);
         vfs_dput(new_root_mountpoint);
         return ret;
     }
 
-    mutex_unlock(&vfs_mount_lock);
+    spin_unlock(&vfs_mount_lock);
     vfs_mntput(new_root_parent);
     vfs_dput(new_root_mountpoint);
     return 0;
@@ -1583,7 +1583,7 @@ int vfs_reconfigure_mount(struct vfs_mount *mnt, const struct vfs_path *to_path,
     if (!vfs_path_copy(&old_root, to_path))
         return -ENOENT;
 
-    mutex_lock(&vfs_mount_lock);
+    spin_lock(&vfs_mount_lock);
 
     if (!detached) {
         old_parent =
@@ -1598,11 +1598,11 @@ int vfs_reconfigure_mount(struct vfs_mount *mnt, const struct vfs_path *to_path,
         if (!detached && old_mountpoint)
             (void)vfs_mount_attach_locked(old_parent, old_mountpoint, mnt,
                                           false);
-        mutex_unlock(&vfs_mount_lock);
+        spin_unlock(&vfs_mount_lock);
         goto out;
     }
 
-    mutex_unlock(&vfs_mount_lock);
+    spin_unlock(&vfs_mount_lock);
 
     vfs_rebind_task_root_paths(&old_root, mnt);
     if (replacing_namespace_root)
@@ -1641,14 +1641,14 @@ int vfs_mount_set_propagation(struct vfs_mount *mnt, unsigned long flags,
         return -EINVAL;
     }
 
-    mutex_lock(&vfs_mount_lock);
+    spin_lock(&vfs_mount_lock);
     if (recursive)
         vfs_mount_apply_propagation_tree(mnt, propagation);
     else
         vfs_mount_apply_propagation(mnt, propagation);
     __atomic_add_fetch(&vfs_mount_seq, 1, __ATOMIC_ACQ_REL);
     vfs_init_mnt_ns.seq++;
-    mutex_unlock(&vfs_mount_lock);
+    spin_unlock(&vfs_mount_lock);
     return 0;
 }
 

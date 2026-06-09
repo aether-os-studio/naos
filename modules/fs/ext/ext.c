@@ -35,7 +35,7 @@ typedef struct ext_map_cache_entry {
 
 typedef struct ext_mount_ctx {
     uint64_t dev;
-    mutex_t lock;
+    spinlock_t lock;
     ext_super_block_t sb;
     ext_group_desc_t *groups;
     uint32_t group_count;
@@ -3242,7 +3242,7 @@ static int ext_get_quota(struct vfs_super_block *sb, unsigned int type,
     if (!quota_ino)
         return -ESRCH;
 
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     ret = ext_read_inode(fs, quota_ino, &quota_inode);
     if (ret)
         goto out;
@@ -3264,7 +3264,7 @@ static int ext_get_quota(struct vfs_super_block *sb, unsigned int type,
                                               bhardlimit, bsoftlimit, valid);
 
 out:
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
     return ret;
 }
 
@@ -4401,12 +4401,12 @@ static struct vfs_dentry *ext_lookup(struct vfs_inode *dir,
     if (!fs || !dir || !dentry)
         return ERR_PTR(-EINVAL);
 
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     ret = ext_lookup_name_locked(fs, (uint32_t)dir->i_ino, dentry->d_name.name,
                                  &lookup);
     if (!ret && lookup.found)
         inode = ext_iget_locked(dir->i_sb, lookup.inode);
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
 
     if (ret)
         return ERR_PTR(ret);
@@ -4424,10 +4424,10 @@ static int ext_create(struct vfs_inode *dir, struct vfs_dentry *dentry,
     ext_mount_ctx_t *fs = ext_sb_info(dir->i_sb);
     int ret;
     (void)excl;
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     ret = ext_create_inode_common_locked(fs, dir, dentry,
                                          (mode & 07777) | S_IFREG, 0, NULL, 0);
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
     return ret;
 }
 
@@ -4435,10 +4435,10 @@ static int ext_mkdir(struct vfs_inode *dir, struct vfs_dentry *dentry,
                      umode_t mode) {
     ext_mount_ctx_t *fs = ext_sb_info(dir->i_sb);
     int ret;
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     ret = ext_create_inode_common_locked(fs, dir, dentry,
                                          (mode & 07777) | S_IFDIR, 0, NULL, 0);
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
     return ret;
 }
 
@@ -4446,10 +4446,10 @@ static int ext_mknod(struct vfs_inode *dir, struct vfs_dentry *dentry,
                      umode_t mode, dev64_t dev) {
     ext_mount_ctx_t *fs = ext_sb_info(dir->i_sb);
     int ret;
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     ret = ext_create_inode_common_locked(fs, dir, dentry, mode, (uint32_t)dev,
                                          NULL, 0);
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
     return ret;
 }
 
@@ -4457,10 +4457,10 @@ static int ext_symlink(struct vfs_inode *dir, struct vfs_dentry *dentry,
                        const char *target) {
     ext_mount_ctx_t *fs = ext_sb_info(dir->i_sb);
     int ret;
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     ret = ext_create_inode_common_locked(fs, dir, dentry, S_IFLNK | 0777, 0,
                                          target, target ? strlen(target) : 0);
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
     return ret;
 }
 
@@ -4476,7 +4476,7 @@ static int ext_link(struct vfs_dentry *old_dentry, struct vfs_inode *dir,
     if (old_dentry->d_inode->i_sb != dir->i_sb)
         return -EXDEV;
 
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     ret = ext_load_inode_locked(old_dentry->d_inode, &target_inode);
     if (ret)
         goto out;
@@ -4508,7 +4508,7 @@ static int ext_link(struct vfs_dentry *old_dentry, struct vfs_inode *dir,
         vfs_d_instantiate(new_dentry, old_dentry->d_inode);
 
 out:
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
     return ret;
 }
 
@@ -4521,7 +4521,7 @@ static int ext_unlink(struct vfs_inode *dir, struct vfs_dentry *dentry) {
     if (!dentry || !dentry->d_inode)
         return -ENOENT;
 
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     ret = ext_read_inode(fs, (uint32_t)dir->i_ino, &parent_inode);
     if (ret)
         goto out;
@@ -4548,7 +4548,7 @@ static int ext_unlink(struct vfs_inode *dir, struct vfs_dentry *dentry) {
         ret = ext_store_inode_locked(dentry->d_inode, &disk_inode, false);
 
 out:
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
     return ret;
 }
 
@@ -4561,7 +4561,7 @@ static int ext_rmdir(struct vfs_inode *dir, struct vfs_dentry *dentry) {
     if (!dentry || !dentry->d_inode)
         return -ENOENT;
 
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     ret = ext_read_inode(fs, (uint32_t)dir->i_ino, &parent_inode);
     if (ret)
         goto out;
@@ -4602,7 +4602,7 @@ static int ext_rmdir(struct vfs_inode *dir, struct vfs_dentry *dentry) {
         ret = ext_store_inode_locked(dentry->d_inode, &disk_inode, false);
 
 out:
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
     return ret;
 }
 
@@ -4628,7 +4628,7 @@ static int ext_rename(struct vfs_rename_ctx *ctx) {
         return -EXDEV;
 
     fs = ext_sb_info(ctx->old_dir->i_sb);
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
 
     ret = ext_load_inode_locked(ctx->old_dentry->d_inode, &src_inode);
     if (ret)
@@ -4754,7 +4754,7 @@ static int ext_rename(struct vfs_rename_ctx *ctx) {
 out:
     if (cached_target)
         vfs_iput(cached_target);
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
     return ret;
 }
 
@@ -4773,11 +4773,11 @@ static const char *ext_get_link(struct vfs_dentry *dentry,
         return ERR_PTR(-EINVAL);
 
     fs = ext_sb_info(inode->i_sb);
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     info = ext_i(inode);
     ret = ext_load_inode_locked(inode, &disk_inode);
     if (ret) {
-        mutex_unlock(&fs->lock);
+        spin_unlock(&fs->lock);
         return ERR_PTR(ret);
     }
 
@@ -4785,19 +4785,19 @@ static const char *ext_get_link(struct vfs_dentry *dentry,
     free(info->symlink);
     info->symlink = calloc(1, link_size + 1);
     if (!info->symlink) {
-        mutex_unlock(&fs->lock);
+        spin_unlock(&fs->lock);
         return ERR_PTR(-ENOMEM);
     }
 
     if (link_size <= sizeof(disk_inode.i_block)) {
         memcpy(info->symlink, disk_inode.i_block, link_size);
-        mutex_unlock(&fs->lock);
+        spin_unlock(&fs->lock);
         return info->symlink;
     }
 
     ret = ext_read_inode_data_locked(fs, (uint32_t)inode->i_ino, &disk_inode,
                                      info->symlink, 0, link_size);
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
     return ret < 0 ? ERR_PTR(ret) : info->symlink;
 }
 
@@ -4824,7 +4824,7 @@ static int ext_setattr(struct vfs_dentry *dentry,
         return -EINVAL;
 
     fs = ext_sb_info(inode->i_sb);
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     ret = ext_load_inode_locked(inode, &disk_inode);
     if (ret)
         goto out;
@@ -4849,7 +4849,7 @@ static int ext_setattr(struct vfs_dentry *dentry,
 
     ret = ext_store_inode_locked(inode, &disk_inode, false);
 out:
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
     return ret;
 }
 
@@ -4859,7 +4859,7 @@ static loff_t ext_llseek(struct vfs_file *file, loff_t offset, int whence) {
     if (!file || !file->f_inode)
         return -EBADF;
 
-    mutex_lock(&file->f_pos_lock);
+    spin_lock(&file->f_pos_lock);
     switch (whence) {
     case SEEK_SET:
         pos = offset;
@@ -4871,15 +4871,15 @@ static loff_t ext_llseek(struct vfs_file *file, loff_t offset, int whence) {
         pos = (loff_t)file->f_inode->i_size + offset;
         break;
     default:
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
         return -EINVAL;
     }
     if (pos < 0) {
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
         return -EINVAL;
     }
     file->f_pos = pos;
-    mutex_unlock(&file->f_pos_lock);
+    spin_unlock(&file->f_pos_lock);
     return pos;
 }
 
@@ -4898,7 +4898,7 @@ static ssize_t ext_read(struct vfs_file *file, void *buf, size_t count,
         return -EINVAL;
 
     fs = ext_sb_info(file->f_inode->i_sb);
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     ret = ext_load_inode_locked(file->f_inode, &disk_inode);
     if (!ret)
         ret =
@@ -4906,7 +4906,7 @@ static ssize_t ext_read(struct vfs_file *file, void *buf, size_t count,
                                        &disk_inode, buf, (size_t)*ppos, count);
     if (ret >= 0)
         *ppos += ret;
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
     return ret;
 }
 
@@ -4925,7 +4925,7 @@ static ssize_t ext_write(struct vfs_file *file, const void *buf, size_t count,
         return -EINVAL;
 
     fs = ext_sb_info(file->f_inode->i_sb);
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     ret = ext_load_inode_locked(file->f_inode, &disk_inode);
     if (!ret) {
         ret =
@@ -4940,7 +4940,7 @@ static ssize_t ext_write(struct vfs_file *file, const void *buf, size_t count,
                 *ppos += ret;
         }
     }
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
     return ret;
 }
 
@@ -4951,9 +4951,9 @@ static int ext_iterate_shared(struct vfs_file *file,
     if (!file || !file->f_inode || !ctx)
         return -EINVAL;
 
-    mutex_lock(&ext_sb_info(file->f_inode->i_sb)->lock);
+    spin_lock(&ext_sb_info(file->f_inode->i_sb)->lock);
     ret = ext_iterate_dir_locked(file->f_inode, ctx);
-    mutex_unlock(&ext_sb_info(file->f_inode->i_sb)->lock);
+    spin_unlock(&ext_sb_info(file->f_inode->i_sb)->lock);
     if (!ret)
         file->f_pos = ctx->pos;
     return ret;
@@ -5029,13 +5029,13 @@ static int ext_readpage(struct vfs_file *file,
         return -EINVAL;
 
     fs = ext_sb_info(file->f_inode->i_sb);
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     ret = ext_load_inode_locked(file->f_inode, &disk_inode);
     if (!ret)
         ret = ext_read_inode_data_locked(fs, (uint32_t)file->f_inode->i_ino,
                                          &disk_inode, page, index * PAGE_SIZE,
                                          PAGE_SIZE);
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
     return ret;
 }
 
@@ -5055,7 +5055,7 @@ static int ext_writepage(struct vfs_file *file,
         return -EINVAL;
 
     fs = ext_sb_info(file->f_inode->i_sb);
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     ret = ext_load_inode_locked(file->f_inode, &disk_inode);
     if (!ret) {
         ret = ext_write_inode_data_locked(fs, (uint32_t)file->f_inode->i_ino,
@@ -5068,7 +5068,7 @@ static int ext_writepage(struct vfs_file *file,
                 ret = write_ret;
         }
     }
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
     return ret;
 }
 
@@ -5113,10 +5113,10 @@ static void ext_evict_inode(struct vfs_inode *inode) {
     if (inode->i_nlink != 0)
         return;
 
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     if (!info->inode_valid) {
         if (ext_read_inode(fs, (uint32_t)inode->i_ino, &info->inode_cache)) {
-            mutex_unlock(&fs->lock);
+            spin_unlock(&fs->lock);
             return;
         }
         info->inode_valid = true;
@@ -5125,7 +5125,7 @@ static void ext_evict_inode(struct vfs_inode *inode) {
     disk_inode = info->inode_cache;
     if (disk_inode.i_dtime)
         (void)ext_release_inode_locked(fs, (uint32_t)inode->i_ino, &disk_inode);
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
 }
 
 static void ext_put_super(struct vfs_super_block *sb) {
@@ -5155,7 +5155,7 @@ static int ext_statfs(struct vfs_path *path, void *buf) {
 
     memset(st, 0, sizeof(*st));
 
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     for (uint32_t i = 0; i < fs->group_count; i++) {
         free_blocks += ext_group_free_blocks_count(&fs->groups[i]);
         free_inodes += ext_group_free_inodes_count(&fs->groups[i]);
@@ -5175,7 +5175,7 @@ static int ext_statfs(struct vfs_path *path, void *buf) {
     st->f_files = fs->inodes_count;
     st->f_ffree = free_inodes;
     st->f_namelen = VFS_NAME_MAX;
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
 
     return 0;
 }
@@ -5249,11 +5249,11 @@ static int ext_get_tree(struct vfs_fs_context *fc) {
     fs = calloc(1, sizeof(*fs));
     if (!fs)
         return -ENOMEM;
-    mutex_init(&fs->lock);
+    spin_init(&fs->lock);
 
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     ret = ext_mount_prepare_locked(fs, dev);
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
     if (ret) {
         ext_map_cache_destroy(fs);
         free(fs->groups);
@@ -5267,9 +5267,9 @@ static int ext_get_tree(struct vfs_fs_context *fc) {
     sb->s_magic = EXT_SUPER_MAGIC;
     sb->s_dev = dev;
 
-    mutex_lock(&fs->lock);
+    spin_lock(&fs->lock);
     root_inode = ext_iget_locked(sb, EXT_ROOT_INO);
-    mutex_unlock(&fs->lock);
+    spin_unlock(&fs->lock);
     if (IS_ERR(root_inode))
         return PTR_ERR(root_inode);
 

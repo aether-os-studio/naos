@@ -20,7 +20,7 @@ static struct vfs_file_system_type pipefs_fs_type;
 static const struct vfs_super_operations pipefs_super_ops;
 static const struct vfs_file_operations pipefs_dir_file_ops;
 static const struct vfs_file_operations pipefs_file_ops;
-static mutex_t pipefs_mount_lock;
+static spinlock_t pipefs_mount_lock;
 static struct vfs_mount *pipefs_internal_mnt;
 
 int pipefs_id = 0;
@@ -234,7 +234,7 @@ static struct vfs_file_system_type pipefs_fs_type = {
 static struct vfs_mount *pipefs_get_internal_mount(void) {
     int ret;
 
-    mutex_lock(&pipefs_mount_lock);
+    spin_lock(&pipefs_mount_lock);
     if (!pipefs_internal_mnt) {
         ret = vfs_kern_mount("pipefs", 0, NULL, NULL, &pipefs_internal_mnt);
         if (ret < 0)
@@ -242,7 +242,7 @@ static struct vfs_mount *pipefs_get_internal_mount(void) {
     }
     if (pipefs_internal_mnt)
         vfs_mntget(pipefs_internal_mnt);
-    mutex_unlock(&pipefs_mount_lock);
+    spin_unlock(&pipefs_mount_lock);
     return pipefs_internal_mnt;
 }
 
@@ -262,7 +262,7 @@ static loff_t pipefs_llseek(struct vfs_file *file, loff_t offset, int whence) {
     if (!file || !file->f_inode)
         return -EBADF;
 
-    mutex_lock(&file->f_pos_lock);
+    spin_lock(&file->f_pos_lock);
     switch (whence) {
     case SEEK_SET:
         pos = offset;
@@ -274,15 +274,15 @@ static loff_t pipefs_llseek(struct vfs_file *file, loff_t offset, int whence) {
         pos = (loff_t)file->f_inode->i_size + offset;
         break;
     default:
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
         return -EINVAL;
     }
     if (pos < 0) {
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
         return -EINVAL;
     }
     file->f_pos = pos;
-    mutex_unlock(&file->f_pos_lock);
+    spin_unlock(&file->f_pos_lock);
     return pos;
 }
 
@@ -690,7 +690,7 @@ static int pipefs_create_endpoint(struct vfs_file **out_file, pipe_info_t *pipe,
 }
 
 void pipefs_init(void) {
-    mutex_init(&pipefs_mount_lock);
+    spin_init(&pipefs_mount_lock);
     vfs_register_filesystem(&pipefs_fs_type);
 }
 

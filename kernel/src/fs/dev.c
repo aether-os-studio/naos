@@ -26,14 +26,14 @@ typedef struct devtmpfs_dirent {
 
 typedef struct devtmpfs_inode_info {
     struct vfs_inode vfs_inode;
-    mutex_t lock;
+    spinlock_t lock;
     struct llist_header children;
     paged_file_store_t store;
     char *link_target;
 } devtmpfs_inode_info_t;
 
 typedef struct devtmpfs_fs_info {
-    mutex_t populate_lock;
+    spinlock_t populate_lock;
     bool populated;
     bool populating;
     uid32_t root_uid;
@@ -132,16 +132,16 @@ static void devtmpfs_lock_dir_infos(devtmpfs_inode_info_t *a,
         return;
 
     if (!b || a == b) {
-        mutex_lock(&a->lock);
+        spin_lock(&a->lock);
         return;
     }
 
     if ((uintptr_t)a < (uintptr_t)b) {
-        mutex_lock(&a->lock);
-        mutex_lock(&b->lock);
+        spin_lock(&a->lock);
+        spin_lock(&b->lock);
     } else {
-        mutex_lock(&b->lock);
-        mutex_lock(&a->lock);
+        spin_lock(&b->lock);
+        spin_lock(&a->lock);
     }
 }
 
@@ -151,12 +151,12 @@ static void devtmpfs_unlock_dir_infos(devtmpfs_inode_info_t *a,
         return;
 
     if (!b || a == b) {
-        mutex_unlock(&a->lock);
+        spin_unlock(&a->lock);
         return;
     }
 
-    mutex_unlock(&a->lock);
-    mutex_unlock(&b->lock);
+    spin_unlock(&a->lock);
+    spin_unlock(&b->lock);
 }
 
 static inline devtmpfs_fs_info_t *devtmpfs_sb_info(struct vfs_super_block *sb) {
@@ -220,11 +220,11 @@ static int devtmpfs_resize_inode(struct vfs_inode *inode, uint64_t new_size) {
     if (ret < 0)
         return ret;
 
-    mutex_lock(&info->lock);
+    spin_lock(&info->lock);
     if (new_size > old_size) {
         ret = paged_file_store_ensure_slots(&info->store, new_pages);
         if (ret < 0) {
-            mutex_unlock(&info->lock);
+            spin_unlock(&info->lock);
             tmpfs_mem_resize_reserve(new_size, old_size);
             return ret;
         }
@@ -236,7 +236,7 @@ static int devtmpfs_resize_inode(struct vfs_inode *inode, uint64_t new_size) {
     inode->i_size = new_size;
     inode->i_blocks = tmpfs_mem_align(new_size) >> 9;
     inode->i_version++;
-    mutex_unlock(&info->lock);
+    spin_unlock(&info->lock);
 
     if (new_size < old_size) {
         uint64_t zap_start = PADDING_UP(new_size, PAGE_SIZE);
@@ -248,12 +248,12 @@ static int devtmpfs_resize_inode(struct vfs_inode *inode, uint64_t new_size) {
         for (size_t i = new_pages; i < old_pages; i++) {
             uint64_t paddr = 0;
 
-            mutex_lock(&info->lock);
+            spin_lock(&info->lock);
             if (i < info->store.page_slots) {
                 paddr = info->store.pages[i];
                 info->store.pages[i] = 0;
             }
-            mutex_unlock(&info->lock);
+            spin_unlock(&info->lock);
 
             if (paddr)
                 address_release(paddr);
@@ -271,9 +271,9 @@ static devtmpfs_dirent_t *devtmpfs_find_dirent(struct vfs_inode *dir,
     if (!info || !S_ISDIR(dir->i_mode) || !name)
         return NULL;
 
-    mutex_lock(&info->lock);
+    spin_lock(&info->lock);
     de = devtmpfs_find_dirent_locked(info, name);
-    mutex_unlock(&info->lock);
+    spin_unlock(&info->lock);
     return de;
 }
 
@@ -297,14 +297,14 @@ static int devtmpfs_add_dirent(struct vfs_inode *dir, const char *name,
 
     de->inode = vfs_igrab(inode);
     llist_init_head(&de->node);
-    mutex_lock(&info->lock);
+    spin_lock(&info->lock);
     if (devtmpfs_find_dirent_locked(info, name)) {
-        mutex_unlock(&info->lock);
+        spin_unlock(&info->lock);
         devtmpfs_free_dirent(de);
         return -EEXIST;
     }
     llist_append(&info->children, &de->node);
-    mutex_unlock(&info->lock);
+    spin_unlock(&info->lock);
     return 0;
 }
 
@@ -316,15 +316,15 @@ static devtmpfs_dirent_t *devtmpfs_detach_dirent(struct vfs_inode *dir,
     if (!info || !name)
         return NULL;
 
-    mutex_lock(&info->lock);
+    spin_lock(&info->lock);
     llist_for_each(de, tmp, &info->children, node) {
         if (!de->name || !streq(de->name, name))
             continue;
         llist_delete(&de->node);
-        mutex_unlock(&info->lock);
+        spin_unlock(&info->lock);
         return de;
     }
-    mutex_unlock(&info->lock);
+    spin_unlock(&info->lock);
     return NULL;
 }
 
@@ -346,7 +346,7 @@ static struct vfs_inode *devtmpfs_new_inode(struct vfs_super_block *sb,
     if (!inode)
         return NULL;
 
-    mutex_init(&info->lock);
+    spin_init(&info->lock);
     llist_init_head(&info->children);
     inode->i_op = &devtmpfs_inode_ops;
     inode->i_fop = S_ISDIR(mode) ? &devtmpfs_dir_file_ops : &devtmpfs_file_ops;
@@ -376,12 +376,12 @@ static struct vfs_dentry *devtmpfs_lookup(struct vfs_inode *dir,
     if (!info)
         return ERR_PTR(-EINVAL);
 
-    mutex_lock(&info->lock);
+    spin_lock(&info->lock);
     devtmpfs_dirent_t *de =
         devtmpfs_find_dirent_locked(info, dentry->d_name.name);
     if (de)
         inode = vfs_igrab(de->inode);
-    mutex_unlock(&info->lock);
+    spin_unlock(&info->lock);
 
     vfs_d_instantiate(dentry, inode);
     if (inode)
@@ -423,10 +423,10 @@ static int devtmpfs_create_common(struct vfs_inode *dir,
         }
 
         loff_t pos = 0;
-        mutex_lock(&info->lock);
+        spin_lock(&info->lock);
         ret = (int)paged_file_store_write_locked(&info->store, symlink_target,
                                                  strlen(symlink_target), &pos);
-        mutex_unlock(&info->lock);
+        spin_unlock(&info->lock);
         if (ret < 0) {
             free(info->link_target);
             info->link_target = NULL;
@@ -521,9 +521,9 @@ static int devtmpfs_rmdir(struct vfs_inode *dir, struct vfs_dentry *dentry) {
         return -ENOTDIR;
 
     info = devtmpfs_i(dentry->d_inode);
-    mutex_lock(&info->lock);
+    spin_lock(&info->lock);
     has_children = !llist_empty(&info->children);
-    mutex_unlock(&info->lock);
+    spin_unlock(&info->lock);
     if (has_children)
         return -ENOTEMPTY;
 
@@ -654,7 +654,7 @@ static loff_t devtmpfs_llseek(struct vfs_file *file, loff_t offset,
     if (!file || !file->f_inode)
         return -EBADF;
 
-    mutex_lock(&file->f_pos_lock);
+    spin_lock(&file->f_pos_lock);
     switch (whence) {
     case SEEK_SET:
         pos = offset;
@@ -666,15 +666,15 @@ static loff_t devtmpfs_llseek(struct vfs_file *file, loff_t offset,
         pos = (loff_t)file->f_inode->i_size + offset;
         break;
     default:
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
         return -EINVAL;
     }
     if (pos < 0) {
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
         return -EINVAL;
     }
     file->f_pos = pos;
-    mutex_unlock(&file->f_pos_lock);
+    spin_unlock(&file->f_pos_lock);
     return pos;
 }
 
@@ -692,9 +692,9 @@ static ssize_t devtmpfs_read(struct vfs_file *file, void *buf, size_t count,
     if (!info)
         return -EINVAL;
 
-    mutex_lock(&info->lock);
+    spin_lock(&info->lock);
     ssize_t ret = paged_file_store_read_locked(&info->store, buf, count, ppos);
-    mutex_unlock(&info->lock);
+    spin_unlock(&info->lock);
     return ret;
 }
 
@@ -721,13 +721,13 @@ static ssize_t devtmpfs_write(struct vfs_file *file, const void *buf,
     if (ret < 0)
         return ret;
 
-    mutex_lock(&info->lock);
+    spin_lock(&info->lock);
     ret = paged_file_store_write_locked(&info->store, buf, count, ppos);
     if (ret > 0 && end > info->store.size)
         info->store.size = end;
     file->f_inode->i_size = info->store.size;
     file->f_inode->i_version++;
-    mutex_unlock(&info->lock);
+    spin_unlock(&info->lock);
     return ret;
 }
 
@@ -743,7 +743,7 @@ static int devtmpfs_iterate_shared(struct vfs_file *file,
     devtmpfs_ensure_populated(file->f_inode->i_sb);
 
     info = devtmpfs_i(file->f_inode);
-    mutex_lock(&info->lock);
+    spin_lock(&info->lock);
     llist_for_each(de, tmp, &info->children, node) {
         index++;
         if (index <= ctx->pos)
@@ -754,7 +754,7 @@ static int devtmpfs_iterate_shared(struct vfs_file *file,
         }
         ctx->pos = index;
     }
-    mutex_unlock(&info->lock);
+    spin_unlock(&info->lock);
 
     file->f_pos = ctx->pos;
     return 0;
@@ -828,11 +828,11 @@ static void *devtmpfs_mmap(struct vfs_file *file, void *addr, size_t offset,
         pt_flags |= PT_FLAG_R;
 
     pgdir = get_current_page_dir(true);
-    mutex_lock(&info->lock);
+    spin_lock(&info->lock);
     ret = paged_file_store_map_shared_locked(&info->store, pgdir,
                                              (uint64_t)addr, (uint64_t)offset,
                                              (uint64_t)size, pt_flags);
-    mutex_unlock(&info->lock);
+    spin_unlock(&info->lock);
     if (ret < 0)
         return (void *)(int64_t)ret;
 
@@ -870,12 +870,12 @@ static void devtmpfs_evict_inode(struct vfs_inode *inode) {
     tmpfs_mem_release(info->store.size);
     paged_file_store_destroy(&info->store);
     free(info->link_target);
-    mutex_lock(&info->lock);
+    spin_lock(&info->lock);
     llist_for_each(de, tmp, &info->children, node) {
         llist_delete(&de->node);
         devtmpfs_free_dirent(de);
     }
-    mutex_unlock(&info->lock);
+    spin_unlock(&info->lock);
 }
 
 static int devtmpfs_init_fs_context(struct vfs_fs_context *fc) {
@@ -884,7 +884,7 @@ static int devtmpfs_init_fs_context(struct vfs_fs_context *fc) {
     fc->fs_private = calloc(1, sizeof(devtmpfs_fs_info_t));
     if (!fc->fs_private)
         return -ENOMEM;
-    mutex_init(&((devtmpfs_fs_info_t *)fc->fs_private)->populate_lock);
+    spin_init(&((devtmpfs_fs_info_t *)fc->fs_private)->populate_lock);
     return 0;
 }
 
@@ -1080,20 +1080,20 @@ static void devtmpfs_ensure_populated(struct vfs_super_block *sb) {
     if (!fsi)
         return;
 
-    mutex_lock(&fsi->populate_lock);
+    spin_lock(&fsi->populate_lock);
     if (fsi->populated || fsi->populating) {
-        mutex_unlock(&fsi->populate_lock);
+        spin_unlock(&fsi->populate_lock);
         return;
     }
     fsi->populating = true;
-    mutex_unlock(&fsi->populate_lock);
+    spin_unlock(&fsi->populate_lock);
 
     devtmpfs_populate_nodes();
 
-    mutex_lock(&fsi->populate_lock);
+    spin_lock(&fsi->populate_lock);
     fsi->populating = false;
     fsi->populated = true;
-    mutex_unlock(&fsi->populate_lock);
+    spin_unlock(&fsi->populate_lock);
 }
 
 ssize_t inputdev_open(void *data, void *arg) {

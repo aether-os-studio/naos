@@ -53,7 +53,7 @@ static const struct vfs_super_operations fsfdfs_super_ops;
 static const struct vfs_file_operations fsfdfs_dir_file_ops;
 static const struct vfs_file_operations fsfdfs_ctx_file_ops;
 static const struct vfs_file_operations fsfdfs_mnt_file_ops;
-static mutex_t fsfdfs_mount_lock;
+static spinlock_t fsfdfs_mount_lock;
 static struct vfs_mount *fsfdfs_internal_mnt;
 
 static inline fsfdfs_info_t *fsfdfs_sb_info(struct vfs_super_block *sb) {
@@ -253,7 +253,7 @@ static struct vfs_file_system_type fsfdfs_fs_type = {
 static struct vfs_mount *fsfdfs_get_internal_mount(void) {
     int ret;
 
-    mutex_lock(&fsfdfs_mount_lock);
+    spin_lock(&fsfdfs_mount_lock);
     if (!fsfdfs_internal_mnt) {
         ret = vfs_kern_mount("fsfdfs", 0, NULL, NULL, &fsfdfs_internal_mnt);
         if (ret < 0)
@@ -261,7 +261,7 @@ static struct vfs_mount *fsfdfs_get_internal_mount(void) {
     }
     if (fsfdfs_internal_mnt)
         vfs_mntget(fsfdfs_internal_mnt);
-    mutex_unlock(&fsfdfs_mount_lock);
+    spin_unlock(&fsfdfs_mount_lock);
     return fsfdfs_internal_mnt;
 }
 
@@ -1052,6 +1052,6 @@ out:
 }
 
 void fsfdfs_init() {
-    mutex_init(&fsfdfs_mount_lock);
+    spin_init(&fsfdfs_mount_lock);
     vfs_register_filesystem(&fsfdfs_fs_type);
 }

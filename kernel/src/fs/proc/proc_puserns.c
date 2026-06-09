@@ -35,14 +35,14 @@ static char *proc_userns_render_map(task_user_namespace_t *user_ns, bool gid,
         return NULL;
     }
 
-    mutex_lock(&user_ns->lock);
+    spin_lock(&user_ns->lock);
     ranges = gid ? user_ns->gid_map : user_ns->uid_map;
     count = gid ? user_ns->gid_map_count : user_ns->uid_map_count;
     for (size_t i = 0; i < count; ++i) {
         string_builder_append(builder, "%u %u %u\n", ranges[i].inside_id,
                               ranges[i].outside_id, ranges[i].length);
     }
-    mutex_unlock(&user_ns->lock);
+    spin_unlock(&user_ns->lock);
 
     *content_len = builder->size;
     char *data = builder->data;
@@ -58,7 +58,7 @@ static int proc_userns_apply_map(task_user_namespace_t *user_ns, bool gid,
     if (!user_ns || !ranges || !count || count > TASK_USERNS_MAX_ID_MAPS)
         return -EINVAL;
 
-    mutex_lock(&user_ns->lock);
+    spin_lock(&user_ns->lock);
     if (gid) {
         if (user_ns->gid_map_written) {
             ret = -EPERM;
@@ -79,7 +79,7 @@ static int proc_userns_apply_map(task_user_namespace_t *user_ns, bool gid,
             user_ns->uid_map_written = true;
         }
     }
-    mutex_unlock(&user_ns->lock);
+    spin_unlock(&user_ns->lock);
     return ret;
 }
 
@@ -193,7 +193,7 @@ static ssize_t proc_userns_write_setgroups(proc_handle_t *handle,
     while (*cursor == ' ' || *cursor == '\t' || *cursor == '\n')
         cursor++;
 
-    mutex_lock(&user_ns->lock);
+    spin_lock(&user_ns->lock);
     if (!strncmp(cursor, "deny", 4)) {
         if (user_ns->gid_map_written)
             ret = -EPERM;
@@ -207,7 +207,7 @@ static ssize_t proc_userns_write_setgroups(proc_handle_t *handle,
     } else {
         ret = -EINVAL;
     }
-    mutex_unlock(&user_ns->lock);
+    spin_unlock(&user_ns->lock);
 
     free(buf);
     return ret < 0 ? ret : (ssize_t)size;
@@ -288,11 +288,11 @@ size_t proc_psetgroups_stat(proc_handle_t *handle) {
 
     if (!user_ns)
         return 0;
-    mutex_lock(&user_ns->lock);
+    spin_lock(&user_ns->lock);
     len = user_ns->setgroups_state == TASK_USERNS_SETGROUPS_DENY
               ? strlen("deny\n")
               : strlen("allow\n");
-    mutex_unlock(&user_ns->lock);
+    spin_unlock(&user_ns->lock);
     return len;
 }
 
@@ -305,11 +305,11 @@ size_t proc_psetgroups_read(proc_handle_t *handle, void *addr, size_t offset,
 
     if (!user_ns)
         return 0;
-    mutex_lock(&user_ns->lock);
+    spin_lock(&user_ns->lock);
     content = user_ns->setgroups_state == TASK_USERNS_SETGROUPS_DENY
                   ? "deny\n"
                   : "allow\n";
-    mutex_unlock(&user_ns->lock);
+    spin_unlock(&user_ns->lock);
 
     content_len = strlen(content);
     if (offset >= content_len)

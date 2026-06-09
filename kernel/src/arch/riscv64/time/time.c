@@ -11,6 +11,7 @@
 #include <limine.h>
 #include <mm/hhdm.h>
 #include <mm/mm.h>
+#include <task/watchdog.h>
 
 #define FDT_MAX_NCELLS 4
 #define RISCV_TIMER_NS_SCALE_SHIFT 32U
@@ -292,6 +293,7 @@ void timer_init_percpu(void) {
     uint64_t stie = 1UL << 5;
     asm volatile("csrs sie, %0" : : "r"(stie) : "memory");
     timer_set_sched_interval_ns(1000000000ULL / SCHED_HZ);
+    sched_watchdog_init_cpu(current_cpu_id);
 }
 
 void timer_set_sched_interval_ns(uint64_t ns) {

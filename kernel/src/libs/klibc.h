@@ -428,6 +428,7 @@ static inline void *user_virt_from_paddr(uint64_t paddr) {
 }
 
 uint64_t user_translate_or_fault(uint64_t *pgdir, uint64_t uaddr, bool write);
+uint64_t user_translate_no_fault(uint64_t *pgdir, uint64_t uaddr, bool write);
 
 static inline bool copy_to_user(void *dst, const void *src, size_t size) {
     if (size == 0)

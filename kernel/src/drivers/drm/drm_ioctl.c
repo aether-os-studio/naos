@@ -127,7 +127,7 @@ static const struct vfs_file_operations drmfdfs_dir_file_ops;
 static const struct vfs_file_operations drmfdfs_prime_file_ops;
 static const struct vfs_file_operations drmfdfs_sync_file_ops;
 static const struct vfs_file_operations drmfdfs_drm_file_ops;
-static mutex_t drmfdfs_mount_lock;
+static spinlock_t drmfdfs_mount_lock;
 static struct vfs_mount *drmfdfs_internal_mnt;
 static spinlock_t drmfdfs_register_lock = SPIN_INIT;
 static bool drmfdfs_registered = false;
@@ -301,13 +301,13 @@ static struct vfs_mount *drmfdfs_get_internal_mount(void) {
 
     spin_lock(&drmfdfs_register_lock);
     if (!drmfdfs_registered) {
-        mutex_init(&drmfdfs_mount_lock);
+        spin_init(&drmfdfs_mount_lock);
         vfs_register_filesystem(&drmfdfs_fs_type);
         drmfdfs_registered = true;
     }
     spin_unlock(&drmfdfs_register_lock);
 
-    mutex_lock(&drmfdfs_mount_lock);
+    spin_lock(&drmfdfs_mount_lock);
     if (!drmfdfs_internal_mnt) {
         ret = vfs_kern_mount("drmfdfs", 0, NULL, NULL, &drmfdfs_internal_mnt);
         if (ret < 0)
@@ -315,7 +315,7 @@ static struct vfs_mount *drmfdfs_get_internal_mount(void) {
     }
     if (drmfdfs_internal_mnt)
         vfs_mntget(drmfdfs_internal_mnt);
-    mutex_unlock(&drmfdfs_mount_lock);
+    spin_unlock(&drmfdfs_mount_lock);
     return drmfdfs_internal_mnt;
 }
 
@@ -3756,22 +3756,29 @@ ssize_t drm_ioctl_mode_getpropblob(drm_device_t *dev, void *arg) {
         return ret;
     }
 
+    size_t snapshot_cap =
+        blob->data ? MIN((size_t)blob->length, (size_t)DRM_USER_BLOB_MAX_SIZE)
+                   : 0;
+    void *snapshot = snapshot_cap ? malloc(snapshot_cap) : NULL;
+    if (snapshot_cap && !snapshot)
+        return -ENOMEM;
+
     spin_lock(&drm_user_blobs_lock);
     int idx = drm_user_blob_find_index_locked(dev, blob->blob_id);
     if (idx >= 0) {
         size_t blob_len = drm_user_blobs[idx].length;
-        size_t copy_len = MIN((size_t)blob->length, blob_len);
+        size_t copy_len = MIN(snapshot_cap, blob_len);
         blob->length = (uint32_t)blob_len;
-
-        int ret = 0;
-        if (copy_len > 0 && blob->data) {
-            ret = drm_copy_to_user_ptr(blob->data, drm_user_blobs[idx].data,
-                                       copy_len);
-        }
+        if (copy_len > 0)
+            memcpy(snapshot, drm_user_blobs[idx].data, copy_len);
         spin_unlock(&drm_user_blobs_lock);
+
+        int ret = drm_copy_to_user_ptr(blob->data, snapshot, copy_len);
+        free(snapshot);
         return ret;
     }
     spin_unlock(&drm_user_blobs_lock);
+    free(snapshot);
 
     switch (blob->blob_id) {
     case DRM_BLOB_ID_PLANE_TYPE: {
@@ -4467,7 +4474,8 @@ ssize_t drm_ioctl_mode_list_lessees(drm_device_t *dev, void *arg, fd_t *fd) {
     uint64_t lessor_id = drm_file_lessor_id(file);
     uint32_t cap;
     uint32_t total = 0;
-    uint32_t copied = 0;
+    uint32_t copy_count = 0;
+    uint64_t ids[DRM_MAX_LEASES_PER_DEVICE];
 
     if (!dev || !l || !file || file->lessee) {
         return -EACCES;
@@ -4482,18 +4490,18 @@ ssize_t drm_ioctl_mode_list_lessees(drm_device_t *dev, void *arg, fd_t *fd) {
         }
 
         uint64_t id = dev->leases[i].lease_id;
-        if (l->lessees_ptr && copied < cap) {
-            int ret = drm_copy_to_user_ptr(
-                l->lessees_ptr + copied * sizeof(uint64_t), &id, sizeof(id));
-            if (ret) {
-                spin_unlock(&dev->lease_lock);
-                return ret;
-            }
-            copied++;
-        }
+        if (l->lessees_ptr && copy_count < cap)
+            ids[copy_count++] = id;
         total++;
     }
     spin_unlock(&dev->lease_lock);
+
+    if (l->lessees_ptr && copy_count > 0) {
+        int ret = drm_copy_to_user_ptr(l->lessees_ptr, ids,
+                                       copy_count * sizeof(ids[0]));
+        if (ret)
+            return ret;
+    }
 
     l->count_lessees = total;
     return 0;

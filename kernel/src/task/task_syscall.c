@@ -2802,6 +2802,8 @@ uint64_t sys_wait4(int pid, int *status, uint64_t options,
             int reason = task_block(current_task, TASK_BLOCKING, -1, "waitpid");
             if (child_wait_armed)
                 task_child_wait_disarm(&child_wait);
+            if (reason < 0)
+                return reason;
             if (reason != EOK && task_signal_has_deliverable(current_task))
                 return -EINTR;
             continue;
@@ -2817,6 +2819,8 @@ uint64_t sys_wait4(int pid, int *status, uint64_t options,
                 task_block(current_task, TASK_BLOCKING, -1, "waitpid-ptrace");
             if (child_wait_armed)
                 task_child_wait_disarm(&child_wait);
+            if (reason < 0)
+                return reason;
             if (reason != EOK && task_signal_has_deliverable(current_task))
                 return -EINTR;
             continue;
@@ -3020,6 +3024,8 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
             int reason = task_block(current_task, TASK_BLOCKING, -1, "waitid");
             if (child_wait_armed)
                 task_child_wait_disarm(&child_wait);
+            if (reason < 0)
+                return reason;
             if (reason != EOK && task_signal_has_deliverable(current_task))
                 return -EINTR;
             continue;
@@ -3030,6 +3036,8 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
                 task_block(current_task, TASK_BLOCKING, -1, "waitid-ptrace");
             if (child_wait_armed)
                 task_child_wait_disarm(&child_wait);
+            if (reason < 0)
+                return reason;
             if (reason != EOK && task_signal_has_deliverable(current_task))
                 return -EINTR;
             continue;
@@ -3768,6 +3776,8 @@ static uint64_t task_sleep_until_ns(uint64_t target_ns, int clock_id,
         int reason =
             task_block(current_task, TASK_BLOCKING, block_ns, "nanosleep");
 
+        if (reason < 0)
+            return (uint64_t)reason;
         if (interruptible && reason >= 128) {
             if (remain) {
                 uint64_t end = get_nanotime_by_clockid(clock_id);

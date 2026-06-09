@@ -2275,7 +2275,7 @@ static uint64_t generic_do_pwritev(uint64_t fd, struct iovec *iovec,
     append = (flags & RWF_APPEND) || (file->f_flags & O_APPEND);
     update_f_pos = use_f_pos && append;
     if (append)
-        mutex_lock(&file->f_pos_lock);
+        spin_lock(&file->f_pos_lock);
     for (uint64_t i = 0; i < count; i++) {
         size_t len = kiov[i].len;
         loff_t *ppos = use_f_pos ? NULL : &pos;
@@ -2328,7 +2328,7 @@ out_writev:
     if (update_f_pos && total_written > 0)
         file->f_pos = pos;
     if (append)
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
     vfs_file_put(file);
     free(kiov);
     return total_written;

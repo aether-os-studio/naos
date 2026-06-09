@@ -160,6 +160,8 @@ static size_t do_poll(struct pollfd *fds, int nfds, uint64_t timeout) {
 
         if (reason == ETIMEDOUT)
             continue;
+        if (reason < 0)
+            return (size_t)reason;
         if (reason != EOK && task_signal_has_deliverable(current_task))
             return (size_t)-EINTR;
     }

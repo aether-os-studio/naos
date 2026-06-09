@@ -5,7 +5,7 @@ struct vfs_mount_namespace vfs_init_mnt_ns = {0};
 struct vfs_path vfs_root_path = {0};
 
 static struct llist_header vfs_filesystems;
-static mutex_t vfs_filesystems_lock;
+static spinlock_t vfs_filesystems_lock;
 
 static uint32_t vfs_qstr_hash_bytes(const char *name, uint32_t len) {
     uint32_t hash = 2166136261u;
@@ -53,8 +53,8 @@ void vfs_qstr_destroy(struct vfs_qstr *qstr) {
 
 int vfs_init(void) {
     llist_init_head(&vfs_filesystems);
-    mutex_init(&vfs_filesystems_lock);
-    mutex_init(&vfs_init_mnt_ns.lock);
+    spin_init(&vfs_filesystems_lock);
+    spin_init(&vfs_init_mnt_ns.lock);
 
     vfs_dcache_init();
     vfs_mount_subsys_init();
@@ -72,16 +72,16 @@ int vfs_register_filesystem(struct vfs_file_system_type *fs) {
     if (!fs->fs_list.next && !fs->fs_list.prev)
         llist_init_head(&fs->fs_list);
 
-    mutex_lock(&vfs_filesystems_lock);
+    spin_lock(&vfs_filesystems_lock);
     llist_for_each(pos, tmp, &vfs_filesystems, fs_list) {
         if (streq(pos->name, fs->name)) {
-            mutex_unlock(&vfs_filesystems_lock);
+            spin_unlock(&vfs_filesystems_lock);
             return -EEXIST;
         }
     }
     if (llist_empty(&fs->fs_list))
         llist_append(&vfs_filesystems, &fs->fs_list);
-    mutex_unlock(&vfs_filesystems_lock);
+    spin_unlock(&vfs_filesystems_lock);
     return 0;
 }
 
@@ -90,10 +90,10 @@ void vfs_unregister_filesystem(struct vfs_file_system_type *fs) {
         return;
     if (!fs->fs_list.next || !fs->fs_list.prev)
         return;
-    mutex_lock(&vfs_filesystems_lock);
+    spin_lock(&vfs_filesystems_lock);
     if (!llist_empty(&fs->fs_list))
         llist_delete(&fs->fs_list);
-    mutex_unlock(&vfs_filesystems_lock);
+    spin_unlock(&vfs_filesystems_lock);
 }
 
 struct vfs_file_system_type *vfs_get_fs_type(const char *name) {
@@ -101,13 +101,13 @@ struct vfs_file_system_type *vfs_get_fs_type(const char *name) {
 
     if (!name)
         return NULL;
-    mutex_lock(&vfs_filesystems_lock);
+    spin_lock(&vfs_filesystems_lock);
     llist_for_each(pos, tmp, &vfs_filesystems, fs_list) {
         if (streq(pos->name, name)) {
-            mutex_unlock(&vfs_filesystems_lock);
+            spin_unlock(&vfs_filesystems_lock);
             return pos;
         }
     }
-    mutex_unlock(&vfs_filesystems_lock);
+    spin_unlock(&vfs_filesystems_lock);
     return NULL;
 }

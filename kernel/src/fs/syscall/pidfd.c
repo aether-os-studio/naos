@@ -30,7 +30,7 @@ static struct vfs_file_system_type pidfdfs_fs_type;
 static const struct vfs_super_operations pidfdfs_super_ops;
 static const struct vfs_file_operations pidfdfs_dir_file_ops;
 static const struct vfs_file_operations pidfdfs_file_ops;
-static mutex_t pidfdfs_mount_lock;
+static spinlock_t pidfdfs_mount_lock;
 static struct vfs_mount *pidfdfs_internal_mnt;
 
 static inline pidfd_watch_bucket_t *pidfd_watch_bucket_lookup(uint64_t pid) {
@@ -262,7 +262,7 @@ static const struct vfs_file_operations pidfdfs_file_ops = {
 static struct vfs_mount *pidfdfs_get_internal_mount(void) {
     int ret;
 
-    mutex_lock(&pidfdfs_mount_lock);
+    spin_lock(&pidfdfs_mount_lock);
     if (!pidfdfs_internal_mnt) {
         ret = vfs_kern_mount("pidfdfs", 0, NULL, NULL, &pidfdfs_internal_mnt);
         if (ret < 0)
@@ -270,7 +270,7 @@ static struct vfs_mount *pidfdfs_get_internal_mount(void) {
     }
     if (pidfdfs_internal_mnt)
         vfs_mntget(pidfdfs_internal_mnt);
-    mutex_unlock(&pidfdfs_mount_lock);
+    spin_unlock(&pidfdfs_mount_lock);
     return pidfdfs_internal_mnt;
 }
 
@@ -560,6 +560,6 @@ void pidfd_on_task_exit(task_t *task) {
 void pidfd_init(void) {
     ASSERT(hashmap_init(&pidfd_watch_map, 128) == 0);
     spin_init(&pidfd_watch_lock);
-    mutex_init(&pidfdfs_mount_lock);
+    spin_init(&pidfdfs_mount_lock);
     vfs_register_filesystem(&pidfdfs_fs_type);
 }

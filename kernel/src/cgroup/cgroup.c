@@ -27,16 +27,16 @@ struct cgroup {
     volatile int ref_count;
 };
 
-static mutex_t cgroup_global_lock;
+static spinlock_t cgroup_global_lock;
 static cgroup_hierarchy_t *cgroup_unified_hierarchy;
 static cgroup_t *cgroup_root_node;
 static uint64_t cgroup_next_hierarchy_id = 1;
 DEFINE_LLIST(cgroup_hierarchies);
 DEFINE_LLIST(cgroup_assignments);
 
-void cgroup_lock(void) { mutex_lock(&cgroup_global_lock); }
+void cgroup_lock(void) { spin_lock(&cgroup_global_lock); }
 
-void cgroup_unlock(void) { mutex_unlock(&cgroup_global_lock); }
+void cgroup_unlock(void) { spin_unlock(&cgroup_global_lock); }
 
 cgroup_t *cgroup_get(cgroup_t *cgroup) {
     if (!cgroup)
@@ -401,7 +401,7 @@ char *cgroup_task_proc_text(task_t *task) {
 }
 
 void cgroup_init(void) {
-    mutex_init(&cgroup_global_lock);
+    spin_init(&cgroup_global_lock);
     llist_init_head(&cgroup_hierarchies);
     llist_init_head(&cgroup_assignments);
     cgroup_root_node = cgroup_create(NULL, "");

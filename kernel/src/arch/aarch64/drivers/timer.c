@@ -5,6 +5,7 @@
 #include <drivers/logger.h>
 #include <drivers/fdt/fdt.h>
 #include <irq/irq_manager.h>
+#include <task/watchdog.h>
 
 struct global_timer_state global_timer = {0};
 static uint64_t timer_interval_ns[MAX_CPU_NUM];
@@ -388,6 +389,7 @@ void timer_init_percpu() {
     gic_enable_irq(global_timer.irq_num);
 
     timer_set_sched_interval_ns(1000000000ULL / SCHED_HZ);
+    sched_watchdog_init_cpu(current_cpu_id);
 }
 
 uint64_t nano_time() {

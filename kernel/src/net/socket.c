@@ -28,13 +28,13 @@ static struct vfs_file_system_type sockfs_fs_type;
 static const struct vfs_super_operations sockfs_super_ops;
 static const struct vfs_file_operations sockfs_dir_file_ops;
 static const struct vfs_file_operations sockfs_file_ops;
-static mutex_t sockfs_mount_lock;
+static spinlock_t sockfs_mount_lock;
 static struct vfs_mount *sockfs_internal_mnt;
 
 socket_t first_unix_socket;
 static socket_t *unix_socket_list_tail = &first_unix_socket;
 spinlock_t unix_socket_list_lock;
-static mutex_t unix_socket_bind_lock;
+static spinlock_t unix_socket_bind_lock;
 
 static hashmap_t unix_socket_bind_map = HASHMAP_INIT;
 
@@ -241,7 +241,7 @@ static struct vfs_file_system_type sockfs_fs_type = {
 static struct vfs_mount *sockfs_get_internal_mount(void) {
     int ret;
 
-    mutex_lock(&sockfs_mount_lock);
+    spin_lock(&sockfs_mount_lock);
     if (!sockfs_internal_mnt) {
         ret = vfs_kern_mount("sockfs", 0, NULL, NULL, &sockfs_internal_mnt);
         if (ret < 0)
@@ -249,7 +249,7 @@ static struct vfs_mount *sockfs_get_internal_mount(void) {
     }
     if (sockfs_internal_mnt)
         vfs_mntget(sockfs_internal_mnt);
-    mutex_unlock(&sockfs_mount_lock);
+    spin_unlock(&sockfs_mount_lock);
     return sockfs_internal_mnt;
 }
 
@@ -328,11 +328,11 @@ static socket_t *unix_socket_get_peer_ref(socket_t *sock) {
     if (!sock)
         return NULL;
 
-    mutex_lock(&sock->lock);
+    spin_lock(&sock->lock);
     peer = sock->peer;
     if (peer)
         unix_socket_get(peer);
-    mutex_unlock(&sock->lock);
+    spin_unlock(&sock->lock);
     return peer;
 }
 
@@ -442,9 +442,9 @@ static int unix_socket_maybe_add_passcred(socket_t *peer,
     if (!peer || !ancillary)
         return 0;
 
-    mutex_lock(&peer->lock);
+    spin_lock(&peer->lock);
     peer_passcred = peer->passcred;
-    mutex_unlock(&peer->lock);
+    spin_unlock(&peer->lock);
 
     if (!peer_passcred)
         return 0;
@@ -492,9 +492,9 @@ unix_socket_maybe_add_timestamp(socket_t *peer,
     if (!peer || !ancillary)
         return 0;
 
-    mutex_lock(&peer->lock);
+    spin_lock(&peer->lock);
     peer_timestamp = peer->timestamp_legacy != 0;
-    mutex_unlock(&peer->lock);
+    spin_unlock(&peer->lock);
 
     if (!peer_timestamp)
         return 0;
@@ -569,9 +569,9 @@ static socket_t *unix_socket_lookup_bound(const char *name, size_t len,
                                           socket_t *skip, bool take_node_ref) {
     socket_t *sock = NULL;
 
-    mutex_lock(&unix_socket_bind_lock);
+    spin_lock(&unix_socket_bind_lock);
     sock = unix_socket_lookup_bound_locked(name, len, skip, take_node_ref);
-    mutex_unlock(&unix_socket_bind_lock);
+    spin_unlock(&unix_socket_bind_lock);
 
     return sock;
 }
@@ -580,7 +580,7 @@ static void unix_socket_unbind(socket_t *sock) {
     if (!sock || !sock->bindAddr)
         return;
 
-    mutex_lock(&unix_socket_bind_lock);
+    spin_lock(&unix_socket_bind_lock);
     unix_socket_bind_bucket_t *bucket =
         unix_socket_bind_bucket_lookup_locked(sock->bindHash);
     socket_t *bind_head = bucket ? bucket->head : NULL;
@@ -603,7 +603,7 @@ static void unix_socket_unbind(socket_t *sock) {
         }
         curr->bind_next = NULL;
     }
-    mutex_unlock(&unix_socket_bind_lock);
+    spin_unlock(&unix_socket_bind_lock);
 
     if (sock->bindAddr[0] != '@')
         unix_socket_unlink_bound_path(sock->bindAddr);
@@ -701,16 +701,16 @@ static inline void unix_socket_lock_pair(socket_t *a, socket_t *b) {
         return;
 
     if (!b || a == b) {
-        mutex_lock(&a->lock);
+        spin_lock(&a->lock);
         return;
     }
 
     if (a < b) {
-        mutex_lock(&a->lock);
-        mutex_lock(&b->lock);
+        spin_lock(&a->lock);
+        spin_lock(&b->lock);
     } else {
-        mutex_lock(&b->lock);
-        mutex_lock(&a->lock);
+        spin_lock(&b->lock);
+        spin_lock(&a->lock);
     }
 }
 
@@ -719,12 +719,12 @@ static inline void unix_socket_unlock_pair(socket_t *a, socket_t *b) {
         return;
 
     if (!b || a == b) {
-        mutex_unlock(&a->lock);
+        spin_unlock(&a->lock);
         return;
     }
 
-    mutex_unlock(&a->lock);
-    mutex_unlock(&b->lock);
+    spin_unlock(&a->lock);
+    spin_unlock(&b->lock);
 }
 
 static void unix_socket_disconnect_peer_links(socket_t *sock, bool mark_closed,
@@ -1396,10 +1396,10 @@ static int socket_wait_listen_backlog(socket_t *listen_sock) {
                               NULL);
         wait_queue_add(&listen_sock->node->poll_wait, &wait);
 
-        mutex_lock(&listen_sock->lock);
+        spin_lock(&listen_sock->lock);
         bool closed = listen_sock->closed || !listen_sock->connMax;
         bool available = listen_sock->connCurr < listen_sock->connMax;
-        mutex_unlock(&listen_sock->lock);
+        spin_unlock(&listen_sock->lock);
 
         if (closed) {
             wait_queue_remove(&listen_sock->node->poll_wait, &wait);
@@ -1424,6 +1424,8 @@ static int socket_wait_listen_backlog(socket_t *listen_sock) {
 
         if (reason != EOK && task_signal_has_deliverable(current_task))
             return -EINTR;
+        if (reason < 0)
+            return reason;
     }
 }
 
@@ -1531,7 +1533,7 @@ socket_t *unix_socket_alloc() {
         return NULL;
     memset(sock, 0, sizeof(socket_t));
     sock->refs = 1;
-    mutex_init(&sock->lock);
+    spin_init(&sock->lock);
 
     sock->recv_size = BUFFER_SIZE;
     skb_queue_init(&sock->recv_queue, sock->recv_size,
@@ -1604,7 +1606,7 @@ static void unix_socket_handle_release(socket_handle_t *handle) {
         return;
     }
 
-    mutex_lock(&sock->lock);
+    spin_lock(&sock->lock);
     if (sock->connMax > 0 && sock->backlogCap > 0 && sock->connCurr > 0) {
         int pending = sock->connCurr;
         for (int i = 0; i < pending; i++) {
@@ -1620,7 +1622,7 @@ static void unix_socket_handle_release(socket_handle_t *handle) {
         sock->connCurr = 0;
         sock->connHead = 0;
     }
-    mutex_unlock(&sock->lock);
+    spin_unlock(&sock->lock);
 
     unix_socket_close_owned(sock);
     free(handle);
@@ -1647,9 +1649,9 @@ static size_t unix_socket_send_stream_to_peer(
             return -EPIPE;
         }
 
-        mutex_lock(&active_peer->lock);
+        spin_lock(&active_peer->lock);
         if (active_peer->closed || active_peer->shut_rd) {
-            mutex_unlock(&active_peer->lock);
+            spin_unlock(&active_peer->lock);
             if (!(flags & MSG_NOSIGNAL))
                 task_commit_signal(current_task, SIGPIPE, NULL);
             return -EPIPE;
@@ -1668,21 +1670,21 @@ static size_t unix_socket_send_stream_to_peer(
 
             skb = unix_socket_build_skb(data, to_copy, skb_ancillary);
             if (!skb) {
-                mutex_unlock(&active_peer->lock);
+                spin_unlock(&active_peer->lock);
                 return -ENOMEM;
             }
             if (!skb_queue_push(&active_peer->recv_queue, skb)) {
                 skb_free(skb,
                          (skb_priv_destructor_t)unix_socket_ancillary_free);
-                mutex_unlock(&active_peer->lock);
+                spin_unlock(&active_peer->lock);
                 continue;
             }
 
-            mutex_unlock(&active_peer->lock);
+            spin_unlock(&active_peer->lock);
             socket_notify_sock(active_peer, EPOLLIN);
             return to_copy;
         }
-        mutex_unlock(&active_peer->lock);
+        spin_unlock(&active_peer->lock);
 
         if ((fd_handle && (fd_get_flags(fd_handle) & O_NONBLOCK)) ||
             (flags & MSG_DONTWAIT)) {
@@ -1722,9 +1724,9 @@ static size_t unix_socket_send_skb_to_peer(socket_t *self, socket_t *peer,
             return -EPIPE;
         }
 
-        mutex_lock(&active_peer->lock);
+        spin_lock(&active_peer->lock);
         if (active_peer->closed || active_peer->shut_rd) {
-            mutex_unlock(&active_peer->lock);
+            spin_unlock(&active_peer->lock);
             if (!(flags & MSG_NOSIGNAL))
                 task_commit_signal(current_task, SIGPIPE, NULL);
             skb_free(skb, (skb_priv_destructor_t)unix_socket_ancillary_free);
@@ -1732,22 +1734,22 @@ static size_t unix_socket_send_skb_to_peer(socket_t *self, socket_t *peer,
         }
 
         if (packet_len > active_peer->recv_size) {
-            mutex_unlock(&active_peer->lock);
+            spin_unlock(&active_peer->lock);
             skb_free(skb, (skb_priv_destructor_t)unix_socket_ancillary_free);
             return -EMSGSIZE;
         }
 
         if (unix_socket_recv_space_locked(active_peer) >= packet_len) {
             if (!skb_queue_push(&active_peer->recv_queue, skb)) {
-                mutex_unlock(&active_peer->lock);
+                spin_unlock(&active_peer->lock);
                 continue;
             }
 
-            mutex_unlock(&active_peer->lock);
+            spin_unlock(&active_peer->lock);
             socket_notify_sock(active_peer, EPOLLIN);
             return packet_len;
         }
-        mutex_unlock(&active_peer->lock);
+        spin_unlock(&active_peer->lock);
 
         if ((fd_handle && (fd_get_flags(fd_handle) & O_NONBLOCK)) ||
             (flags & MSG_DONTWAIT)) {
@@ -1809,7 +1811,7 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
         return 0;
 
     while (true) {
-        mutex_lock(&self->lock);
+        spin_lock(&self->lock);
 
         bool has_data = unix_socket_is_message_type(self->type)
                             ? (skb_queue_packets(&self->recv_queue) > 0)
@@ -1822,7 +1824,7 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
                                                      &truncated, NULL, NULL)
                     : unix_socket_stream_read_locked(self, buf, len, peek, NULL,
                                                      NULL);
-            mutex_unlock(&self->lock);
+            spin_unlock(&self->lock);
 
             if (!peek) {
                 socket_t *notify_peer = unix_socket_get_peer_ref(self);
@@ -1841,7 +1843,7 @@ static size_t unix_socket_recv_from_self(socket_t *self, socket_t *peer,
         bool eof =
             unix_socket_is_connected_type(self->type) &&
             (!active_peer || active_peer->closed || active_peer->shut_wr);
-        mutex_unlock(&self->lock);
+        spin_unlock(&self->lock);
 
         if (eof)
             return 0;
@@ -1881,7 +1883,7 @@ unix_socket_recvmsg_from_self(socket_t *self, socket_t *peer,
         return 0;
 
     while (true) {
-        mutex_lock(&self->lock);
+        spin_lock(&self->lock);
 
         bool has_data = unix_socket_is_message_type(self->type)
                             ? (skb_queue_packets(&self->recv_queue) > 0)
@@ -1907,7 +1909,7 @@ unix_socket_recvmsg_from_self(socket_t *self, socket_t *peer,
                     self, msg->msg_iov, msg->msg_iovlen, len_total, peek,
                     &ancillary_list, &ancillary_tail);
             }
-            mutex_unlock(&self->lock);
+            spin_unlock(&self->lock);
 
             if ((ssize_t)copied < 0) {
                 unix_socket_ancillary_free_list(ancillary_list);
@@ -1938,7 +1940,7 @@ unix_socket_recvmsg_from_self(socket_t *self, socket_t *peer,
         bool eof =
             unix_socket_is_connected_type(self->type) &&
             (!active_peer || active_peer->closed || active_peer->shut_wr);
-        mutex_unlock(&self->lock);
+        spin_unlock(&self->lock);
 
         if (eof)
             return 0;
@@ -2125,9 +2127,9 @@ int socket_bind(uint64_t fd, const struct sockaddr_un *addr,
     }
 
     uint64_t bind_hash = unix_socket_name_hash(safe);
-    mutex_lock(&unix_socket_bind_lock);
+    spin_lock(&unix_socket_bind_lock);
     if (unix_socket_lookup_bound_locked(safe, safeLen, sock, false)) {
-        mutex_unlock(&unix_socket_bind_lock);
+        spin_unlock(&unix_socket_bind_lock);
         free(safe);
         vfs_file_put(file);
         return -EADDRINUSE;
@@ -2138,7 +2140,7 @@ int socket_bind(uint64_t fd, const struct sockaddr_un *addr,
     if (!bucket) {
         bucket = calloc(1, sizeof(*bucket));
         if (!bucket) {
-            mutex_unlock(&unix_socket_bind_lock);
+            spin_unlock(&unix_socket_bind_lock);
             if (!is_abstract)
                 unix_socket_unlink_bound_path(safe);
             free(safe);
@@ -2148,7 +2150,7 @@ int socket_bind(uint64_t fd, const struct sockaddr_un *addr,
         bucket->hash = bind_hash;
         if (hashmap_put(&unix_socket_bind_map, bind_hash, bucket) != 0) {
             free(bucket);
-            mutex_unlock(&unix_socket_bind_lock);
+            spin_unlock(&unix_socket_bind_lock);
             if (!is_abstract)
                 unix_socket_unlink_bound_path(safe);
             free(safe);
@@ -2162,7 +2164,7 @@ int socket_bind(uint64_t fd, const struct sockaddr_un *addr,
     sock->bindHash = bind_hash;
     sock->bind_next = bucket->head;
     bucket->head = sock;
-    mutex_unlock(&unix_socket_bind_lock);
+    spin_unlock(&unix_socket_bind_lock);
 
     vfs_file_put(file);
     return 0;
@@ -2180,7 +2182,7 @@ int socket_listen(uint64_t fd, int backlog) {
     socket_handle_t *handle = sockfs_file_handle(file);
     socket_t *sock = handle->sock;
 
-    mutex_lock(&sock->lock);
+    spin_lock(&sock->lock);
     unix_socket_fill_cred_from_task(&sock->cred, current_task);
     if (sock->backlog) {
         free(sock->backlog);
@@ -2190,7 +2192,7 @@ int socket_listen(uint64_t fd, int backlog) {
     sock->connCurr = 0;
     sock->connHead = 0;
     sock->backlogCap = 0;
-    mutex_unlock(&sock->lock);
+    spin_unlock(&sock->lock);
     vfs_file_put(file);
     return 0;
 }
@@ -2230,7 +2232,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
     // 等待连接并从 backlog 取一个
     socket_t *server_sock = NULL;
     while (true) {
-        mutex_lock(&listen_sock->lock);
+        spin_lock(&listen_sock->lock);
         if (listen_sock->connCurr > 0) {
             int head = listen_sock->connHead;
             server_sock = listen_sock->backlog[head];
@@ -2240,11 +2242,11 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
             listen_sock->connCurr--;
             if (listen_sock->connCurr == 0)
                 listen_sock->connHead = 0;
-            mutex_unlock(&listen_sock->lock);
+            spin_unlock(&listen_sock->lock);
             socket_notify_sock(listen_sock, EPOLLOUT);
             break;
         }
-        mutex_unlock(&listen_sock->lock);
+        spin_unlock(&listen_sock->lock);
         if (fd_get_flags(listener_fd) & O_NONBLOCK) {
             vfs_file_put(listener_fd);
             return -(EWOULDBLOCK);
@@ -2298,7 +2300,7 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
      */
     uint32_t replay_events = 0;
     socket_t *server_peer = NULL;
-    mutex_lock(&server_sock->lock);
+    spin_lock(&server_sock->lock);
     bool has_input = unix_socket_is_message_type(server_sock->type)
                          ? (skb_queue_packets(&server_sock->recv_queue) > 0)
                          : (unix_socket_recv_used_locked(server_sock) > 0);
@@ -2307,19 +2309,19 @@ int socket_accept(uint64_t fd, struct sockaddr_un *addr, socklen_t *addrlen,
     if (server_sock->peer) {
         server_peer = server_sock->peer;
         unix_socket_get(server_peer);
-        if (mutex_trylock(&server_peer->lock)) {
+        if (spin_trylock(&server_peer->lock)) {
             if (server_peer->closed)
                 replay_events |= EPOLLIN | EPOLLRDNORM | EPOLLRDHUP | EPOLLHUP;
             else if (server_peer->shut_wr)
                 replay_events |= EPOLLIN | EPOLLRDNORM | EPOLLRDHUP;
-            mutex_unlock(&server_peer->lock);
+            spin_unlock(&server_peer->lock);
         }
     } else if (server_sock->established) {
         replay_events |= EPOLLIN | EPOLLRDNORM | EPOLLRDHUP | EPOLLHUP;
     }
     if (server_sock->closed)
         replay_events |= EPOLLERR | EPOLLHUP;
-    mutex_unlock(&server_sock->lock);
+    spin_unlock(&server_sock->lock);
     if (replay_events)
         socket_notify_sock(server_sock, replay_events);
 
@@ -2453,15 +2455,15 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
     }
 
     while (true) {
-        mutex_lock(&listen_sock->lock);
+        spin_lock(&listen_sock->lock);
         if (listen_sock->closed || !listen_sock->connMax) {
-            mutex_unlock(&listen_sock->lock);
+            spin_unlock(&listen_sock->lock);
             unix_socket_release_lookup_ref(listen_sock);
             vfs_file_put(file);
             return -ECONNREFUSED;
         }
         bool queue_available = listen_sock->connCurr < listen_sock->connMax;
-        mutex_unlock(&listen_sock->lock);
+        spin_unlock(&listen_sock->lock);
 
         if (queue_available)
             break;
@@ -2510,10 +2512,10 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
     server_sock->established = true;
     sock->established = true;
 
-    mutex_lock(&listen_sock->lock);
+    spin_lock(&listen_sock->lock);
     if (listen_sock->closed || !listen_sock->connMax ||
         listen_sock->connCurr >= listen_sock->connMax) {
-        mutex_unlock(&listen_sock->lock);
+        spin_unlock(&listen_sock->lock);
         sock->established = false;
         unix_socket_disconnect_peer_links(server_sock, false, false, false);
         unix_socket_release_lookup_ref(listen_sock);
@@ -2523,7 +2525,7 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
     }
     if (!unix_socket_backlog_reserve_locked(listen_sock,
                                             listen_sock->connCurr + 1)) {
-        mutex_unlock(&listen_sock->lock);
+        spin_unlock(&listen_sock->lock);
         sock->established = false;
         unix_socket_disconnect_peer_links(server_sock, false, false, false);
         unix_socket_release_lookup_ref(listen_sock);
@@ -2535,7 +2537,7 @@ int socket_connect(uint64_t fd, const struct sockaddr_un *addr,
                listen_sock->backlogCap;
     listen_sock->backlog[tail] = server_sock;
     listen_sock->connCurr++;
-    mutex_unlock(&listen_sock->lock);
+    spin_unlock(&listen_sock->lock);
     socket_notify_sock(listen_sock, EPOLLIN);
     socket_notify_sock(sock, EPOLLOUT);
     unix_socket_release_lookup_ref(listen_sock);
@@ -2940,16 +2942,16 @@ int socket_poll(fd_t *fd, size_t events) {
 
     if (sock->connMax > 0) {
         // listen 模式
-        mutex_lock(&sock->lock);
+        spin_lock(&sock->lock);
         if (sock->connCurr > 0)
             revents |= socket_ready_input(want);
         if (sock->connCurr < sock->connMax)
             revents |= socket_ready_output(want);
         if (sock->closed)
             revents |= EPOLLERR | EPOLLHUP;
-        mutex_unlock(&sock->lock);
+        spin_unlock(&sock->lock);
     } else if (unix_socket_is_dgram_type(sock->type)) {
-        mutex_lock(&sock->lock);
+        spin_lock(&sock->lock);
         socket_t *peer = sock->peer;
         if (peer)
             unix_socket_get(peer);
@@ -2964,25 +2966,25 @@ int socket_poll(fd_t *fd, size_t events) {
             revents |= EPOLLERR | EPOLLHUP;
         if (!peer && sock->established)
             revents |= EPOLLHUP;
-        else if (peer && mutex_trylock(&peer->lock)) {
+        else if (peer && spin_trylock(&peer->lock)) {
             if (peer->closed || peer->shut_wr) {
                 if (socket_wants_input(want))
                     revents |= socket_ready_input(want);
                 revents |= EPOLLHUP | EPOLLRDHUP;
             }
-            mutex_unlock(&peer->lock);
+            spin_unlock(&peer->lock);
         }
 
-        mutex_unlock(&sock->lock);
+        spin_unlock(&sock->lock);
         if (peer)
             unix_socket_free(peer);
     } else {
-        mutex_lock(&sock->lock);
+        spin_lock(&sock->lock);
         socket_t *peer = sock->peer;
         if (peer)
             unix_socket_get(peer);
         if (peer) {
-            if (mutex_trylock(&peer->lock)) {
+            if (spin_trylock(&peer->lock)) {
                 if (peer->closed)
                     revents |= EPOLLHUP | EPOLLRDHUP;
                 else if (peer->shut_wr)
@@ -2998,7 +3000,7 @@ int socket_poll(fd_t *fd, size_t events) {
                 if (socket_wants_input(want) && (has_input || sock->shut_rd ||
                                                  peer->shut_wr || peer->closed))
                     revents |= socket_ready_input(want);
-                mutex_unlock(&peer->lock);
+                spin_unlock(&peer->lock);
             } else {
                 bool has_input =
                     unix_socket_is_message_type(sock->type)
@@ -3009,7 +3011,7 @@ int socket_poll(fd_t *fd, size_t events) {
                 if (sock->closed)
                     revents |= EPOLLHUP | EPOLLERR;
             }
-            mutex_unlock(&sock->lock);
+            spin_unlock(&sock->lock);
             unix_socket_free(peer);
         } else {
             if (socket_wants_input(want) && sock->established)
@@ -3021,7 +3023,7 @@ int socket_poll(fd_t *fd, size_t events) {
                 revents |= EPOLLHUP;
             if (sock->closed)
                 revents |= EPOLLERR;
-            mutex_unlock(&sock->lock);
+            spin_unlock(&sock->lock);
         }
     }
 
@@ -3176,11 +3178,11 @@ int socket_ioctl(fd_t *fd, ssize_t cmd, ssize_t arg) {
         if (!arg)
             return -EFAULT;
         {
-            mutex_lock(&sock->lock);
+            spin_lock(&sock->lock);
             int value = (int)(unix_socket_is_message_type(sock->type)
                                   ? unix_socket_next_packet_len_locked(sock)
                                   : unix_socket_recv_used_locked(sock));
-            mutex_unlock(&sock->lock);
+            spin_unlock(&sock->lock);
             if (copy_to_user((void *)arg, &value, sizeof(value)))
                 return -EFAULT;
             return 0;
@@ -3471,10 +3473,10 @@ size_t unix_socket_setsockopt(uint64_t fd, int level, int optname,
             if (new_size < BUFFER_SIZE)
                 new_size = BUFFER_SIZE;
 
-            mutex_lock(&sock->lock);
+            spin_lock(&sock->lock);
             sock->recv_size = new_size;
             skb_queue_set_limit(&sock->recv_queue, sock->recv_size);
-            mutex_unlock(&sock->lock);
+            spin_unlock(&sock->lock);
         }
         break;
 
@@ -3748,10 +3750,10 @@ static const struct vfs_file_operations sockfs_file_ops = {
 };
 
 void socketfs_init() {
-    mutex_init(&sockfs_mount_lock);
+    spin_init(&sockfs_mount_lock);
     vfs_register_filesystem(&sockfs_fs_type);
     spin_init(&unix_socket_list_lock);
-    mutex_init(&unix_socket_bind_lock);
+    spin_init(&unix_socket_bind_lock);
     memset(&first_unix_socket, 0, sizeof(socket_t));
     unix_socket_list_tail = &first_unix_socket;
     unix_socket_bind_map = HASHMAP_INIT;

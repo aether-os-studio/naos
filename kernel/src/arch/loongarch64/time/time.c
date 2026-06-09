@@ -2,6 +2,7 @@
 #include <arch/loongarch64/time/time.h>
 #include <arch/loongarch64/csr.h>
 #include <irq/irq_manager.h>
+#include <task/watchdog.h>
 
 #define LOONGARCH_DEFAULT_TIMER_FREQ 100000000ULL
 
@@ -79,6 +80,7 @@ void timer_init_percpu(void) {
         return;
 
     timer_set_sched_interval_ns(1000000000ULL / SCHED_HZ);
+    sched_watchdog_init_cpu(current_cpu_id);
 }
 
 void timer_handler(uint64_t irq_num, void *parameter, struct pt_regs *regs) {

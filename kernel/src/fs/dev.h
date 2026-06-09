@@ -2,7 +2,6 @@
 
 #include <fs/vfs/vfs.h>
 #include <dev/device.h>
-#include <libs/mutex.h>
 
 typedef struct devtmpfs_node {
     char *content;

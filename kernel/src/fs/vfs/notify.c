@@ -22,7 +22,7 @@ typedef struct notifyfs_watch_bucket_entry {
 } notifyfs_watch_bucket_entry_t;
 
 typedef struct notifyfs_watch_bucket {
-    mutex_t lock;
+    spinlock_t lock;
     struct llist_header entries;
 } notifyfs_watch_bucket_t;
 
@@ -39,7 +39,7 @@ struct notifyfs_watch {
 };
 
 struct notifyfs_handle {
-    mutex_t lock;
+    spinlock_t lock;
     struct llist_header watches;
     struct llist_header events;
     spinlock_t events_lock;
@@ -70,7 +70,7 @@ static const struct vfs_super_operations notifyfs_super_ops;
 static const struct vfs_inode_operations notifyfs_dir_inode_ops;
 static const struct vfs_file_operations notifyfs_dir_file_ops;
 static const struct vfs_file_operations notifyfs_file_ops;
-static mutex_t notifyfs_mount_lock;
+static spinlock_t notifyfs_mount_lock;
 static struct vfs_mount *notifyfs_internal_mnt;
 static notifyfs_watch_bucket_t notifyfs_watch_index[NOTIFYFS_WATCH_HASH_SIZE];
 static volatile uint32_t notifyfs_cookie_seq = 1;
@@ -253,12 +253,12 @@ static int notifyfs_watch_index_locked(notifyfs_watch_t *watch) {
         return -EINVAL;
 
     bucket = notifyfs_watch_bucket_for(watch->watch_inode);
-    mutex_lock(&bucket->lock);
+    spin_lock(&bucket->lock);
     entry = notifyfs_find_bucket_entry_locked(bucket, watch->watch_inode);
     if (!entry) {
         entry = calloc(1, sizeof(*entry));
         if (!entry) {
-            mutex_unlock(&bucket->lock);
+            spin_unlock(&bucket->lock);
             return -ENOMEM;
         }
 
@@ -271,7 +271,7 @@ static int notifyfs_watch_index_locked(notifyfs_watch_t *watch) {
     if (llist_empty(&watch->inode_node))
         llist_append(&entry->watches, &watch->inode_node);
     watch->bucket = entry;
-    mutex_unlock(&bucket->lock);
+    spin_unlock(&bucket->lock);
     return 0;
 }
 
@@ -282,9 +282,9 @@ static void notifyfs_watch_unindex(notifyfs_watch_t *watch) {
         return;
 
     bucket = notifyfs_watch_bucket_for(watch->watch_inode);
-    mutex_lock(&bucket->lock);
+    spin_lock(&bucket->lock);
     notifyfs_watch_unindex_locked(watch, bucket, true);
-    mutex_unlock(&bucket->lock);
+    spin_unlock(&bucket->lock);
 }
 
 static void
@@ -418,11 +418,11 @@ notifyfs_drain_events_locked(notifyfs_handle_t *handle, void *addr, size_t size,
     }
     spin_unlock(&handle->events_lock);
 
-    mutex_lock(&handle->lock);
+    spin_lock(&handle->lock);
     notifyfs_watch_t *watch, *watch_tmp;
     llist_for_each(watch, watch_tmp, &handle->watches, node)
         notifyfs_maybe_collect_stale_watch_locked(watch, stale_watches);
-    mutex_unlock(&handle->lock);
+    spin_unlock(&handle->lock);
     return (ssize_t)total_write;
 }
 
@@ -434,7 +434,7 @@ static void notifyfs_destroy_handle(notifyfs_handle_t *handle) {
         return;
 
     llist_init_head(&stale_watches);
-    mutex_lock(&handle->lock);
+    spin_lock(&handle->lock);
     while (!llist_empty(&handle->watches)) {
         notifyfs_watch_t *watch =
             list_entry(handle->watches.next, notifyfs_watch_t, node);
@@ -442,7 +442,7 @@ static void notifyfs_destroy_handle(notifyfs_handle_t *handle) {
         llist_delete(&watch->node);
         llist_append(&stale_watches, &watch->node);
     }
-    mutex_unlock(&handle->lock);
+    spin_unlock(&handle->lock);
 
     notifyfs_free_watch_list(&stale_watches);
 
@@ -475,14 +475,14 @@ int notifyfs_handle_add_watch(notifyfs_handle_t *handle,
     if (!new_mask)
         return -EINVAL;
 
-    mutex_lock(&handle->lock);
+    spin_lock(&handle->lock);
     llist_for_each(watch, tmp, &handle->watches, node) {
         if (watch->watch_inode != watch_inode)
             continue;
         if (!watch->active)
             continue;
         if (mask & IN_MASK_CREATE) {
-            mutex_unlock(&handle->lock);
+            spin_unlock(&handle->lock);
             return -EEXIST;
         }
 
@@ -492,13 +492,13 @@ int notifyfs_handle_add_watch(notifyfs_handle_t *handle,
             watch->mask = new_mask;
         if (wd_out)
             *wd_out = watch->wd;
-        mutex_unlock(&handle->lock);
+        spin_unlock(&handle->lock);
         return 0;
     }
 
     watch = calloc(1, sizeof(*watch));
     if (!watch) {
-        mutex_unlock(&handle->lock);
+        spin_unlock(&handle->lock);
         return -ENOMEM;
     }
 
@@ -515,14 +515,14 @@ int notifyfs_handle_add_watch(notifyfs_handle_t *handle,
     llist_append(&handle->watches, &watch->node);
     if (wd_out)
         *wd_out = watch->wd;
-    mutex_unlock(&handle->lock);
+    spin_unlock(&handle->lock);
 
     ret = notifyfs_watch_index_locked(watch);
     if (ret < 0) {
-        mutex_lock(&handle->lock);
+        spin_lock(&handle->lock);
         if (!llist_empty(&watch->node))
             llist_delete(&watch->node);
-        mutex_unlock(&handle->lock);
+        spin_unlock(&handle->lock);
         notifyfs_free_watch(watch);
         return ret;
     }
@@ -537,18 +537,18 @@ int notifyfs_handle_remove_watch(notifyfs_handle_t *handle, uint64_t wd) {
     if (!handle || !wd)
         return -EINVAL;
 
-    mutex_lock(&handle->lock);
+    spin_lock(&handle->lock);
     llist_for_each(watch, tmp, &handle->watches, node) {
         if (watch->wd != wd || !watch->active)
             continue;
         notifyfs_watch_deactivate_locked(watch, true);
         llist_delete(&watch->node);
         removed = watch;
-        mutex_unlock(&handle->lock);
+        spin_unlock(&handle->lock);
         notifyfs_free_watch(removed);
         return 0;
     }
-    mutex_unlock(&handle->lock);
+    spin_unlock(&handle->lock);
     return -EINVAL;
 }
 
@@ -579,10 +579,10 @@ bool notifyfs_queue_inode_event(struct vfs_inode *watch_inode,
         event_mask |= IN_ISDIR;
 
     bucket = notifyfs_watch_bucket_for(watch_inode);
-    mutex_lock(&bucket->lock);
+    spin_lock(&bucket->lock);
     entry = notifyfs_find_bucket_entry_locked(bucket, watch_inode);
     if (!entry) {
-        mutex_unlock(&bucket->lock);
+        spin_unlock(&bucket->lock);
         return false;
     }
 
@@ -614,7 +614,7 @@ bool notifyfs_queue_inode_event(struct vfs_inode *watch_inode,
         free(entry);
     }
 
-    mutex_unlock(&bucket->lock);
+    spin_unlock(&bucket->lock);
     return queued;
 }
 
@@ -850,7 +850,7 @@ static struct vfs_file_system_type notifyfs_fs_type = {
 static struct vfs_mount *notifyfs_get_internal_mount(void) {
     int ret;
 
-    mutex_lock(&notifyfs_mount_lock);
+    spin_lock(&notifyfs_mount_lock);
     if (!notifyfs_internal_mnt) {
         ret = vfs_kern_mount("notifyfs", 0, NULL, NULL, &notifyfs_internal_mnt);
         if (ret < 0)
@@ -858,7 +858,7 @@ static struct vfs_mount *notifyfs_get_internal_mount(void) {
     }
     if (notifyfs_internal_mnt)
         vfs_mntget(notifyfs_internal_mnt);
-    mutex_unlock(&notifyfs_mount_lock);
+    spin_unlock(&notifyfs_mount_lock);
     return notifyfs_internal_mnt;
 }
 
@@ -890,7 +890,7 @@ int notifyfs_create_handle_file(struct vfs_file **out_file,
         return -ENOMEM;
     }
 
-    mutex_init(&handle->lock);
+    spin_init(&handle->lock);
     llist_init_head(&handle->watches);
     llist_init_head(&handle->events);
     spin_init(&handle->events_lock);
@@ -945,10 +945,10 @@ int notifyfs_create_handle_file(struct vfs_file **out_file,
 
 void notifyfs_init(void) {
     for (size_t i = 0; i < NOTIFYFS_WATCH_HASH_SIZE; ++i) {
-        mutex_init(&notifyfs_watch_index[i].lock);
+        spin_init(&notifyfs_watch_index[i].lock);
         llist_init_head(&notifyfs_watch_index[i].entries);
     }
 
-    mutex_init(&notifyfs_mount_lock);
+    spin_init(&notifyfs_mount_lock);
     vfs_register_filesystem(&notifyfs_fs_type);
 }

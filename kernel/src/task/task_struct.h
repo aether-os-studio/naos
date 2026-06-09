@@ -1,7 +1,6 @@
 #pragma once
 
 #include <libs/klibc.h>
-#include <libs/mutex.h>
 #include <libs/llist.h>
 #include <libs/rbtree.h>
 #include <libs/termios.h>

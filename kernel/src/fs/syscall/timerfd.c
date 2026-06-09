@@ -17,7 +17,7 @@ static struct vfs_file_system_type timerfdfs_fs_type;
 static const struct vfs_super_operations timerfdfs_super_ops;
 static const struct vfs_file_operations timerfdfs_dir_file_ops;
 static const struct vfs_file_operations timerfdfs_file_ops;
-static mutex_t timerfdfs_mount_lock;
+static spinlock_t timerfdfs_mount_lock;
 static struct vfs_mount *timerfdfs_internal_mnt;
 
 int timerfdfs_id = 0;
@@ -380,7 +380,7 @@ static struct vfs_file_system_type timerfdfs_fs_type = {
 static struct vfs_mount *timerfdfs_get_internal_mount(void) {
     int ret;
 
-    mutex_lock(&timerfdfs_mount_lock);
+    spin_lock(&timerfdfs_mount_lock);
     if (!timerfdfs_internal_mnt) {
         ret =
             vfs_kern_mount("timefdfs", 0, NULL, NULL, &timerfdfs_internal_mnt);
@@ -389,7 +389,7 @@ static struct vfs_mount *timerfdfs_get_internal_mount(void) {
     }
     if (timerfdfs_internal_mnt)
         vfs_mntget(timerfdfs_internal_mnt);
-    mutex_unlock(&timerfdfs_mount_lock);
+    spin_unlock(&timerfdfs_mount_lock);
     return timerfdfs_internal_mnt;
 }
 
@@ -409,7 +409,7 @@ static loff_t timerfdfs_llseek(struct vfs_file *file, loff_t offset,
 
     if (!file || !file->f_inode)
         return -EBADF;
-    mutex_lock(&file->f_pos_lock);
+    spin_lock(&file->f_pos_lock);
     switch (whence) {
     case SEEK_SET:
         pos = offset;
@@ -421,15 +421,15 @@ static loff_t timerfdfs_llseek(struct vfs_file *file, loff_t offset,
         pos = (loff_t)file->f_inode->i_size + offset;
         break;
     default:
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
         return -EINVAL;
     }
     if (pos < 0) {
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
         return -EINVAL;
     }
     file->f_pos = pos;
-    mutex_unlock(&file->f_pos_lock);
+    spin_unlock(&file->f_pos_lock);
     return pos;
 }
 
@@ -774,7 +774,7 @@ static const struct vfs_file_operations timerfdfs_file_ops = {
 };
 
 void timerfd_init() {
-    mutex_init(&timerfdfs_mount_lock);
+    spin_init(&timerfdfs_mount_lock);
     spin_init(&timerfd_mono_lock);
     spin_init(&timerfd_real_lock);
     timerfd_mono_root = RB_ROOT_INIT;

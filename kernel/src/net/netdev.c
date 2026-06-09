@@ -935,6 +935,8 @@ int netdev_wait_rx(netdev_t *dev, uint64_t observed_seq) {
 
     if (reason == ETIMEDOUT)
         return EOK;
+    if (reason < 0)
+        return reason;
     if (reason != EOK && task_signal_has_deliverable(current_task))
         return -EINTR;
     return reason == EOK ? EOK : -EINTR;

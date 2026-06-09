@@ -5,7 +5,6 @@
 #include <fs/vfs/vfs.h>
 #include <fs/vfs/fcntl.h>
 #include <task/task.h>
-#include <libs/mutex.h>
 
 char *at_resolve_pathname(int dirfd, char *pathname);
 char *at_resolve_pathname_fullpath(int dirfd, char *pathname);
@@ -284,7 +283,7 @@ typedef struct epoll_watch {
 
 typedef struct epoll {
     struct llist_header watches;
-    mutex_t lock;
+    spinlock_t lock;
     struct vfs_inode *inode;
 } epoll_t;
 

@@ -19,7 +19,7 @@ static struct vfs_file_system_type signalfdfs_fs_type;
 static const struct vfs_super_operations signalfdfs_super_ops;
 static const struct vfs_file_operations signalfdfs_dir_file_ops;
 static const struct vfs_file_operations signalfdfs_file_ops;
-static mutex_t signalfdfs_mount_lock;
+static spinlock_t signalfdfs_mount_lock;
 static struct vfs_mount *signalfdfs_internal_mnt;
 
 int signalfdfs_id = 0;
@@ -173,7 +173,7 @@ static struct vfs_file_system_type signalfdfs_fs_type = {
 static struct vfs_mount *signalfdfs_get_internal_mount(void) {
     int ret;
 
-    mutex_lock(&signalfdfs_mount_lock);
+    spin_lock(&signalfdfs_mount_lock);
     if (!signalfdfs_internal_mnt) {
         ret = vfs_kern_mount("signalfdfs", 0, NULL, NULL,
                              &signalfdfs_internal_mnt);
@@ -182,7 +182,7 @@ static struct vfs_mount *signalfdfs_get_internal_mount(void) {
     }
     if (signalfdfs_internal_mnt)
         vfs_mntget(signalfdfs_internal_mnt);
-    mutex_unlock(&signalfdfs_mount_lock);
+    spin_unlock(&signalfdfs_mount_lock);
     return signalfdfs_internal_mnt;
 }
 
@@ -203,7 +203,7 @@ static loff_t signalfdfs_llseek(struct vfs_file *file, loff_t offset,
     if (!file || !file->f_inode)
         return -EBADF;
 
-    mutex_lock(&file->f_pos_lock);
+    spin_lock(&file->f_pos_lock);
     switch (whence) {
     case SEEK_SET:
         pos = offset;
@@ -215,15 +215,15 @@ static loff_t signalfdfs_llseek(struct vfs_file *file, loff_t offset,
         pos = (loff_t)file->f_inode->i_size + offset;
         break;
     default:
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
         return -EINVAL;
     }
     if (pos < 0) {
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
         return -EINVAL;
     }
     file->f_pos = pos;
-    mutex_unlock(&file->f_pos_lock);
+    spin_unlock(&file->f_pos_lock);
     return pos;
 }
 
@@ -451,7 +451,7 @@ uint64_t sys_signalfd(int ufd, const sigset_t *mask, size_t sizemask) {
 }
 
 void signalfd_init() {
-    mutex_init(&signalfdfs_mount_lock);
+    spin_init(&signalfdfs_mount_lock);
     vfs_register_filesystem(&signalfdfs_fs_type);
     signalfdfs_id = 1;
 }

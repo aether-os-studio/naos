@@ -156,7 +156,7 @@ struct vfs_file *vfs_alloc_file(const struct vfs_path *path,
     file->node = file->f_inode;
     file->f_op = file->f_inode->i_fop;
     file->f_flags = open_flags;
-    mutex_init(&file->f_pos_lock);
+    spin_init(&file->f_pos_lock);
     spin_init(&file->f_lock);
     file->f_fd_refs = 0;
     spin_init(&file->epoll_watches_lock);
@@ -572,7 +572,7 @@ ssize_t vfs_read_file(struct vfs_file *file, void *buf, size_t count,
     bool lock_pos = !ppos && !(file->f_mode & VFS_FMODE_NO_POS_LOCK);
 
     if (lock_pos)
-        mutex_lock(&file->f_pos_lock);
+        spin_lock(&file->f_pos_lock);
     pos = ppos ? *ppos : file->f_pos;
 
     new_pos = pos;
@@ -586,7 +586,7 @@ ssize_t vfs_read_file(struct vfs_file *file, void *buf, size_t count,
     }
 
     if (lock_pos)
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
     return ret;
 }
 
@@ -606,7 +606,7 @@ ssize_t vfs_write_file(struct vfs_file *file, const void *buf, size_t count,
     bool lock_pos = !ppos && !(file->f_mode & VFS_FMODE_NO_POS_LOCK);
 
     if (lock_pos)
-        mutex_lock(&file->f_pos_lock);
+        spin_lock(&file->f_pos_lock);
     pos = ppos ? *ppos : file->f_pos;
     if (!ppos && (file->f_flags & O_APPEND))
         pos = (loff_t)file->f_inode->i_size;
@@ -625,7 +625,7 @@ ssize_t vfs_write_file(struct vfs_file *file, const void *buf, size_t count,
     }
 
     if (lock_pos)
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
     return ret;
 }
 
@@ -637,7 +637,7 @@ loff_t vfs_llseek_file(struct vfs_file *file, loff_t offset, int whence) {
     if (file->f_op && file->f_op->llseek)
         return file->f_op->llseek(file, offset, whence);
 
-    mutex_lock(&file->f_pos_lock);
+    spin_lock(&file->f_pos_lock);
     switch (whence) {
     case SEEK_SET:
         new_pos = offset;
@@ -649,17 +649,17 @@ loff_t vfs_llseek_file(struct vfs_file *file, loff_t offset, int whence) {
         new_pos = (loff_t)file->f_inode->i_size + offset;
         break;
     default:
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
         return -EINVAL;
     }
 
     if (new_pos < 0) {
-        mutex_unlock(&file->f_pos_lock);
+        spin_unlock(&file->f_pos_lock);
         return -EINVAL;
     }
 
     file->f_pos = new_pos;
-    mutex_unlock(&file->f_pos_lock);
+    spin_unlock(&file->f_pos_lock);
     return new_pos;
 }
 
@@ -740,6 +740,8 @@ int vfs_poll_wait_interruptible(struct vfs_file *file, uint32_t events) {
 
         if (reason == ETIMEDOUT)
             return -ETIMEDOUT;
+        if (reason < 0)
+            return reason;
         if (reason != EOK && task_signal_has_deliverable(current_task))
             return -EINTR;
     }

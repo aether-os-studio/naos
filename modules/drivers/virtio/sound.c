@@ -34,8 +34,8 @@ struct virtio_sound_device {
     virtqueue_t *event_vq;
     virtqueue_t *tx_vq;
     virtqueue_t *rx_vq;
-    mutex_t control_lock;
-    mutex_t tx_lock;
+    spinlock_t control_lock;
+    spinlock_t tx_lock;
     uint32_t stream_count;
     virtio_sound_stream_t streams[VIRTIO_SOUND_MAX_STREAMS];
 };
@@ -89,10 +89,10 @@ static int virtio_sound_ctl_send(virtio_sound_device_t *dev, const void *req,
     bufs[1].addr = (uint64_t)resp_buf;
     bufs[1].size = resp_size;
 
-    mutex_lock(&dev->control_lock);
+    spin_lock(&dev->control_lock);
     desc_idx = virt_queue_add_buf(dev->control_vq, bufs, 2, writable);
     if (desc_idx == 0xFFFF) {
-        mutex_unlock(&dev->control_lock);
+        spin_unlock(&dev->control_lock);
         ret = -EIO;
         goto out;
     }
@@ -105,7 +105,7 @@ static int virtio_sound_ctl_send(virtio_sound_device_t *dev, const void *req,
         arch_pause();
     }
     virt_queue_free_desc(dev->control_vq, used_idx);
-    mutex_unlock(&dev->control_lock);
+    spin_unlock(&dev->control_lock);
 
     memcpy(resp, resp_buf, resp_size);
     if (((virtio_snd_hdr_t *)resp)->code != VIRTIO_SND_S_OK) {
@@ -519,7 +519,7 @@ static int virtio_sound_drain(sound_pcm_substream_t *substream) {
     virtio_sound_stream_t *stream = substream->driver_data;
     sound_pcm_runtime_t *runtime = &substream->runtime;
 
-    mutex_lock(&stream->dev->tx_lock);
+    spin_lock(&stream->dev->tx_lock);
     virtio_sound_reclaim_locked(stream);
     int ret = virtio_sound_submit_locked(stream);
     if (ret == 0 && (runtime->appl_ptr - runtime->hw_ptr_base) == 0 &&
@@ -528,7 +528,7 @@ static int virtio_sound_drain(sound_pcm_substream_t *substream) {
         runtime->draining = false;
         runtime->state = SNDRV_PCM_STATE_SETUP;
     }
-    mutex_unlock(&stream->dev->tx_lock);
+    spin_unlock(&stream->dev->tx_lock);
     sound_pcm_notify(substream);
     return ret;
 }
@@ -538,9 +538,9 @@ static int virtio_sound_free(sound_pcm_substream_t *substream) {
     virtio_snd_pcm_hdr_t req;
     virtio_snd_hdr_t resp;
 
-    mutex_lock(&stream->dev->tx_lock);
+    spin_lock(&stream->dev->tx_lock);
     virtio_sound_reclaim_locked(stream);
-    mutex_unlock(&stream->dev->tx_lock);
+    spin_unlock(&stream->dev->tx_lock);
 
     memset(&req, 0, sizeof(req));
     req.hdr.code = VIRTIO_SND_R_PCM_RELEASE;
@@ -555,7 +555,7 @@ static int virtio_sound_pump(sound_pcm_substream_t *substream) {
     sound_pcm_runtime_t *runtime = &substream->runtime;
     int ret = 0;
 
-    mutex_lock(&stream->dev->tx_lock);
+    spin_lock(&stream->dev->tx_lock);
     virtio_sound_reclaim_locked(stream);
     if (runtime->running) {
         ret = virtio_sound_submit_locked(stream);
@@ -573,7 +573,7 @@ static int virtio_sound_pump(sound_pcm_substream_t *substream) {
             runtime->state = SNDRV_PCM_STATE_SETUP;
         }
     }
-    mutex_unlock(&stream->dev->tx_lock);
+    spin_unlock(&stream->dev->tx_lock);
 
     sound_pcm_notify(substream);
     return ret;
@@ -598,9 +598,9 @@ static void virtio_sound_worker(uint64_t arg) {
             if (!stream->substream) {
                 continue;
             }
-            mutex_lock(&stream->substream->lock);
+            spin_lock(&stream->substream->lock);
             virtio_sound_pump(stream->substream);
-            mutex_unlock(&stream->substream->lock);
+            spin_unlock(&stream->substream->lock);
         }
 
         task_block(current_task, TASK_BLOCKING, 1000000, "virtio_sound");
@@ -629,8 +629,8 @@ int virtio_sound_init(virtio_driver_t *driver) {
     }
 
     dev->driver = driver;
-    mutex_init(&dev->control_lock);
-    mutex_init(&dev->tx_lock);
+    spin_init(&dev->control_lock);
+    spin_init(&dev->tx_lock);
     dev->stream_count = MIN(cfg.streams, (uint32_t)VIRTIO_SOUND_MAX_STREAMS);
 
     dev->control_vq = virt_queue_new(driver, VIRTIO_SND_VQ_CONTROL,

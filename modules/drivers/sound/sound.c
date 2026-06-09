@@ -708,26 +708,26 @@ static int sound_hw_refine_fill_defaults(sound_pcm_substream_t *substream,
 static int sound_pcm_open(void *dev, void *arg) {
     sound_pcm_substream_t *substream = sound_dev_to_substream(dev);
     (void)arg;
-    mutex_lock(&substream->lock);
+    spin_lock(&substream->lock);
     if (substream->opened) {
-        mutex_unlock(&substream->lock);
+        spin_unlock(&substream->lock);
         return -EBUSY;
     }
     substream->opened = true;
     if (sound_runtime_allocate_control_pages(substream) < 0) {
         substream->opened = false;
-        mutex_unlock(&substream->lock);
+        spin_unlock(&substream->lock);
         return -ENOMEM;
     }
     sound_runtime_reset(substream);
-    mutex_unlock(&substream->lock);
+    spin_unlock(&substream->lock);
     return 0;
 }
 
 static int sound_pcm_close(void *dev, void *arg) {
     sound_pcm_substream_t *substream = sound_dev_to_substream(dev);
     (void)arg;
-    mutex_lock(&substream->lock);
+    spin_lock(&substream->lock);
     if (substream->ops && substream->ops->free &&
         sound_pcm_backend_validate(substream) == 0) {
         substream->ops->free(substream);
@@ -736,7 +736,7 @@ static int sound_pcm_close(void *dev, void *arg) {
     substream->runtime.configured = false;
     substream->opened = false;
     sound_runtime_reset(substream);
-    mutex_unlock(&substream->lock);
+    spin_unlock(&substream->lock);
     return 0;
 }
 
@@ -857,7 +857,7 @@ static ssize_t sound_pcm_ioctl(void *dev, int cmd, void *args, fd_t *fd) {
     ssize_t ret = -ENOTTY;
     (void)fd;
 
-    mutex_lock(&substream->lock);
+    spin_lock(&substream->lock);
 
     switch ((uint32_t)cmd) {
     case SNDRV_PCM_IOCTL_PVERSION:
@@ -1118,7 +1118,7 @@ static ssize_t sound_pcm_ioctl(void *dev, int cmd, void *args, fd_t *fd) {
         break;
     }
 
-    mutex_unlock(&substream->lock);
+    spin_unlock(&substream->lock);
     return ret;
 }
 
@@ -1129,16 +1129,16 @@ static ssize_t sound_pcm_write(void *dev, void *buf, uint64_t offset,
     (void)offset;
     (void)fd;
 
-    mutex_lock(&substream->lock);
+    spin_lock(&substream->lock);
     if (!substream->runtime.configured || !substream->runtime.frame_bytes) {
-        mutex_unlock(&substream->lock);
+        spin_unlock(&substream->lock);
         return -EBADFD;
     }
     memset(&xfer, 0, sizeof(xfer));
     xfer.buf = buf;
     xfer.frames = sound_bytes_to_frames(&substream->runtime, size);
     ssize_t ret = sound_pcm_write_frames_locked(substream, &xfer);
-    mutex_unlock(&substream->lock);
+    spin_unlock(&substream->lock);
     return ret < 0 ? ret
                    : sound_frames_to_bytes(&substream->runtime, xfer.result);
 }
@@ -1148,11 +1148,11 @@ static ssize_t sound_pcm_poll(void *dev, int events) {
     sound_pcm_runtime_t *runtime = &substream->runtime;
     ssize_t ready = EPOLLERR;
 
-    mutex_lock(&substream->lock);
+    spin_lock(&substream->lock);
     if (substream->ops && substream->ops->pump) {
         int ret = sound_pcm_backend_validate(substream);
         if (ret < 0) {
-            mutex_unlock(&substream->lock);
+            spin_unlock(&substream->lock);
             return EPOLLERR;
         }
         substream->ops->pump(substream);
@@ -1169,7 +1169,7 @@ static ssize_t sound_pcm_poll(void *dev, int events) {
     if ((events & EPOLLIN) && substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
         ready |= EPOLLIN;
     }
-    mutex_unlock(&substream->lock);
+    spin_unlock(&substream->lock);
     return ready;
 }
 
@@ -1181,42 +1181,42 @@ static void *sound_pcm_map(void *dev, void *addr, size_t offset, size_t size,
     uint64_t pt_flags = PT_FLAG_U;
     (void)fd;
 
-    mutex_lock(&substream->lock);
+    spin_lock(&substream->lock);
     if (!runtime->configured && offset == SNDRV_PCM_MMAP_OFFSET_DATA) {
-        mutex_unlock(&substream->lock);
+        spin_unlock(&substream->lock);
         return (void *)(int64_t)-EBADFD;
     }
 
     if (offset == SNDRV_PCM_MMAP_OFFSET_STATUS) {
         if (!runtime->mmap_status &&
             sound_runtime_allocate_control_pages(substream) < 0) {
-            mutex_unlock(&substream->lock);
+            spin_unlock(&substream->lock);
             return (void *)(int64_t)-ENOMEM;
         }
         if (!runtime->mmap_status) {
-            mutex_unlock(&substream->lock);
+            spin_unlock(&substream->lock);
             return (void *)(int64_t)-EBADFD;
         }
         paddr = virt_to_phys(runtime->mmap_status);
     } else if (offset == SNDRV_PCM_MMAP_OFFSET_CONTROL) {
         if (!runtime->mmap_control &&
             sound_runtime_allocate_control_pages(substream) < 0) {
-            mutex_unlock(&substream->lock);
+            spin_unlock(&substream->lock);
             return (void *)(int64_t)-ENOMEM;
         }
         if (!runtime->mmap_control) {
-            mutex_unlock(&substream->lock);
+            spin_unlock(&substream->lock);
             return (void *)(int64_t)-EBADFD;
         }
         paddr = virt_to_phys(runtime->mmap_control);
     } else if (offset < runtime->buffer_bytes) {
         if (!runtime->configured || !runtime->dma_area) {
-            mutex_unlock(&substream->lock);
+            spin_unlock(&substream->lock);
             return (void *)(int64_t)-EBADFD;
         }
         paddr = virt_to_phys(runtime->dma_area + offset);
     } else {
-        mutex_unlock(&substream->lock);
+        spin_unlock(&substream->lock);
         return (void *)(int64_t)-EINVAL;
     }
 
@@ -1235,7 +1235,7 @@ static void *sound_pcm_map(void *dev, void *addr, size_t offset, size_t size,
 
     map_page_range(task_mm_pgdir(current_task->mm), (uint64_t)addr, paddr, size,
                    pt_flags);
-    mutex_unlock(&substream->lock);
+    spin_unlock(&substream->lock);
     return addr;
 }
 
@@ -1244,7 +1244,7 @@ static ssize_t sound_ctl_ioctl(void *dev, int cmd, void *args, fd_t *fd) {
     ssize_t ret = -ENOTTY;
     (void)fd;
 
-    mutex_lock(&card->lock);
+    spin_lock(&card->lock);
     switch ((uint32_t)cmd) {
     case SNDRV_CTL_IOCTL_PVERSION:
         ret =
@@ -1348,7 +1348,7 @@ static ssize_t sound_ctl_ioctl(void *dev, int cmd, void *args, fd_t *fd) {
         ret = -ENOTTY;
         break;
     }
-    mutex_unlock(&card->lock);
+    spin_unlock(&card->lock);
     return ret;
 }
 
@@ -1428,7 +1428,7 @@ sound_card_t *sound_card_create(const char *driver, const char *id,
     sound_cards[card->index] = card;
     spin_unlock(&sound_registry_lock);
 
-    mutex_init(&card->lock);
+    spin_init(&card->lock);
     strncpy(card->driver, driver ? driver : "sound", sizeof(card->driver) - 1);
     strncpy(card->id, id ? id : "soundcard", sizeof(card->id) - 1);
     strncpy(card->name, name ? name : "Sound Card", sizeof(card->name) - 1);
@@ -1499,7 +1499,7 @@ sound_pcm_substream_t *sound_pcm_create(const sound_pcm_create_info_t *info) {
     substream->ops = info->ops;
     substream->driver_data = info->driver_data;
     substream->caps = *info->caps;
-    mutex_init(&substream->lock);
+    spin_init(&substream->lock);
 
     strncpy(substream->id, info->id ? info->id : pcm->id,
             sizeof(substream->id) - 1);

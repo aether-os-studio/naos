@@ -218,6 +218,10 @@ uint64_t user_translate_or_fault(uint64_t *pgdir, uint64_t uaddr, bool write) {
     return user_translate_access(pgdir, uaddr, write);
 }
 
+uint64_t user_translate_no_fault(uint64_t *pgdir, uint64_t uaddr, bool write) {
+    return user_translate_access(pgdir, uaddr, write);
+}
+
 void *memcpy(void *restrict dest, const void *restrict src, size_t n) {
     unsigned char *d = dest;
     const unsigned char *s = src;

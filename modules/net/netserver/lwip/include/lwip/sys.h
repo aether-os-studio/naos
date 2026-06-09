@@ -61,8 +61,8 @@ typedef u8_t sys_mbox_t;
 #define sys_sem_set_invalid(s)
 #define sys_sem_set_invalid_val(s)
 #define sys_mutex_new(mu) ERR_OK
-#define sys_mutex_lock(mu)
-#define sys_mutex_unlock(mu)
+#define sys_spin_lock(mu)
+#define sys_spin_unlock(mu)
 #define sys_mutex_free(mu)
 #define sys_mutex_valid(mu) 0
 #define sys_mutex_set_invalid(mu)
@@ -112,8 +112,8 @@ typedef void (*lwip_thread_fn)(void *arg);
 /* for old ports that don't have mutexes: define them to binary semaphores */
 #define sys_mutex_t sys_sem_t
 #define sys_mutex_new(mutex) sys_sem_new(mutex, 1)
-#define sys_mutex_lock(mutex) sys_sem_wait(mutex)
-#define sys_mutex_unlock(mutex) sys_sem_signal(mutex)
+#define sys_spin_lock(mutex) sys_sem_wait(mutex)
+#define sys_spin_unlock(mutex) sys_sem_signal(mutex)
 #define sys_mutex_free(mutex) sys_sem_free(mutex)
 #define sys_mutex_valid(mutex) sys_sem_valid(mutex)
 #define sys_mutex_set_invalid(mutex) sys_sem_set_invalid(mutex)
@@ -140,13 +140,13 @@ err_t sys_mutex_new(sys_mutex_t *mutex);
  * Blocks the thread until the mutex can be grabbed.
  * @param mutex the mutex to lock
  */
-void sys_mutex_lock(sys_mutex_t *mutex);
+void sys_spin_lock(sys_mutex_t *mutex);
 /**
  * @ingroup sys_mutex
- * Releases the mutex previously locked through 'sys_mutex_lock()'.
+ * Releases the mutex previously locked through 'sys_spin_lock()'.
  * @param mutex the mutex to unlock
  */
-void sys_mutex_unlock(sys_mutex_t *mutex);
+void sys_spin_unlock(sys_mutex_t *mutex);
 /**
  * @ingroup sys_mutex
  * Deallocates a mutex.

@@ -3,6 +3,7 @@
 #include <boot/boot.h>
 #include <mm/mm.h>
 #include <task/task.h>
+#include <task/watchdog.h>
 
 uint64_t cpu_count = 0;
 uint64_t cpuid_to_physid[MAX_CPU_NUM];
@@ -54,6 +55,7 @@ void loongarch64_ap_entry(uint64_t physid) {
     arch_set_current(idle_tasks[cpu_id]);
     task_mark_on_cpu(idle_tasks[cpu_id], true);
     task_mm_mark_cpu_active(idle_tasks[cpu_id]->mm, cpu_id);
+    sched_watchdog_note_current(cpu_id, idle_tasks[cpu_id], nano_time());
 
     while (!__atomic_load_n(&global_timer.initialized, __ATOMIC_ACQUIRE)) {
         arch_pause();

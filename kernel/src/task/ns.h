@@ -54,7 +54,7 @@ typedef struct task_user_namespace {
     uint32_t level;
     int64_t owner_uid;
     int64_t owner_gid;
-    mutex_t lock;
+    spinlock_t lock;
     task_id_map_range_t uid_map[TASK_USERNS_MAX_ID_MAPS];
     task_id_map_range_t gid_map[TASK_USERNS_MAX_ID_MAPS];
     size_t uid_map_count;

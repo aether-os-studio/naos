@@ -13,7 +13,7 @@ typedef struct pty_pair {
 
     struct pty_pair *next;
 
-    mutex_t lock;
+    spinlock_t lock;
 
     int masterFds;
     int slaveFds;

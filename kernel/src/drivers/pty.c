@@ -481,12 +481,12 @@ static int pty_open_peer_fd(pty_pair_t *pair, uint64_t flags) {
     if (flags & ~allowed_flags)
         return -EINVAL;
 
-    mutex_lock(&pair->lock);
+    spin_lock(&pair->lock);
     if (pair->locked) {
-        mutex_unlock(&pair->lock);
+        spin_unlock(&pair->lock);
         return -EIO;
     }
-    mutex_unlock(&pair->lock);
+    spin_unlock(&pair->lock);
 
     spin_lock(&pty_global_lock);
     inode = pair->pts_node ? vfs_igrab(pair->pts_node) : NULL;
@@ -580,7 +580,7 @@ static int ptmx_open_file(struct vfs_inode *inode, struct vfs_file *file) {
         return -ENOMEM;
     }
 
-    mutex_init(&pair->lock);
+    spin_init(&pair->lock);
     llist_init_head(&pair->pts_nodes);
     pair->id = id;
     pair->bufferMaster = malloc(PTY_BUFF_SIZE);
@@ -624,11 +624,11 @@ static int ptmx_release_file(struct vfs_inode *inode, struct vfs_file *file) {
     if (!pair)
         return 0;
 
-    mutex_lock(&pair->lock);
+    spin_lock(&pair->lock);
     if (pair->masterFds > 0)
         pair->masterFds--;
     notify_hup = pair->masterFds == 0;
-    mutex_unlock(&pair->lock);
+    spin_unlock(&pair->lock);
 
     if (notify_hup)
         pty_notify_slaves(pair, EPOLLHUP | EPOLLRDHUP | EPOLLIN | EPOLLOUT |
@@ -650,11 +650,11 @@ static ssize_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
         return 0;
 
     while (true) {
-        mutex_lock(&pair->lock);
+        spin_lock(&pair->lock);
         if (pair->packet_mode && pair->packet_status) {
             ((uint8_t *)addr)[0] = pair->packet_status;
             pair->packet_status = 0;
-            mutex_unlock(&pair->lock);
+            spin_unlock(&pair->lock);
             return 1;
         }
         if (ptmx_data_avail(pair) > 0) {
@@ -672,13 +672,13 @@ static ssize_t ptmx_read(fd_t *fd, void *addr, size_t offset, size_t size) {
             pair->ptrMaster -= to_copy;
             pair->packet_data_pending =
                 pair->packet_mode && pair->ptrMaster > 0;
-            mutex_unlock(&pair->lock);
+            spin_unlock(&pair->lock);
             if (to_copy > 0)
                 pty_notify_slaves(pair, EPOLLOUT | EPOLLWRNORM);
             return (ssize_t)(header + to_copy);
         }
         bool no_slave = (pair->slaveFds == 0);
-        mutex_unlock(&pair->lock);
+        spin_unlock(&pair->lock);
         if (no_slave)
             return 0;
         if (fd_get_flags(fd) & O_NONBLOCK)
@@ -699,9 +699,9 @@ static ssize_t ptmx_write(fd_t *fd, const void *addr, size_t offset,
         return -EINVAL;
 
     while (true) {
-        mutex_lock(&pair->lock);
+        spin_lock(&pair->lock);
         if (pair->stop_master_output) {
-            mutex_unlock(&pair->lock);
+            spin_unlock(&pair->lock);
             if (fd_get_flags(fd) & O_NONBLOCK)
                 return -EWOULDBLOCK;
 
@@ -716,7 +716,7 @@ static ssize_t ptmx_write(fd_t *fd, const void *addr, size_t offset,
             continue;
         }
         if (!pair->slaveFds) {
-            mutex_unlock(&pair->lock);
+            spin_unlock(&pair->lock);
             return -EIO;
         }
         if (pair->ptrSlave < PTY_BUFF_SIZE) {
@@ -754,7 +754,7 @@ static ssize_t ptmx_write(fd_t *fd, const void *addr, size_t offset,
                 echoed++;
                 written++;
             }
-            mutex_unlock(&pair->lock);
+            spin_unlock(&pair->lock);
             if ((pair->term.c_lflag & ICANON) && (pair->term.c_lflag & ECHO) &&
                 echoed > 0)
                 pts_write_inner(fd, &pair->bufferSlave[echo_start], echoed);
@@ -762,7 +762,7 @@ static ssize_t ptmx_write(fd_t *fd, const void *addr, size_t offset,
                 pty_notify_slaves(pair, EPOLLIN | EPOLLRDNORM);
             return (ssize_t)written;
         }
-        mutex_unlock(&pair->lock);
+        spin_unlock(&pair->lock);
         if (fd_get_flags(fd) & O_NONBLOCK)
             return -EWOULDBLOCK;
 
@@ -788,7 +788,7 @@ static long ptmx_ioctl(fd_t *fd, unsigned long request, unsigned long arg) {
     if ((request & 0xffffffffUL) == TIOCGPTPEER)
         return pty_open_peer_fd(pair, (uint64_t)arg);
 
-    mutex_lock(&pair->lock);
+    spin_lock(&pair->lock);
     switch (number) {
     case 0x31: {
         int lock = 0;
@@ -924,7 +924,7 @@ static long ptmx_ioctl(fd_t *fd, unsigned long request, unsigned long arg) {
     }
     if (!ret)
         pty_packet_queue_locked(pair, packet_status, &notify_master);
-    mutex_unlock(&pair->lock);
+    spin_unlock(&pair->lock);
 
     if (!ret)
         pty_notify_pair(pair, notify_master, notify_slave);
@@ -938,7 +938,7 @@ static __poll_t ptmx_poll(fd_t *file, struct vfs_poll_table *pt) {
     if (!pair)
         return EPOLLNVAL;
 
-    mutex_lock(&pair->lock);
+    spin_lock(&pair->lock);
     if (pair->packet_mode && pair->packet_status)
         revents |= EPOLLIN | EPOLLRDNORM | EPOLLPRI;
     if (ptmx_data_avail(pair) > 0)
@@ -947,7 +947,7 @@ static __poll_t ptmx_poll(fd_t *file, struct vfs_poll_table *pt) {
         revents |= EPOLLOUT | EPOLLWRNORM;
     if (!pair->slaveFds)
         revents |= EPOLLHUP | EPOLLRDHUP;
-    mutex_unlock(&pair->lock);
+    spin_unlock(&pair->lock);
     return revents;
 }
 
@@ -956,14 +956,14 @@ static int pts_open_file(struct vfs_inode *inode, struct vfs_file *file) {
 
     if (!pair || !file)
         return -EINVAL;
-    mutex_lock(&pair->lock);
+    spin_lock(&pair->lock);
     if (pair->locked) {
-        mutex_unlock(&pair->lock);
+        spin_unlock(&pair->lock);
         return -EIO;
     }
     pair->slaveFds++;
     file->private_data = pair;
-    mutex_unlock(&pair->lock);
+    spin_unlock(&pair->lock);
     pty_notify_master(pair, EPOLLOUT | EPOLLWRNORM);
     return 0;
 }
@@ -975,11 +975,11 @@ static int pts_release_file(struct vfs_inode *inode, struct vfs_file *file) {
     if (!pair)
         return 0;
 
-    mutex_lock(&pair->lock);
+    spin_lock(&pair->lock);
     if (pair->slaveFds > 0)
         pair->slaveFds--;
     notify_hup = pair->slaveFds == 0;
-    mutex_unlock(&pair->lock);
+    spin_unlock(&pair->lock);
 
     if (notify_hup)
         pty_notify_master(pair, EPOLLHUP | EPOLLRDHUP | EPOLLIN | EPOLLOUT |
@@ -1010,7 +1010,7 @@ static ssize_t pts_read(fd_t *fd, void *out, size_t offset, size_t limit) {
         return -EINVAL;
 
     while (true) {
-        mutex_lock(&pair->lock);
+        spin_lock(&pair->lock);
         if (pts_data_avail(pair) > 0) {
             size_t to_copy = MIN(limit, pts_data_avail(pair));
             memcpy(out, pair->bufferSlave, to_copy);
@@ -1019,13 +1019,13 @@ static ssize_t pts_read(fd_t *fd, void *out, size_t offset, size_t limit) {
                 memmove(pair->bufferSlave, &pair->bufferSlave[to_copy],
                         remaining);
             pair->ptrSlave -= to_copy;
-            mutex_unlock(&pair->lock);
+            spin_unlock(&pair->lock);
             if (to_copy > 0)
                 pty_notify_master(pair, EPOLLOUT | EPOLLWRNORM);
             return (ssize_t)to_copy;
         }
         bool no_master = (pair->masterFds == 0);
-        mutex_unlock(&pair->lock);
+        spin_unlock(&pair->lock);
         if (no_master)
             return 0;
         if (fd_get_flags(fd) & O_NONBLOCK)
@@ -1044,9 +1044,9 @@ ssize_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
         return -EINVAL;
 
     while (true) {
-        mutex_lock(&pair->lock);
+        spin_lock(&pair->lock);
         if (pair->stop_slave_output) {
-            mutex_unlock(&pair->lock);
+            spin_unlock(&pair->lock);
             if (fd_get_flags(fd) & O_NONBLOCK)
                 return -EWOULDBLOCK;
 
@@ -1061,7 +1061,7 @@ ssize_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
             continue;
         }
         if (!pair->masterFds) {
-            mutex_unlock(&pair->lock);
+            spin_unlock(&pair->lock);
             return -EIO;
         }
         if (pair->ptrMaster < PTY_BUFF_SIZE) {
@@ -1085,13 +1085,13 @@ ssize_t pts_write_inner(fd_t *fd, uint8_t *in, size_t limit) {
             }
             if (written > 0)
                 pty_packet_mark_data_locked(pair, old_ptr_master);
-            mutex_unlock(&pair->lock);
+            spin_unlock(&pair->lock);
             if (written > 0)
                 pty_notify_master(pair, EPOLLIN | EPOLLRDNORM |
                                             (pair->packet_mode ? EPOLLPRI : 0));
             return (ssize_t)written;
         }
-        mutex_unlock(&pair->lock);
+        spin_unlock(&pair->lock);
         if (fd_get_flags(fd) & O_NONBLOCK)
             return -EWOULDBLOCK;
 
@@ -1149,7 +1149,7 @@ int pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
     if (!pair)
         return -EINVAL;
 
-    mutex_lock(&pair->lock);
+    spin_lock(&pair->lock);
     switch (request) {
     case TIOCGWINSZ:
         ret = (!arg || copy_to_user(arg, &pair->win, sizeof(struct winsize)))
@@ -1230,7 +1230,7 @@ int pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
     }
     if (!ret)
         pty_packet_queue_locked(pair, packet_status, &notify_master);
-    mutex_unlock(&pair->lock);
+    spin_unlock(&pair->lock);
 
     if (!ret)
         pty_notify_pair(pair, notify_master, notify_slave);
@@ -1272,14 +1272,14 @@ static __poll_t pts_poll(fd_t *file, struct vfs_poll_table *pt) {
     if (!pair)
         return EPOLLNVAL;
 
-    mutex_lock(&pair->lock);
+    spin_lock(&pair->lock);
     if (pts_data_avail(pair) > 0)
         revents |= EPOLLIN | EPOLLRDNORM;
     if (pair->ptrMaster < PTY_BUFF_SIZE)
         revents |= EPOLLOUT | EPOLLWRNORM;
     if (!pair->masterFds)
         revents |= EPOLLHUP | EPOLLRDHUP;
-    mutex_unlock(&pair->lock);
+    spin_unlock(&pair->lock);
     return revents;
 }
 

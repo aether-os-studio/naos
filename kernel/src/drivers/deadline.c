@@ -8,7 +8,14 @@ typedef struct deadline_queue {
     uint64_t next_cached_ns;
 } deadline_queue_t;
 
-static deadline_queue_t deadline_queues[MAX_CPU_NUM];
+static deadline_queue_t deadline_queues[MAX_CPU_NUM] = {
+    [0 ... MAX_CPU_NUM - 1] =
+        {
+            .tree = RB_ROOT_INIT,
+            .lock = SPIN_INIT,
+            .next_cached_ns = UINT64_MAX,
+        },
+};
 
 static inline deadline_queue_t *deadline_queue_for_cpu(uint32_t cpu_id) {
     if (cpu_id >= MAX_CPU_NUM)
@@ -31,9 +38,10 @@ static int deadline_source_cmp(const deadline_source_t *left,
 
 static void deadline_refresh_next_locked(deadline_queue_t *queue) {
     rb_node_t *first = rb_first(&queue->tree);
-    queue->next_cached_ns =
-        first ? rb_entry(first, deadline_source_t, node)->deadline_ns
-              : UINT64_MAX;
+    uint64_t next = first
+                        ? rb_entry(first, deadline_source_t, node)->deadline_ns
+                        : UINT64_MAX;
+    __atomic_store_n(&queue->next_cached_ns, next, __ATOMIC_RELEASE);
 }
 
 void deadline_source_init(deadline_source_t *source,
@@ -60,7 +68,7 @@ void deadline_source_update(deadline_source_t *source, uint64_t deadline_ns) {
 
     queue = deadline_queue_for_cpu(source->cpu_id);
     spin_lock(&queue->lock);
-    old_next = queue->next_cached_ns;
+    old_next = __atomic_load_n(&queue->next_cached_ns, __ATOMIC_ACQUIRE);
 
     if (source->deadline_ns == deadline_ns &&
         source->queued == (deadline_ns != UINT64_MAX)) {
@@ -98,7 +106,7 @@ void deadline_source_update(deadline_source_t *source, uint64_t deadline_ns) {
     }
 
     deadline_refresh_next_locked(queue);
-    new_next = queue->next_cached_ns;
+    new_next = __atomic_load_n(&queue->next_cached_ns, __ATOMIC_ACQUIRE);
     should_reprogram = old_next != new_next;
     spin_unlock(&queue->lock);
 
@@ -116,17 +124,21 @@ uint64_t deadline_next_ns_for_cpu(uint32_t cpu_id) {
     return next;
 }
 
+uint64_t deadline_cached_next_ns_for_cpu(uint32_t cpu_id) {
+    deadline_queue_t *queue = deadline_queue_for_cpu(cpu_id);
+    return __atomic_load_n(&queue->next_cached_ns, __ATOMIC_ACQUIRE);
+}
+
 void deadline_reprogram_cpu(uint32_t cpu_id) {
     if (cpu_id >= cpu_count)
         return;
 
-    uint64_t deadline_ns = deadline_next_ns_for_cpu(cpu_id);
-    if (cpu_id == current_cpu_id) {
-        arch_program_timer_deadline_local(deadline_ns);
+    if (cpu_id != current_cpu_id) {
+        irq_trigger_sched_ipi(cpu_id);
         return;
     }
 
-    irq_trigger_sched_ipi(cpu_id);
+    arch_program_timer_deadline_local(deadline_next_ns_for_cpu(cpu_id));
 }
 
 void deadline_reprogram_local(void) { deadline_reprogram_cpu(current_cpu_id); }

@@ -1,10 +1,15 @@
 #pragma once
 
-#include <libs/mutex.h>
 #include <libs/klibc.h>
 #include <task/task.h>
 
 typedef unsigned long sys_prot_t;
+
+typedef struct wait_node {
+    task_t *task;
+    struct wait_node *next;
+    bool queued;
+} wait_node_t;
 
 typedef struct naos_lwip_sem {
     sem_t sem;
@@ -14,7 +19,12 @@ typedef struct naos_lwip_sem {
 } *sys_sem_t;
 
 typedef struct naos_lwip_mutex {
-    mutex_t lock;
+    spinlock_t lock;
+    wait_node_t *wait_head;
+    wait_node_t *wait_tail;
+    uintptr_t owner;
+    uint32_t depth;
+    bool locked;
     bool valid;
 } *sys_mutex_t;
 

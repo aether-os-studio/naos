@@ -331,7 +331,7 @@ static void sched_add_entity(task_t *task, sched_rq_t *scheduler, bool wakeup) {
     raw_spin_unlock(&scheduler->lock);
 
     if (resched_task)
-        task_set_need_resched(resched_task);
+        sched_request_resched(resched_task);
     if (should_ping_cpu)
         irq_trigger_sched_ipi(target_cpu);
 }
@@ -685,7 +685,7 @@ bool sched_request_preempt_on_wakeup(sched_rq_t *scheduler,
 
 out:
     if (should_preempt && curr_task)
-        task_set_need_resched(curr_task);
+        sched_request_resched(curr_task);
     raw_spin_unlock(&scheduler->lock);
     return should_preempt;
 }

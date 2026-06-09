@@ -9,6 +9,7 @@ typedef enum deadline_source_type {
     DEADLINE_SOURCE_TASK_SIGNAL_TIMER = 2,
     DEADLINE_SOURCE_TIMERFD_MONO = 3,
     DEADLINE_SOURCE_TIMERFD_REAL = 4,
+    DEADLINE_SOURCE_SCHED_WATCHDOG = 5,
 } deadline_source_type_t;
 
 typedef struct deadline_source {
@@ -23,5 +24,6 @@ void deadline_source_init(deadline_source_t *source,
                           deadline_source_type_t type, uint32_t cpu_id);
 void deadline_source_update(deadline_source_t *source, uint64_t deadline_ns);
 uint64_t deadline_next_ns_for_cpu(uint32_t cpu_id);
+uint64_t deadline_cached_next_ns_for_cpu(uint32_t cpu_id);
 void deadline_reprogram_cpu(uint32_t cpu_id);
 void deadline_reprogram_local(void);

@@ -30,8 +30,8 @@ uint64_t naos_get_time_ms(void) { return nano_time() / 1000000; }
 
 // Locking (for multi-threaded environments)
 void *naos_mutex_create(void) { return NULL; }
-void naos_mutex_lock(void *mutex) {}
-void naos_mutex_unlock(void *mutex) {}
+void naos_spin_lock(void *mutex) {}
+void naos_spin_unlock(void *mutex) {}
 void naos_mutex_destroy(void *mutex) {}
 
 int naos_printk(const char *fmt, ...) {
@@ -54,8 +54,8 @@ nvme_platform_ops_t naos_nvme_platform_ops = {
     .udelay = naos_udelay,
     .get_time_ms = naos_get_time_ms,
     .mutex_create = naos_mutex_create,
-    .mutex_lock = naos_mutex_lock,
-    .mutex_unlock = naos_mutex_unlock,
+    .spin_lock = naos_spin_lock,
+    .spin_unlock = naos_spin_unlock,
     .mutex_destroy = naos_mutex_destroy,
     .log = naos_printk,
 };

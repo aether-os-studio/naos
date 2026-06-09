@@ -2,7 +2,6 @@
 
 #include <libs/klibc.h>
 #include <libs/llist.h>
-#include <libs/mutex.h>
 #include <task/task.h>
 
 typedef struct cgroup cgroup_t;
