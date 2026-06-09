@@ -67,6 +67,52 @@ static void pipefs_notify_node(vfs_node_t *node, uint32_t events) {
         vfs_poll_notify_inode(node, events);
 }
 
+static void pipefs_update_size_locked(pipe_info_t *pipe,
+                                      struct vfs_file *file) {
+    if (!pipe)
+        return;
+    if (file && file->f_inode)
+        file->f_inode->i_size = pipe->ptr;
+    if (pipe->write_node)
+        pipe->write_node->i_size = pipe->ptr;
+    if (pipe->read_node)
+        pipe->read_node->i_size = pipe->ptr;
+}
+
+static void pipefs_ring_read_locked(pipe_info_t *pipe, void *addr, size_t len) {
+    size_t first;
+    size_t second;
+
+    first = MIN(len, (size_t)PIPE_BUFF - pipe->read_pos);
+    memcpy(addr, pipe->buf + pipe->read_pos, first);
+
+    second = len - first;
+    if (second)
+        memcpy((char *)addr + first, pipe->buf, second);
+
+    pipe->read_pos = (pipe->read_pos + len) % PIPE_BUFF;
+    pipe->ptr -= (uint32_t)len;
+    if (pipe->ptr == 0)
+        pipe->read_pos = 0;
+}
+
+static void pipefs_ring_write_locked(pipe_info_t *pipe, const void *addr,
+                                     size_t len) {
+    size_t write_pos;
+    size_t first;
+    size_t second;
+
+    write_pos = (pipe->read_pos + pipe->ptr) % PIPE_BUFF;
+    first = MIN(len, (size_t)PIPE_BUFF - write_pos);
+    memcpy(pipe->buf + write_pos, addr, first);
+
+    second = len - first;
+    if (second)
+        memcpy(pipe->buf, (const char *)addr + first, second);
+
+    pipe->ptr += (uint32_t)len;
+}
+
 static void pipefs_free_info(pipe_info_t *pipe) {
     if (!pipe)
         return;
@@ -337,15 +383,8 @@ static ssize_t pipe_read_inner(struct vfs_file *file, void *addr, size_t size,
 
         if (pipe->ptr > 0) {
             size_t to_read = MIN(size, pipe->ptr);
-            memcpy(addr, pipe->buf, to_read);
-            memmove(pipe->buf, pipe->buf + to_read, pipe->ptr - to_read);
-            pipe->ptr -= to_read;
-            if (file && file->f_inode)
-                file->f_inode->i_size = pipe->ptr;
-            if (pipe->write_node)
-                pipe->write_node->i_size = pipe->ptr;
-            if (pipe->read_node)
-                pipe->read_node->i_size = pipe->ptr;
+            pipefs_ring_read_locked(pipe, addr, to_read);
+            pipefs_update_size_locked(pipe, file);
             vfs_node_t *write_node = pipe->write_node;
             if (write_node)
                 vfs_igrab(write_node);
@@ -420,22 +459,18 @@ static ssize_t pipe_write_inner(struct vfs_file *file, const void *addr,
 
         size_t available = PIPE_BUFF - pipe->ptr;
         if (available > 0 && (!atomic || available >= size)) {
+            bool was_empty = pipe->ptr == 0;
             size_t to_write = atomic ? size : MIN(size, available);
-            memcpy(pipe->buf + pipe->ptr, addr, to_write);
-            pipe->ptr += to_write;
-            if (file && file->f_inode)
-                file->f_inode->i_size = pipe->ptr;
-            if (pipe->write_node)
-                pipe->write_node->i_size = pipe->ptr;
-            if (pipe->read_node)
-                pipe->read_node->i_size = pipe->ptr;
+            pipefs_ring_write_locked(pipe, addr, to_write);
+            pipefs_update_size_locked(pipe, file);
             vfs_node_t *read_node = pipe->read_node;
-            if (read_node)
+            if (was_empty && read_node)
                 vfs_igrab(read_node);
             spin_unlock(&pipe->lock);
 
-            pipefs_notify_node(read_node, EPOLLIN | EPOLLRDNORM);
-            if (read_node)
+            if (was_empty)
+                pipefs_notify_node(read_node, EPOLLIN | EPOLLRDNORM);
+            if (was_empty && read_node)
                 vfs_iput(read_node);
             return (ssize_t)to_write;
         }
@@ -463,7 +498,7 @@ static ssize_t pipefs_write(struct vfs_file *file, const void *buf,
     (void)ppos;
     while (written < count) {
         ssize_t ret = pipe_write_inner(file, data + written, count - written,
-                                       atomic, written == 0);
+                                       atomic, true);
         if (ret < 0)
             return written ? (ssize_t)written : ret;
         if (ret == 0)
@@ -674,6 +709,7 @@ static int pipefs_create_endpoint(struct vfs_file **out_file, pipe_info_t *pipe,
     }
 
     file->private_data = spec;
+    file->f_mode |= VFS_FMODE_NO_POS_LOCK;
     spin_lock(&pipe->lock);
     pipe->owns_node_refs = true;
     if (write_end)
@@ -736,6 +772,7 @@ int pipefs_named_open(struct vfs_inode *inode, struct vfs_file *file) {
     spin_unlock(&pipe->lock);
 
     file->private_data = spec;
+    file->f_mode |= VFS_FMODE_NO_POS_LOCK;
     return 0;
 }
 

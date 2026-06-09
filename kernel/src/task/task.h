@@ -7,6 +7,16 @@
 #include <libs/termios.h>
 #include <mm/bitmap.h>
 
+#define preempt_enable(task)                                                   \
+    do {                                                                       \
+        __atomic_fetch_add(&(task)->preempt_count, 1, __ATOMIC_RELAXED);       \
+    } while (0);
+
+#define preempt_disable(task)                                                  \
+    do {                                                                       \
+        __atomic_fetch_sub(&(task)->preempt_count, 1, __ATOMIC_RELAXED);       \
+    } while (0);
+
 typedef struct task_index_bucket {
     uint64_t key;
     size_t count;

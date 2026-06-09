@@ -107,7 +107,7 @@ void deadline_source_update(deadline_source_t *source, uint64_t deadline_ns) {
 
     deadline_refresh_next_locked(queue);
     new_next = __atomic_load_n(&queue->next_cached_ns, __ATOMIC_ACQUIRE);
-    should_reprogram = old_next != new_next;
+    should_reprogram = new_next < old_next;
     spin_unlock(&queue->lock);
 
     if (should_reprogram)
@@ -138,7 +138,7 @@ void deadline_reprogram_cpu(uint32_t cpu_id) {
         return;
     }
 
-    arch_program_timer_deadline_local(deadline_next_ns_for_cpu(cpu_id));
+    arch_program_timer_deadline_local(deadline_cached_next_ns_for_cpu(cpu_id));
 }
 
 void deadline_reprogram_local(void) { deadline_reprogram_cpu(current_cpu_id); }

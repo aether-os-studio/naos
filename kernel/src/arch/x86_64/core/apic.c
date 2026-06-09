@@ -592,8 +592,6 @@ static void apic_resched_ipi_handler(uint64_t irq_num, void *data,
     (void)irq_num;
     (void)data;
     (void)regs;
-
-    deadline_reprogram_local();
 }
 
 static void apic_tlb_shootdown_ipi_handler(uint64_t irq_num, void *data,

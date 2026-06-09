@@ -8,6 +8,7 @@
 #include <task/futex.h>
 #include <task/keyring.h>
 #include <task/ptrace.h>
+#include <task/sched.h>
 #include <task/task_syscall.h>
 #include <drivers/rtc.h>
 #include <net/net_syscall.h>
@@ -904,6 +905,18 @@ static inline uint64_t syscall_account_running_ns(task_t *task,
     return delta;
 }
 
+static inline void syscall_charge_sched_runtime(task_t *task,
+                                                uint64_t delta_ns) {
+    if (!task || !delta_ns)
+        return;
+
+    bool irq_state = arch_interrupt_enabled();
+    arch_disable_interrupt();
+    sched_account_runtime(task, delta_ns);
+    if (irq_state)
+        arch_enable_interrupt();
+}
+
 void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
     uint64_t idx = regs->rax & 0xFFFFFFFF;
 
@@ -936,7 +949,8 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
     uint64_t arg6 = regs->r9;
 
     if (self)
-        syscall_account_running_ns(self, nano_time());
+        syscall_charge_sched_runtime(
+            self, syscall_account_running_ns(self, nano_time()));
     uint64_t syscall_user_base = self ? self->user_time_ns : 0;
 
     if (idx >= MAX_SYSCALL_NUM) {
@@ -966,7 +980,10 @@ void syscall_handler(struct pt_regs *regs, uint64_t user_rsp) {
 
 done:
     if (self) {
-        syscall_account_running_ns(self, nano_time());
+        uint64_t syscall_kernel_delta =
+            syscall_account_running_ns(self, nano_time());
+
+        syscall_charge_sched_runtime(self, syscall_kernel_delta);
         if (self->user_time_ns > syscall_user_base)
             self->system_time_ns += self->user_time_ns - syscall_user_base;
     }
@@ -990,6 +1007,8 @@ done:
         regs->rcx = regs->rip;
         regs->r11 = regs->rflags;
     }
+
+    sched_resched_if_needed();
 
     x64_fpu_restore(self->arch_context->fpu_ctx);
 }

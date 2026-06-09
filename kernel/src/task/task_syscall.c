@@ -3094,7 +3094,9 @@ uint64_t sys_getrusage(int who, struct rusage *ru) {
         return (uint64_t)-EFAULT;
 
     uint64_t now_ns = nano_time();
-    task_account_runtime_ns(current_task, now_ns);
+    uint64_t runtime_delta_ns = task_account_runtime_ns(current_task, now_ns);
+    if (runtime_delta_ns)
+        sched_account_runtime(current_task, runtime_delta_ns);
 
     struct rusage result;
 

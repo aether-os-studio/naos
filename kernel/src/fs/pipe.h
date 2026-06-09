@@ -3,7 +3,7 @@
 #include <libs/klibc.h>
 #include <fs/vfs/vfs.h>
 
-#define PIPE_BUFF (64 * 1024)
+#define PIPE_BUFF (512 * 1024)
 #define PIPE_ATOMIC_MAX MIN(PIPE_BUFF, PAGE_SIZE)
 
 #define MAX_PIPES 32
@@ -19,6 +19,7 @@ typedef struct vfs_inode vfs_node_t;
 
 typedef struct pipe_info {
     uint32_t ptr;
+    uint32_t read_pos;
     char *buf;
 
     int write_fds;

@@ -1878,13 +1878,6 @@ fail:
     return NULL;
 }
 
-void idle_entry(uint64_t arg) {
-    while (1) {
-        arch_enable_interrupt();
-        arch_wait_for_interrupt();
-    }
-}
-
 extern void init_thread(uint64_t arg);
 
 extern bool system_initialized;
@@ -1959,7 +1952,7 @@ void task_init() {
     }
 
     for (uint64_t cpu = 0; cpu < cpu_count; cpu++) {
-        task_t *idle_task = task_create("idle", idle_entry, 0, IDLE_PRIORITY);
+        task_t *idle_task = task_create("idle", NULL, 0, IDLE_PRIORITY);
         idle_task->cpu_id = cpu;
         idle_task->state = TASK_READY;
         idle_task->current_state = TASK_RUNNING;
@@ -2194,7 +2187,6 @@ void task_unblock(task_t *task, int reason) {
     }
 
     bool irq_state = arch_interrupt_enabled();
-    bool should_trigger_sched_ipi = false;
 
     arch_disable_interrupt();
 
@@ -2224,15 +2216,8 @@ void task_unblock(task_t *task, int reason) {
     task_timeout_cancel(task);
 
     add_sched_entity_wakeup(task, &schedulers[task->cpu_id]);
-    should_trigger_sched_ipi =
-        task->cpu_id != current_cpu_id && task->cpu_id < cpu_count;
 
     spin_unlock(&task->block_lock);
-
-    sched_request_preempt_on_wakeup(&schedulers[task->cpu_id], task);
-    if (should_trigger_sched_ipi) {
-        irq_trigger_sched_ipi(task->cpu_id);
-    }
 
 ret:
     if (irq_state) {
@@ -2606,21 +2591,10 @@ NO_OPT void schedule(uint64_t sched_flags) {
         goto ret;
     }
 
-    if ((sched_flags & SCHED_FLAG_YIELD) && prev->state == TASK_READY &&
-        prev->current_state == TASK_RUNNING &&
-        sched_rq_nr_queued(&schedulers[cpu_id]) == 0) {
-        task_clear_need_resched(prev);
-        goto ret;
-    }
-
     task_t *next = NULL;
-    if (prev->state == TASK_READY && prev->current_state == TASK_RUNNING)
-        sched_requeue_current(prev, &schedulers[cpu_id]);
-
-    if (sched_flags & SCHED_FLAG_YIELD) {
-        next = sched_pick_next_task_excluding(&schedulers[cpu_id], prev);
-        if (next == idle_tasks[cpu_id] && prev->state == TASK_READY)
-            next = sched_pick_next_task(&schedulers[cpu_id]);
+    if (prev->state == TASK_READY && prev->current_state == TASK_RUNNING) {
+        next = sched_requeue_current_and_pick_next(
+            prev, &schedulers[cpu_id], (sched_flags & SCHED_FLAG_YIELD) != 0);
     } else {
         next = sched_pick_next_task(&schedulers[cpu_id]);
     }
@@ -2631,8 +2605,7 @@ NO_OPT void schedule(uint64_t sched_flags) {
 
     if (prev == next) {
         task_clear_need_resched(prev);
-        if (!(sched_flags & SCHED_FLAG_YIELD))
-            sched_update_preempt_deadline(cpu_id, prev, now_ns);
+        sched_update_preempt_deadline(cpu_id, prev, now_ns);
         goto ret;
     }
 

@@ -64,7 +64,6 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num) {
     }
 
     if (irq_is_sched_ipi(irq_num)) {
-        deadline_reprogram_local();
         sched_check_wakeup();
     }
 
@@ -74,6 +73,7 @@ void do_irq(struct pt_regs *regs, uint64_t irq_num) {
             sched_request_resched(self);
 
         sched_resched_if_needed();
+        self = current_task;
     }
 
     if (irq_num == ARCH_TIMER_IRQ || irq_is_sched_ipi(irq_num)) {

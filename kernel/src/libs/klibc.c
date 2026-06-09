@@ -44,7 +44,7 @@ void spin_lock(spinlock_t *sl) {
     task_t *task = current_task;
 
     if (task)
-        task->preempt_count++;
+        preempt_enable(task);
 
     raw_spin_lock(sl);
 
@@ -63,7 +63,7 @@ bool spin_trylock(spinlock_t *lock) {
         task_t *task = current_task;
 
         if (task)
-            task->preempt_count++;
+            preempt_enable(task);
 
         lock->irq_state = irq_state;
     }
@@ -75,8 +75,10 @@ void spin_unlock(spinlock_t *sl) {
 
     raw_spin_unlock(sl);
 
-    if (current_task)
-        current_task->preempt_count--;
+    task_t *task = current_task;
+
+    if (task)
+        preempt_disable(task);
 
     if (irq_state) {
         arch_enable_interrupt();

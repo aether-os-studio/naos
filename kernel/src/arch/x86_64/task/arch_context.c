@@ -90,6 +90,7 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     }
     context->ctx = (struct pt_regs *)stack - 1;
     memset(context->ctx, 0, sizeof(struct pt_regs));
+    context->rsp =(uint64_t)context->ctx;
     context->ctx->rsp = (uint64_t)context->ctx;
     context->ctx->rbp = (uint64_t)context->ctx;
     context->ctx->rflags = X64_RFLAGS_IF;
@@ -97,14 +98,12 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
     context->gsbase = 0;
     if (user_mode) {
         context->rip = (uint64_t)ret_to_user;
-        context->rsp = (uint64_t)context->ctx;
         context->ctx->rip = entry;
         context->ctx->rdi = initial_arg;
         context->ctx->cs = SELECTOR_USER_CS;
         context->ctx->ss = SELECTOR_USER_DS;
     } else {
         context->rip = (uint64_t)kernel_thread_func;
-        context->rsp = (uint64_t)context->ctx;
         context->ctx->rbx = entry;
         context->ctx->rdx = initial_arg;
         context->ctx->cs = SELECTOR_KERNEL_CS;

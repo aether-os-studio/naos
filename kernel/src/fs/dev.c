@@ -1401,7 +1401,6 @@ ssize_t nulldev_write(void *data, const void *buf, uint64_t offset,
     (void)data;
     (void)offset;
     (void)flags;
-    serial_printk(buf, len);
     return len;
 }
 
@@ -1435,7 +1434,7 @@ ssize_t zerodev_write(void *data, const void *buf, uint64_t offset,
     (void)offset;
     (void)len;
     (void)flags;
-    return 0;
+    return len;
 }
 
 ssize_t zerodev_ioctl(void *data, ssize_t request, ssize_t arg, fd_t *fd) {

@@ -152,6 +152,40 @@ static void sched_update_min_vruntime_locked(sched_rq_t *scheduler) {
         scheduler->min_vruntime = min_vruntime;
 }
 
+static bool sched_entity_preempts_curr_locked(sched_rq_t *scheduler,
+                                              struct sched_entity *entity,
+                                              uint64_t now_ns) {
+    if (!scheduler || !entity || !entity->task ||
+        entity->task->state != TASK_READY)
+        return false;
+
+    struct sched_entity *curr = scheduler->curr;
+    if (!curr || !curr->task || curr == scheduler->idle)
+        return true;
+    if (curr == entity || curr->task == entity->task)
+        return false;
+    if (curr->task->state != TASK_READY ||
+        curr->task->current_state != TASK_RUNNING)
+        return true;
+
+    uint64_t curr_vruntime = curr->vruntime;
+    uint64_t curr_deadline = curr->deadline;
+    if (curr->exec_start_ns && now_ns > curr->exec_start_ns) {
+        uint64_t runtime =
+            sched_calc_delta_fair(now_ns - curr->exec_start_ns, curr->task);
+
+        curr_vruntime += runtime;
+        curr_deadline += runtime;
+    }
+
+    if (entity->vruntime + SCHED_WAKEUP_PREEMPT_GRANULARITY_NS < curr_vruntime)
+        return true;
+    if (entity->deadline + SCHED_WAKEUP_PREEMPT_GRANULARITY_NS < curr_deadline)
+        return true;
+
+    return false;
+}
+
 static void sched_entity_enqueue_locked(sched_rq_t *scheduler,
                                         struct sched_entity *entity) {
     rb_node_t **slot = &scheduler->run_tree.rb_node;
@@ -295,6 +329,7 @@ static void sched_add_entity(task_t *task, sched_rq_t *scheduler, bool wakeup) {
     bool should_ping_cpu = false;
     task_t *resched_task = NULL;
     uint32_t target_cpu = task->cpu_id;
+    uint64_t now_ns = nano_time();
 
     raw_spin_lock(&scheduler->lock);
 
@@ -316,6 +351,10 @@ static void sched_add_entity(task_t *task, sched_rq_t *scheduler, bool wakeup) {
     }
 
     uint64_t placement = scheduler->min_vruntime;
+    if (wakeup && placement > SCHED_WAKEUP_PREEMPT_GRANULARITY_NS)
+        placement -= SCHED_WAKEUP_PREEMPT_GRANULARITY_NS;
+    else if (wakeup)
+        placement = 0;
     if (entity->vruntime < placement)
         entity->vruntime = placement;
 
@@ -323,10 +362,12 @@ static void sched_add_entity(task_t *task, sched_rq_t *scheduler, bool wakeup) {
     sched_update_min_vruntime_locked(scheduler);
 
     if (scheduler->curr && scheduler->curr != scheduler->idle &&
-        scheduler->curr->task && scheduler->curr->task != task)
+        scheduler->curr->task && scheduler->curr->task != task &&
+        sched_entity_preempts_curr_locked(scheduler, entity, now_ns))
         resched_task = scheduler->curr->task;
-    should_ping_cpu = target_cpu < cpu_count && target_cpu != current_cpu_id &&
-                      (scheduler->curr == scheduler->idle || wakeup);
+    should_ping_cpu =
+        target_cpu < cpu_count && target_cpu != current_cpu_id &&
+        sched_entity_preempts_curr_locked(scheduler, entity, now_ns);
 
     raw_spin_unlock(&scheduler->lock);
 
@@ -356,25 +397,6 @@ void remove_sched_entity(task_t *task, sched_rq_t *scheduler) {
         sched_entity_dequeue_locked(scheduler, entity, true);
     } else if (sched_entity_is_current_locked(scheduler, entity)) {
         sched_curr_detach_locked(scheduler, entity);
-    }
-
-    raw_spin_unlock(&scheduler->lock);
-}
-
-void sched_requeue_current(task_t *task, sched_rq_t *scheduler) {
-    if (__builtin_expect(!task || !scheduler || !task->sched_info, 0))
-        return;
-
-    struct sched_entity *entity = task->sched_info;
-
-    raw_spin_lock(&scheduler->lock);
-
-    if (scheduler->idle != entity &&
-        sched_entity_is_current_locked(scheduler, entity)) {
-        sched_curr_detach_locked(scheduler, entity);
-        if (entity->vruntime < scheduler->min_vruntime)
-            entity->vruntime = scheduler->min_vruntime;
-        sched_entity_enqueue_locked(scheduler, entity);
     }
 
     raw_spin_unlock(&scheduler->lock);
@@ -476,9 +498,7 @@ static struct sched_entity *sched_pick_eevdf_locked(sched_rq_t *scheduler,
         min_vruntime = NULL;
     }
 
-    bool scan_min_vruntime = min_vruntime == NULL;
-
-    if (scan_min_vruntime) {
+    if (!min_vruntime) {
         for (rb_node_t *node = rb_first(&scheduler->run_tree); node;
              node = rb_next(node)) {
             struct sched_entity *se =
@@ -579,27 +599,20 @@ bool sched_should_preempt(sched_rq_t *scheduler, task_t *curr_task,
     if (!curr->exec_start_ns || now_ns < curr->exec_start_ns)
         curr->exec_start_ns = now_ns;
 
+    if (scheduler->cleanup_queued)
+        sched_drop_dead_queued_locked(scheduler);
+
     uint64_t ran_ns = now_ns - curr->exec_start_ns;
     uint64_t slice_ns = curr->slice_ns
                             ? curr->slice_ns
                             : sched_entity_slice_locked(scheduler, curr);
-    rb_node_t *first = rb_first(&scheduler->run_tree);
-    if (!first)
-        goto out;
-
-    struct sched_entity *next = rb_entry(first, struct sched_entity, run_node);
-    if (!next || !next->task) {
-        scheduler->cleanup_queued = true;
-        should_preempt = true;
-        goto out;
+    struct sched_entity *next = sched_pick_eevdf_locked(scheduler, curr_task);
+    if (scheduler->cleanup_queued) {
+        sched_drop_dead_queued_locked(scheduler);
+        next = sched_pick_eevdf_locked(scheduler, curr_task);
     }
-    if (next->task == curr_task)
+    if (!next)
         goto out;
-    if (next->task->state != TASK_READY) {
-        scheduler->cleanup_queued = true;
-        should_preempt = true;
-        goto out;
-    }
 
     if (next->deadline + SCHED_WAKEUP_PREEMPT_GRANULARITY_NS < curr->deadline) {
         should_preempt = true;
@@ -610,82 +623,6 @@ bool sched_should_preempt(sched_rq_t *scheduler, task_t *curr_task,
         should_preempt = true;
 
 out:
-    raw_spin_unlock(&scheduler->lock);
-    return should_preempt;
-}
-
-bool sched_should_preempt_on_wakeup(sched_rq_t *scheduler,
-                                    task_t *wakeup_task) {
-    bool should_preempt = false;
-
-    if (!scheduler || !wakeup_task || !wakeup_task->sched_info)
-        return false;
-
-    struct sched_entity *wakeup = wakeup_task->sched_info;
-
-    raw_spin_lock(&scheduler->lock);
-
-    struct sched_entity *curr = scheduler->curr;
-    if (!curr || !curr->task || curr == scheduler->idle) {
-        should_preempt = true;
-        goto out;
-    }
-
-    if (curr->task == wakeup_task)
-        goto out;
-
-    if (curr->task->state != TASK_READY ||
-        curr->task->current_state != TASK_RUNNING) {
-        should_preempt = true;
-        goto out;
-    }
-
-    if (wakeup->deadline + SCHED_WAKEUP_PREEMPT_GRANULARITY_NS < curr->deadline)
-        should_preempt = true;
-
-out:
-    raw_spin_unlock(&scheduler->lock);
-    return should_preempt;
-}
-
-bool sched_request_preempt_on_wakeup(sched_rq_t *scheduler,
-                                     task_t *wakeup_task) {
-    bool should_preempt = false;
-    task_t *curr_task = NULL;
-
-    if (!scheduler || !wakeup_task || !wakeup_task->sched_info)
-        return false;
-
-    struct sched_entity *wakeup = wakeup_task->sched_info;
-
-    raw_spin_lock(&scheduler->lock);
-
-    struct sched_entity *curr = scheduler->curr;
-    if (!curr || !curr->task || curr == scheduler->idle) {
-        should_preempt = true;
-        curr_task = curr ? curr->task : NULL;
-        goto out;
-    }
-
-    curr_task = curr->task;
-    if (curr_task == wakeup_task)
-        goto out;
-
-    if (curr_task->state != TASK_READY ||
-        curr_task->current_state != TASK_RUNNING) {
-        should_preempt = true;
-        goto out;
-    }
-
-    if (wakeup->on_rq && wakeup->rq == scheduler)
-        should_preempt = true;
-    else if (wakeup->deadline + SCHED_WAKEUP_PREEMPT_GRANULARITY_NS <
-             curr->deadline)
-        should_preempt = true;
-
-out:
-    if (should_preempt && curr_task)
-        sched_request_resched(curr_task);
     raw_spin_unlock(&scheduler->lock);
     return should_preempt;
 }
@@ -729,7 +666,9 @@ out:
 }
 
 static task_t *sched_pick_next_task_internal(sched_rq_t *scheduler,
-                                             task_t *excluded) {
+                                             task_t *excluded,
+                                             task_t *requeue_task, bool yielded,
+                                             bool fallback_to_excluded) {
     task_t *next_task = NULL;
     uint64_t now_ns = nano_time();
 
@@ -738,11 +677,34 @@ static task_t *sched_pick_next_task_internal(sched_rq_t *scheduler,
     if (scheduler->cleanup_queued)
         sched_drop_dead_queued_locked(scheduler);
 
+    if (requeue_task && requeue_task->sched_info) {
+        struct sched_entity *entity = requeue_task->sched_info;
+
+        if (scheduler->idle != entity &&
+            sched_entity_is_current_locked(scheduler, entity)) {
+            if (yielded && !scheduler->nr_queued) {
+                next_task = requeue_task;
+                goto out;
+            }
+
+            sched_curr_detach_locked(scheduler, entity);
+            if (entity->vruntime < scheduler->min_vruntime)
+                entity->vruntime = scheduler->min_vruntime;
+            if (yielded && scheduler->nr_queued &&
+                entity->vruntime != UINT64_MAX)
+                entity->vruntime++;
+            sched_entity_enqueue_locked(scheduler, entity);
+        }
+    }
+
     struct sched_entity *next = sched_pick_eevdf_locked(scheduler, excluded);
     if (scheduler->cleanup_queued) {
         sched_drop_dead_queued_locked(scheduler);
         next = sched_pick_eevdf_locked(scheduler, excluded);
     }
+    if (!next && fallback_to_excluded)
+        next = sched_pick_eevdf_locked(scheduler, NULL);
+
     if (next) {
         if (scheduler->curr == scheduler->idle && scheduler->idle) {
             scheduler->idle->rq = NULL;
@@ -770,13 +732,21 @@ out:
     return next_task;
 }
 
+task_t *sched_requeue_current_and_pick_next(task_t *task, sched_rq_t *scheduler,
+                                            bool yielded) {
+    task_t *excluded = yielded ? task : NULL;
+    return sched_pick_next_task_internal(scheduler, excluded, task, yielded,
+                                         yielded);
+}
+
 task_t *sched_pick_next_task(sched_rq_t *scheduler) {
-    return sched_pick_next_task_internal(scheduler, NULL);
+    return sched_pick_next_task_internal(scheduler, NULL, NULL, false, false);
 }
 
 task_t *sched_pick_next_task_excluding(sched_rq_t *scheduler,
                                        task_t *excluded) {
-    return sched_pick_next_task_internal(scheduler, excluded);
+    return sched_pick_next_task_internal(scheduler, excluded, NULL, false,
+                                         false);
 }
 
 size_t sched_rq_nr_running(sched_rq_t *scheduler) {
