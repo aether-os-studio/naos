@@ -57,7 +57,7 @@ virtio_blk_alloc_slot_locked(virtio_blk_device_t *blk_dev) {
         }
 
         spin_unlock(&blk_dev->request_lock);
-        schedule(SCHED_FLAG_YIELD);
+        schedule(0);
         spin_lock(&blk_dev->request_lock);
     }
 }
@@ -96,7 +96,7 @@ static int virtio_blk_wait_slot(virtio_blk_device_t *blk_dev,
             return 0;
         }
 
-        schedule(SCHED_FLAG_YIELD);
+        schedule(0);
     }
 }
 

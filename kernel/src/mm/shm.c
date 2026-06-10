@@ -56,17 +56,6 @@ static void shm_unlink_locked(shm_t *shm) {
     }
 }
 
-static int shm_ensure_backing_locked(shm_t *shm) {
-    if (shm->addr)
-        return 0;
-
-    shm->addr = alloc_frames_bytes(shm->size);
-    if (!shm->addr)
-        return -ENOMEM;
-    memset(shm->addr, 0, shm->size);
-    return 0;
-}
-
 static int shm_create_dev_node_locked(shm_t *shm) {
     if (!shm)
         return -EINVAL;
@@ -102,18 +91,6 @@ static void *find_free_region(vma_manager_t *mgr, size_t size) {
     return (void *)addr;
 }
 
-static shm_mapping_t *mapping_add(task_t *task, shm_t *shm, uint64_t uaddr) {
-    shm_mapping_t *m = calloc(1, sizeof(*m));
-    if (!m)
-        return NULL;
-
-    m->shm = shm;
-    m->uaddr = uaddr;
-    m->next = task->shm_ids;
-    task->shm_ids = m;
-    return m;
-}
-
 static shm_mapping_t *mapping_find(task_t *task, uint64_t uaddr) {
     for (shm_mapping_t *m = task->shm_ids; m; m = m->next) {
         if (m->uaddr == uaddr)
@@ -122,37 +99,73 @@ static shm_mapping_t *mapping_find(task_t *task, uint64_t uaddr) {
     return NULL;
 }
 
-static void mapping_remove(task_t *task, shm_mapping_t *target) {
+typedef struct shm_detach_work {
+    shm_t *shm;
+    uint64_t uaddr;
+    uint64_t size;
+} shm_detach_work_t;
+
+static shm_mapping_t *mapping_detach(task_t *task, shm_mapping_t *target) {
     for (shm_mapping_t **pp = &task->shm_ids; *pp; pp = &(*pp)->next) {
         if (*pp == target) {
             *pp = target->next;
-            free(target);
-            return;
+            target->next = NULL;
+            return target;
         }
     }
+
+    return NULL;
 }
 
-static void do_shmdt_one(task_t *task, shm_mapping_t *m) {
-    shm_t *shm = m->shm;
-    vma_manager_t *mgr = &task->mm->task_vma_mgr;
+static bool shm_detach_prepare_locked(task_t *task, shm_mapping_t *mapping,
+                                      shm_detach_work_t *work,
+                                      bool require_vma) {
+    if (!task || !task->mm || !mapping || !work)
+        return false;
 
-    vma_t *vma = vma_find(mgr, m->uaddr);
-    if (vma && vma->vm_type == VMA_TYPE_SHM && vma->vm_start == m->uaddr) {
-        spin_lock(&task->mm->lock);
-        unmap_page_range_mm(task->mm, vma->vm_start,
-                            vma->vm_end - vma->vm_start);
-        spin_unlock(&task->mm->lock);
-        vma_remove(mgr, vma);
+    vma_manager_t *mgr = &task->mm->task_vma_mgr;
+    vma_t *vma = vma_find(mgr, mapping->uaddr);
+    if ((!vma || vma->vm_type != VMA_TYPE_SHM ||
+         vma->vm_start != mapping->uaddr) &&
+        require_vma)
+        return false;
+
+    *work = (shm_detach_work_t){
+        .shm = mapping->shm,
+    };
+
+    if (vma && vma->vm_type == VMA_TYPE_SHM &&
+        vma->vm_start == mapping->uaddr) {
+        work->uaddr = vma->vm_start;
+        work->size = vma->vm_end - vma->vm_start;
+
+        if (vma_remove(mgr, vma) != 0)
+            return false;
+
         vma_free(vma);
     }
 
-    if (shm) {
-        if (shm->nattch > 0)
-            shm->nattch--;
-        shm->dtime = shm_now_seconds();
-        shm->lpid = task->pid;
-        shm_try_free_locked(shm);
+    mapping_detach(task, mapping);
+    free(mapping);
+    return true;
+}
+
+static void shm_detach_finish(task_t *task, const shm_detach_work_t *work) {
+    if (!task || !work)
+        return;
+
+    if (task->mm && work->size)
+        unmap_page_range_mm_batched(task->mm, work->uaddr, work->size);
+
+    spin_lock(&shm_op_lock);
+    if (work->shm) {
+        if (work->shm->nattch > 0)
+            work->shm->nattch--;
+        work->shm->dtime = shm_now_seconds();
+        work->shm->lpid = task->pid;
+        shm_try_free_locked(work->shm);
     }
+    spin_unlock(&shm_op_lock);
 }
 
 void shm_try_reap_by_vnode(struct vfs_inode *node) { (void)node; }
@@ -243,29 +256,66 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
     int64_t err = 0;
     shm_t *shm;
     uint64_t addr;
-    uint64_t flags;
-    uint64_t start;
-    uint64_t *pgdir;
     vma_t *vma;
+    shm_mapping_t *mapping;
+    void *new_backing = NULL;
+    size_t size;
+    bool need_backing;
 
-    spin_lock(&mgr->lock);
     spin_lock(&shm_op_lock);
 
     shm = shm_find_id_locked(shmid);
     if (!shm) {
         err = -EINVAL;
-        goto out_unlock;
+        goto out_unlock_shm;
     }
 
-    err = shm_ensure_backing_locked(shm);
-    if (err < 0)
-        goto out_unlock;
+    size = shm->size;
+    need_backing = shm->addr == NULL;
+    shm->nattch++;
+    spin_unlock(&shm_op_lock);
+
+    if (need_backing) {
+        new_backing = alloc_frames_bytes(size);
+        if (!new_backing) {
+            err = -ENOMEM;
+            goto out_put_attach;
+        }
+        memset(new_backing, 0, size);
+
+        spin_lock(&shm_op_lock);
+        if (!shm->addr) {
+            shm->addr = new_backing;
+            new_backing = NULL;
+        }
+        spin_unlock(&shm_op_lock);
+
+        if (new_backing) {
+            free_frames_bytes(new_backing, size);
+            new_backing = NULL;
+        }
+    }
+
+    vma = vma_alloc();
+    if (!vma) {
+        err = -ENOMEM;
+        goto out_put_attach;
+    }
+    mapping = calloc(1, sizeof(*mapping));
+    if (!mapping) {
+        vma_free(vma);
+        err = -ENOMEM;
+        goto out_put_attach;
+    }
+    mapping->shm = shm;
+
+    spin_lock(&mgr->lock);
 
     if (!shmaddr) {
-        shmaddr = find_free_region(mgr, shm->size);
+        shmaddr = find_free_region(mgr, size);
         if (!shmaddr) {
             err = -ENOMEM;
-            goto out_unlock;
+            goto out_unlock_mgr_free;
         }
     }
 
@@ -275,43 +325,17 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
             addr = PADDING_DOWN(addr, PAGE_SIZE);
         } else if (addr & (PAGE_SIZE - 1)) {
             err = -EINVAL;
-            goto out_unlock;
+            goto out_unlock_mgr_free;
         }
     }
 
-    if (vma_find_intersection(mgr, addr, addr + shm->size)) {
+    if (vma_find_intersection(mgr, addr, addr + size)) {
         err = -EINVAL;
-        goto out_unlock;
-    }
-
-    flags = PT_FLAG_U | PT_FLAG_R;
-    if (!(shmflg & SHM_RDONLY))
-        flags |= PT_FLAG_W;
-    if (shmflg & SHM_EXEC)
-        flags |= PT_FLAG_X;
-
-    start = addr;
-    pgdir = get_current_page_dir(false);
-    spin_lock(&current_task->mm->lock);
-    for (uint64_t ptr = start; ptr < start + shm->size; ptr += PAGE_SIZE) {
-        map_page_range_mm(
-            current_task->mm, ptr,
-            translate_address(pgdir, (uint64_t)shm->addr + ptr - start),
-            PAGE_SIZE, flags);
-    }
-    spin_unlock(&current_task->mm->lock);
-
-    vma = vma_alloc();
-    if (!vma) {
-        spin_lock(&current_task->mm->lock);
-        unmap_page_range_mm(current_task->mm, addr, shm->size);
-        spin_unlock(&current_task->mm->lock);
-        err = -ENOMEM;
-        goto out_unlock;
+        goto out_unlock_mgr_free;
     }
 
     vma->vm_start = addr;
-    vma->vm_end = addr + shm->size;
+    vma->vm_end = addr + size;
     vma->vm_type = VMA_TYPE_SHM;
     vma->vm_flags = VMA_SHARED | VMA_SHM | VMA_READ;
     if (!(shmflg & SHM_RDONLY))
@@ -323,39 +347,41 @@ void *sys_shmat(int shmid, void *shmaddr, int shmflg) {
 
     if (vma_insert(mgr, vma) != 0) {
         vma_free(vma);
-        spin_lock(&current_task->mm->lock);
-        unmap_page_range_mm(current_task->mm, addr, shm->size);
-        spin_unlock(&current_task->mm->lock);
+        free(mapping);
         err = -ENOMEM;
-        goto out_unlock;
+        goto out_unlock_mgr;
     }
 
-    if (!mapping_add(current_task, shm, addr)) {
-        vma_remove(mgr, vma);
-        vma_free(vma);
-        spin_lock(&current_task->mm->lock);
-        unmap_page_range_mm(current_task->mm, addr, shm->size);
-        spin_unlock(&current_task->mm->lock);
-        err = -ENOMEM;
-        goto out_unlock;
-    }
-
-    shm->nattch++;
+    spin_lock(&shm_op_lock);
+    mapping->uaddr = addr;
+    mapping->next = current_task->shm_ids;
+    current_task->shm_ids = mapping;
+    mapping = NULL;
     shm->atime = shm_now_seconds();
     shm->lpid = current_task->pid;
     spin_unlock(&shm_op_lock);
     spin_unlock(&mgr->lock);
     return (void *)addr;
 
-out_unlock:
-    spin_unlock(&shm_op_lock);
+out_unlock_mgr_free:
+    vma_free(vma);
+    free(mapping);
+out_unlock_mgr:
     spin_unlock(&mgr->lock);
+out_put_attach:
+    spin_lock(&shm_op_lock);
+    if (shm->nattch > 0)
+        shm->nattch--;
+    shm_try_free_locked(shm);
+out_unlock_shm:
+    spin_unlock(&shm_op_lock);
     return (void *)(int64_t)err;
 }
 
 uint64_t sys_shmdt(void *shmaddr) {
     vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
     shm_mapping_t *m;
+    shm_detach_work_t work = {0};
 
     if (!shmaddr)
         return -EINVAL;
@@ -370,11 +396,16 @@ uint64_t sys_shmdt(void *shmaddr) {
         return -EINVAL;
     }
 
-    do_shmdt_one(current_task, m);
-    mapping_remove(current_task, m);
+    if (!shm_detach_prepare_locked(current_task, m, &work, true)) {
+        spin_unlock(&shm_op_lock);
+        spin_unlock(&mgr->lock);
+        return -EINVAL;
+    }
 
     spin_unlock(&shm_op_lock);
     spin_unlock(&mgr->lock);
+
+    shm_detach_finish(current_task, &work);
     return 0;
 }
 
@@ -549,24 +580,33 @@ void shm_exec(task_t *task) {
 
 void shm_exit(task_t *task) {
     vma_manager_t *mgr;
-    shm_mapping_t *m;
 
     if (!task || !task->arch_context || !task->mm)
         return;
 
     mgr = &task->mm->task_vma_mgr;
-    spin_lock(&mgr->lock);
-    spin_lock(&shm_op_lock);
 
-    m = task->shm_ids;
-    while (m) {
-        shm_mapping_t *next = m->next;
-        do_shmdt_one(task, m);
-        free(m);
-        m = next;
+    while (true) {
+        shm_detach_work_t work = {0};
+        spin_lock(&mgr->lock);
+        spin_lock(&shm_op_lock);
+
+        shm_mapping_t *m = task->shm_ids;
+        if (!m) {
+            spin_unlock(&shm_op_lock);
+            spin_unlock(&mgr->lock);
+            break;
+        }
+
+        if (!shm_detach_prepare_locked(task, m, &work, false)) {
+            spin_unlock(&shm_op_lock);
+            spin_unlock(&mgr->lock);
+            break;
+        }
+
+        spin_unlock(&shm_op_lock);
+        spin_unlock(&mgr->lock);
+
+        shm_detach_finish(task, &work);
     }
-    task->shm_ids = NULL;
-
-    spin_unlock(&shm_op_lock);
-    spin_unlock(&mgr->lock);
 }

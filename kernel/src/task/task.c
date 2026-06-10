@@ -755,6 +755,12 @@ static inline void task_timeout_refresh_next_locked(uint32_t cpu_id) {
     task_t *first = task_timeout_first_locked(cpu_id);
     uint64_t next = first ? first->force_wakeup_ns : UINT64_MAX;
     __atomic_store_n(&task_timeout_next_ns[cpu_id], next, __ATOMIC_RELEASE);
+}
+
+static inline void task_timeout_publish_next(uint32_t cpu_id) {
+    uint64_t next =
+        __atomic_load_n(&task_timeout_next_ns[cpu_id], __ATOMIC_ACQUIRE);
+
     deadline_source_update(&task_timeout_deadline_sources[cpu_id], next);
 }
 
@@ -809,6 +815,12 @@ static inline void task_signal_timer_refresh_next_locked(uint32_t cpu_id) {
     uint64_t next = first ? first->signal_timer_deadline_ns : UINT64_MAX;
     __atomic_store_n(&task_signal_timer_next_ns[cpu_id], next,
                      __ATOMIC_RELEASE);
+}
+
+static inline void task_signal_timer_publish_next(uint32_t cpu_id) {
+    uint64_t next =
+        __atomic_load_n(&task_signal_timer_next_ns[cpu_id], __ATOMIC_ACQUIRE);
+
     deadline_source_update(&task_signal_timer_deadline_sources[cpu_id], next);
 }
 
@@ -857,6 +869,7 @@ static void task_signal_timer_add_locked(task_t *task) {
 
 static void task_signal_timer_update(task_t *task) {
     uint32_t cpu_id = task_timer_cpu_id(task);
+
     spin_lock(&task_signal_timer_locks[cpu_id]);
     task_signal_timer_remove_locked(task);
     task->signal_timer_deadline_ns =
@@ -864,16 +877,21 @@ static void task_signal_timer_update(task_t *task) {
     task_signal_timer_add_locked(task);
     task_signal_timer_refresh_next_locked(cpu_id);
     spin_unlock(&task_signal_timer_locks[cpu_id]);
+
+    task_signal_timer_publish_next(cpu_id);
 }
 
 static void task_signal_timer_cancel(task_t *task) {
     uint32_t cpu_id = task_timer_cpu_id(task);
+
     spin_lock(&task_signal_timer_locks[cpu_id]);
     task_signal_timer_remove_locked(task);
     if (task)
         task->signal_timer_deadline_ns = UINT64_MAX;
     task_signal_timer_refresh_next_locked(cpu_id);
     spin_unlock(&task_signal_timer_locks[cpu_id]);
+
+    task_signal_timer_publish_next(cpu_id);
 }
 
 static inline uint64_t task_signal_timer_next_deadline_ns(uint32_t cpu_id) {
@@ -929,6 +947,7 @@ void task_timeout_cancel(task_t *task) {
         return;
 
     uint32_t cpu_id = task_timer_cpu_id(task);
+
     spin_lock(&task_timeout_locks[cpu_id]);
     if (!task->timeout_queued) {
         spin_unlock(&task_timeout_locks[cpu_id]);
@@ -937,15 +956,20 @@ void task_timeout_cancel(task_t *task) {
     task_timeout_remove_locked(task);
     task_timeout_refresh_next_locked(cpu_id);
     spin_unlock(&task_timeout_locks[cpu_id]);
+
+    task_timeout_publish_next(cpu_id);
 }
 
 static void task_timeout_arm(task_t *task) {
     uint32_t cpu_id = task_timer_cpu_id(task);
+
     spin_lock(&task_timeout_locks[cpu_id]);
     task_timeout_remove_locked(task);
     task_timeout_add_locked(task);
     task_timeout_refresh_next_locked(cpu_id);
     spin_unlock(&task_timeout_locks[cpu_id]);
+
+    task_timeout_publish_next(cpu_id);
 }
 
 static void task_timeout_softirq_cpu(uint32_t cpu_id) {
@@ -977,6 +1001,8 @@ static void task_timeout_softirq_cpu(uint32_t cpu_id) {
 
         if (irq_state)
             arch_enable_interrupt();
+
+        task_timeout_publish_next(cpu_id);
 
         if (!expired_count) {
             return;
@@ -1027,6 +1053,8 @@ static void task_signal_timer_softirq_cpu(uint32_t cpu_id) {
 
         if (irq_state)
             arch_enable_interrupt();
+
+        task_signal_timer_publish_next(cpu_id);
 
         if (!expired_count)
             return;
@@ -2092,6 +2120,8 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
     int result = EOK;
     uint32_t target_cpu = task->cpu_id;
     bool should_trigger_sched_ipi = false;
+    bool arm_timeout = false;
+    bool cancel_timeout = false;
 
     bool lock_irq_state = arch_interrupt_enabled();
 
@@ -2116,7 +2146,7 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
     }
 
     task->status = EOK;
-    task->block_preparing = false;
+    task->block_preparing = true;
 
     if (target_cpu != current_cpu_id && task->sched_info) {
         spin_lock(&schedulers[target_cpu].lock);
@@ -2125,32 +2155,41 @@ int task_block(task_t *task, task_state_t state, int64_t timeout_ns,
         spin_unlock(&schedulers[target_cpu].lock);
     }
 
-    task->state = state;
     task->force_wakeup_ns =
         (timeout_ns > 0) ? (nano_time() + timeout_ns) : UINT64_MAX;
     task->blocking_reason = blocking_reason;
+    arm_timeout = timeout_ns > 0;
 
-    if (timeout_ns > 0)
+    spin_unlock(&task->block_lock);
+
+    if (arm_timeout)
         task_timeout_arm(task);
-    else
-        task_timeout_cancel(task);
 
-    remove_sched_entity(task, &schedulers[task->cpu_id]);
+    spin_lock(&task->block_lock);
 
     if (task->wake_pending) {
         task->wake_pending = false;
         task->block_preparing = false;
-        task_timeout_cancel(task);
+        cancel_timeout = arm_timeout;
         task->state = TASK_READY;
         task->force_wakeup_ns = UINT64_MAX;
         task->blocking_reason = NULL;
-        add_sched_entity(task, &schedulers[task->cpu_id]);
         result = task->status;
     } else {
+        task->block_preparing = false;
+        task->state = state;
         should_sleep = true;
+        remove_sched_entity(task, &schedulers[task->cpu_id]);
     }
 
     spin_unlock(&task->block_lock);
+
+    if (cancel_timeout) {
+        task_timeout_cancel(task);
+    }
+
+    if (!should_sleep)
+        add_sched_entity(task, &schedulers[task->cpu_id]);
 
     if (!should_sleep)
         goto ret;
@@ -2187,6 +2226,8 @@ void task_unblock(task_t *task, int reason) {
     }
 
     bool irq_state = arch_interrupt_enabled();
+    bool cancel_timeout = false;
+    bool should_wake = false;
 
     arch_disable_interrupt();
 
@@ -2194,7 +2235,7 @@ void task_unblock(task_t *task, int reason) {
 
     if (task->state != TASK_BLOCKING && task->state != TASK_READING_STDIO &&
         task->state != TASK_UNINTERRUPTABLE) {
-        if (!task->block_preparing && reason != EOK) {
+        if (!task->block_preparing) {
             spin_unlock(&task->block_lock);
             goto ret;
         }
@@ -2210,14 +2251,22 @@ void task_unblock(task_t *task, int reason) {
     task->block_preparing = false;
 
     task->blocking_reason = NULL;
-    task->force_wakeup_ns = UINT64_MAX;
+    cancel_timeout = task->force_wakeup_ns != UINT64_MAX;
     task->wake_pending = false;
-
-    task_timeout_cancel(task);
-
-    add_sched_entity_wakeup(task, &schedulers[task->cpu_id]);
+    should_wake = true;
 
     spin_unlock(&task->block_lock);
+
+    if (cancel_timeout) {
+        task_timeout_cancel(task);
+
+        spin_lock(&task->block_lock);
+        task->force_wakeup_ns = UINT64_MAX;
+        spin_unlock(&task->block_lock);
+    }
+
+    if (should_wake)
+        add_sched_entity_wakeup(task, &schedulers[task->cpu_id]);
 
 ret:
     if (irq_state) {
@@ -2559,7 +2608,7 @@ int task_kill_process_group(int pgid, int sig) {
     return sent;
 }
 
-NO_OPT void schedule(uint64_t sched_flags) {
+void schedule(uint64_t sched_flags) {
     jiffies = (unsigned long)(nano_time() / (1000000000ULL / SCHED_HZ));
 
     bool state = arch_interrupt_enabled();

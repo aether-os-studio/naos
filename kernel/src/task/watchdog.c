@@ -46,12 +46,15 @@ static void sched_watchdog_arm(uint32_t cpu_id, uint64_t now_ns) {
 static void sched_watchdog_update_task_locked(uint32_t cpu_id, task_t *task,
                                               uint64_t now_ns) {
     sched_watchdog_cpu_t *wd = &sched_watchdogs[cpu_id];
+    uint64_t preempt_count =
+        task ? __atomic_load_n(&task->preempt_count, __ATOMIC_ACQUIRE) : 0;
+    bool need_resched = task_need_resched(task);
 
     wd->running_task = task;
     wd->current_pid = task ? task->pid : 0;
     wd->current_sched_in_ns = now_ns;
-    wd->resched_since_ns = task && task_need_resched(task) ? now_ns : 0;
-    wd->preempt_since_ns = task && task->preempt_count ? now_ns : 0;
+    wd->resched_since_ns = task && need_resched ? now_ns : 0;
+    wd->preempt_since_ns = task && preempt_count ? now_ns : 0;
     wd->last_warn_ns = 0;
 }
 
@@ -65,12 +68,13 @@ static void sched_watchdog_check_cpu(uint32_t cpu_id, uint64_t now_ns) {
     if (cpu_id == current_cpu_id) {
         task = current_task;
     } else if (idle_tasks[cpu_id]) {
-        task = wd->running_task ? wd->running_task : idle_tasks[cpu_id];
         sched_rq_t *rq = &schedulers[cpu_id];
         if (raw_spin_trylock(&rq->lock)) {
             if (rq->curr && rq->curr->task)
                 task = rq->curr->task;
             raw_spin_unlock(&rq->lock);
+        } else {
+            return;
         }
     }
 
@@ -84,21 +88,28 @@ static void sched_watchdog_check_cpu(uint32_t cpu_id, uint64_t now_ns) {
         return;
     }
 
-    if (task_need_resched(task)) {
+    uint64_t preempt_count =
+        __atomic_load_n(&task->preempt_count, __ATOMIC_ACQUIRE);
+    bool need_resched = task_need_resched(task);
+    void *preempt_caller =
+        __atomic_load_n(&task->preempt_caller, __ATOMIC_ACQUIRE);
+
+    if (need_resched) {
         if (!wd->resched_since_ns)
             wd->resched_since_ns = now_ns ? now_ns : 1;
     } else {
         wd->resched_since_ns = 0;
     }
 
-    if (task->preempt_count) {
+    if (preempt_count) {
         if (!wd->preempt_since_ns)
             wd->preempt_since_ns = now_ns ? now_ns : 1;
     } else {
         wd->preempt_since_ns = 0;
+        wd->last_warn_ns = 0;
     }
 
-    bool stalled = task->preempt_count && wd->preempt_since_ns &&
+    bool stalled = preempt_count && wd->preempt_since_ns &&
                    now_ns >= wd->preempt_since_ns + SCHED_WATCHDOG_STALL_NS;
 
     if (stalled &&
@@ -116,11 +127,12 @@ static void sched_watchdog_check_cpu(uint32_t cpu_id, uint64_t now_ns) {
                 : 0;
 
         wd->last_warn_ns = now_ns;
-        printk("sched watchdog: cpu=%u task=%s pid=%lu preempt_count=%lu "
+        printk("sched watchdog: cpu=%u task=%s pid=%lu "
+               "preempt_count=%lu preempt_caller=%p "
                "need_resched=%u preempt_ms=%lu resched_ms=%lu "
                "sched_in_ms=%lu\n",
-               cpu_id, task->name, task->pid, task->preempt_count,
-               task_need_resched(task) ? 1 : 0, preempt_ns / 1000000ULL,
+               cpu_id, task->name, task->pid, preempt_count, preempt_caller,
+               need_resched ? 1 : 0, preempt_ns / 1000000ULL,
                resched_ns / 1000000ULL, sched_in_ns / 1000000ULL);
     }
 
@@ -131,7 +143,7 @@ static void sched_watchdog_check_cpu(uint32_t cpu_id, uint64_t now_ns) {
         } else {
             deadline_reprogram_cpu(cpu_id);
         }
-    } else if (task_need_resched(task) && cpu_id != current_cpu_id) {
+    } else if (need_resched && cpu_id != current_cpu_id) {
         irq_trigger_sched_ipi(cpu_id);
     }
 }

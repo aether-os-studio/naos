@@ -9,7 +9,7 @@ ENTRY(syscall_handler_asm)
     movq %gs:0x0, %rsp // syscall_stack
     swapgs
 
-    subq $0x40, %rsp
+    subq $0x48, %rsp
 
     pushq %rax
 
@@ -36,7 +36,7 @@ ENTRY(syscall_handler_asm)
 
     call syscall_handler
 
-    cmpq $15, 0x78(%rsp)
+    cmpq $15, 0x80(%rsp)
     je ret_from_exception
 
 ENTRY(ret_from_syscall)
@@ -59,7 +59,7 @@ ENTRY(ret_from_syscall)
 
     popq %rax
 
-    addq $0x30, %rsp
+    addq $0x38, %rsp
 
     popq %rsp
 

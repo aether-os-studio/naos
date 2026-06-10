@@ -37,7 +37,7 @@ SECTIONS
     __kernel_image_start = KERNEL_VIRT_BASE;
 
     .text : AT(ADDR(.text) - KERNEL_VIRT_OFFSET) {
-        _text = .;
+        _stext = .;
         *(.text .text.*)
         _etext = .;
     } :text

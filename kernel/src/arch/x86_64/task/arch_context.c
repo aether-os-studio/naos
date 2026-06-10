@@ -12,6 +12,25 @@ static uint64_t x64_fpu_initial_xstate_bv(void) {
     return x64_fpu_xsave_mask & (X64_XSTATE_X87 | X64_XSTATE_SSE);
 }
 
+static inline uintptr_t x64_stack_alloc_down(uintptr_t sp, size_t size) {
+    return (sp - size) & ~(uintptr_t)0xf;
+}
+
+static void x64_setup_inactive_frame(arch_context_t *context, uint64_t ret_addr,
+                                     uint64_t stack) {
+    uintptr_t regs_sp = x64_stack_alloc_down(stack, sizeof(struct pt_regs));
+    uintptr_t frame_sp = regs_sp - sizeof(x86_64_inactive_task_frame_t);
+
+    context->ctx = (struct pt_regs *)regs_sp;
+    memset(context->ctx, 0, sizeof(struct pt_regs));
+
+    x86_64_inactive_task_frame_t *frame =
+        (x86_64_inactive_task_frame_t *)frame_sp;
+    memset(frame, 0, sizeof(*frame));
+    frame->ret_addr = ret_addr;
+    context->rsp = frame_sp;
+}
+
 uint64_t x64_fpu_state_size(void) { return x64_fpu_state_bytes; }
 
 bool x64_fpu_xsave_enabled(void) { return x64_fpu_use_xsave; }
@@ -88,22 +107,21 @@ void arch_context_init(arch_context_t *context, uint64_t page_table_addr,
         context->fpu_ctx = alloc_frames_bytes(x64_fpu_state_size());
         x64_fpu_state_init(context->fpu_ctx);
     }
-    context->ctx = (struct pt_regs *)stack - 1;
-    memset(context->ctx, 0, sizeof(struct pt_regs));
-    context->rsp =(uint64_t)context->ctx;
+    x64_setup_inactive_frame(context,
+                             user_mode ? (uint64_t)ret_to_user
+                                       : (uint64_t)kernel_thread_func,
+                             stack);
     context->ctx->rsp = (uint64_t)context->ctx;
     context->ctx->rbp = (uint64_t)context->ctx;
     context->ctx->rflags = X64_RFLAGS_IF;
     context->fsbase = 0;
     context->gsbase = 0;
     if (user_mode) {
-        context->rip = (uint64_t)ret_to_user;
         context->ctx->rip = entry;
         context->ctx->rdi = initial_arg;
         context->ctx->cs = SELECTOR_USER_CS;
         context->ctx->ss = SELECTOR_USER_DS;
     } else {
-        context->rip = (uint64_t)kernel_thread_func;
         context->ctx->rbx = entry;
         context->ctx->rdx = initial_arg;
         context->ctx->cs = SELECTOR_KERNEL_CS;
@@ -121,9 +139,7 @@ void arch_context_copy(arch_context_t *dst, arch_context_t *src, uint64_t stack,
     (void)clone_flags;
 
     memset(dst, 0, sizeof(*dst));
-    dst->ctx = (struct pt_regs *)stack - 1;
-    dst->rip = (uint64_t)ret_from_fork;
-    dst->rsp = (uint64_t)dst->ctx;
+    x64_setup_inactive_frame(dst, (uint64_t)ret_from_fork, stack);
     memcpy(dst->ctx, src->ctx, sizeof(struct pt_regs));
     dst->ctx->rax = 0;
 
@@ -177,12 +193,8 @@ void __switch_to(task_t *prev, task_t *next) {
 
 void arch_context_to_user_mode(arch_context_t *context, uint64_t entry,
                                uint64_t stack) {
-    context->ctx = (struct pt_regs *)current_task->kernel_stack - 1;
-
-    context->rip = (uint64_t)ret_to_user;
-    context->rsp = (uint64_t)context->ctx;
-
-    memset(context->ctx, 0, sizeof(struct pt_regs));
+    x64_setup_inactive_frame(context, (uint64_t)ret_to_user,
+                             current_task->kernel_stack);
 
     context->ctx->rip = entry;
     context->ctx->rsp = stack;
@@ -210,8 +222,8 @@ void arch_to_user_mode(arch_context_t *context, uint64_t entry,
     x64_fpu_restore(context->fpu_ctx);
 
     asm volatile("movq %0, %%rsp\n\t"
-                 "jmp *%1" ::"r"(context->ctx),
-                 "r"(context->rip));
+                 "jmp ret_to_user" ::"r"(context->ctx)
+                 : "memory");
 }
 
 extern bool task_initialized;

@@ -5,6 +5,7 @@
 
 #define PAGE_CACHE_MIN_READAHEAD 2ULL
 #define PAGE_CACHE_MAX_READAHEAD 32ULL
+#define PAGE_CACHE_UNMAP_LOCK_BATCH_MAX 64ULL
 
 static DEFINE_LLIST(pcache_lru);
 static spinlock_t pcache_lru_lock = SPIN_INIT;
@@ -131,6 +132,24 @@ pcache_lookup_locked(struct vfs_address_space *mapping, uint64_t index) {
     }
 
     return NULL;
+}
+
+static rb_node_t *pcache_lower_bound_locked(struct vfs_address_space *mapping,
+                                            uint64_t index) {
+    rb_node_t *node = mapping ? mapping->pages.rb_node : NULL;
+    rb_node_t *best = NULL;
+
+    while (node) {
+        page_cache_page_t *page = rb_entry(node, page_cache_page_t, node);
+        if (index <= page->index) {
+            best = node;
+            node = node->rb_left;
+        } else {
+            node = node->rb_right;
+        }
+    }
+
+    return best;
 }
 
 static int pcache_insert_locked(struct vfs_address_space *mapping,
@@ -299,9 +318,10 @@ static void pcache_finish_update(page_cache_page_t *page, bool uptodate,
     spin_unlock(&mapping->lock);
 }
 
-static void page_cache_zap_shared_mappings(struct vfs_address_space *mapping,
-                                           uint64_t file_start,
-                                           uint64_t file_end);
+void page_cache_zap_inode_shared_mappings(vfs_node_t *node,
+                                          struct vfs_address_space *mapping,
+                                          uint64_t file_start,
+                                          uint64_t file_end);
 
 static int pcache_load_page(struct vfs_file *file,
                             struct vfs_address_space *mapping,
@@ -807,24 +827,27 @@ int page_cache_writeback_range(struct vfs_address_space *mapping,
         return 0;
 
     spin_lock(&mapping->lock);
-    node = rb_first(&mapping->pages);
+    node = pcache_lower_bound_locked(mapping, start / PAGE_SIZE);
     while (node) {
         page_cache_page_t *page = rb_entry(node, page_cache_page_t, node);
         node = rb_next(node);
         uint64_t page_start = page->index * PAGE_SIZE;
         uint64_t page_end = page_start + PAGE_SIZE;
 
+        if (page_start >= end)
+            break;
         if (page_end <= start || page_start >= end || !page->dirty)
             continue;
 
         pcache_take_ref(page);
+        uint64_t next_index = page->index + 1;
         spin_unlock(&mapping->lock);
         ret = pcache_write_page(mapping, page);
         page_cache_page_put(page);
         if (ret < 0)
             return ret;
         spin_lock(&mapping->lock);
-        node = rb_first(&mapping->pages);
+        node = pcache_lower_bound_locked(mapping, next_index);
     }
     spin_unlock(&mapping->lock);
     return 0;
@@ -844,23 +867,26 @@ int page_cache_invalidate_range(struct vfs_address_space *mapping,
     }
 
     spin_lock(&mapping->lock);
-    node = rb_first(&mapping->pages);
+    node = pcache_lower_bound_locked(mapping, start / PAGE_SIZE);
     while (node) {
         page_cache_page_t *page = rb_entry(node, page_cache_page_t, node);
         node = rb_next(node);
         uint64_t page_start = page->index * PAGE_SIZE;
         uint64_t page_end = page_start + PAGE_SIZE;
 
+        if (page_start >= end)
+            break;
         if (page_end <= start || page_start >= end)
             continue;
         if (page->mmap_count > 0)
             continue;
         pcache_remove_locked(page);
         if (page->ref_count == 0 && !page->reclaiming) {
+            uint64_t next_index = page->index + 1;
             spin_unlock(&mapping->lock);
             pcache_free(page);
             spin_lock(&mapping->lock);
-            node = rb_first(&mapping->pages);
+            node = pcache_lower_bound_locked(mapping, next_index);
         }
     }
     spin_unlock(&mapping->lock);
@@ -884,7 +910,8 @@ void page_cache_truncate(struct vfs_address_space *mapping, uint64_t new_size) {
     }
 
     uint64_t drop_start = PADDING_UP(new_size, PAGE_SIZE);
-    page_cache_zap_shared_mappings(mapping, drop_start, UINT64_MAX);
+    page_cache_zap_inode_shared_mappings(mapping->host, mapping, drop_start,
+                                         UINT64_MAX);
     (void)page_cache_invalidate_range(mapping, drop_start, UINT64_MAX, false);
 }
 
@@ -945,13 +972,125 @@ static void pcache_mmap_dec_index_batch(struct vfs_address_space *mapping,
         page_cache_mmap_dec_page(mapping, indices[i]);
 }
 
+static bool pcache_vma_is_shared_file(vma_t *vma, vfs_node_t *node) {
+    return vma && vma->vm_type == VMA_TYPE_FILE && vma->node == node &&
+           (vma->vm_flags & VMA_SHARED) && vma->vm_offset >= 0;
+}
+
+static bool pcache_vma_file_overlap(vma_t *vma, vfs_node_t *node,
+                                    uint64_t file_start, uint64_t file_end,
+                                    uint64_t *unmap_start,
+                                    uint64_t *unmap_file_start,
+                                    uint64_t *unmap_len) {
+    if (!pcache_vma_is_shared_file(vma, node))
+        return false;
+
+    uint64_t vma_file_start = (uint64_t)vma->vm_offset;
+    uint64_t vma_len = vma->vm_end - vma->vm_start;
+    uint64_t vma_file_end = UINT64_MAX;
+    if (vma_len <= UINT64_MAX - vma_file_start)
+        vma_file_end = vma_file_start + vma_len;
+
+    uint64_t overlap_start = MAX(file_start, vma_file_start);
+    uint64_t overlap_end = MIN(file_end, vma_file_end);
+    if (overlap_start >= overlap_end)
+        return false;
+
+    if (unmap_start)
+        *unmap_start = vma->vm_start + (overlap_start - vma_file_start);
+    if (unmap_file_start)
+        *unmap_file_start = overlap_start;
+    if (unmap_len)
+        *unmap_len = overlap_end - overlap_start;
+    return true;
+}
+
+static bool pcache_vma_maps_file_range(vma_t *vma, vfs_node_t *node,
+                                       uint64_t vaddr, uint64_t file_start,
+                                       uint64_t len) {
+    if (!pcache_vma_is_shared_file(vma, node) || len == 0)
+        return false;
+    if (vaddr < vma->vm_start || vaddr + len > vma->vm_end)
+        return false;
+
+    uint64_t expected = (uint64_t)vma->vm_offset + (vaddr - vma->vm_start);
+    return expected == file_start;
+}
+
+static uint64_t page_cache_unmap_shared_range_checked(
+    struct vfs_address_space *mapping, vfs_node_t *node, task_mm_info_t *mm,
+    uint64_t vaddr, uint64_t file_start, uint64_t len) {
+    if (!node || !mm || len == 0)
+        return vaddr;
+
+    uint64_t *pgdir = task_mm_pgdir(mm);
+    if (!pgdir)
+        return vaddr;
+
+    vma_manager_t *mgr = &mm->task_vma_mgr;
+    uint64_t end = vaddr + len;
+    uint64_t cursor = vaddr;
+    uint64_t unmapped = 0;
+
+    while (cursor < end) {
+        uint64_t chunk_end = end;
+        uint64_t chunk_limit =
+            cursor + PAGE_CACHE_UNMAP_LOCK_BATCH_MAX * PAGE_SIZE;
+        if (chunk_limit > cursor && chunk_limit < chunk_end)
+            chunk_end = chunk_limit;
+        if (chunk_end <= cursor)
+            break;
+
+        uint64_t indices[UNMAP_RELEASE_BATCH_MAX];
+        size_t index_count = 0;
+        unmap_release_batch_t batch = {
+            .mm = mm,
+            .flush_start = vaddr,
+            .flush_end = end,
+        };
+
+        spin_lock(&mgr->lock);
+        vma_t *vma = vma_find(mgr, cursor);
+        uint64_t chunk_file_start = file_start + (cursor - vaddr);
+        if (vma && vma->vm_end < chunk_end)
+            chunk_end = vma->vm_end;
+        uint64_t chunk_len = chunk_end - cursor;
+        if (!pcache_vma_maps_file_range(vma, node, cursor, chunk_file_start,
+                                        chunk_len)) {
+            spin_unlock(&mgr->lock);
+            cursor += PAGE_SIZE;
+            continue;
+        }
+
+        spin_lock(&mm->lock);
+        for (uint64_t va = cursor; va < chunk_end; va += PAGE_SIZE) {
+            uint64_t off = va - vaddr;
+            if (off > UINT64_MAX - file_start)
+                break;
+            if (!translate_address(pgdir, va))
+                continue;
+            if (!unmap_page_defer_release(pgdir, va, &batch, false, false))
+                continue;
+            indices[index_count++] = (file_start + off) / PAGE_SIZE;
+            unmapped++;
+        }
+        spin_unlock(&mm->lock);
+        spin_unlock(&mgr->lock);
+
+        unmap_release_batch_commit(&batch);
+        pcache_mmap_dec_index_batch(mapping, indices, index_count);
+        cursor = chunk_end;
+    }
+
+    pcache_sub_resident_pages(mm, unmapped);
+    return cursor;
+}
+
 void page_cache_unmap_shared_range(struct vfs_address_space *mapping,
                                    task_mm_info_t *mm, uint64_t vaddr,
                                    uint64_t file_start, uint64_t len) {
     uint64_t *pgdir;
     uint64_t unmapped = 0;
-    uint64_t indices[UNMAP_RELEASE_BATCH_MAX];
-    size_t index_count = 0;
 
     if (!mapping || !mm || len == 0)
         return;
@@ -959,94 +1098,151 @@ void page_cache_unmap_shared_range(struct vfs_address_space *mapping,
     if (!pgdir)
         return;
 
-    unmap_release_batch_t batch = {
-        .mm = mm,
-        .flush_start = vaddr,
-        .flush_end = vaddr + len,
-    };
+    uint64_t end = vaddr + len;
+    uint64_t cursor = vaddr;
+    while (cursor < end) {
+        uint64_t indices[UNMAP_RELEASE_BATCH_MAX];
+        size_t index_count = 0;
+        uint64_t scanned = 0;
+        unmap_release_batch_t batch = {
+            .mm = mm,
+            .flush_start = vaddr,
+            .flush_end = end,
+        };
 
-    spin_lock(&mm->lock);
-    for (uint64_t off = 0; off < len; off += PAGE_SIZE) {
-        uint64_t va = vaddr + off;
+        spin_lock(&mm->lock);
+        while (cursor < end && scanned < PAGE_CACHE_UNMAP_LOCK_BATCH_MAX &&
+               batch.page_count < UNMAP_RELEASE_BATCH_MAX) {
+            uint64_t off = cursor - vaddr;
+            uint64_t va = cursor;
 
-        if (batch.page_count == UNMAP_RELEASE_BATCH_MAX) {
-            unmap_release_batch_commit(&batch);
-            pcache_mmap_dec_index_batch(mapping, indices, index_count);
-            index_count = 0;
-            batch.mm = mm;
-            batch.flush_start = vaddr;
-            batch.flush_end = vaddr + len;
+            cursor += PAGE_SIZE;
+            scanned++;
+
+            if (off > UINT64_MAX - file_start)
+                break;
+            if (!translate_address(pgdir, va))
+                continue;
+            if (!unmap_page_defer_release(pgdir, va, &batch, false, false))
+                continue;
+            indices[index_count++] = (file_start + off) / PAGE_SIZE;
+            unmapped++;
         }
+        spin_unlock(&mm->lock);
 
-        if (off > UINT64_MAX - file_start)
-            break;
-        if (!translate_address(pgdir, va))
-            continue;
-        if (!unmap_page_defer_release(pgdir, va, &batch))
-            continue;
-        indices[index_count++] = (file_start + off) / PAGE_SIZE;
-        unmapped++;
+        unmap_release_batch_commit(&batch);
+        pcache_mmap_dec_index_batch(mapping, indices, index_count);
     }
 
-    unmap_release_batch_commit(&batch);
-    pcache_mmap_dec_index_batch(mapping, indices, index_count);
     pcache_sub_resident_pages(mm, unmapped);
-    spin_unlock(&mm->lock);
 }
 
-static void page_cache_zap_shared_mappings(struct vfs_address_space *mapping,
-                                           uint64_t file_start,
-                                           uint64_t file_end) {
-    vfs_node_t *node = mapping ? mapping->host : NULL;
-
+void page_cache_zap_inode_shared_mappings(vfs_node_t *node,
+                                          struct vfs_address_space *mapping,
+                                          uint64_t file_start,
+                                          uint64_t file_end) {
     if (!node || file_start >= file_end)
         return;
 
+    size_t capacity;
     spin_lock(&task_queue_lock);
-    if (!task_pid_map.buckets) {
-        spin_unlock(&task_queue_lock);
+    capacity = hashmap_size(&task_pid_map);
+    spin_unlock(&task_queue_lock);
+    if (capacity == 0)
         return;
+
+    if (capacity < 16)
+        capacity = 16;
+
+    task_mm_info_t **mms = NULL;
+    size_t mm_count = 0;
+    while (true) {
+        bool overflow = false;
+        mms = calloc(capacity, sizeof(*mms));
+        if (!mms)
+            return;
+
+        spin_lock(&task_queue_lock);
+        if (task_pid_map.buckets) {
+            for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
+                hashmap_entry_t *entry = &task_pid_map.buckets[i];
+                if (!hashmap_entry_is_occupied(entry))
+                    continue;
+
+                task_t *task = (task_t *)entry->value;
+                task_mm_info_t *mm = task ? task->mm : NULL;
+                if (!mm || !mm->task_vma_mgr.initialized)
+                    continue;
+
+                bool seen = false;
+                for (size_t j = 0; j < mm_count; j++) {
+                    if (mms[j] == mm) {
+                        seen = true;
+                        break;
+                    }
+                }
+                if (seen)
+                    continue;
+
+                if (mm_count == capacity) {
+                    overflow = true;
+                    break;
+                }
+
+                task_mm_get(mm);
+                mms[mm_count++] = mm;
+            }
+        }
+        spin_unlock(&task_queue_lock);
+
+        if (!overflow)
+            break;
+
+        for (size_t i = 0; i < mm_count; i++)
+            task_mm_put(mms[i]);
+        free(mms);
+        mms = NULL;
+        mm_count = 0;
+        if (capacity > SIZE_MAX / 2)
+            return;
+        capacity *= 2;
     }
 
-    for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
-        hashmap_entry_t *entry = &task_pid_map.buckets[i];
-        if (!hashmap_entry_is_occupied(entry))
-            continue;
-
-        task_t *task = (task_t *)entry->value;
-        if (!task || !task->mm)
-            continue;
-
-        task_mm_info_t *mm = task->mm;
+    for (size_t i = 0; i < mm_count; i++) {
+        task_mm_info_t *mm = mms[i];
         vma_manager_t *mgr = &mm->task_vma_mgr;
         uint64_t mmap_top = task_mm_mmap_top(mm);
-
-        spin_lock(&mgr->lock);
         uint64_t cursor = USER_MMAP_START;
+
         while (cursor < mmap_top) {
+            bool found = false;
+            bool matched = false;
+            uint64_t next = cursor;
+            uint64_t unmap_start = 0;
+            uint64_t unmap_file_start = 0;
+            uint64_t unmap_len = 0;
+
+            spin_lock(&mgr->lock);
             vma_t *vma = vma_find_intersection(mgr, cursor, mmap_top);
-            if (!vma)
+            if (vma) {
+                found = true;
+                next = vma->vm_end;
+                matched = pcache_vma_file_overlap(
+                    vma, node, file_start, file_end, &unmap_start,
+                    &unmap_file_start, &unmap_len);
+            }
+            spin_unlock(&mgr->lock);
+
+            if (!found)
                 break;
 
-            uint64_t next = vma->vm_end;
-            if (vma->vm_type == VMA_TYPE_FILE && vma->node == node &&
-                (vma->vm_flags & VMA_SHARED) && vma->vm_offset >= 0) {
-                uint64_t vma_file_start = (uint64_t)vma->vm_offset;
-                uint64_t vma_len = vma->vm_end - vma->vm_start;
-                uint64_t vma_file_end = UINT64_MAX;
-                if (vma_len <= UINT64_MAX - vma_file_start)
-                    vma_file_end = vma_file_start + vma_len;
-
-                uint64_t overlap_start = MAX(file_start, vma_file_start);
-                uint64_t overlap_end = MIN(file_end, vma_file_end);
-                if (overlap_start < overlap_end) {
-                    uint64_t unmap_start =
-                        vma->vm_start + (overlap_start - vma_file_start);
-                    uint64_t unmap_len = overlap_end - overlap_start;
-                    uint64_t unmap_file_start = overlap_start;
-
-                    page_cache_unmap_shared_range(mapping, mm, unmap_start,
-                                                  unmap_file_start, unmap_len);
+            if (matched) {
+                uint64_t unmapped_until = page_cache_unmap_shared_range_checked(
+                    mapping, node, mm, unmap_start, unmap_file_start,
+                    unmap_len);
+                if (unmapped_until > cursor) {
+                    cursor = unmapped_until;
+                    continue;
                 }
             }
 
@@ -1054,10 +1250,11 @@ static void page_cache_zap_shared_mappings(struct vfs_address_space *mapping,
                 break;
             cursor = next;
         }
-        spin_unlock(&mgr->lock);
+
+        task_mm_put(mm);
     }
 
-    spin_unlock(&task_queue_lock);
+    free(mms);
 }
 
 int page_cache_map_fault(struct vfs_file *file, uint64_t vaddr,
@@ -1093,6 +1290,9 @@ int page_cache_map_fault(struct vfs_file *file, uint64_t vaddr,
         ret = 0;
     }
     spin_unlock(&current_task->mm->lock);
+
+    if (mapped_new)
+        task_mm_flush_tlb_all(current_task->mm);
 
     if (mapped_new) {
         page_cache_mmap_inc_page(&inode->i_mapping, page->index);

@@ -75,13 +75,28 @@ typedef struct __ucontext {
 } ucontext_t;
 
 typedef struct arch_context {
-    uint64_t rip;
     uint64_t rsp;
     uint64_t fsbase;
     uint64_t gsbase;
     struct pt_regs *ctx;
     fpu_context_t *fpu_ctx;
 } arch_context_t;
+
+_Static_assert(offsetof(arch_context_t, rsp) == 0,
+               "x86_64 switch.S expects arch_context.rsp at offset 0");
+
+typedef struct x86_64_inactive_task_frame {
+    uint64_t r15;
+    uint64_t r14;
+    uint64_t r13;
+    uint64_t r12;
+    uint64_t rbx;
+    uint64_t rbp;
+    uint64_t ret_addr;
+} x86_64_inactive_task_frame_t;
+
+_Static_assert(sizeof(x86_64_inactive_task_frame_t) == 56,
+               "x86_64 inactive task frame layout mismatch");
 
 #define X64_RFLAGS_IF (1ULL << 9)
 
@@ -121,38 +136,11 @@ static inline void arch_context_set_tls(arch_context_t *context, uint64_t tls) {
         apic_tlb_shootdown_handle();                                           \
     } while (0)
 
+void x86_64_switch_to(arch_context_t *prev_ctx, arch_context_t *next_ctx,
+                      task_t *prev, task_t *next);
+
 #define switch_to(prev, next)                                                  \
-    do {                                                                       \
-        asm volatile("pushq %%rax\n\t"                                         \
-                     "pushq %%rbp\n\t"                                         \
-                     "pushq %%rbx\n\t"                                         \
-                     "pushq %%r12\n\t"                                         \
-                     "pushq %%r13\n\t"                                         \
-                     "pushq %%r14\n\t"                                         \
-                     "pushq %%r15\n\t"                                         \
-                     "movq %%rsp, %0\n\t"                                      \
-                     "movq %2, %%rsp\n\t"                                      \
-                     "leaq 1f(%%rip), %%rax\n\t"                               \
-                     "movq %%rax, %1\n\t"                                      \
-                     "movq %4, %%rdi\n\t"                                      \
-                     "movq %5, %%rsi\n\t"                                      \
-                     "pushq %3\n\t"                                            \
-                     "jmp __switch_to\n\t"                                     \
-                     "1:\n\t"                                                  \
-                     "popq %%r15\n\t"                                          \
-                     "popq %%r14\n\t"                                          \
-                     "popq %%r13\n\t"                                          \
-                     "popq %%r12\n\t"                                          \
-                     "popq %%rbx\n\t"                                          \
-                     "popq %%rbp\n\t"                                          \
-                     "popq %%rax\n\t"                                          \
-                     : "=m"(prev->arch_context->rsp),                          \
-                       "=m"(prev->arch_context->rip)                           \
-                     : "m"(next->arch_context->rsp),                           \
-                       "m"(next->arch_context->rip), "m"(prev), "m"(next)      \
-                     : "rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10",   \
-                       "r11", "cc", "memory");                                 \
-    } while (0)
+    x86_64_switch_to((prev)->arch_context, (next)->arch_context, (prev), (next))
 
 void arch_context_init(arch_context_t *context, uint64_t page_table_dir,
                        uint64_t entry, uint64_t stack, bool user_mode,

@@ -14,8 +14,6 @@ extern void acpi_init_after_pci();
 
 bool system_initialized = false;
 
-extern bool can_schedule;
-
 extern void pidfd_init();
 extern void mountfd_init();
 

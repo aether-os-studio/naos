@@ -55,10 +55,15 @@ typedef struct unmap_release_batch {
 uint64_t translate_address(uint64_t *pgdir, uint64_t vaddr);
 
 uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
-                  uint64_t flags, bool force);
+                  uint64_t flags, bool force, bool flush);
 uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr);
 uint64_t unmap_page_defer_release(uint64_t *pgdir, uint64_t vaddr,
-                                  unmap_release_batch_t *batch);
+                                  unmap_release_batch_t *batch, bool flush,
+                                  bool reclaim_tables);
+uint64_t unmap_page_range_defer_release(uint64_t *pgdir, uint64_t vaddr,
+                                        uint64_t end,
+                                        unmap_release_batch_t *batch,
+                                        uint64_t max_scan, uint64_t *unmapped);
 void unmap_release_batch_commit(unmap_release_batch_t *batch);
 void unmap_release_deferred_drain(void);
 

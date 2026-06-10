@@ -49,7 +49,7 @@ SECTIONS
     __kernel_image_start = .;
 
     .text : AT(ADDR(.text) - KERNEL_VIRT_OFFSET) {
-        _text = .;
+        _stext = .;
         *(.text .text.*)
         _etext = .;
     } :text

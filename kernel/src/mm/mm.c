@@ -18,6 +18,9 @@ uint64_t memory_size = 0;
 static size_t early_last_alloc_pos = 0;
 
 #define USER_LAYOUT_ASLR_BITS 18
+#define MM_PAGE_TABLE_BATCH_MAX 16
+#define MM_ATTR_BATCH_MAX 65536
+#define MM_UNMAP_LOCK_SCAN_MAX 65536
 
 uint64_t arch_user_va_limit(void) __attribute__((weak));
 
@@ -339,16 +342,21 @@ uint64_t map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
         uint64_t ret;
         if (paddr == (uint64_t)-1) {
             ret = map_page(pml4, va, (uint64_t)-1,
-                           get_arch_page_table_flags(flags), true);
+                           get_arch_page_table_flags(flags), true, false);
         } else {
             ret = map_page(pml4, va, paddr + (va - vaddr),
-                           get_arch_page_table_flags(flags), true);
+                           get_arch_page_table_flags(flags), true, false);
         }
 
-        if (ret != 0)
+        if (ret != 0) {
+            if (va != vaddr)
+                arch_flush_tlb_all();
             return ret;
+        }
     }
 
+    if (size)
+        arch_flush_tlb_all();
     return 0;
 }
 
@@ -369,10 +377,10 @@ uint64_t map_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t paddr,
 
         if (paddr == (uint64_t)-1) {
             ret = map_page(pgdir, va, (uint64_t)-1,
-                           get_arch_page_table_flags(flags), true);
+                           get_arch_page_table_flags(flags), true, false);
         } else {
             ret = map_page(pgdir, va, paddr + (va - vaddr),
-                           get_arch_page_table_flags(flags), true);
+                           get_arch_page_table_flags(flags), true, false);
         }
 
         if (ret != 0) {
@@ -391,6 +399,66 @@ uint64_t map_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t paddr,
     return 0;
 }
 
+uint64_t map_page_range_mm_batched(task_mm_info_t *mm, uint64_t vaddr,
+                                   uint64_t paddr, uint64_t size,
+                                   uint64_t flags) {
+    if (!mm || !task_mm_pgdir(mm))
+        return (uint64_t)-1;
+
+    ASSERT((vaddr & 0xfff) == 0);
+    ASSERT(paddr == (uint64_t)-1 || (paddr & 0xfff) == 0);
+
+    uint64_t end = vaddr + size;
+    uint64_t cursor = vaddr;
+    uint64_t mapped = 0;
+
+    while (cursor < end) {
+        uint64_t chunk_end = cursor + MM_ATTR_BATCH_MAX * PAGE_SIZE;
+        if (chunk_end < cursor || chunk_end > end)
+            chunk_end = end;
+
+        spin_lock(&mm->lock);
+        uint64_t *pgdir = task_mm_pgdir(mm);
+        if (!pgdir) {
+            spin_unlock(&mm->lock);
+            if (mapped)
+                __atomic_add_fetch(&mm->resident_pages, mapped,
+                                   __ATOMIC_RELAXED);
+            if (cursor != vaddr)
+                task_mm_flush_tlb_all(mm);
+            return (uint64_t)-1;
+        }
+
+        while (cursor < chunk_end) {
+            bool had_mapping = translate_address(pgdir, cursor) != 0;
+            uint64_t map_paddr =
+                paddr == (uint64_t)-1 ? (uint64_t)-1 : paddr + (cursor - vaddr);
+            uint64_t ret =
+                map_page(pgdir, cursor, map_paddr,
+                         get_arch_page_table_flags(flags), true, false);
+            if (ret != 0) {
+                spin_unlock(&mm->lock);
+                if (mapped)
+                    __atomic_add_fetch(&mm->resident_pages, mapped,
+                                       __ATOMIC_RELAXED);
+                if (cursor != vaddr)
+                    task_mm_flush_tlb_all(mm);
+                return ret;
+            }
+            if (!had_mapping && translate_address(pgdir, cursor))
+                mapped++;
+            cursor += PAGE_SIZE;
+        }
+        spin_unlock(&mm->lock);
+    }
+
+    if (mapped)
+        __atomic_add_fetch(&mm->resident_pages, mapped, __ATOMIC_RELAXED);
+    if (size)
+        task_mm_flush_tlb_all(mm);
+    return 0;
+}
+
 uint64_t map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                                 uint64_t size, uint64_t flags) {
     ASSERT((vaddr & 0xfff) == 0);
@@ -400,16 +468,21 @@ uint64_t map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
         uint64_t ret;
         if (paddr == (uint64_t)-1) {
             ret = map_page(pml4, va, (uint64_t)-1,
-                           get_arch_page_table_flags(flags), false);
+                           get_arch_page_table_flags(flags), false, false);
         } else {
             ret = map_page(pml4, va, paddr + (va - vaddr),
-                           get_arch_page_table_flags(flags), false);
+                           get_arch_page_table_flags(flags), false, false);
         }
 
-        if (ret != 0)
+        if (ret != 0) {
+            if (va != vaddr)
+                arch_flush_tlb_all();
             return ret;
+        }
     }
 
+    if (size)
+        arch_flush_tlb_all();
     return 0;
 }
 
@@ -431,10 +504,10 @@ uint64_t map_page_range_unforce_mm(task_mm_info_t *mm, uint64_t vaddr,
 
         if (paddr == (uint64_t)-1) {
             ret = map_page(pgdir, va, (uint64_t)-1,
-                           get_arch_page_table_flags(flags), false);
+                           get_arch_page_table_flags(flags), false, false);
         } else {
             ret = map_page(pgdir, va, paddr + (va - vaddr),
-                           get_arch_page_table_flags(flags), false);
+                           get_arch_page_table_flags(flags), false, false);
         }
 
         if (ret != 0) {
@@ -454,18 +527,7 @@ uint64_t map_page_range_unforce_mm(task_mm_info_t *mm, uint64_t vaddr,
 }
 
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size) {
-    for (uint64_t va = vaddr; va < vaddr + size; va += PAGE_SIZE) {
-        unmap_page(pml4, va);
-    }
-}
-
-void unmap_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t size) {
-    if (!mm)
-        return;
-
-    uint64_t unmapped = 0;
     unmap_release_batch_t batch = {
-        .mm = mm,
         .flush_start = vaddr,
         .flush_end = vaddr + size,
     };
@@ -473,36 +535,254 @@ void unmap_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t size) {
     for (uint64_t va = vaddr; va < vaddr + size; va += PAGE_SIZE) {
         if (batch.page_count == UNMAP_RELEASE_BATCH_MAX) {
             unmap_release_batch_commit(&batch);
-            batch.mm = mm;
             batch.flush_start = vaddr;
             batch.flush_end = vaddr + size;
         }
 
-        if (unmap_page_defer_release(task_mm_pgdir(mm), va, &batch))
-            unmapped++;
+        unmap_page_defer_release(pml4, va, &batch, false, false);
     }
 
     unmap_release_batch_commit(&batch);
-    if (unmapped) {
-        uint64_t old = __atomic_load_n(&mm->resident_pages, __ATOMIC_RELAXED);
-        uint64_t new_value = old > unmapped ? old - unmapped : 0;
-        __atomic_store_n(&mm->resident_pages, new_value, __ATOMIC_RELAXED);
+}
+
+void task_mm_account_unmapped_pages(task_mm_info_t *mm, uint64_t pages) {
+    if (!mm || !pages)
+        return;
+
+    uint64_t old = __atomic_load_n(&mm->resident_pages, __ATOMIC_RELAXED);
+    uint64_t new_value = old > pages ? old - pages : 0;
+    __atomic_store_n(&mm->resident_pages, new_value, __ATOMIC_RELAXED);
+}
+
+uint64_t unmap_page_range_mm_locked(task_mm_info_t *mm, uint64_t vaddr,
+                                    uint64_t end, unmap_release_batch_t *batch,
+                                    uint64_t *unmapped) {
+    if (!mm || !batch || vaddr >= end)
+        return end;
+    if (batch->page_count >= UNMAP_RELEASE_BATCH_MAX)
+        return vaddr;
+
+    uint64_t *pgdir = task_mm_pgdir(mm);
+    if (!pgdir)
+        return end;
+
+    return unmap_page_range_defer_release(pgdir, vaddr, end, batch,
+                                          MM_UNMAP_LOCK_SCAN_MAX, unmapped);
+}
+
+void unmap_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t size) {
+    if (!mm)
+        return;
+
+    uint64_t unmapped = 0;
+    uint64_t end = vaddr + size;
+    unmap_release_batch_t batch = {
+        .mm = mm,
+        .flush_start = vaddr,
+        .flush_end = end,
+    };
+
+    for (uint64_t va = vaddr; va < end;) {
+        va = unmap_page_range_mm_locked(mm, va, end, &batch, &unmapped);
+        if (batch.page_count >= UNMAP_RELEASE_BATCH_MAX) {
+            unmap_release_batch_commit(&batch);
+            batch.mm = mm;
+            batch.flush_start = vaddr;
+            batch.flush_end = end;
+        }
+    }
+
+    unmap_release_batch_commit(&batch);
+    task_mm_account_unmapped_pages(mm, unmapped);
+}
+
+void unmap_page_range_mm_batched(task_mm_info_t *mm, uint64_t vaddr,
+                                 uint64_t size) {
+    if (!mm || !size)
+        return;
+
+    uint64_t end = vaddr + size;
+    uint64_t cursor = vaddr;
+    uint64_t total_unmapped = 0;
+
+    while (cursor < end) {
+        uint64_t unmapped = 0;
+        unmap_release_batch_t batch = {
+            .mm = mm,
+            .flush_start = vaddr,
+            .flush_end = end,
+        };
+
+        spin_lock(&mm->lock);
+        cursor = unmap_page_range_mm_locked(mm, cursor, end, &batch, &unmapped);
+        spin_unlock(&mm->lock);
+
+        total_unmapped += unmapped;
+        unmap_release_batch_commit(&batch);
+    }
+
+    task_mm_account_unmapped_pages(mm, total_unmapped);
+}
+
+static uint64_t mm_page_table_entries_per_level(void) {
+    return (uint64_t)1 << ARCH_PT_OFFSET_PER_LEVEL;
+}
+
+static uint64_t mm_page_table_level_region_size(uint64_t level) {
+    uint64_t span = PAGE_CALC_PAGE_TABLE_SIZE(level);
+    uint64_t entries = mm_page_table_entries_per_level();
+
+    if (!span || span > UINT64_MAX / entries)
+        return UINT64_MAX;
+    return span * entries;
+}
+
+static uint64_t mm_range_min(uint64_t a, uint64_t b) { return a < b ? a : b; }
+
+static uint64_t mm_range_max(uint64_t a, uint64_t b) { return a > b ? a : b; }
+
+static void map_change_attribute_present_range(uint64_t *table, uint64_t level,
+                                               uint64_t table_base,
+                                               uint64_t start, uint64_t end,
+                                               uint64_t arch_flags,
+                                               uint64_t levels) {
+    if (!table || start >= end || level == 0 || level > levels)
+        return;
+
+    uint64_t span = PAGE_CALC_PAGE_TABLE_SIZE(level);
+    if (!span)
+        return;
+
+    uint64_t entries = mm_page_table_entries_per_level();
+    uint64_t first = PAGE_CALC_PAGE_TABLE_INDEX(start, level);
+    uint64_t last = PAGE_CALC_PAGE_TABLE_INDEX(end - 1, level);
+    if (first >= entries)
+        first = entries - 1;
+    if (last >= entries)
+        last = entries - 1;
+
+    for (uint64_t index = first; index <= last; index++) {
+        uint64_t entry_base = table_base + index * span;
+        uint64_t entry_end = entry_base + span;
+        if (entry_end < entry_base)
+            entry_end = UINT64_MAX;
+        if (entry_end <= start || entry_base >= end)
+            continue;
+
+        uint64_t entry = table[index];
+        if (level < levels && ARCH_PT_IS_LARGE(entry)) {
+            uint64_t old_flags = ARCH_READ_PTE_FLAG(entry);
+            uint64_t keep_flags = old_flags & ARCH_PT_SOFT_FLAGS;
+            uint64_t paddr = ARCH_READ_PTE(entry);
+            table[index] = ARCH_MAKE_HUGE_PTE(paddr, arch_flags | keep_flags);
+            continue;
+        }
+
+        if (level == levels) {
+            if (!(entry & ARCH_PT_FLAG_VALID))
+                continue;
+
+            uint64_t old_flags = ARCH_READ_PTE_FLAG(entry);
+            uint64_t keep_flags = old_flags & ARCH_PT_SOFT_FLAGS;
+            uint64_t paddr = ARCH_READ_PTE(entry);
+            table[index] = ARCH_MAKE_PTE(paddr, arch_flags | keep_flags);
+            continue;
+        }
+
+        if (!ARCH_PT_IS_TABLE(entry))
+            continue;
+
+        uint64_t *child = (uint64_t *)phys_to_virt(ARCH_READ_PTE(entry));
+        map_change_attribute_present_range(
+            child, level + 1, entry_base, mm_range_max(start, entry_base),
+            mm_range_min(end, entry_end), arch_flags, levels);
     }
 }
 
 uint64_t map_change_attribute_range(uint64_t *pgdir, uint64_t vaddr,
-                                    uint64_t len, uint64_t flags) {
-    for (uint64_t va = vaddr; va < vaddr + len; va += PAGE_SIZE) {
-        map_change_attribute(pgdir, va, get_arch_page_table_flags(flags));
+                                    uint64_t len, uint64_t flags, bool flush) {
+    if (!pgdir || !len)
+        return 0;
+
+    uint64_t end = vaddr + len;
+    if (end < vaddr)
+        end = UINT64_MAX;
+
+    uint64_t levels = arch_page_table_levels();
+    if (!levels || levels > ARCH_MAX_PT_LEVEL)
+        return 0;
+
+    uint64_t region_size = mm_page_table_level_region_size(1);
+    uint64_t arch_flags = get_arch_page_table_flags(flags);
+    uint64_t cursor = vaddr;
+
+    while (cursor < end) {
+        uint64_t table_base =
+            region_size == UINT64_MAX ? 0 : (cursor & ~(region_size - 1));
+        uint64_t table_end = table_base + region_size;
+        if (table_end < table_base)
+            table_end = UINT64_MAX;
+        uint64_t chunk_end = mm_range_min(end, table_end);
+        if (chunk_end <= cursor)
+            chunk_end = end;
+
+        map_change_attribute_present_range(pgdir, 1, table_base, cursor,
+                                           chunk_end, arch_flags, levels);
+        cursor = chunk_end;
     }
 
+    if (flush && len)
+        arch_flush_tlb_all();
     return 0;
 }
 
 uint64_t map_change_attribute_range_mm(task_mm_info_t *mm, uint64_t vaddr,
-                                       uint64_t len, uint64_t flags) {
+                                       uint64_t len, uint64_t flags,
+                                       bool flush) {
     uint64_t ret =
-        map_change_attribute_range(task_mm_pgdir(mm), vaddr, len, flags);
+        map_change_attribute_range(task_mm_pgdir(mm), vaddr, len, flags, false);
+
+    if (flush && len)
+        task_mm_flush_tlb_all(mm);
 
     return ret;
+}
+
+uint64_t map_change_attribute_range_mm_batched(task_mm_info_t *mm,
+                                               uint64_t vaddr, uint64_t len,
+                                               uint64_t flags, bool flush) {
+    if (!mm || !len)
+        return 0;
+
+    uint64_t *pgdir = task_mm_pgdir(mm);
+    if (!pgdir)
+        return (uint64_t)-1;
+
+    uint64_t end = vaddr + len;
+    uint64_t cursor = vaddr;
+    while (cursor < end) {
+        uint64_t chunk_end = cursor + MM_PAGE_TABLE_BATCH_MAX * PAGE_SIZE;
+        if (chunk_end < cursor || chunk_end > end)
+            chunk_end = end;
+
+        spin_lock(&mm->lock);
+        pgdir = task_mm_pgdir(mm);
+        if (!pgdir) {
+            spin_unlock(&mm->lock);
+            return (uint64_t)-1;
+        }
+
+        uint64_t ret = map_change_attribute_range(
+            pgdir, cursor, chunk_end - cursor, flags, false);
+        spin_unlock(&mm->lock);
+
+        if ((int64_t)ret < 0)
+            return ret;
+        cursor = chunk_end;
+    }
+
+    if (flush)
+        task_mm_flush_tlb_all(mm);
+
+    return 0;
 }

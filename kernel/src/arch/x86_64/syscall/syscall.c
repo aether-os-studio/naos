@@ -1008,7 +1008,5 @@ done:
         regs->r11 = regs->rflags;
     }
 
-    sched_resched_if_needed();
-
     x64_fpu_restore(self->arch_context->fpu_ctx);
 }

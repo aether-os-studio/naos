@@ -42,7 +42,7 @@ END {
     print "typedef struct {";
     print "    uint64_t addr;";
     print "    const char *name;";
-    print "    uint8_t type;";
+    print "    uint8_t nm_type;";
     print "    uint8_t exported;";
     print "    uint8_t can_describe_ip;";
     print "} kernel_builtin_symbol_t;";

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <fs/vfs/vfs.h>
+#include <mm/cache.h>
 #include <mm/mm.h>
 #include <mm/page.h>
 #include <task/task.h>
@@ -182,65 +183,7 @@ paged_file_store_map_shared_locked(paged_file_store_t *store, uint64_t *pgdir,
 static inline void paged_file_store_zap_shared_mappings(vfs_node_t *node,
                                                         uint64_t file_start,
                                                         uint64_t file_end) {
-    if (!node || file_start >= file_end)
-        return;
-
-    spin_lock(&task_queue_lock);
-    if (!task_pid_map.buckets) {
-        spin_unlock(&task_queue_lock);
-        return;
-    }
-
-    for (size_t i = 0; i < task_pid_map.bucket_count; i++) {
-        hashmap_entry_t *entry = &task_pid_map.buckets[i];
-        if (!hashmap_entry_is_occupied(entry))
-            continue;
-
-        task_t *task = (task_t *)entry->value;
-        if (!task || !task->mm)
-            continue;
-
-        task_mm_info_t *mm = task->mm;
-        vma_manager_t *mgr = &mm->task_vma_mgr;
-        uint64_t mmap_top = task_mm_mmap_top(mm);
-
-        spin_lock(&mgr->lock);
-        uint64_t cursor = USER_MMAP_START;
-        while (cursor < mmap_top) {
-            vma_t *vma = vma_find_intersection(mgr, cursor, mmap_top);
-            if (!vma)
-                break;
-
-            uint64_t next = vma->vm_end;
-            if (vma->vm_type == VMA_TYPE_FILE && vma->node == node &&
-                (vma->vm_flags & VMA_SHARED) && vma->vm_offset >= 0) {
-                uint64_t vma_file_start = (uint64_t)vma->vm_offset;
-                uint64_t vma_len = vma->vm_end - vma->vm_start;
-                uint64_t vma_file_end = UINT64_MAX;
-                if (vma_len <= UINT64_MAX - vma_file_start)
-                    vma_file_end = vma_file_start + vma_len;
-
-                uint64_t overlap_start = MAX(file_start, vma_file_start);
-                uint64_t overlap_end = MIN(file_end, vma_file_end);
-                if (overlap_start < overlap_end) {
-                    uint64_t unmap_start =
-                        vma->vm_start + (overlap_start - vma_file_start);
-                    uint64_t unmap_len = overlap_end - overlap_start;
-
-                    spin_lock(&mm->lock);
-                    unmap_page_range_mm(mm, unmap_start, unmap_len);
-                    spin_unlock(&mm->lock);
-                }
-            }
-
-            if (next <= cursor)
-                break;
-            cursor = next;
-        }
-        spin_unlock(&mgr->lock);
-    }
-
-    spin_unlock(&task_queue_lock);
+    page_cache_zap_inode_shared_mappings(node, NULL, file_start, file_end);
 }
 
 static inline void paged_file_store_destroy(paged_file_store_t *store) {

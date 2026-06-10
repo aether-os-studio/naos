@@ -690,7 +690,7 @@ static int map_task_elf_segment(task_t *task, vfs_node_t *node,
     if (load_flags != final_flags) {
         map_change_attribute_range(
             (uint64_t *)phys_to_virt(task->mm->page_table_addr), aligned_addr,
-            alloc_size, final_flags);
+            alloc_size, final_flags, true);
     }
 
     return 0;
@@ -1895,7 +1895,9 @@ static void task_execve_switch_mm(task_t *task, task_mm_info_t *from,
     bool irq_state = arch_interrupt_enabled();
 
     arch_disable_interrupt();
+    spin_lock(&task_queue_lock);
     task->mm = to;
+    spin_unlock(&task_queue_lock);
     task_mm_mark_cpu_active(to, task->cpu_id);
     set_current_page_dir(true, to->page_table_addr);
     task_mm_mark_cpu_inactive(from, task->cpu_id);
@@ -2773,8 +2775,11 @@ uint64_t sys_wait4(int pid, int *status, uint64_t options,
             if (status) {
                 int stop_status = 0;
                 ptrace_consume_wait_event(found_ptrace_stop, &stop_status, NULL,
-                                          false);
-                *status = stop_status;
+                                          true);
+                if (copy_to_user(status, &stop_status, sizeof(stop_status))) {
+                    return -EFAULT;
+                }
+                ptrace_consume_wait_event(found_ptrace_stop, NULL, NULL, false);
             } else {
                 ptrace_consume_wait_event(found_ptrace_stop, NULL, NULL, false);
             }
@@ -2785,12 +2790,10 @@ uint64_t sys_wait4(int pid, int *status, uint64_t options,
             if (child_wait_armed)
                 task_child_wait_disarm(&child_wait);
             target = found_dead;
-            arch_disable_interrupt();
             break;
         }
 
         if ((found_alive || found_ptrace_alive) && (options & WNOHANG)) {
-            arch_disable_interrupt();
             return 0;
         }
 
@@ -2846,11 +2849,17 @@ uint64_t sys_wait4(int pid, int *status, uint64_t options,
             }
 
             if (copy_to_user(status, &ret_status, sizeof(int))) {
+                __atomic_store_n(&target->exit_reaped, false, __ATOMIC_RELEASE);
                 return -EFAULT;
             }
         }
         if (rusage) {
-            task_fill_rusage(target, true, rusage);
+            struct rusage usage;
+            task_fill_rusage(target, true, &usage);
+            if (copy_to_user(rusage, &usage, sizeof(usage))) {
+                __atomic_store_n(&target->exit_reaped, false, __ATOMIC_RELEASE);
+                return -EFAULT;
+            }
         }
 
         ret = target->pid;
@@ -2982,24 +2991,33 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
 
         if (found_ptrace_stop) {
             siginfo_t ptrace_info;
+            bool have_ptrace_info = false;
 
             if (child_wait_armed)
                 task_child_wait_disarm(&child_wait);
             if (infop) {
                 if (!ptrace_consume_wait_event(found_ptrace_stop, NULL,
-                                               &ptrace_info,
-                                               (options & WNOWAIT) != 0)) {
+                                               &ptrace_info, true)) {
                     return 0;
                 }
+                have_ptrace_info = true;
                 if (copy_to_user(infop, &ptrace_info, sizeof(ptrace_info))) {
                     return (uint64_t)-EFAULT;
                 }
-            } else {
-                ptrace_consume_wait_event(found_ptrace_stop, NULL, NULL,
-                                          (options & WNOWAIT) != 0);
             }
-            if (rusage)
-                task_fill_rusage(found_ptrace_stop, false, rusage);
+            if (rusage) {
+                struct rusage usage;
+                task_fill_rusage(found_ptrace_stop, false, &usage);
+                if (copy_to_user(rusage, &usage, sizeof(usage))) {
+                    return (uint64_t)-EFAULT;
+                }
+            }
+            if (!(options & WNOWAIT)) {
+                if (!have_ptrace_info)
+                    ptrace_consume_wait_event(found_ptrace_stop, NULL, NULL,
+                                              true);
+                ptrace_consume_wait_event(found_ptrace_stop, NULL, NULL, false);
+            }
             return 0;
         }
 
@@ -3073,7 +3091,12 @@ uint64_t sys_waitid(int idtype, uint64_t id, siginfo_t *infop, int options,
             }
         }
         if (rusage) {
-            task_fill_rusage(target, true, rusage);
+            struct rusage usage;
+            task_fill_rusage(target, true, &usage);
+            if (copy_to_user(rusage, &usage, sizeof(usage))) {
+                __atomic_store_n(&target->exit_reaped, false, __ATOMIC_RELEASE);
+                return (uint64_t)-EFAULT;
+            }
         }
 
         ret = 0;
@@ -4818,6 +4841,6 @@ uint32_t sys_personality(uint32_t personality) {
 }
 
 int sys_yield() {
-    schedule(SCHED_FLAG_YIELD);
+    schedule(0);
     return 0;
 }

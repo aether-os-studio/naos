@@ -34,7 +34,7 @@ bool arch_interrupt_enabled() {
 #define SAVE_ALL_REGS                                                          \
     "cld; \n\t"                                                                \
     "pushq $0;    \n\t"                                                        \
-    "subq $0x8, %rsp;    \n\t"                                                 \
+    "subq $0x10, %rsp;    \n\t"                                                \
     "pushq %rax;     \n\t"                                                     \
     "pushq %rbp;     \n\t"                                                     \
     "pushq %rdi;     \n\t"                                                     \

@@ -60,5 +60,9 @@ void page_cache_mmap_dec_page(struct vfs_address_space *mapping,
 void page_cache_unmap_shared_range(struct vfs_address_space *mapping,
                                    task_mm_info_t *mm, uint64_t vaddr,
                                    uint64_t file_start, uint64_t len);
+void page_cache_zap_inode_shared_mappings(vfs_node_t *node,
+                                          struct vfs_address_space *mapping,
+                                          uint64_t file_start,
+                                          uint64_t file_end);
 int page_cache_map_fault(struct vfs_file *file, uint64_t vaddr,
                          uint64_t file_off, uint64_t pt_flags);

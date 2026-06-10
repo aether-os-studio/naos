@@ -7,6 +7,8 @@
 #include <task/task.h>
 
 #define NUMA_NODE_COUNT 1
+#define MM_PTE_ATTR_BATCH_PAGES 65536
+#define MADVISE_SHARED_FILE_BATCH_PAGES 64
 
 static bool mempolicy_mode_valid(int mode) {
     return mode >= MPOL_DEFAULT && mode <= MPOL_PREFERRED_MANY;
@@ -144,6 +146,13 @@ static bool vma_uses_page_cache_mapping(vma_t *vma) {
            vma->vm_offset >= 0;
 }
 
+static uint64_t mm_pte_attr_batch_end(uint64_t cursor, uint64_t limit) {
+    uint64_t chunk_end = cursor + MM_PTE_ATTR_BATCH_PAGES * PAGE_SIZE;
+    if (chunk_end < cursor || chunk_end > limit)
+        chunk_end = limit;
+    return chunk_end;
+}
+
 static void unmap_vma_resident_range(task_mm_info_t *mm, vma_t *vma,
                                      uint64_t start, uint64_t end) {
     if (!mm || !vma || start >= end)
@@ -157,9 +166,35 @@ static void unmap_vma_resident_range(task_mm_info_t *mm, vma_t *vma,
         return;
     }
 
+    unmap_page_range_mm_batched(mm, start, end - start);
+}
+
+static uint64_t unmap_vma_resident_range_once(task_mm_info_t *mm, vma_t *vma,
+                                              uint64_t start, uint64_t end,
+                                              unmap_release_batch_t *batch,
+                                              uint64_t *unmapped) {
+    if (!mm || !vma || start >= end)
+        return end;
+
+    if (vma_uses_page_cache_mapping(vma)) {
+        uint64_t chunk_end =
+            start + MADVISE_SHARED_FILE_BATCH_PAGES * PAGE_SIZE;
+        if (chunk_end < start || chunk_end > end)
+            chunk_end = end;
+        uint64_t file_start =
+            (uint64_t)vma->vm_offset + (start - vma->vm_start);
+        page_cache_unmap_shared_range(&vma->node->i_mapping, mm, start,
+                                      file_start, chunk_end - start);
+        return chunk_end;
+    }
+
+    if (!batch)
+        return start;
+
     spin_lock(&mm->lock);
-    unmap_page_range_mm(mm, start, end - start);
+    uint64_t next = unmap_page_range_mm_locked(mm, start, end, batch, unmapped);
     spin_unlock(&mm->lock);
+    return next;
 }
 
 static uint64_t vm_flags_to_pt_flags(uint64_t vm_flags) {
@@ -525,6 +560,71 @@ static int split_vma_boundaries_locked(vma_manager_t *mgr, uint64_t start,
     return 0;
 }
 
+static uint64_t update_vma_pte_attrs(task_mm_info_t *mm, uint64_t start,
+                                     uint64_t end, bool *ptes_changed) {
+    if (!mm || start >= end)
+        return 0;
+
+    vma_manager_t *mgr = &mm->task_vma_mgr;
+    uint64_t cursor = start;
+
+    while (cursor < end) {
+        spin_lock(&mgr->lock);
+        vma_t *vma = vma_find(mgr, cursor);
+        if (!vma) {
+            spin_unlock(&mgr->lock);
+            return (uint64_t)-ENOMEM;
+        }
+
+        uint64_t next_cursor =
+            mm_pte_attr_batch_end(cursor, MIN(vma->vm_end, end));
+        uint64_t effective_access = (vma->vm_flags & VMA_GUARD)
+                                        ? 0
+                                        : vm_flags_access_bits(vma->vm_flags);
+
+        spin_lock(&mm->lock);
+        uint64_t *pgdir = task_mm_pgdir(mm);
+        if (!pgdir) {
+            spin_unlock(&mm->lock);
+            spin_unlock(&mgr->lock);
+            return (uint64_t)-1;
+        }
+
+        uint64_t ret = map_change_attribute_range(
+            pgdir, cursor, next_cursor - cursor,
+            vm_flags_to_pt_flags(effective_access), false);
+        spin_unlock(&mm->lock);
+        spin_unlock(&mgr->lock);
+
+        if ((int64_t)ret < 0)
+            return ret;
+        if (ptes_changed)
+            *ptes_changed = true;
+        cursor = next_cursor;
+    }
+
+    return 0;
+}
+
+static uint64_t merge_vma_range_locked(vma_manager_t *mgr, uint64_t start,
+                                       uint64_t end) {
+    uint64_t cursor = start;
+
+    while (cursor < end) {
+        vma_t *vma = vma_find(mgr, cursor);
+        if (!vma)
+            return (uint64_t)-ENOMEM;
+
+        uint64_t next_cursor = MIN(vma->vm_end, end);
+        vma_try_merge_around(mgr, &vma);
+        if (vma->vm_end > next_cursor)
+            next_cursor = vma->vm_end;
+        cursor = next_cursor;
+    }
+
+    return 0;
+}
+
 static vma_t *alloc_mapping_vma(uint64_t start, uint64_t len, uint64_t prot,
                                 uint64_t map_type, uint64_t file_flags,
                                 bool anonymous, vfs_node_t *node,
@@ -578,12 +678,10 @@ static uint64_t populate_anon_vma(uint64_t vm_flags, uint64_t addr,
     if (writable_override)
         pt_flags |= PT_FLAG_W;
 
-    spin_lock(&mm->lock);
-    uint64_t ret = map_page_range_mm(mm, addr, (uint64_t)-1, len, pt_flags);
+    uint64_t ret =
+        map_page_range_mm_batched(mm, addr, (uint64_t)-1, len, pt_flags);
     if (ret != 0)
-        unmap_page_range_mm(mm, addr, len);
-    spin_unlock(&mm->lock);
-    task_mm_flush_tlb_all(mm);
+        unmap_page_range_mm_batched(mm, addr, len);
     return ret == 0 ? addr : (uint64_t)-ENOMEM;
 }
 
@@ -887,9 +985,7 @@ uint64_t sys_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags,
     map_fd_ref = NULL;
 
     if ((int64_t)ret < 0) {
-        spin_lock(&mm_info->lock);
-        unmap_page_range_mm(mm_info, start_addr, aligned_len);
-        spin_unlock(&mm_info->lock);
+        unmap_page_range_mm_batched(mm_info, start_addr, aligned_len);
         spin_lock(&mgr->lock);
         vma_remove(mgr, vma);
         spin_unlock(&mgr->lock);
@@ -962,14 +1058,109 @@ static uint64_t do_munmap_locked(uint64_t addr, uint64_t size) {
     return 0;
 }
 
+static uint64_t do_munmap_detach_locked(uint64_t addr, uint64_t size,
+                                        vma_t **detached) {
+    if (detached)
+        *detached = NULL;
+
+    addr = PADDING_DOWN(addr, PAGE_SIZE);
+    size = PADDING_UP(size, PAGE_SIZE);
+
+    if (size == 0)
+        return (uint64_t)-EINVAL;
+    if (!user_range_valid(addr, size))
+        return (uint64_t)-EFAULT;
+
+    vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+    uint64_t end = addr + size;
+    vma_t *head = NULL;
+
+    if (split_vma_boundaries_locked(mgr, addr, end) != 0)
+        return (uint64_t)-ENOMEM;
+
+    for (uint64_t cursor = addr; cursor < end;) {
+        vma_t *vma = vma_find_intersection(mgr, cursor, end);
+        if (!vma)
+            break;
+        if (vma_needs_file_writeback(vma))
+            return (uint64_t)-EAGAIN;
+        cursor = vma->vm_end;
+    }
+
+    while (true) {
+        vma_t *vma = vma_find_intersection(mgr, addr, end);
+        if (!vma)
+            break;
+        if (vma->vm_start < addr || vma->vm_end > end) {
+            for (vma_t *cur = head; cur;) {
+                vma_t *next = cur->vm_rb.rb_left
+                                  ? rb_entry(cur->vm_rb.rb_left, vma_t, vm_rb)
+                                  : NULL;
+                vma_insert(mgr, cur);
+                cur = next;
+            }
+            return (uint64_t)-ENOMEM;
+        }
+
+        if (vma_remove(mgr, vma) != 0) {
+            for (vma_t *cur = head; cur;) {
+                vma_t *next = cur->vm_rb.rb_left
+                                  ? rb_entry(cur->vm_rb.rb_left, vma_t, vm_rb)
+                                  : NULL;
+                vma_insert(mgr, cur);
+                cur = next;
+            }
+            return (uint64_t)-ENOMEM;
+        }
+
+        vma->vm_rb.rb_left = head ? &head->vm_rb : NULL;
+        head = vma;
+    }
+
+    if (detached)
+        *detached = head;
+    return 0;
+}
+
+static uint64_t munmap_release_detached(task_mm_info_t *mm, vma_t *list) {
+    while (list) {
+        vma_t *vma = list;
+        list = vma->vm_rb.rb_left ? rb_entry(vma->vm_rb.rb_left, vma_t, vm_rb)
+                                  : NULL;
+        vma->vm_rb.rb_left = NULL;
+
+        uint64_t start = vma->vm_start;
+        uint64_t end = vma->vm_end;
+
+        unmap_vma_resident_range(mm, vma, start, end);
+        vma_free(vma);
+    }
+
+    return 0;
+}
+
 uint64_t sys_munmap(uint64_t addr, uint64_t size) {
     if (addr & (PAGE_SIZE - 1))
         return (uint64_t)-EINVAL;
 
     vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+    task_mm_info_t *mm = current_task->mm;
+    vma_t *detached = NULL;
+    bool single_owner = __atomic_load_n(&mm->ref_count, __ATOMIC_ACQUIRE) == 1;
+
     spin_lock(&mgr->lock);
-    uint64_t ret = do_munmap_locked(addr, size);
+    uint64_t ret;
+    if (single_owner) {
+        ret = do_munmap_detach_locked(addr, size, &detached);
+        if ((int64_t)ret == -EAGAIN)
+            ret = do_munmap_locked(addr, size);
+    } else {
+        ret = do_munmap_locked(addr, size);
+    }
     spin_unlock(&mgr->lock);
+
+    if (ret == 0)
+        ret = munmap_release_detached(mm, detached);
     return ret;
 }
 
@@ -989,6 +1180,8 @@ uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
     task_mm_info_t *mm = current_task->mm;
     uint64_t end = addr + len;
     uint64_t new_vm_access = prot_to_vma_access_flags(prot);
+    bool ptes_changed = false;
+
     spin_lock(&mgr->lock);
 
     if (!range_fully_covered_locked(mgr, addr, end)) {
@@ -1019,44 +1212,18 @@ uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
         cursor = vma->vm_end;
     }
 
-    spin_lock(&mm->lock);
-    cursor = addr;
-    while (cursor < end) {
-        vma_t *vma = vma_find(mgr, cursor);
-        if (!vma) {
-            spin_unlock(&mm->lock);
-            spin_unlock(&mgr->lock);
-            return (uint64_t)-ENOMEM;
-        }
-
-        uint64_t next_cursor = MIN(vma->vm_end, end);
-        uint64_t effective_access = (vma->vm_flags & VMA_GUARD)
-                                        ? 0
-                                        : vm_flags_access_bits(vma->vm_flags);
-        map_change_attribute_range_mm(mm, cursor, next_cursor - cursor,
-                                      vm_flags_to_pt_flags(effective_access));
-        cursor = next_cursor;
-    }
-    spin_unlock(&mm->lock);
-    task_mm_flush_tlb_all(mm);
-
-    cursor = addr;
-    while (cursor < end) {
-        vma_t *vma = vma_find(mgr, cursor);
-        if (!vma) {
-            spin_unlock(&mgr->lock);
-            return (uint64_t)-ENOMEM;
-        }
-
-        uint64_t next_cursor = vma->vm_end;
-        vma_try_merge_around(mgr, &vma);
-        if (vma->vm_end > next_cursor)
-            next_cursor = vma->vm_end;
-        cursor = next_cursor;
-    }
-
     spin_unlock(&mgr->lock);
-    return 0;
+
+    uint64_t ret = update_vma_pte_attrs(mm, addr, end, &ptes_changed);
+    if (ret == 0) {
+        spin_lock(&mgr->lock);
+        ret = merge_vma_range_locked(mgr, addr, end);
+        spin_unlock(&mgr->lock);
+    }
+
+    if (ptes_changed)
+        task_mm_flush_tlb_all(mm);
+    return ret;
 }
 
 static int madvise_guard_validate_vmas(uint64_t addr, uint64_t end) {
@@ -1090,6 +1257,7 @@ static uint64_t madvise_guard_install_range(uint64_t addr, uint64_t len) {
     task_mm_info_t *mm = current_task->mm;
     uint64_t end = addr + len;
     uint64_t cursor = addr;
+    bool ptes_changed = false;
 
     spin_lock(&mgr->lock);
     if (split_vma_boundaries_locked(mgr, addr, end) != 0) {
@@ -1113,27 +1281,18 @@ static uint64_t madvise_guard_install_range(uint64_t addr, uint64_t len) {
         cursor = MIN(vma->vm_end, end);
     }
 
-    spin_lock(&mm->lock);
-    map_change_attribute_range_mm(mm, addr, len, 0);
-    spin_unlock(&mm->lock);
+    spin_unlock(&mgr->lock);
 
-    cursor = addr;
-    while (cursor < end) {
-        vma_t *vma = vma_find(mgr, cursor);
-        if (!vma) {
-            spin_unlock(&mgr->lock);
-            return (uint64_t)-ENOMEM;
-        }
-
-        uint64_t next_cursor = MIN(vma->vm_end, end);
-        vma_try_merge_around(mgr, &vma);
-        if (vma->vm_end > next_cursor)
-            next_cursor = vma->vm_end;
-        cursor = next_cursor;
+    uint64_t ret = update_vma_pte_attrs(mm, addr, end, &ptes_changed);
+    if (ret == 0) {
+        spin_lock(&mgr->lock);
+        ret = merge_vma_range_locked(mgr, addr, end);
+        spin_unlock(&mgr->lock);
     }
 
-    spin_unlock(&mgr->lock);
-    return 0;
+    if (ptes_changed)
+        task_mm_flush_tlb_all(mm);
+    return ret;
 }
 
 static uint64_t madvise_guard_remove_range(uint64_t addr, uint64_t len) {
@@ -1141,6 +1300,8 @@ static uint64_t madvise_guard_remove_range(uint64_t addr, uint64_t len) {
     task_mm_info_t *mm = current_task->mm;
     uint64_t end = addr + len;
     uint64_t cursor = addr;
+    uint64_t ret = 0;
+    bool ptes_changed = false;
 
     spin_lock(&mgr->lock);
     if (split_vma_boundaries_locked(mgr, addr, end) != 0) {
@@ -1164,42 +1325,18 @@ static uint64_t madvise_guard_remove_range(uint64_t addr, uint64_t len) {
         cursor = MIN(vma->vm_end, end);
     }
 
-    spin_lock(&mm->lock);
-    cursor = addr;
-    while (cursor < end) {
-        vma_t *vma = vma_find(mgr, cursor);
-        if (!vma) {
-            spin_unlock(&mm->lock);
-            spin_unlock(&mgr->lock);
-            return (uint64_t)-ENOMEM;
-        }
-
-        uint64_t next_cursor = MIN(vma->vm_end, end);
-        map_change_attribute_range_mm(
-            mm, cursor, next_cursor - cursor,
-            vm_flags_to_pt_flags(vm_flags_access_bits(vma->vm_flags)));
-        cursor = next_cursor;
-    }
-    spin_unlock(&mm->lock);
-    task_mm_flush_tlb_all(mm);
-
-    cursor = addr;
-    while (cursor < end) {
-        vma_t *vma = vma_find(mgr, cursor);
-        if (!vma) {
-            spin_unlock(&mgr->lock);
-            return (uint64_t)-ENOMEM;
-        }
-
-        uint64_t next_cursor = MIN(vma->vm_end, end);
-        vma_try_merge_around(mgr, &vma);
-        if (vma->vm_end > next_cursor)
-            next_cursor = vma->vm_end;
-        cursor = next_cursor;
-    }
-
     spin_unlock(&mgr->lock);
-    return 0;
+
+    ret = update_vma_pte_attrs(mm, addr, end, &ptes_changed);
+    if (ret == 0) {
+        spin_lock(&mgr->lock);
+        ret = merge_vma_range_locked(mgr, addr, end);
+        spin_unlock(&mgr->lock);
+    }
+
+    if (ptes_changed)
+        task_mm_flush_tlb_all(mm);
+    return ret;
 }
 
 static vma_t *duplicate_vma(vma_t *src, uint64_t source_addr, uint64_t start,
@@ -1318,11 +1455,13 @@ static uint64_t mremap_map_resident_pages(task_mm_info_t *mm, uint64_t old_addr,
             continue;
 
         bool had_mapping = translate_address(pgdir, dst) != 0;
-        if (map_page(pgdir, dst, paddr, flags, true) != 0) {
+        if (map_page(pgdir, dst, paddr, flags, true, false) != 0) {
             if (mapped)
                 __atomic_add_fetch(&mm->resident_pages, mapped,
                                    __ATOMIC_RELAXED);
             spin_unlock(&mm->lock);
+            if (mapped)
+                task_mm_flush_tlb_all(mm);
             return (uint64_t)-ENOMEM;
         }
 
@@ -1334,6 +1473,8 @@ static uint64_t mremap_map_resident_pages(task_mm_info_t *mm, uint64_t old_addr,
         __atomic_add_fetch(&mm->resident_pages, mapped, __ATOMIC_RELAXED);
 
     spin_unlock(&mm->lock);
+    if (mapped)
+        task_mm_flush_tlb_all(mm);
     if (mapped_out)
         *mapped_out = mapped;
     return 0;
@@ -1372,9 +1513,7 @@ static void mremap_unmap_resident_pages(task_mm_info_t *mm, uint64_t addr,
     if (!mm || size == 0)
         return;
 
-    spin_lock(&mm->lock);
-    unmap_page_range_mm(mm, addr, size);
-    spin_unlock(&mm->lock);
+    unmap_page_range_mm_batched(mm, addr, size);
 }
 
 static vma_t *mremap_find_single_vma_locked(vma_manager_t *mgr, uint64_t addr,
@@ -1513,9 +1652,7 @@ static uint64_t mremap_move_locked(task_mm_info_t *mm, vma_manager_t *mgr,
 
     uint64_t map_ret = mremap_map_new_region(new_vma, target, new_size);
     if ((int64_t)map_ret < 0) {
-        spin_lock(&mm->lock);
-        unmap_page_range_mm(mm, target, new_size);
-        spin_unlock(&mm->lock);
+        unmap_page_range_mm_batched(mm, target, new_size);
         vma_remove(mgr, new_vma);
         vma_free(new_vma);
         return map_ret;
@@ -1529,9 +1666,7 @@ static uint64_t mremap_move_locked(task_mm_info_t *mm, vma_manager_t *mgr,
     uint64_t resident_ret = mremap_map_resident_pages(mm, old_addr, target,
                                                       copy_len, &mapped_pages);
     if ((int64_t)resident_ret < 0) {
-        spin_lock(&mm->lock);
-        unmap_page_range_mm(mm, target, new_size);
-        spin_unlock(&mm->lock);
+        unmap_page_range_mm_batched(mm, target, new_size);
         vma_remove(mgr, new_vma);
         vma_free(new_vma);
         return resident_ret;
@@ -1717,12 +1852,10 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
     uint64_t load_pt_flags = final_pt_flags | PT_FLAG_W;
     task_mm_info_t *mm = current_task->mm;
 
-    spin_lock(&mm->lock);
-    uint64_t map_ret =
-        map_page_range_mm(mm, map_addr, (uint64_t)-1, map_len, load_pt_flags);
+    uint64_t map_ret = map_page_range_mm_batched(mm, map_addr, (uint64_t)-1,
+                                                 map_len, load_pt_flags);
     if (map_ret != 0)
-        unmap_page_range_mm(mm, map_addr, map_len);
-    spin_unlock(&mm->lock);
+        unmap_page_range_mm_batched(mm, map_addr, map_len);
     if (map_ret != 0)
         return (void *)(uint64_t)-ENOMEM;
 
@@ -1734,9 +1867,7 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
         ssize_t ret = vfs_read_kernel_file(
             file, (void *)(addr + (len - remaining)), remaining, &pos);
         if (ret < 0) {
-            spin_lock(&mm->lock);
-            unmap_page_range_mm(mm, map_addr, map_len);
-            spin_unlock(&mm->lock);
+            unmap_page_range_mm_batched(mm, map_addr, map_len);
             printk("Failed read file for mmap: file_off=%lu req=%lu ret=%ld\n",
                    file_off, remaining, ret);
             return (void *)ret;
@@ -1749,9 +1880,9 @@ void *general_map(fd_t *file, uint64_t addr, uint64_t len, uint64_t prot,
     }
 
     if (load_pt_flags != final_pt_flags) {
-        spin_lock(&mm->lock);
-        map_change_attribute_range_mm(mm, map_addr, map_len, final_pt_flags);
-        spin_unlock(&mm->lock);
+        map_change_attribute_range_mm_batched(mm, map_addr, map_len,
+                                              final_pt_flags, false);
+        task_mm_flush_tlb_all(mm);
     }
 
     return (void *)addr;
@@ -1990,11 +2121,12 @@ static uint64_t madvise_dontneed_range(uint64_t addr, uint64_t len) {
         return (uint64_t)check_ret;
 
     vma_manager_t *mgr = &current_task->mm->task_vma_mgr;
+    task_mm_info_t *mm = current_task->mm;
     uint64_t end = addr + len;
     uint64_t cursor = addr;
 
-    spin_lock(&mgr->lock);
     while (cursor < end) {
+        spin_lock(&mgr->lock);
         vma_t *vma = vma_find(mgr, cursor);
         if (!vma) {
             spin_unlock(&mgr->lock);
@@ -2002,16 +2134,36 @@ static uint64_t madvise_dontneed_range(uint64_t addr, uint64_t len) {
         }
 
         uint64_t range_end = MIN(vma->vm_end, end);
-        uint64_t ret = writeback_vma_file_range(vma, cursor, range_end);
+        uint64_t chunk_end = range_end;
+        if (vma_needs_file_writeback(vma)) {
+            chunk_end = cursor + MADVISE_SHARED_FILE_BATCH_PAGES * PAGE_SIZE;
+            if (chunk_end < cursor || chunk_end > range_end)
+                chunk_end = range_end;
+        }
+
+        uint64_t ret = writeback_vma_file_range(vma, cursor, chunk_end);
         if ((int64_t)ret < 0) {
             spin_unlock(&mgr->lock);
             return ret;
         }
 
-        unmap_vma_resident_range(current_task->mm, vma, cursor, range_end);
-        cursor = range_end;
+        unmap_release_batch_t batch = {
+            .mm = mm,
+            .flush_start = addr,
+            .flush_end = end,
+        };
+        uint64_t unmapped = 0;
+        uint64_t next = unmap_vma_resident_range_once(
+            mm, vma, cursor, chunk_end, &batch, &unmapped);
+        spin_unlock(&mgr->lock);
+
+        unmap_release_batch_commit(&batch);
+        task_mm_account_unmapped_pages(mm, unmapped);
+
+        if (next <= cursor)
+            next = chunk_end;
+        cursor = next;
     }
-    spin_unlock(&mgr->lock);
 
     return 0;
 }

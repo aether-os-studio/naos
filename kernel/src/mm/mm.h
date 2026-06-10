@@ -67,6 +67,18 @@ static inline uint64_t task_mm_resident_pages(task_mm_info_t *mm) {
     return mm ? __atomic_load_n(&mm->resident_pages, __ATOMIC_RELAXED) : 0;
 }
 
+void task_mm_account_unmapped_pages(task_mm_info_t *mm, uint64_t pages);
+
+static inline void task_mm_get(task_mm_info_t *mm) {
+    if (mm)
+        __atomic_add_fetch(&mm->ref_count, 1, __ATOMIC_ACQ_REL);
+}
+
+static inline void task_mm_put(task_mm_info_t *mm) {
+    if (mm)
+        free_page_table(mm);
+}
+
 static inline void task_mm_mark_cpu_active(task_mm_info_t *mm,
                                            uint32_t cpu_id) {
     if (!mm || cpu_id >= MAX_CPU_NUM)
@@ -95,17 +107,30 @@ uint64_t map_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
 uint64_t map_page_range_unforce(uint64_t *pml4, uint64_t vaddr, uint64_t paddr,
                                 uint64_t size, uint64_t flags);
 void unmap_page_range(uint64_t *pml4, uint64_t vaddr, uint64_t size);
-uint64_t map_change_attribute(uint64_t *pml4, uint64_t vaddr, uint64_t flags);
+uint64_t map_change_attribute(uint64_t *pml4, uint64_t vaddr, uint64_t flags,
+                              bool flush);
 uint64_t map_change_attribute_range(uint64_t *pgdir, uint64_t vaddr,
-                                    uint64_t len, uint64_t flags);
+                                    uint64_t len, uint64_t flags, bool flush);
 uint64_t map_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t paddr,
                            uint64_t size, uint64_t flags);
+uint64_t map_page_range_mm_batched(task_mm_info_t *mm, uint64_t vaddr,
+                                   uint64_t paddr, uint64_t size,
+                                   uint64_t flags);
 uint64_t map_page_range_unforce_mm(task_mm_info_t *mm, uint64_t vaddr,
                                    uint64_t paddr, uint64_t size,
                                    uint64_t flags);
 void unmap_page_range_mm(task_mm_info_t *mm, uint64_t vaddr, uint64_t size);
+uint64_t unmap_page_range_mm_locked(task_mm_info_t *mm, uint64_t vaddr,
+                                    uint64_t end, unmap_release_batch_t *batch,
+                                    uint64_t *unmapped);
+void unmap_page_range_mm_batched(task_mm_info_t *mm, uint64_t vaddr,
+                                 uint64_t size);
 uint64_t map_change_attribute_range_mm(task_mm_info_t *mm, uint64_t vaddr,
-                                       uint64_t len, uint64_t flags);
+                                       uint64_t len, uint64_t flags,
+                                       bool flush);
+uint64_t map_change_attribute_range_mm_batched(task_mm_info_t *mm,
+                                               uint64_t vaddr, uint64_t len,
+                                               uint64_t flags, bool flush);
 
 /*
  * Byte-sized wrappers around the frame allocator.

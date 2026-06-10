@@ -410,8 +410,20 @@ static void pty_pair_cleanup(pty_pair_t *pair) {
 }
 
 static void pts_ctrl_assign(pty_pair_t *pair) {
+    if (!pair || !current_task)
+        return;
+
     pair->ctrlSession = current_task->sid;
     pair->ctrlPgid = current_task->pgid;
+    if (!pair->frontProcessGroup)
+        pair->frontProcessGroup = pair->ctrlPgid;
+}
+
+static int pty_foreground_pgid_locked(pty_pair_t *pair) {
+    if (!pair)
+        return 0;
+
+    return pair->frontProcessGroup ? pair->frontProcessGroup : pair->ctrlPgid;
 }
 
 static struct vfs_inode *
@@ -901,10 +913,15 @@ static long ptmx_ioctl(fd_t *fd, unsigned long request, unsigned long arg) {
             ret = 0;
             break;
         case TIOCGPGRP:
-            ret =
-                copy_to_user((void *)arg, &pair->frontProcessGroup, sizeof(int))
-                    ? -EFAULT
-                    : 0;
+            if (!arg) {
+                ret = -EFAULT;
+                break;
+            }
+            int foreground_pgid = pty_foreground_pgid_locked(pair);
+            ret = copy_to_user((void *)arg, &foreground_pgid,
+                               sizeof(foreground_pgid))
+                      ? -EFAULT
+                      : 0;
             break;
         case TIOCSPGRP:
             ret = copy_from_user(&pair->frontProcessGroup, (const void *)arg,
@@ -1211,8 +1228,14 @@ int pts_ioctl(pty_pair_t *pair, uint64_t request, void *arg) {
         ret = 0;
         break;
     case TIOCGPGRP:
-        ret = copy_to_user(arg, &pair->frontProcessGroup, sizeof(int)) ? -EFAULT
-                                                                       : 0;
+        if (!arg) {
+            ret = -EFAULT;
+            break;
+        }
+        int foreground_pgid = pty_foreground_pgid_locked(pair);
+        ret = copy_to_user(arg, &foreground_pgid, sizeof(foreground_pgid))
+                  ? -EFAULT
+                  : 0;
         break;
     case TIOCSPGRP:
         ret = copy_from_user(&pair->frontProcessGroup, arg, sizeof(int))

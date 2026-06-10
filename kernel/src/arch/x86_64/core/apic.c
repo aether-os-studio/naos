@@ -19,9 +19,9 @@ extern irq_controller_t apic_controller;
 tss_t tss[MAX_CPU_NUM];
 
 #define IA32_TSC_DEADLINE 0x6E0
+#define APIC_TIMER_MIN_DELTA_NS 100000ULL
 
 static bool lapic_use_tsc_deadline;
-static uint64_t lapic_tsc_deadline_interval;
 static uint32_t lapic_periodic_ticks;
 static uint64_t lapic_next_deadline[MAX_CPU_NUM];
 static uint64_t lapic_interval_ticks[MAX_CPU_NUM];
@@ -31,8 +31,8 @@ static inline uint64_t apic_base_tick_ns(void) {
 }
 
 static uint64_t apic_timer_ticks_from_ns(uint64_t ns) {
-    if (ns == 0)
-        ns = 1;
+    if (ns < APIC_TIMER_MIN_DELTA_NS)
+        ns = APIC_TIMER_MIN_DELTA_NS;
 
     if (lapic_use_tsc_deadline) {
         uint64_t tsc_hz = tsc_cycles_per_sec();
@@ -111,8 +111,7 @@ void apic_send_ipi(uint32_t cpu_id, uint64_t irq_num) {
     }
 
     uint32_t flags = ICR_DELIVERY_FIXED | ICR_DEST_PHYSICAL |
-                     ICR_DEST_NOSHORTHAND | ICR_TRIGGER_LEVEL |
-                     ICR_LEVEL_ASSERT | (uint32_t)irq_num;
+                     ICR_DEST_NOSHORTHAND | (uint32_t)irq_num;
     uint32_t target_lapic_id = cpuid_to_lapicid[cpu_id];
 
     if (x2apic_mode) {
@@ -156,9 +155,6 @@ void local_apic_init() {
     if (tsc_deadline_mode_available()) {
         uint32_t cpu_id = get_cpuid_by_lapic_id((uint32_t)lapic_id());
         lapic_use_tsc_deadline = true;
-        lapic_tsc_deadline_interval = tsc_cycles_per_sec() / SCHED_HZ;
-        if (lapic_tsc_deadline_interval == 0)
-            lapic_tsc_deadline_interval = 1;
 
         apic_timer_set_interval_ns_for_cpu(cpu_id, apic_base_tick_ns());
         lapic_write(LAPIC_TIMER, APIC_TIMER_INTERRUPT_VECTOR | (2U << 17));
@@ -191,6 +187,11 @@ void apic_timer_rearm(void) {
     if (lapic_use_tsc_deadline) {
         uint64_t now = rdtsc_ordered();
         uint64_t next = now + interval;
+        uint64_t programmed = lapic_next_deadline[cpu_id];
+
+        if (programmed > now && programmed <= next)
+            return;
+
         lapic_next_deadline[cpu_id] = next;
         wrmsr(IA32_TSC_DEADLINE, next);
         return;
@@ -508,12 +509,12 @@ uint64_t general_ap_entry() {
 
     fsgsbase_init();
 
+    uint32_t local_apic_id = (uint32_t)lapic_id();
+    x64_cpu_local_init(get_cpuid_by_lapic_id(local_apic_id), local_apic_id);
+
     tss_init();
 
     local_apic_init();
-
-    x64_cpu_local_init(get_cpuid_by_lapic_id((uint32_t)lapic_id()),
-                       (uint32_t)lapic_id());
 
     syscall_init();
 
@@ -532,7 +533,6 @@ uint64_t general_ap_entry() {
 
     while (1) {
         arch_enable_interrupt();
-        deadline_reprogram_local();
         arch_wait_for_interrupt();
     }
 }

@@ -157,7 +157,7 @@ void unmap_release_deferred_drain(void) {
 }
 
 uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
-                  uint64_t flags, bool force) {
+                  uint64_t flags, bool force, bool flush) {
     ASSERT((vaddr & 0xfff) == 0);
     ASSERT(paddr == (uint64_t)-1 || (paddr & 0xfff) == 0);
 
@@ -197,7 +197,8 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
                 uint64_t old_flags = ARCH_READ_PTE_FLAG(addr);
                 pgdir[index] =
                     arch_make_page_table_entry(pa, old_flags | flags);
-                arch_flush_tlb(vaddr);
+                if (flush)
+                    arch_flush_tlb(vaddr);
             }
         }
 
@@ -226,13 +227,13 @@ uint64_t map_page(uint64_t *pgdir, uint64_t vaddr, uint64_t paddr,
         goto rollback_created_tables;
     }
 
-    if (had_old_mapping && old_paddr && old_paddr != paddr) {
-        address_release(old_paddr);
-    }
-
     pgdir[index] = ARCH_MAKE_PTE(paddr, flags);
 
-    arch_flush_tlb(vaddr);
+    if (flush || (had_old_mapping && old_paddr && old_paddr != paddr))
+        arch_flush_tlb(vaddr);
+
+    if (had_old_mapping && old_paddr && old_paddr != paddr)
+        address_release(old_paddr);
 
     return 0;
 
@@ -247,7 +248,8 @@ rollback_created_tables:
 }
 
 uint64_t unmap_page_defer_release(uint64_t *pgdir, uint64_t vaddr,
-                                  unmap_release_batch_t *batch) {
+                                  unmap_release_batch_t *batch, bool flush,
+                                  bool reclaim_tables) {
     uint64_t levels = arch_page_table_levels();
     if (!page_table_levels_valid(levels))
         return 0;
@@ -284,41 +286,44 @@ uint64_t unmap_page_defer_release(uint64_t *pgdir, uint64_t vaddr,
 
     if (paddr != 0) {
         table_ptrs[levels - 1][index] = 0;
-        arch_flush_tlb(vaddr);
+        if (flush)
+            arch_flush_tlb(vaddr);
         if (batch) {
             unmap_batch_queue_page(batch, paddr);
         } else {
             unmap_release_page(paddr);
         }
 
-        // 从最底层页表开始向上检查并释放空页表
-        for (int level = (int)levels - 1; level > 0; level--) {
-            uint64_t *current_table = table_ptrs[level];
-            bool table_empty = true;
+        if (reclaim_tables) {
+            // 从最底层页表开始向上检查并释放空页表
+            for (int level = (int)levels - 1; level > 0; level--) {
+                uint64_t *current_table = table_ptrs[level];
+                bool table_empty = true;
 
-            for (uint64_t i = 0; i < 512; i++) {
-                if (current_table[i] != 0) {
-                    table_empty = false;
+                for (uint64_t i = 0; i < 512; i++) {
+                    if (current_table[i] != 0) {
+                        table_empty = false;
+                        break;
+                    }
+                }
+
+                if (table_empty) {
+                    // 释放空页表
+                    uint64_t table_phys_addr = virt_to_phys(current_table);
+                    if (batch) {
+                        unmap_batch_queue_table(batch, table_phys_addr);
+                    } else {
+                        unmap_release_table(table_phys_addr);
+                    }
+
+                    // 清除上级页表中的对应条目
+                    uint64_t *parent_table = table_ptrs[level - 1];
+                    uint64_t parent_index = table_indices[level - 1];
+                    parent_table[parent_index] = 0;
+                } else {
+                    // 页表不为空，停止向上检查
                     break;
                 }
-            }
-
-            if (table_empty) {
-                // 释放空页表
-                uint64_t table_phys_addr = virt_to_phys(current_table);
-                if (batch) {
-                    unmap_batch_queue_table(batch, table_phys_addr);
-                } else {
-                    unmap_release_table(table_phys_addr);
-                }
-
-                // 清除上级页表中的对应条目
-                uint64_t *parent_table = table_ptrs[level - 1];
-                uint64_t parent_index = table_indices[level - 1];
-                parent_table[parent_index] = 0;
-            } else {
-                // 页表不为空，停止向上检查
-                break;
             }
         }
     }
@@ -327,10 +332,138 @@ uint64_t unmap_page_defer_release(uint64_t *pgdir, uint64_t vaddr,
 }
 
 uint64_t unmap_page(uint64_t *pgdir, uint64_t vaddr) {
-    return unmap_page_defer_release(pgdir, vaddr, NULL);
+    return unmap_page_defer_release(pgdir, vaddr, NULL, true, true);
 }
 
-uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
+static uint64_t page_table_entries_per_level(void) {
+    return (uint64_t)1 << ARCH_PT_OFFSET_PER_LEVEL;
+}
+
+static uint64_t page_table_region_size(uint64_t level) {
+    uint64_t span = PAGE_CALC_PAGE_TABLE_SIZE(level);
+    uint64_t entries = page_table_entries_per_level();
+
+    if (!span || span > UINT64_MAX / entries)
+        return UINT64_MAX;
+    return span * entries;
+}
+
+static uint64_t pt_range_min(uint64_t a, uint64_t b) { return a < b ? a : b; }
+
+static uint64_t pt_range_max(uint64_t a, uint64_t b) { return a > b ? a : b; }
+
+static uint64_t unmap_present_range(uint64_t *table, uint64_t level,
+                                    uint64_t table_base, uint64_t start,
+                                    uint64_t end, unmap_release_batch_t *batch,
+                                    uint64_t max_scan, uint64_t *scanned,
+                                    uint64_t *unmapped, uint64_t levels) {
+    if (!table || start >= end || level == 0 || level > levels)
+        return end;
+
+    uint64_t span = PAGE_CALC_PAGE_TABLE_SIZE(level);
+    if (!span)
+        return end;
+
+    uint64_t entries = page_table_entries_per_level();
+    uint64_t first = PAGE_CALC_PAGE_TABLE_INDEX(start, level);
+    uint64_t last = PAGE_CALC_PAGE_TABLE_INDEX(end - 1, level);
+    if (first >= entries)
+        first = entries - 1;
+    if (last >= entries)
+        last = entries - 1;
+
+    for (uint64_t index = first; index <= last; index++) {
+        uint64_t entry_base = table_base + index * span;
+        uint64_t entry_end = entry_base + span;
+        if (entry_end < entry_base)
+            entry_end = UINT64_MAX;
+        if (entry_end <= start || entry_base >= end)
+            continue;
+
+        if (level == levels) {
+            if (batch && batch->page_count >= UNMAP_RELEASE_BATCH_MAX)
+                return entry_base;
+            if (max_scan && *scanned >= max_scan)
+                return entry_base;
+            (*scanned)++;
+
+            uint64_t entry = table[index];
+            uint64_t paddr = ARCH_READ_PTE(entry);
+            if (!paddr)
+                continue;
+
+            table[index] = 0;
+            if (batch) {
+                unmap_batch_queue_page(batch, paddr);
+            } else {
+                unmap_release_page(paddr);
+            }
+            if (unmapped)
+                (*unmapped)++;
+            continue;
+        }
+
+        uint64_t entry = table[index];
+        if (ARCH_PT_IS_LARGE(entry)) {
+            /*
+             * Existing range unmap does not partially release huge mappings.
+             * Keep that behavior here and only skip the covered span.
+             */
+            continue;
+        }
+        if (!ARCH_PT_IS_TABLE(entry))
+            continue;
+
+        uint64_t *child = (uint64_t *)phys_to_virt(ARCH_READ_PTE(entry));
+        uint64_t ret = unmap_present_range(child, level + 1, entry_base,
+                                           pt_range_max(start, entry_base),
+                                           pt_range_min(end, entry_end), batch,
+                                           max_scan, scanned, unmapped, levels);
+        if (ret < pt_range_min(end, entry_end))
+            return ret;
+    }
+
+    return end;
+}
+
+uint64_t unmap_page_range_defer_release(uint64_t *pgdir, uint64_t vaddr,
+                                        uint64_t end,
+                                        unmap_release_batch_t *batch,
+                                        uint64_t max_scan, uint64_t *unmapped) {
+    if (!pgdir || vaddr >= end)
+        return end;
+
+    uint64_t levels = arch_page_table_levels();
+    if (!page_table_levels_valid(levels))
+        return end;
+
+    uint64_t region_size = page_table_region_size(1);
+    uint64_t cursor = vaddr;
+    uint64_t scanned = 0;
+
+    while (cursor < end && (!max_scan || scanned < max_scan)) {
+        uint64_t table_base =
+            region_size == UINT64_MAX ? 0 : (cursor & ~(region_size - 1));
+        uint64_t table_end = table_base + region_size;
+        if (table_end < table_base)
+            table_end = UINT64_MAX;
+        uint64_t chunk_end = pt_range_min(end, table_end);
+        if (chunk_end <= cursor)
+            chunk_end = end;
+
+        uint64_t next =
+            unmap_present_range(pgdir, 1, table_base, cursor, chunk_end, batch,
+                                max_scan, &scanned, unmapped, levels);
+        if (next < chunk_end)
+            return next;
+        cursor = chunk_end;
+    }
+
+    return cursor;
+}
+
+uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags,
+                              bool flush) {
     uint64_t levels = arch_page_table_levels();
     if (!page_table_levels_valid(levels))
         return 0;
@@ -348,7 +481,8 @@ uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
             uint64_t old_paddr = ARCH_READ_PTE(pgdir[index]);
             uint64_t new_flags = flags | keep_flags;
             pgdir[index] = ARCH_MAKE_HUGE_PTE(old_paddr, new_flags);
-            arch_flush_tlb(vaddr);
+            if (flush)
+                arch_flush_tlb(vaddr);
             return 0;
         }
         if (!ARCH_PT_IS_TABLE(addr)) {
@@ -368,7 +502,8 @@ uint64_t map_change_attribute(uint64_t *pgdir, uint64_t vaddr, uint64_t flags) {
     uint64_t new_flags = flags | keep_flags;
     pgdir[index] = ARCH_MAKE_PTE(old_paddr, new_flags);
 
-    arch_flush_tlb(vaddr);
+    if (flush)
+        arch_flush_tlb(vaddr);
 
     return 0;
 }
@@ -426,7 +561,8 @@ static void page_table_account_shared_file_mappings(task_mm_info_t *mm,
 
 static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level,
                                            uint64_t base_vaddr,
-                                           vma_manager_t *mgr) {
+                                           vma_manager_t *mgr,
+                                           bool *source_changed) {
     if (!source_table)
         return NULL;
 
@@ -464,8 +600,8 @@ static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level,
                 arch_page_table_flags_writable(flags)) {
                 flags = arch_page_table_flags_make_cow(flags);
                 source_table[i] = ARCH_MAKE_PTE(paddr, flags);
-                task_mm_flush_tlb_page(current_task ? current_task->mm : NULL,
-                                       entry_vaddr);
+                if (source_changed)
+                    *source_changed = true;
             }
 
             new_table[i] = ARCH_MAKE_PTE(paddr, flags);
@@ -476,7 +612,7 @@ static uint64_t *copy_page_table_recursive(uint64_t *source_table, int level,
             uint64_t *child_src =
                 (uint64_t *)phys_to_virt(ARCH_READ_PTE(entry));
             uint64_t *child_new = copy_page_table_recursive(
-                child_src, level - 1, entry_vaddr, mgr);
+                child_src, level - 1, entry_vaddr, mgr, source_changed);
             if (!child_new) {
                 free_page_table_recursive(new_table, level);
                 return NULL;
@@ -539,9 +675,7 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
 
     if (clone_flags & CLONE_VM) {
         spin_lock(&mgr->lock);
-        spin_lock(&old->lock);
-        old->ref_count++;
-        spin_unlock(&old->lock);
+        task_mm_get(old);
         spin_unlock(&mgr->lock);
         return old;
     }
@@ -565,7 +699,9 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
         return NULL;
     }
 
-    uint64_t *new_root = copy_page_table_recursive(old_root, levels, 0, mgr);
+    bool source_changed = false;
+    uint64_t *new_root =
+        copy_page_table_recursive(old_root, levels, 0, mgr, &source_changed);
     if (!new_root) {
         free(new_mm);
         spin_unlock(&old->lock);
@@ -591,6 +727,9 @@ task_mm_info_t *clone_page_table(task_mm_info_t *old, uint64_t clone_flags) {
     spin_unlock(&old->lock);
     spin_unlock(&mgr->lock);
 
+    if (source_changed)
+        task_mm_flush_tlb_all(old);
+
     new_mm->task_vma_mgr.initialized = mgr->initialized;
     new_mm->mmap_top = old->mmap_top;
     new_mm->signal_trampoline_start = old->signal_trampoline_start;
@@ -611,21 +750,18 @@ void free_page_table(task_mm_info_t *directory) {
         return;
 
     vma_manager_t *mgr = &directory->task_vma_mgr;
-    bool should_free = false;
-
-    spin_lock(&directory->lock);
-    if (directory->ref_count <= 0) {
-        spin_unlock(&directory->lock);
-        return;
-    }
-
-    if (--directory->ref_count == 0) {
-        should_free = true;
-    }
-    spin_unlock(&directory->lock);
-
-    if (!should_free) {
-        return;
+    int old_ref = __atomic_load_n(&directory->ref_count, __ATOMIC_ACQUIRE);
+    while (true) {
+        if (old_ref <= 0)
+            return;
+        int new_ref = old_ref - 1;
+        if (__atomic_compare_exchange_n(&directory->ref_count, &old_ref,
+                                        new_ref, false, __ATOMIC_ACQ_REL,
+                                        __ATOMIC_ACQUIRE)) {
+            if (new_ref != 0)
+                return;
+            break;
+        }
     }
 
     spin_lock(&mgr->lock);
@@ -654,8 +790,13 @@ void unmap_release_batch_commit(unmap_release_batch_t *batch) {
     unmap_release_deferred_drain();
 
     bool can_release = true;
-    if (batch->mm && (batch->page_count || batch->table_count)) {
-        can_release = task_mm_flush_tlb_all(batch->mm);
+    bool has_entries = batch->page_count || batch->table_count;
+    if (has_entries) {
+        if (batch->mm) {
+            can_release = task_mm_flush_tlb_all(batch->mm);
+        } else {
+            arch_flush_tlb_all();
+        }
     }
 
     if (!can_release) {

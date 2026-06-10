@@ -17,7 +17,9 @@ kernel_thread_func:
     popq %rdi
     popq %rbp
     popq %rax
+    addq $0x8, %rsp
     movq %rdx, %rdi
     callq *%rbx
     movq $0, %rdi
-    jmp task_exit_thread
+    callq task_exit_thread
+    ud2

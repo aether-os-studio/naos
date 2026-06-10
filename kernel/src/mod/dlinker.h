@@ -14,6 +14,17 @@ typedef struct {
     void *addr;
 } dlfunc_t;
 
+typedef struct kernel_builtin_symbol {
+    uint64_t addr;
+    const char *name;
+    uint8_t nm_type;
+    uint8_t exported;
+    uint8_t can_describe_ip;
+} kernel_builtin_symbol_t;
+
+extern const kernel_builtin_symbol_t kallsyms_symbols[] __attribute__((weak));
+extern const uint64_t kallsyms_num __attribute__((weak));
+
 typedef struct module_symbol {
     char *module_name;
     char *name;

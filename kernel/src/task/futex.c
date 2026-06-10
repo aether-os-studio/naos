@@ -69,6 +69,33 @@ static inline futex_bucket_t *futex_bucket_for_key(const futex_key_t *key,
     return futex_bucket_for_id(bucket_id);
 }
 
+static void futex_lock_bucket_pair(futex_bucket_t *first, uint32_t first_id,
+                                   futex_bucket_t *second, uint32_t second_id) {
+    if (first_id == second_id) {
+        spin_lock(&first->lock);
+    } else if (first_id < second_id) {
+        spin_lock(&first->lock);
+        spin_lock(&second->lock);
+    } else {
+        spin_lock(&second->lock);
+        spin_lock(&first->lock);
+    }
+}
+
+static void futex_unlock_bucket_pair(futex_bucket_t *first, uint32_t first_id,
+                                     futex_bucket_t *second,
+                                     uint32_t second_id) {
+    if (first_id == second_id) {
+        spin_unlock(&first->lock);
+    } else if (first_id < second_id) {
+        spin_unlock(&second->lock);
+        spin_unlock(&first->lock);
+    } else {
+        spin_unlock(&first->lock);
+        spin_unlock(&second->lock);
+    }
+}
+
 static uint64_t futex_build_key_for_task(task_t *task, int *uaddr,
                                          bool is_private, futex_key_t *key) {
     if (is_private) {
@@ -411,6 +438,9 @@ static int futex_wake_locked(futex_bucket_t *bucket, const futex_key_t *key,
             continue;
         }
 
+        if (woke >= val)
+            break;
+
         if (futex_key_equal(curr, key) && (curr->bitset & bitset) != 0 &&
             woke < val) {
             if (prev)
@@ -629,7 +659,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
                               false);
     }
     case FUTEX_WAKE: {
-        if (!futex_prefault_user_word(uaddr, false))
+        if (!is_private && !futex_prefault_user_word(uaddr, false))
             return (uint64_t)-EFAULT;
         futex_key_t key;
         uint64_t ret = futex_build_key(uaddr, is_private, &key);
@@ -648,7 +678,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
                               (op & FUTEX_CLOCK_REALTIME) != 0);
     }
     case FUTEX_WAKE_BITSET: {
-        if (!futex_prefault_user_word(uaddr, false))
+        if (!is_private && !futex_prefault_user_word(uaddr, false))
             return (uint64_t)-EFAULT;
         futex_key_t key;
         uint64_t ret = futex_build_key(uaddr, is_private, &key);
@@ -674,7 +704,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 
         if (!uaddr2 || check_user_overflow((uint64_t)uaddr2, sizeof(int)))
             return (uint64_t)-EFAULT;
-        if (!futex_prefault_user_word(uaddr, false) ||
+        if ((!is_private && !futex_prefault_user_word(uaddr, false)) ||
             !futex_prefault_user_word(uaddr2, true))
             return (uint64_t)-EFAULT;
 
@@ -706,20 +736,10 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             return (uint64_t)-ENOSYS;
         }
 
-        if (bucket1_id == bucket2_id) {
-            spin_lock(&bucket1->lock);
-        } else if (bucket1_id < bucket2_id) {
-            spin_lock(&bucket1->lock);
-            spin_lock(&bucket2->lock);
-        } else {
-            spin_lock(&bucket2->lock);
-            spin_lock(&bucket1->lock);
-        }
+        futex_lock_bucket_pair(bucket1, bucket1_id, bucket2, bucket2_id);
 
         if (!futex_read_user_word_locked(uaddr2, &oldval)) {
-            if (bucket1_id != bucket2_id)
-                spin_unlock(&bucket2->lock);
-            spin_unlock(&bucket1->lock);
+            futex_unlock_bucket_pair(bucket1, bucket1_id, bucket2, bucket2_id);
             return (uint64_t)-EFAULT;
         }
 
@@ -741,16 +761,12 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             newval = oldval ^ oparg;
             break;
         default:
-            if (bucket1_id != bucket2_id)
-                spin_unlock(&bucket2->lock);
-            spin_unlock(&bucket1->lock);
+            futex_unlock_bucket_pair(bucket1, bucket1_id, bucket2, bucket2_id);
             return (uint64_t)-ENOSYS;
         }
 
         if (!futex_write_user_word_locked(uaddr2, newval)) {
-            if (bucket1_id != bucket2_id)
-                spin_unlock(&bucket2->lock);
-            spin_unlock(&bucket1->lock);
+            futex_unlock_bucket_pair(bucket1, bucket1_id, bucket2, bucket2_id);
             return (uint64_t)-EFAULT;
         }
 
@@ -788,9 +804,7 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
                 futex_wake_locked(bucket2, &key2, val2, 0xFFFFFFFF, &batch);
         }
 
-        if (bucket1_id != bucket2_id)
-            spin_unlock(&bucket2->lock);
-        spin_unlock(&bucket1->lock);
+        futex_unlock_bucket_pair(bucket1, bucket1_id, bucket2, bucket2_id);
         futex_wake_batch_run(&batch);
         return ret_count;
     }
@@ -937,26 +951,17 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
         if ((op & FUTEX_CMD_MASK) == FUTEX_CMP_REQUEUE && uval3 != val3)
             return (uint64_t)-EAGAIN;
 
-        if (src_bucket_id == dst_bucket_id) {
-            spin_lock(&src_bucket->lock);
-        } else if (src_bucket_id < dst_bucket_id) {
-            spin_lock(&src_bucket->lock);
-            spin_lock(&dst_bucket->lock);
-        } else {
-            spin_lock(&dst_bucket->lock);
-            spin_lock(&src_bucket->lock);
-        }
+        futex_lock_bucket_pair(src_bucket, src_bucket_id, dst_bucket,
+                               dst_bucket_id);
 
         if (!futex_read_user_word_locked(uaddr, &uval3)) {
-            if (src_bucket_id != dst_bucket_id)
-                spin_unlock(&dst_bucket->lock);
-            spin_unlock(&src_bucket->lock);
+            futex_unlock_bucket_pair(src_bucket, src_bucket_id, dst_bucket,
+                                     dst_bucket_id);
             return (uint64_t)-EFAULT;
         }
         if ((op & FUTEX_CMD_MASK) == FUTEX_CMP_REQUEUE && uval3 != val3) {
-            if (src_bucket_id != dst_bucket_id)
-                spin_unlock(&dst_bucket->lock);
-            spin_unlock(&src_bucket->lock);
+            futex_unlock_bucket_pair(src_bucket, src_bucket_id, dst_bucket,
+                                     dst_bucket_id);
             return (uint64_t)-EAGAIN;
         }
 
@@ -1008,9 +1013,8 @@ uint64_t sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
             }
         }
 
-        if (src_bucket_id != dst_bucket_id)
-            spin_unlock(&dst_bucket->lock);
-        spin_unlock(&src_bucket->lock);
+        futex_unlock_bucket_pair(src_bucket, src_bucket_id, dst_bucket,
+                                 dst_bucket_id);
         futex_wake_batch_run(&batch);
         return wake_count + requeue_count;
     }

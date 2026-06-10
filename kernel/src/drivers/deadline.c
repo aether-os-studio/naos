@@ -66,6 +66,12 @@ void deadline_source_update(deadline_source_t *source, uint64_t deadline_ns) {
     if (!source)
         return;
 
+    if (__atomic_load_n(&source->deadline_ns, __ATOMIC_ACQUIRE) ==
+            deadline_ns &&
+        __atomic_load_n(&source->queued, __ATOMIC_ACQUIRE) ==
+            (deadline_ns != UINT64_MAX))
+        return;
+
     queue = deadline_queue_for_cpu(source->cpu_id);
     spin_lock(&queue->lock);
     old_next = __atomic_load_n(&queue->next_cached_ns, __ATOMIC_ACQUIRE);

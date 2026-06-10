@@ -8,17 +8,6 @@ uint64_t kernel_modules_load_offset = 0;
 
 size_t dlfunc_count = 0;
 
-typedef struct {
-    uint64_t addr;
-    const char *name;
-    uint8_t type;
-    uint8_t exported;
-    uint8_t can_describe_ip;
-} kernel_builtin_symbol_t;
-
-extern const kernel_builtin_symbol_t kallsyms_symbols[] __attribute__((weak));
-extern const uint64_t kallsyms_num __attribute__((weak));
-
 static dlfunc_t __printf = {.name = "printf", .addr = (void *)printk};
 static dlfunc_t resolved_func;
 static module_symbol_t *loaded_module_symbols = NULL;

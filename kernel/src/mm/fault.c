@@ -105,31 +105,6 @@ static uint64_t vm_flags_to_pt_flags(uint64_t vm_flags) {
     return pt_flags;
 }
 
-static page_fault_result_t map_anon_fault_page(task_t *task, vma_t *vma,
-                                               uint64_t vaddr) {
-    uint64_t pt_flags = vm_flags_to_pt_flags(vma->vm_flags);
-    uint64_t aligned_vaddr = PADDING_DOWN(vaddr, PAGE_SIZE);
-    uint64_t *pgdir = NULL;
-
-    spin_lock(&task->mm->lock);
-    pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
-
-    if (translate_address(pgdir, aligned_vaddr)) {
-        spin_unlock(&task->mm->lock);
-        return PF_RES_OK;
-    }
-
-    if (map_page_range_mm(task->mm, aligned_vaddr, (uint64_t)-1, PAGE_SIZE,
-                          pt_flags) != 0) {
-        spin_unlock(&task->mm->lock);
-        return PF_RES_NOMEM;
-    }
-
-    spin_unlock(&task->mm->lock);
-
-    return PF_RES_OK;
-}
-
 static void fault_vma_snapshot_put(fault_vma_snapshot_t *snapshot) {
     if (!snapshot || !snapshot->node)
         return;
@@ -151,6 +126,59 @@ static bool fault_vma_matches_snapshot(vma_t *vma,
            vma->vm_offset == snapshot->vm_offset &&
            vma->vm_file_len == snapshot->vm_file_len &&
            vma->vm_file_flags == snapshot->vm_file_flags;
+}
+
+static page_fault_result_t
+map_anon_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
+                             uint64_t vaddr, uint64_t fault_flags) {
+    if (!task || !snapshot)
+        return PF_RES_SEGF;
+
+    uint64_t aligned_vaddr = PADDING_DOWN(vaddr, PAGE_SIZE);
+    uint64_t final_pt_flags = vm_flags_to_pt_flags(snapshot->vm_flags);
+    uint64_t page_paddr = alloc_frames(1);
+    if (!page_paddr)
+        return PF_RES_NOMEM;
+
+    memset((void *)phys_to_virt(page_paddr), 0, PAGE_SIZE);
+    fault_sync_page_before_user_map(snapshot, page_paddr);
+
+    vma_manager_t *mgr = &task->mm->task_vma_mgr;
+    spin_lock(&mgr->lock);
+
+    vma_t *current_vma = vma_find(mgr, vaddr);
+    if (!fault_vma_matches_snapshot(current_vma, snapshot) ||
+        !fault_snapshot_allows_access(snapshot, fault_flags)) {
+        spin_unlock(&mgr->lock);
+        address_release(page_paddr);
+        return PF_RES_SEGF;
+    }
+
+    spin_lock(&task->mm->lock);
+
+    uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
+    if (translate_address(pgdir, aligned_vaddr)) {
+        spin_unlock(&task->mm->lock);
+        spin_unlock(&mgr->lock);
+        address_release(page_paddr);
+        return PF_RES_OK;
+    }
+
+    if (map_page(pgdir, aligned_vaddr, page_paddr,
+                 get_arch_page_table_flags(final_pt_flags), true, false) != 0) {
+        spin_unlock(&task->mm->lock);
+        spin_unlock(&mgr->lock);
+        address_release(page_paddr);
+        return PF_RES_NOMEM;
+    }
+    __atomic_add_fetch(&task->mm->resident_pages, 1, __ATOMIC_RELAXED);
+
+    spin_unlock(&task->mm->lock);
+    spin_unlock(&mgr->lock);
+
+    address_release(page_paddr);
+
+    return PF_RES_OK;
 }
 
 static page_fault_result_t
@@ -241,13 +269,14 @@ map_file_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
         return PF_RES_OK;
     }
 
-    if (map_page_range_mm(task->mm, aligned_vaddr, page_paddr, PAGE_SIZE,
-                          final_pt_flags) != 0) {
+    if (map_page(pgdir, aligned_vaddr, page_paddr,
+                 get_arch_page_table_flags(final_pt_flags), true, false) != 0) {
         spin_unlock(&task->mm->lock);
         spin_unlock(&mgr->lock);
         address_release(page_paddr);
         return PF_RES_NOMEM;
     }
+    __atomic_add_fetch(&task->mm->resident_pages, 1, __ATOMIC_RELAXED);
 
     spin_unlock(&task->mm->lock);
     spin_unlock(&mgr->lock);
@@ -314,9 +343,8 @@ map_cow_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
         flags = arch_page_table_flags_make_writable(flags);
 
         pgdir[index] = ARCH_MAKE_PTE(old_paddr, flags);
-        task_mm_flush_tlb_page(task->mm, aligned_vaddr);
-
         spin_unlock(&task->mm->lock);
+        task_mm_flush_tlb_page(task->mm, aligned_vaddr);
         return PF_RES_OK;
     }
 
@@ -333,12 +361,51 @@ map_cow_fault_page_snapshot(task_t *task, const fault_vma_snapshot_t *snapshot,
     flags = arch_page_table_flags_make_writable(flags);
 
     pgdir[index] = ARCH_MAKE_PTE(new_paddr, flags);
-    task_mm_flush_tlb_page(task->mm, aligned_vaddr);
-
     spin_unlock(&task->mm->lock);
+    task_mm_flush_tlb_page(task->mm, aligned_vaddr);
 
     address_release(old_paddr);
 
+    return PF_RES_OK;
+}
+
+static page_fault_result_t map_shm_fault_page_locked(task_t *task, vma_t *vma,
+                                                     uint64_t vaddr) {
+    if (!task || !task->mm || !vma || !vma->shm || !vma->shm->addr)
+        return PF_RES_SEGF;
+
+    uint64_t aligned_vaddr = PADDING_DOWN(vaddr, PAGE_SIZE);
+    if (aligned_vaddr < vma->vm_start || aligned_vaddr >= vma->vm_end)
+        return PF_RES_SEGF;
+
+    uint64_t offset = aligned_vaddr - vma->vm_start;
+    if (offset >= vma->shm->size)
+        return PF_RES_SEGF;
+
+    void *page = (uint8_t *)vma->shm->addr + offset;
+    uint64_t paddr = virt_to_phys(page);
+    uint64_t pt_flags = vm_flags_to_pt_flags(vma->vm_flags);
+
+    dcache_flush_range(page, PAGE_SIZE);
+    if (vma->vm_flags & VMA_EXEC)
+        sync_instruction_memory_range(page, PAGE_SIZE);
+
+    spin_lock(&task->mm->lock);
+
+    uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
+    if (translate_address(pgdir, aligned_vaddr)) {
+        spin_unlock(&task->mm->lock);
+        return PF_RES_OK;
+    }
+
+    if (map_page(pgdir, aligned_vaddr, paddr,
+                 get_arch_page_table_flags(pt_flags), true, false) != 0) {
+        spin_unlock(&task->mm->lock);
+        return PF_RES_NOMEM;
+    }
+
+    __atomic_add_fetch(&task->mm->resident_pages, 1, __ATOMIC_RELAXED);
+    spin_unlock(&task->mm->lock);
     return PF_RES_OK;
 }
 
@@ -351,8 +418,6 @@ page_fault_result_t handle_page_fault_flags(task_t *task, uint64_t vaddr,
 
     uint64_t aligned_vaddr = PADDING_DOWN(vaddr, PAGE_SIZE);
 
-    vma_manager_t *mgr = &task->mm->task_vma_mgr;
-    spin_lock(&mgr->lock);
     spin_lock(&task->mm->lock);
 
     uint64_t *pgdir = (uint64_t *)phys_to_virt(task->mm->page_table_addr);
@@ -360,7 +425,6 @@ page_fault_result_t handle_page_fault_flags(task_t *task, uint64_t vaddr,
     uint64_t levels = arch_page_table_levels();
     if (!fault_page_table_levels_valid(levels)) {
         spin_unlock(&task->mm->lock);
-        spin_unlock(&mgr->lock);
         return PF_RES_SEGF;
     }
     uint64_t indexs[ARCH_MAX_PT_LEVEL];
@@ -374,7 +438,6 @@ page_fault_result_t handle_page_fault_flags(task_t *task, uint64_t vaddr,
         uint64_t addr = pgdir[index];
         if (ARCH_PT_IS_LARGE(addr)) {
             spin_unlock(&task->mm->lock);
-            spin_unlock(&mgr->lock);
             return PF_RES_SEGF;
         }
         if (!ARCH_PT_IS_TABLE(addr)) {
@@ -393,6 +456,9 @@ page_fault_result_t handle_page_fault_flags(task_t *task, uint64_t vaddr,
     }
 
     spin_unlock(&task->mm->lock);
+
+    vma_manager_t *mgr = &task->mm->task_vma_mgr;
+    spin_lock(&mgr->lock);
 
     vma_t *vma = vma_find(mgr, vaddr);
     page_fault_result_t result = PF_RES_SEGF;
@@ -442,8 +508,25 @@ page_fault_result_t handle_page_fault_flags(task_t *task, uint64_t vaddr,
         return result;
     }
 
-    if (vma->vm_type == VMA_TYPE_ANON)
-        result = map_anon_fault_page(task, vma, vaddr);
+    if (vma->vm_type == VMA_TYPE_ANON) {
+        fault_vma_snapshot_t snapshot = {0};
+        if (!fault_vma_snapshot_capture(vma, &snapshot, false)) {
+            spin_unlock(&mgr->lock);
+            return PF_RES_SEGF;
+        }
+
+        spin_unlock(&mgr->lock);
+        result =
+            map_anon_fault_page_snapshot(task, &snapshot, vaddr, fault_flags);
+        fault_vma_snapshot_put(&snapshot);
+        return result;
+    }
+
+    if (vma->vm_type == VMA_TYPE_SHM) {
+        result = map_shm_fault_page_locked(task, vma, vaddr);
+        spin_unlock(&mgr->lock);
+        return result;
+    }
 
     spin_unlock(&mgr->lock);
 

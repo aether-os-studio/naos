@@ -49,12 +49,17 @@ static bool vma_is_linked(vma_manager_t *mgr, const vma_t *target) {
     if (!mgr || !target)
         return false;
 
-    rb_node_t *node = rb_first(&mgr->vma_tree);
+    rb_node_t *node = mgr->vma_tree.rb_node;
     while (node) {
         vma_t *vma = rb_entry(node, vma_t, vm_rb);
-        if (vma == target)
-            return true;
-        node = rb_next(node);
+
+        if (target->vm_start < vma->vm_start) {
+            node = node->rb_left;
+        } else if (target->vm_start >= vma->vm_end) {
+            node = node->rb_right;
+        } else {
+            return vma == target;
+        }
     }
 
     return false;

@@ -9,6 +9,7 @@
 
 #define preempt_enable(task)                                                   \
     do {                                                                       \
+        task->preempt_caller = __builtin_return_address(0);                    \
         __atomic_fetch_add(&(task)->preempt_count, 1, __ATOMIC_RELAXED);       \
     } while (0);
 
@@ -59,19 +60,20 @@ typedef struct task_index_bucket {
 #define AT_SYSINFO_EHDR 33
 
 #define USER_MMAP_START 0x10000
-#define USER_MMAP_END 0x00007fff00000000
+#define USER_MMAP_END 0x00007f0000000000
 
-#define USER_SIGNAL_TRAMPOLINE_START USER_MMAP_END
+#define USER_STACK_START USER_MMAP_END
+#define USER_STACK_END 0x00007ff000000000
+
+#define USER_SIGNAL_TRAMPOLINE_START USER_STACK_END
 #define USER_SIGNAL_TRAMPOLINE_END (USER_SIGNAL_TRAMPOLINE_START + PAGE_SIZE)
 
-#define INTERPRETER_BASE_ADDR 0x00000006fff00000
-#define PIE_BASE_ADDR 0x0000000600000000
+#define INTERPRETER_BASE_ADDR USER_SIGNAL_TRAMPOLINE_END
 
-#define USER_BRK_START 0x00000007ff000000
-#define USER_BRK_END 0x0000000800000000
+#define USER_BRK_START 0x00007ffff0000000
+#define USER_BRK_END 0x00007fffff000000
 
-#define USER_STACK_START 0x00000008fff00000
-#define USER_STACK_END 0x0000000900000000
+#define PIE_BASE_ADDR USER_BRK_END
 
 #define CLONE_VM 0x00000100 /* set if VM shared between processes */
 #define CLONE_FS 0x00000200 /* set if fs info shared between processes */
