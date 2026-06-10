@@ -2346,8 +2346,6 @@ shell_fallback_done:
         }
     }
 
-    shm_exec(self);
-
     task_mm_info_t *old_mm = self->mm;
     task_mm_info_t *new_mm = (task_mm_info_t *)malloc(sizeof(task_mm_info_t));
     memset(new_mm, 0, sizeof(task_mm_info_t));
@@ -2595,6 +2593,8 @@ shell_fallback_done:
     }
     free(exec_close_files);
     exec_close_files = NULL;
+
+    shm_exec(self, old_mm);
 
     if (!self->is_kernel)
         task_enqueue_mm_free(old_mm);

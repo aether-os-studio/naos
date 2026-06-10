@@ -113,6 +113,7 @@ uint64_t sys_shmdt(void *shmaddr);
 uint64_t sys_shmctl(int shmid, int cmd, struct shmid_ds *buf);
 
 struct task;
+struct task_mm_info;
 struct vfs_inode;
 
 typedef struct shm_snapshot_entry {
@@ -126,7 +127,7 @@ typedef struct shm_snapshot_entry {
 } shm_snapshot_entry_t;
 
 void shm_fork(struct task *parent, struct task *child);
-void shm_exec(struct task *task);
+void shm_exec(struct task *task, struct task_mm_info *mm);
 void shm_exit(struct task *task);
 void shm_try_reap_by_vnode(struct vfs_inode *node);
 size_t shm_snapshot(shm_snapshot_entry_t *entries, size_t max_entries);

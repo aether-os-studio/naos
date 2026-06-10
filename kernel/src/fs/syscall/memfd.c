@@ -14,6 +14,7 @@ static const struct vfs_super_operations memfdfs_super_ops;
 static const struct vfs_inode_operations memfdfs_inode_ops;
 static const struct vfs_file_operations memfdfs_dir_file_ops;
 static const struct vfs_file_operations memfdfs_file_ops;
+static const struct vfs_address_space_operations memfdfs_aops;
 static spinlock_t memfdfs_mount_lock;
 static struct vfs_mount *memfdfs_internal_mnt;
 
@@ -51,6 +52,13 @@ static inline struct memfd_ctx *memfd_file_handle(struct vfs_file *file) {
     return (struct memfd_ctx *)file->f_inode->i_private;
 }
 
+static inline struct memfd_ctx *
+memfd_mapping_handle(struct vfs_address_space *mapping) {
+    if (!mapping || !mapping->host)
+        return NULL;
+    return (struct memfd_ctx *)mapping->host->i_private;
+}
+
 static struct vfs_inode *memfdfs_alloc_inode(struct vfs_super_block *sb) {
     memfdfs_inode_info_t *info = calloc(1, sizeof(*info));
     (void)sb;
@@ -76,6 +84,11 @@ static void memfdfs_destroy_inode(struct vfs_inode *inode) {
         inode->i_private = NULL;
     }
     free(container_of(inode, memfdfs_inode_info_t, vfs_inode));
+}
+
+static void memfdfs_evict_inode(struct vfs_inode *inode) {
+    if (inode)
+        page_cache_evict(&inode->i_mapping);
 }
 
 static int memfdfs_init_fs_context(struct vfs_fs_context *fc) {
@@ -149,6 +162,7 @@ static int memfdfs_getattr(const struct vfs_path *path, struct vfs_kstat *stat,
 
 static const struct vfs_super_operations memfdfs_super_ops = {
     .alloc_inode = memfdfs_alloc_inode,
+    .evict_inode = memfdfs_evict_inode,
     .destroy_inode = memfdfs_destroy_inode,
     .put_super = memfdfs_put_super,
 };
@@ -245,85 +259,102 @@ static int memfd_resolve_page_locked(struct memfd_ctx *ctx, size_t page_idx,
     return 0;
 }
 
-static void memfd_zap_mappings(vfs_node_t *node, uint64_t file_start,
-                               uint64_t file_end) {
-    page_cache_zap_inode_shared_mappings(node, NULL, file_start, file_end);
+static int memfdfs_readpage(struct vfs_file *file,
+                            struct vfs_address_space *mapping, uint64_t index,
+                            void *page) {
+    struct memfd_ctx *ctx = memfd_mapping_handle(mapping);
+    uint64_t file_off;
+    uint64_t paddr = 0;
+
+    (void)file;
+    if (!ctx || !page)
+        return -EINVAL;
+    if (index > UINT64_MAX / PAGE_SIZE)
+        return -EFBIG;
+
+    file_off = index * PAGE_SIZE;
+    memset(page, 0, PAGE_SIZE);
+
+    spin_lock(&ctx->lock);
+    if (file_off >= ctx->len) {
+        spin_unlock(&ctx->lock);
+        return 0;
+    }
+
+    (void)memfd_resolve_page_locked(ctx, (size_t)index, false, &paddr);
+    if (paddr) {
+        size_t copy_len = (size_t)MIN(PAGE_SIZE, ctx->len - file_off);
+        memcpy(page, (const void *)phys_to_virt(paddr), copy_len);
+    }
+    spin_unlock(&ctx->lock);
+    return 0;
+}
+
+static int memfdfs_writepage(struct vfs_file *file,
+                             struct vfs_address_space *mapping, uint64_t index,
+                             const void *page) {
+    struct memfd_ctx *ctx = memfd_mapping_handle(mapping);
+    uint64_t file_off;
+    uint64_t paddr = 0;
+    int ret;
+
+    (void)file;
+    if (!ctx || !page)
+        return -EINVAL;
+    if (index > UINT64_MAX / PAGE_SIZE)
+        return -EFBIG;
+
+    file_off = index * PAGE_SIZE;
+
+    spin_lock(&ctx->lock);
+    if (file_off >= ctx->len) {
+        spin_unlock(&ctx->lock);
+        return 0;
+    }
+
+    ret = memfd_resolve_page_locked(ctx, (size_t)index, true, &paddr);
+    if (ret < 0) {
+        spin_unlock(&ctx->lock);
+        return ret;
+    }
+
+    size_t copy_len = (size_t)MIN(PAGE_SIZE, ctx->len - file_off);
+    memcpy((void *)phys_to_virt(paddr), page, copy_len);
+    if (copy_len < PAGE_SIZE)
+        memset((uint8_t *)phys_to_virt(paddr) + copy_len, 0,
+               PAGE_SIZE - copy_len);
+    spin_unlock(&ctx->lock);
+    return 0;
 }
 
 static ssize_t memfdfs_read(struct vfs_file *file, void *buf, size_t count,
                             loff_t *ppos) {
     struct memfd_ctx *ctx = memfd_file_handle(file);
-    size_t copy_len;
-    size_t copied = 0;
 
     if (!ctx || !ppos)
         return -EINVAL;
-    if ((uint64_t)*ppos >= ctx->len)
-        return 0;
-
-    copy_len = (size_t)MIN((uint64_t)count, ctx->len - (uint64_t)*ppos);
-
-    spin_lock(&ctx->lock);
-    while (copied < copy_len) {
-        uint64_t file_off = (uint64_t)*ppos + copied;
-        size_t page_idx = (size_t)(file_off / PAGE_SIZE);
-        size_t in_page = (size_t)(file_off % PAGE_SIZE);
-        size_t chunk = MIN(copy_len - copied, PAGE_SIZE - in_page);
-        uint64_t paddr = 0;
-
-        memfd_resolve_page_locked(ctx, page_idx, false, &paddr);
-        if (paddr)
-            memcpy((uint8_t *)buf + copied,
-                   (uint8_t *)phys_to_virt(paddr) + in_page, chunk);
-        else
-            memset((uint8_t *)buf + copied, 0, chunk);
-        copied += chunk;
-    }
-    spin_unlock(&ctx->lock);
-
-    *ppos += (loff_t)copy_len;
-    return (ssize_t)copy_len;
+    return page_cache_read(file, buf, count, ppos);
 }
 
 static ssize_t memfdfs_write(struct vfs_file *file, const void *buf,
                              size_t count, loff_t *ppos) {
     struct memfd_ctx *ctx = memfd_file_handle(file);
-    uint64_t end;
-    size_t copied = 0;
+    ssize_t ret;
 
     if (!ctx || !ppos)
         return -EINVAL;
-    if ((uint64_t)*ppos > UINT64_MAX - count)
-        return -EFBIG;
 
-    end = (uint64_t)*ppos + count;
+    ret = page_cache_write(file, buf, count, ppos);
+    if (ret < 0)
+        return ret;
 
     spin_lock(&ctx->lock);
-    while (copied < count) {
-        uint64_t file_off = (uint64_t)*ppos + copied;
-        size_t page_idx = (size_t)(file_off / PAGE_SIZE);
-        size_t in_page = (size_t)(file_off % PAGE_SIZE);
-        size_t chunk = MIN(count - copied, PAGE_SIZE - in_page);
-        uint64_t paddr = 0;
-        int ret = memfd_resolve_page_locked(ctx, page_idx, true, &paddr);
-        if (ret < 0) {
-            spin_unlock(&ctx->lock);
-            return ret;
-        }
-
-        memcpy((uint8_t *)phys_to_virt(paddr) + in_page,
-               (const uint8_t *)buf + copied, chunk);
-        copied += chunk;
-    }
-
-    if (end > ctx->len)
-        ctx->len = end;
+    if (file && file->f_inode)
+        ctx->len = file->f_inode->i_size;
     if (ctx->node)
         ctx->node->i_size = ctx->len;
     spin_unlock(&ctx->lock);
-
-    *ppos += (loff_t)count;
-    return (ssize_t)count;
+    return ret;
 }
 
 static int memfdfs_resize(struct vfs_inode *node, uint64_t size) {
@@ -345,17 +376,6 @@ static int memfdfs_resize(struct vfs_inode *node, uint64_t size) {
     new_pages = memfd_pages_for_size(size);
 
     if (size > old_len) {
-        /*
-         * Growing a memfd only extends the logical length and slot capacity.
-         * Linux does not require eagerly materializing every new page here;
-         * reads from unwritten holes still observe zeroes, and actual storage
-         * can appear lazily on write or shared-fault/mmap paths.
-         */
-        int ret = memfd_ensure_page_slots_locked(ctx, new_pages);
-        if (ret < 0) {
-            spin_unlock(&ctx->lock);
-            return ret;
-        }
         ctx->len = size;
         if (ctx->node)
             ctx->node->i_size = size;
@@ -386,15 +406,7 @@ static int memfdfs_resize(struct vfs_inode *node, uint64_t size) {
         ctx->node->i_size = size;
     spin_unlock(&ctx->lock);
 
-    uint64_t zap_start = PADDING_UP(size, PAGE_SIZE);
-    uint64_t zap_end = PADDING_UP(old_len, PAGE_SIZE);
-    if (zap_start < zap_end)
-        /*
-         * Shared mappings of the truncated region must lose their page-table
-         * translations. Truncation is not just metadata; userspace expects the
-         * old pages past EOF to stop being a valid shared view of the file.
-         */
-        memfd_zap_mappings(node, zap_start, zap_end);
+    page_cache_truncate(&node->i_mapping, size);
 
     for (size_t i = new_pages; i < old_pages; i++) {
         uint64_t paddr = 0;
@@ -436,11 +448,17 @@ static int memfdfs_setattr(struct vfs_dentry *dentry,
 
 static int memfdfs_fsync(struct vfs_file *file, loff_t start, loff_t end,
                          int datasync) {
-    (void)file;
-    (void)start;
-    (void)end;
-    (void)datasync;
-    return 0;
+    if (!file || !file->f_inode)
+        return -EINVAL;
+    if (start < 0)
+        start = 0;
+    if (end < start)
+        end = (loff_t)file->f_inode->i_size;
+    return page_cache_writeback_range(&file->f_inode->i_mapping,
+                                      (uint64_t)start, (uint64_t)end,
+                                      datasync) < 0
+               ? -EIO
+               : 0;
 }
 
 static int memfdfs_open(struct vfs_inode *inode, struct vfs_file *file) {
@@ -469,46 +487,11 @@ static void *memfdfs_mmap(struct vfs_file *file, void *addr, size_t offset,
     if (offset > SIZE_MAX - size)
         return (void *)(int64_t)-EINVAL;
 
-    uint64_t pt_flags = PT_FLAG_U;
-    if (prot & PROT_READ)
-        pt_flags |= PT_FLAG_R;
-    if (prot & PROT_WRITE)
-        pt_flags |= PT_FLAG_W;
-    if (prot & PROT_EXEC)
-        pt_flags |= PT_FLAG_X;
-    if (!(pt_flags & (PT_FLAG_R | PT_FLAG_W | PT_FLAG_X)))
-        pt_flags |= PT_FLAG_R;
-
-    uint64_t start = (uint64_t)addr;
-    uint64_t *pgdir = get_current_page_dir(true);
-
-    spin_lock(&ctx->lock);
-    for (uint64_t ptr = start; ptr < start + size; ptr += PAGE_SIZE) {
-        uint64_t file_off = offset + (ptr - start);
-        if (file_off >= ctx->len)
-            break;
-
-        uint64_t paddr = 0;
-        int ret = memfd_resolve_page_locked(ctx, (size_t)(file_off / PAGE_SIZE),
-                                            true, &paddr);
-        if (ret < 0) {
-            spin_unlock(&ctx->lock);
-            return (void *)(int64_t)ret;
-        }
-
-        /*
-         * Shared memfd mappings are backed directly by the memfd page array, so
-         * writes through the mapping and writes through the file descriptor
-         * stay coherent at the page level. That is the whole reason this path
-         * does not go through the private-copy helper above.
-         */
-        if (map_page_range(pgdir, ptr, paddr, PAGE_SIZE, pt_flags) != 0) {
-            spin_unlock(&ctx->lock);
-            return (void *)(int64_t)-ENOMEM;
-        }
-    }
-    spin_unlock(&ctx->lock);
-
+    /*
+     * Shared memfd mappings are faulted through the inode page cache. The page
+     * cache page is the live shared page for fd I/O and mmap, so updates are
+     * visible immediately instead of waiting for a later writeback.
+     */
     return addr;
 }
 
@@ -561,6 +544,11 @@ static const struct vfs_file_operations memfdfs_file_ops = {
     .open = memfdfs_open,
     .release = memfdfs_release,
     .fsync = memfdfs_fsync,
+};
+
+static const struct vfs_address_space_operations memfdfs_aops = {
+    .readpage = memfdfs_readpage,
+    .writepage = memfdfs_writepage,
 };
 
 #define MFD_CLOEXEC 0x0001U
@@ -617,6 +605,7 @@ static int memfd_create_file(struct vfs_file **out_file, const char *name,
     inode->i_nlink = 1;
     inode->i_op = &memfdfs_inode_ops;
     inode->i_fop = &memfdfs_file_ops;
+    inode->i_mapping.a_ops = &memfdfs_aops;
     inode->i_private = ctx;
     ctx->node = inode;
 
