@@ -109,6 +109,7 @@ _Static_assert(sizeof(x86_64_inactive_task_frame_t) == 56,
 
 uint64_t x64_fpu_state_size(void);
 bool x64_fpu_xsave_enabled(void);
+uint64_t x64_fpu_xsave_supported_mask(void);
 void x64_fpu_configure_xsave(bool enabled, uint64_t xsave_mask,
                              uint64_t state_bytes);
 void x64_fpu_state_init(fpu_context_t *fpu_ctx);

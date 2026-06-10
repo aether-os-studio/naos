@@ -181,6 +181,33 @@ static uint64_t signal_x64_restore_fpstate_bytes(const ucontext_t *ucontext) {
     return sizeof(fpu_context_t);
 }
 
+static bool signal_x64_fpstate_image_valid(const fpu_context_t *fpu_ctx,
+                                           uint64_t copied_bytes) {
+    if (!x64_fpu_xsave_enabled())
+        return true;
+    if (!fpu_ctx || copied_bytes <= X64_XSAVE_HDR_OFFSET)
+        return true;
+
+    const x64_xsave_header_t *hdr =
+        (const x64_xsave_header_t *)((const uint8_t *)fpu_ctx +
+                                     X64_XSAVE_HDR_OFFSET);
+    if (hdr->xstate_bv & ~x64_fpu_xsave_supported_mask())
+        return false;
+
+    for (size_t i = 0; i < sizeof(hdr->reserved1) / sizeof(hdr->reserved1[0]);
+         i++) {
+        if (hdr->reserved1[i] != 0)
+            return false;
+    }
+    for (size_t i = 0; i < sizeof(hdr->reserved2) / sizeof(hdr->reserved2[0]);
+         i++) {
+        if (hdr->reserved2[i] != 0)
+            return false;
+    }
+
+    return true;
+}
+
 static inline void signal_x64_fill_ucontext(ucontext_t *ucontext,
                                             const struct pt_regs *regs,
                                             sigset_t blocked_mask,
@@ -369,14 +396,18 @@ static uint64_t signal_arch_sigreturn(struct pt_regs *regs) {
         return 0;
     }
 
-    if (frame_ucontext.uc_mcontext.fpregs && ({
-            x64_fpu_state_init(self->arch_context->fpu_ctx);
-            copy_from_user(self->arch_context->fpu_ctx,
-                           frame_ucontext.uc_mcontext.fpregs,
-                           signal_x64_restore_fpstate_bytes(&frame_ucontext));
-        })) {
-        task_exit(128 + SIGSEGV);
-        return 0;
+    if (frame_ucontext.uc_mcontext.fpregs) {
+        uint64_t fpstate_bytes =
+            signal_x64_restore_fpstate_bytes(&frame_ucontext);
+
+        x64_fpu_state_init(self->arch_context->fpu_ctx);
+        if (copy_from_user(self->arch_context->fpu_ctx,
+                           frame_ucontext.uc_mcontext.fpregs, fpstate_bytes) ||
+            !signal_x64_fpstate_image_valid(self->arch_context->fpu_ctx,
+                                            fpstate_bytes)) {
+            task_exit(128 + SIGSEGV);
+            return 0;
+        }
     }
     x64_fpu_restore(self->arch_context->fpu_ctx);
 

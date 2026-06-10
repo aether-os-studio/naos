@@ -270,7 +270,16 @@ void boot_get_modules(boot_module_t **modules, size_t *count) {
     }
 }
 
-#if defined(__riscv__)
+#if defined(__x86_64__)
+
+LIMINE_REQUEST static volatile struct limine_paging_mode_request
+    paging_mode_request = {
+        .id = LIMINE_PAGING_MODE_REQUEST_ID,
+        .revision = 0,
+        .mode = LIMINE_PAGING_MODE_X86_64_4LVL,
+};
+
+#elif defined(__riscv__)
 
 LIMINE_REQUEST static volatile struct limine_paging_mode_request
     paging_mode_request = {

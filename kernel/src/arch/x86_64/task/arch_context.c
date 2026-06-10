@@ -35,6 +35,8 @@ uint64_t x64_fpu_state_size(void) { return x64_fpu_state_bytes; }
 
 bool x64_fpu_xsave_enabled(void) { return x64_fpu_use_xsave; }
 
+uint64_t x64_fpu_xsave_supported_mask(void) { return x64_fpu_xsave_mask; }
+
 void x64_fpu_configure_xsave(bool enabled, uint64_t xsave_mask,
                              uint64_t state_bytes) {
     x64_fpu_use_xsave = enabled;

@@ -1430,8 +1430,20 @@ static bool mremap_get_mapped_page(uint64_t *pgdir, uint64_t vaddr,
     return true;
 }
 
+static uint64_t mremap_target_pt_flags(uint64_t old_flags,
+                                       uint64_t target_vm_flags) {
+    uint64_t flags =
+        get_arch_page_table_flags(vm_flags_to_pt_flags(target_vm_flags));
+
+    if (old_flags & ARCH_PT_FLAG_COW)
+        flags = arch_page_table_flags_make_cow(flags);
+
+    return flags;
+}
+
 static uint64_t mremap_map_resident_pages(task_mm_info_t *mm, uint64_t old_addr,
                                           uint64_t new_addr, uint64_t size,
+                                          uint64_t target_vm_flags,
                                           uint64_t *mapped_out) {
     if (mapped_out)
         *mapped_out = 0;
@@ -1455,7 +1467,8 @@ static uint64_t mremap_map_resident_pages(task_mm_info_t *mm, uint64_t old_addr,
             continue;
 
         bool had_mapping = translate_address(pgdir, dst) != 0;
-        if (map_page(pgdir, dst, paddr, flags, true, false) != 0) {
+        uint64_t target_flags = mremap_target_pt_flags(flags, target_vm_flags);
+        if (map_page(pgdir, dst, paddr, target_flags, true, false) != 0) {
             if (mapped)
                 __atomic_add_fetch(&mm->resident_pages, mapped,
                                    __ATOMIC_RELAXED);
@@ -1663,8 +1676,8 @@ static uint64_t mremap_move_locked(task_mm_info_t *mm, vma_manager_t *mgr,
                             ? new_size
                             : (old_size < new_size ? old_size : new_size);
     uint64_t mapped_pages = 0;
-    uint64_t resident_ret = mremap_map_resident_pages(mm, old_addr, target,
-                                                      copy_len, &mapped_pages);
+    uint64_t resident_ret = mremap_map_resident_pages(
+        mm, old_addr, target, copy_len, new_vma->vm_flags, &mapped_pages);
     if ((int64_t)resident_ret < 0) {
         unmap_page_range_mm_batched(mm, target, new_size);
         vma_remove(mgr, new_vma);

@@ -29,7 +29,7 @@ override QEMUFLAGS := $(QEMUFLAGS) -s -S
 endif
 
 ifeq ($(KVM), 1)
-override QEMUFLAGS := $(QEMUFLAGS) -cpu host --enable-kvm
+override QEMUFLAGS := $(QEMUFLAGS) -cpu host,migratable=off --enable-kvm
 else
 override QEMUFLAGS := $(QEMUFLAGS) -cpu max
 endif
