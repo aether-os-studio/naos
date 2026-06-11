@@ -6,6 +6,7 @@
 #include "net.h"
 #include "blk.h"
 #include "sound.h"
+#include "gpu.h"
 
 #include <init/callbacks.h>
 
@@ -60,6 +61,9 @@ int virtio_probe(pci_device_t *dev) {
             break;
         case VIRTIO_DEVICE_TYPE_SOUND:
             virtio_sound_init(driver);
+            break;
+        case VIRTIO_DEVICE_TYPE_GPU:
+            virtio_gpu_init(driver);
             break;
 
         default:
@@ -150,6 +154,9 @@ static int virtio_mmio_fdt_probe(fdt_device_t *fdt_dev,
         break;
     case VIRTIO_DEVICE_TYPE_SOUND:
         virtio_sound_init(drv);
+        break;
+    case VIRTIO_DEVICE_TYPE_GPU:
+        virtio_gpu_init(drv);
         break;
     default:
         break;

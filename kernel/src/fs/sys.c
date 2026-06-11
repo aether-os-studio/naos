@@ -334,8 +334,12 @@ static ssize_t sysfs_entry_read(sysfs_entry_t *entry, void *buf, size_t count,
     if (!entry || !ppos)
         return -EINVAL;
     if (entry->bin_attr && entry->bin_device) {
-        return entry->bin_attr->read(entry->bin_device, entry->bin_attr, buf,
-                                     (uint64_t)*ppos, count);
+        ssize_t ret = entry->bin_attr->read(entry->bin_device, entry->bin_attr,
+                                            buf, (uint64_t)*ppos, count);
+        if (ret < 0)
+            return ret;
+        *ppos += ret;
+        return ret;
     }
 
     offset = (size_t)*ppos;

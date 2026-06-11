@@ -7,6 +7,9 @@
 #include <fs/vfs/vfs.h>
 #include <fs/sys.h>
 
+#define DRM_DUMB_MMAP_OFFSET_BASE 0x100000000ULL
+#define DRM_DUMB_MMAP_OFFSET_STRIDE 0x100000000ULL
+
 static bool plainfb_handle_to_index(uint32_t handle, uint32_t *idx) {
     if (handle == 0 || handle > 32 || !idx) {
         return false;
@@ -1008,8 +1011,28 @@ int plainfb_map_dumb(drm_device_t *drm_dev, struct drm_mode_map_dumb *args,
         return -EINVAL;
     }
 
-    args->offset = gpu_dev->dumbbuffers[idx].addr;
+    args->offset = DRM_DUMB_MMAP_OFFSET_BASE +
+                   (uint64_t)args->handle * DRM_DUMB_MMAP_OFFSET_STRIDE;
 
+    return 0;
+}
+
+static int plainfb_get_dumb_map(drm_device_t *drm_dev, uint32_t handle,
+                                uint64_t *phys, uint64_t *size) {
+    plainfb_device_t *gpu_dev = drm_dev->data;
+    if (!gpu_dev || !phys || !size) {
+        return -EINVAL;
+    }
+
+    uint32_t idx = 0;
+    if (!plainfb_handle_to_index(handle, &idx) ||
+        !gpu_dev->dumbbuffers[idx].used) {
+        return -EINVAL;
+    }
+
+    *phys = gpu_dev->dumbbuffers[idx].addr;
+    *size = (uint64_t)gpu_dev->dumbbuffers[idx].pitch *
+            gpu_dev->dumbbuffers[idx].height;
     return 0;
 }
 
@@ -1200,6 +1223,7 @@ drm_device_op_t plainfb_drm_device_op = {
     .get_crtcs = plainfb_get_crtcs,
     .get_encoders = plainfb_get_encoders,
     .get_planes = plainfb_get_planes,
+    .get_dumb_map = plainfb_get_dumb_map,
 };
 
 void drm_plainfb_init() {

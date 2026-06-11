@@ -8,8 +8,5 @@ export XCURSOR_SIZE="24"
 export XCURSOR_PATH="/usr/share/icons:/usr/share/pixmaps"
 export SDL_VIDEODRIVER=wayland
 export SDL_AUDIODRIVER=pipewire
-export LIBGL_ALWAYS_SOFTWARE=1
-export WLR_RENDERER_ALLOW_SOFTWARE=1
-export WLR_RENDERER=pixman
 
 exec dbus-run-session -- seatd-launch -- startxfce4 --wayland

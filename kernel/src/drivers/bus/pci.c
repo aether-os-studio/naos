@@ -375,15 +375,29 @@ bin_attribute_t pci_bus_config_bin_attr = {
     .write = pci_bus_config_write,
 };
 
+static ssize_t pci_sysfs_read_hex(char *buf, uint64_t off, size_t count,
+                                  uint32_t value, uint32_t digits) {
+    char tmp[16];
+    size_t len;
+
+    if (!buf) {
+        return -EINVAL;
+    }
+
+    len = (size_t)snprintf(tmp, sizeof(tmp), "0x%0*x\n", digits, value);
+    if (off >= len) {
+        return 0;
+    }
+
+    size_t to_copy = MIN(count, len - off);
+    memcpy(buf, tmp + off, to_copy);
+    return (ssize_t)to_copy;
+}
+
 ssize_t pci_bus_class_read(struct bus_device *dev, struct bin_attribute *attr,
                            char *buf, uint64_t off, size_t count) {
-    if (count < 8)
-        return -ENOSPC;
-    if (off >= 8)
-        return 0;
     pci_device_t *pci_dev = dev->private_data;
-    snprintf(buf, 8, "%#06x", pci_dev->class_code);
-    return 8;
+    return pci_sysfs_read_hex(buf, off, count, pci_dev->class_code, 6);
 }
 
 ssize_t pci_bus_class_write(struct bus_device *dev, struct bin_attribute *attr,
@@ -400,13 +414,8 @@ bin_attribute_t pci_bus_class_bin_attr = {
 ssize_t pci_bus_revision_read(struct bus_device *dev,
                               struct bin_attribute *attr, char *buf,
                               uint64_t off, size_t count) {
-    if (count < 4)
-        return -ENOSPC;
-    if (off >= 4)
-        return 0;
     pci_device_t *pci_dev = dev->private_data;
-    snprintf(buf, 4, "%#02x", pci_dev->revision_id);
-    return 4;
+    return pci_sysfs_read_hex(buf, off, count, pci_dev->revision_id, 2);
 }
 
 ssize_t pci_bus_revision_write(struct bus_device *dev,
@@ -423,13 +432,8 @@ bin_attribute_t pci_bus_revision_bin_attr = {
 
 ssize_t pci_bus_vendor_read(struct bus_device *dev, struct bin_attribute *attr,
                             char *buf, uint64_t off, size_t count) {
-    if (count < 6)
-        return -ENOSPC;
-    if (off >= 6)
-        return 0;
     pci_device_t *pci_dev = dev->private_data;
-    snprintf(buf, 6, "%#04x", pci_dev->vendor_id);
-    return 6;
+    return pci_sysfs_read_hex(buf, off, count, pci_dev->vendor_id, 4);
 }
 
 ssize_t pci_bus_vendor_write(struct bus_device *dev, struct bin_attribute *attr,
@@ -445,13 +449,8 @@ bin_attribute_t pci_bus_vendor_bin_attr = {
 
 ssize_t pci_bus_device_read(struct bus_device *dev, struct bin_attribute *attr,
                             char *buf, uint64_t off, size_t count) {
-    if (count < 6)
-        return -ENOSPC;
-    if (off >= 6)
-        return 0;
     pci_device_t *pci_dev = dev->private_data;
-    snprintf(buf, 6, "%#04x", pci_dev->device_id);
-    return 6;
+    return pci_sysfs_read_hex(buf, off, count, pci_dev->device_id, 4);
 }
 
 ssize_t pci_bus_device_write(struct bus_device *dev, struct bin_attribute *attr,
@@ -468,13 +467,8 @@ bin_attribute_t pci_bus_device_bin_attr = {
 ssize_t pci_bus_subsystem_vendor_read(struct bus_device *dev,
                                       struct bin_attribute *attr, char *buf,
                                       uint64_t off, size_t count) {
-    if (count < 6)
-        return -ENOSPC;
-    if (off >= 6)
-        return 0;
     pci_device_t *pci_dev = dev->private_data;
-    snprintf(buf, 6, "%#04x", pci_dev->subsystem_vendor_id);
-    return 6;
+    return pci_sysfs_read_hex(buf, off, count, pci_dev->subsystem_vendor_id, 4);
 }
 
 ssize_t pci_bus_subsystem_vendor_write(struct bus_device *dev,
@@ -493,13 +487,8 @@ bin_attribute_t pci_bus_subsystem_vendor_bin_attr = {
 ssize_t pci_bus_subsystem_device_read(struct bus_device *dev,
                                       struct bin_attribute *attr, char *buf,
                                       uint64_t off, size_t count) {
-    if (count < 6)
-        return -ENOSPC;
-    if (off >= 6)
-        return 0;
     pci_device_t *pci_dev = dev->private_data;
-    snprintf(buf, 6, "%#04x", pci_dev->subsystem_device_id);
-    return 6;
+    return pci_sysfs_read_hex(buf, off, count, pci_dev->subsystem_device_id, 4);
 }
 
 ssize_t pci_bus_subsystem_device_write(struct bus_device *dev,

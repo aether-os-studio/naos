@@ -464,6 +464,13 @@ static int drm_primefd_release(struct vfs_inode *inode, struct vfs_file *file) {
     drm_prime_fd_ctx_t *ctx = drm_primefd_file_ctx(file);
     if (!ctx)
         return 0;
+    if (ctx->dev && ctx->dev->op && ctx->dev->op->driver_ioctl &&
+        ctx->handle != 0) {
+        struct drm_gem_close close = {.handle = ctx->handle};
+        ssize_t ret = ctx->dev->op->driver_ioctl(ctx->dev, DRM_IOCTL_GEM_CLOSE,
+                                                 &close, false, NULL);
+        (void)ret;
+    }
     if (file)
         file->private_data = NULL;
     if (inode && inode->i_private == ctx)
@@ -584,13 +591,31 @@ static long drm_primefs_ioctl(struct vfs_file *fd, unsigned long cmd,
 
 static void *drm_primefd_mmap(struct vfs_file *file, void *addr, size_t offset,
                               size_t size, size_t prot, uint64_t flags) {
-    (void)file;
-    (void)addr;
-    (void)offset;
     (void)size;
     (void)prot;
     (void)flags;
-    return NULL;
+    drm_prime_fd_ctx_t *ctx = drm_primefd_file_ctx(file);
+    if (!ctx || !addr || ctx->phys == 0 || offset >= ctx->size ||
+        !current_task || !current_task->mm) {
+        return (void *)(int64_t)-EINVAL;
+    }
+
+    uint64_t map_len = MIN(size, ctx->size - offset);
+    if (map_len == 0) {
+        return addr;
+    }
+
+    uint64_t page_delta = offset & (PAGE_SIZE - 1);
+    uint64_t map_phys = PADDING_DOWN(ctx->phys + offset, PAGE_SIZE);
+    uint64_t map_addr = PADDING_DOWN((uint64_t)addr, PAGE_SIZE);
+    uint64_t rounded_len = PADDING_UP(map_len + page_delta, PAGE_SIZE);
+
+    if (map_page_range(task_mm_pgdir(current_task->mm), map_addr, map_phys,
+                       rounded_len, PT_FLAG_R | PT_FLAG_W | PT_FLAG_U) != 0) {
+        return (void *)(int64_t)-ENOMEM;
+    }
+
+    return addr;
 }
 
 static const struct vfs_file_operations drmfdfs_dir_file_ops = {
@@ -1340,7 +1365,16 @@ ssize_t drm_primefd_create(drm_device_t *dev, uint32_t handle, uint64_t phys,
 
 static ssize_t drm_prime_get_handle_phys(drm_device_t *dev, uint32_t handle,
                                          uint64_t *phys) {
-    if (!dev || !dev->op || !dev->op->map_dumb || !phys) {
+    if (!dev || !dev->op || !phys) {
+        return -ENOTTY;
+    }
+
+    if (dev->op->get_dumb_map) {
+        uint64_t size = 0;
+        return dev->op->get_dumb_map(dev, handle, phys, &size);
+    }
+
+    if (!dev->op->map_dumb) {
         return -ENOTTY;
     }
 
@@ -2516,7 +2550,7 @@ ssize_t drm_ioctl_version(drm_device_t *dev, void *arg) {
 
     if (!strcmp(name, "virtio_gpu")) {
         version_major = 0;
-        version_minor = 1;
+        version_minor = 0;
     }
 
     size_t user_name_len = version->name_len;
@@ -2632,20 +2666,53 @@ ssize_t drm_ioctl_prime_handle_to_fd(drm_device_t *dev, void *arg, fd_t *fd) {
         }
     }
 
-    uint64_t dumb_size = drm_dumb_get_size(dev, prime->handle);
-    if (dumb_size == 0) {
+    uint64_t phys = 0;
+    uint64_t size = drm_dumb_get_size(dev, prime->handle);
+    if (size != 0) {
+        int ret = drm_prime_get_handle_phys(dev, prime->handle, &phys);
+        if (ret) {
+            if (dev->op && dev->op->driver_ioctl) {
+                struct drm_gem_close close = {.handle = prime->handle};
+                dev->op->driver_ioctl(dev, DRM_IOCTL_GEM_CLOSE, &close, false,
+                                      NULL);
+            }
+            return ret;
+        }
+    } else if (dev && dev->op && dev->op->get_dumb_map) {
+        int ret = dev->op->get_dumb_map(dev, prime->handle, &phys, &size);
+        if (ret) {
+            if (dev->op && dev->op->driver_ioctl) {
+                struct drm_gem_close close = {.handle = prime->handle};
+                dev->op->driver_ioctl(dev, DRM_IOCTL_GEM_CLOSE, &close, false,
+                                      NULL);
+            }
+            return ret;
+        }
+        if (size == 0) {
+            if (dev->op && dev->op->driver_ioctl) {
+                struct drm_gem_close close = {.handle = prime->handle};
+                dev->op->driver_ioctl(dev, DRM_IOCTL_GEM_CLOSE, &close, false,
+                                      NULL);
+            }
+            return -ENOENT;
+        }
+    } else {
+        if (dev->op && dev->op->driver_ioctl) {
+            struct drm_gem_close close = {.handle = prime->handle};
+            dev->op->driver_ioctl(dev, DRM_IOCTL_GEM_CLOSE, &close, false,
+                                  NULL);
+        }
         return -ENOENT;
     }
 
-    uint64_t phys = 0;
-    int ret = drm_prime_get_handle_phys(dev, prime->handle, &phys);
-    if (ret) {
-        return ret;
-    }
-
     ssize_t fd_ret =
-        drm_primefd_create(dev, prime->handle, phys, dumb_size, prime->flags);
+        drm_primefd_create(dev, prime->handle, phys, size, prime->flags);
     if (fd_ret < 0) {
+        if (dev->op && dev->op->driver_ioctl) {
+            struct drm_gem_close close = {.handle = prime->handle};
+            dev->op->driver_ioctl(dev, DRM_IOCTL_GEM_CLOSE, &close, false,
+                                  NULL);
+        }
         return fd_ret;
     }
 
@@ -3129,6 +3196,19 @@ ssize_t drm_ioctl_mode_closefb(drm_device_t *dev, void *arg) {
     }
 
     return drm_framebuffer_close(dev, closefb->fb_id);
+}
+
+static ssize_t drm_ioctl_mode_rmfb(drm_device_t *dev, void *arg) {
+    if (!arg) {
+        return -EINVAL;
+    }
+
+    uint32_t fb_id = *(uint32_t *)arg;
+    if (fb_id == 0) {
+        return -EINVAL;
+    }
+
+    return drm_framebuffer_remove(dev, fb_id);
 }
 
 /**
@@ -4851,7 +4931,7 @@ ssize_t drm_ioctl(void *data, ssize_t cmd, ssize_t arg, fd_t *fd) {
         ret = drm_ioctl_mode_addfb2(dev, ioarg, fd);
         break;
     case DRM_IOCTL_MODE_RMFB:
-        ret = 0; // Not implemented
+        ret = drm_ioctl_mode_rmfb(dev, ioarg);
         break;
     case DRM_IOCTL_MODE_CLOSEFB:
         ret = drm_ioctl_mode_closefb(dev, ioarg);

@@ -53,5 +53,8 @@ init_path=$(sed -n 's/.*init=\([^ ]*\).*/\1/p' /proc/cmdline)
 
 /bin/echo "Ready to switch root..."
 
+# export LIBGL_ALWAYS_SOFTWARE=1
+# export WLR_RENDERER_ALLOW_SOFTWARE=1
+# export WLR_RENDERER=pixman
 exec /sbin/switch_root /mnt/ ${init_path:-/sbin/init}
 

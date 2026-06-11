@@ -1403,6 +1403,7 @@ typedef struct drm_file {
     drm_minor_type_t type;
     bool lessee;
     bool revoked;
+    void *driver_priv;
     uint32_t lease_id;
     uint32_t lessor_id;
     uint32_t object_count;
@@ -1418,6 +1419,8 @@ typedef struct drm_lease_entry {
 
 typedef struct drm_device_op {
     bool supports_render_node;
+    int (*open)(drm_device_t *drm_dev, drm_file_t *file);
+    void (*close)(drm_device_t *drm_dev, drm_file_t *file);
     int (*get_display_info)(drm_device_t *drm_dev, uint32_t *width,
                             uint32_t *height, uint32_t *bpp);
     int (*get_fb)(drm_device_t *drm_dev, uint32_t *width, uint32_t *height,
@@ -1430,6 +1433,7 @@ typedef struct drm_device_op {
     int (*add_fb)(drm_device_t *drm_dev, struct drm_mode_fb_cmd *cmd, fd_t *fd);
     int (*add_fb2)(drm_device_t *drm_dev, struct drm_mode_fb_cmd2 *cmd,
                    fd_t *fd);
+    void (*release_fb)(drm_device_t *drm_dev, drm_framebuffer_t *fb);
     int (*set_plane)(drm_device_t *drm_dev, struct drm_mode_set_plane *plane,
                      fd_t *fd);
     int (*atomic_commit)(drm_device_t *drm_dev, struct drm_mode_atomic *atomic,
@@ -1452,6 +1456,8 @@ typedef struct drm_device_op {
                       uint32_t *count);
     int (*mmap)(drm_device_t *drm_dev, uint64_t addr, uint64_t offset,
                 uint64_t len);
+    int (*get_dumb_map)(drm_device_t *drm_dev, uint32_t handle, uint64_t *phys,
+                        uint64_t *size);
     ssize_t (*driver_ioctl)(drm_device_t *drm_dev, uint32_t cmd, void *arg,
                             bool render_node, fd_t *fd);
 } drm_device_op_t;
@@ -1541,6 +1547,12 @@ drm_device_t *drm_regist_pci_dev(void *data, drm_device_op_t *op,
                                  pci_device_t *pci_dev);
 drm_device_t *drm_register_device(void *data, drm_device_op_t *op,
                                   const char *name, pci_device_t *pci_dev);
+drm_device_t *drm_register_device_with_info(void *data, drm_device_op_t *op,
+                                            const char *node_name,
+                                            pci_device_t *pci_dev,
+                                            const char *driver_name,
+                                            const char *driver_date,
+                                            const char *driver_desc);
 void drm_device_set_driver_info(drm_device_t *dev, const char *name,
                                 const char *date, const char *desc);
 void drm_unregister_device(drm_device_t *dev);

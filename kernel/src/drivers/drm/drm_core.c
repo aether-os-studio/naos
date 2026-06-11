@@ -13,6 +13,16 @@ uint32_t drm_find_free_slot(void **array, uint32_t size) {
     return (uint32_t)-1;
 }
 
+static void drm_framebuffer_release(drm_device_t *dev, drm_framebuffer_t *fb) {
+    if (!fb) {
+        return;
+    }
+    if (dev && dev->op && dev->op->release_fb) {
+        dev->op->release_fb(dev, fb);
+    }
+    free(fb);
+}
+
 // Resource manager initialization and cleanup
 void drm_resource_manager_init(drm_resource_manager_t *mgr) {
     memset(mgr, 0, sizeof(drm_resource_manager_t));
@@ -347,7 +357,7 @@ int drm_framebuffer_close(drm_device_t *dev, uint32_t id) {
 
         fb->closed = true;
         if (!drm_framebuffer_is_bound_locked(dev, id) && fb->refcount <= 1) {
-            free(fb);
+            drm_framebuffer_release(dev, fb);
             mgr->framebuffers[i] = NULL;
         }
 
@@ -356,7 +366,35 @@ int drm_framebuffer_close(drm_device_t *dev, uint32_t id) {
     }
 
     spin_unlock(&mgr->lock);
-    return -ENOENT;
+    return -EINVAL;
+}
+
+int drm_framebuffer_remove(drm_device_t *dev, uint32_t id) {
+    if (!dev || id == 0) {
+        return -EINVAL;
+    }
+
+    drm_resource_manager_t *mgr = &dev->resource_mgr;
+    spin_lock(&mgr->lock);
+
+    for (uint32_t i = 0; i < DRM_MAX_FRAMEBUFFERS_PER_DEVICE; i++) {
+        drm_framebuffer_t *fb = mgr->framebuffers[i];
+        if (!fb || fb->id != id) {
+            continue;
+        }
+
+        fb->closed = true;
+        if (!drm_framebuffer_is_bound_locked(dev, id)) {
+            drm_framebuffer_release(dev, fb);
+            mgr->framebuffers[i] = NULL;
+        }
+
+        spin_unlock(&mgr->lock);
+        return 0;
+    }
+
+    spin_unlock(&mgr->lock);
+    return -EINVAL;
 }
 
 void drm_framebuffer_cleanup_closed(drm_device_t *dev, uint32_t id) {
@@ -375,7 +413,7 @@ void drm_framebuffer_cleanup_closed(drm_device_t *dev, uint32_t id) {
 
         if (fb->closed && !drm_framebuffer_is_bound_locked(dev, id) &&
             fb->refcount <= 1) {
-            free(fb);
+            drm_framebuffer_release(dev, fb);
             mgr->framebuffers[i] = NULL;
         }
         break;

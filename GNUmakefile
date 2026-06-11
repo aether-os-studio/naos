@@ -190,6 +190,9 @@ run-x86_64: assets/ovmf-code-$(ARCH).fd all rootfs-$(ARCH).img
 		-netdev user,id=net0 \
 		-device e1000,netdev=net0 \
 		-rtc base=utc \
+		-display sdl,gl=on \
+		-device virtio-vga-gl \
+		-vga none \
 		$(QEMUFLAGS)
 
 .PHONY: run-x86_64-single

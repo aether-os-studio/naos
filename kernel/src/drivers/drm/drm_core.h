@@ -158,6 +158,7 @@ void drm_framebuffer_free(drm_resource_manager_t *mgr, uint32_t id);
 drm_framebuffer_t *drm_framebuffer_get(drm_resource_manager_t *mgr,
                                        uint32_t id);
 int drm_framebuffer_close(drm_device_t *dev, uint32_t id);
+int drm_framebuffer_remove(drm_device_t *dev, uint32_t id);
 void drm_framebuffer_cleanup_closed(drm_device_t *dev, uint32_t id);
 
 drm_plane_t *drm_plane_alloc(drm_resource_manager_t *mgr, void *driver_data);
