@@ -11,7 +11,6 @@ static char task_state_to_proc_state(task_t *task) {
     case TASK_RUNNING:
         return 'R';
     case TASK_BLOCKING:
-    case TASK_READING_STDIO:
         return 'S';
     case TASK_UNINTERRUPTABLE:
         return 'D';

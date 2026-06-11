@@ -548,7 +548,6 @@ int vfs_close_file_for_task(struct vfs_file *file, struct task *task) {
     }
     if (file->f_op && file->f_op->flush)
         file->f_op->flush(file);
-    epoll_on_file_close(file);
     close_mask = ((file->f_flags & O_ACCMODE_FLAGS) == O_RDONLY)
                      ? IN_CLOSE_NOWRITE
                      : IN_CLOSE_WRITE;

@@ -956,7 +956,6 @@ uint64_t sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
  * Linux contract: create an epoll instance with flags.
  */
 uint64_t sys_epoll_create1(int flags);
-void epoll_on_file_close(struct vfs_file *file);
 
 /**
  * Linux contract: create an eventfd with flags.

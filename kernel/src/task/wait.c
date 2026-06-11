@@ -124,7 +124,6 @@ int wait_queue_wake(wait_queue_head_t *queue, uint32_t events, int nr,
             if (!task || task->state == TASK_DIED)
                 continue;
             if (task->state != TASK_BLOCKING &&
-                task->state != TASK_READING_STDIO &&
                 task->state != TASK_UNINTERRUPTABLE && !task->block_preparing)
                 continue;
 

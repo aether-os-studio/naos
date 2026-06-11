@@ -1759,7 +1759,6 @@ static int task_execve_dethread(task_t *self) {
                 others_alive = true;
                 task_send_signal(task, SIGKILL, SI_DETHREAD);
                 if (task->state == TASK_BLOCKING ||
-                    task->state == TASK_READING_STDIO ||
                     task->state == TASK_UNINTERRUPTABLE) {
                     task_unblock(task, EOK);
                 }

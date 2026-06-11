@@ -275,7 +275,7 @@ static inline void signal_wake_interruptible_task(task_t *task, int sig) {
     if (!signal_should_wake_task(task, sig) && !signalfd_waiter)
         return;
 
-    if (task->state == TASK_BLOCKING || task->state == TASK_READING_STDIO) {
+    if (task->state == TASK_BLOCKING) {
         task_unblock(task, 128 + sig);
     } else if (signalfd_waiter && task->cpu_id < cpu_count &&
                task->cpu_id != current_cpu_id) {
@@ -562,7 +562,8 @@ bool task_signal_has_deliverable(task_t *task) {
 
     bool deliverable = false;
     spin_lock(&task->signal->sighand->siglock);
-    deliverable = signal_has_deliverable_outside_set_locked(task, 0);
+    deliverable = task->signal->sighand->group_exit ||
+                  signal_has_deliverable_outside_set_locked(task, 0);
     spin_unlock(&task->signal->sighand->siglock);
 
     return deliverable;

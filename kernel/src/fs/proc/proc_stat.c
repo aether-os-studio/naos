@@ -54,8 +54,7 @@ static void proc_stat_collect(proc_stat_snapshot_t *stat, size_t cpu_slots,
             if (task->state == TASK_RUNNING)
                 stat->running++;
             if (task->state == TASK_BLOCKING ||
-                task->state == TASK_UNINTERRUPTABLE ||
-                task->state == TASK_READING_STDIO) {
+                task->state == TASK_UNINTERRUPTABLE) {
                 stat->blocked++;
             }
 

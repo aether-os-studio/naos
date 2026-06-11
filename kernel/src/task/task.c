@@ -1359,7 +1359,7 @@ static int task_kill_thread_group_locked(uint64_t tgid, int sig, int code,
 
         sent++;
         task_send_signal(task, sig, code);
-        if (task->state == TASK_BLOCKING || task->state == TASK_READING_STDIO ||
+        if (task->state == TASK_BLOCKING ||
             task->state == TASK_UNINTERRUPTABLE || task->block_preparing) {
             task_unblock(task, EOK);
         }
@@ -1610,7 +1610,7 @@ static void task_notify_parent_death_locked(task_t *task) {
 
     task_send_signal(task, task->parent_death_sig,
                      task->parent_death_sig + 128);
-    if (task->state == TASK_BLOCKING || task->state == TASK_READING_STDIO) {
+    if (task->state == TASK_BLOCKING) {
         task_unblock(task, EOK);
     }
 }
@@ -2070,7 +2070,6 @@ void task_cancel_block_prepare(task_t *task) {
     arch_disable_interrupt();
     spin_lock(&task->block_lock);
     if (task->block_preparing && task->state != TASK_BLOCKING &&
-        task->state != TASK_READING_STDIO &&
         task->state != TASK_UNINTERRUPTABLE) {
         task->block_preparing = false;
         task->wake_pending = false;
@@ -2233,8 +2232,7 @@ void task_unblock(task_t *task, int reason) {
 
     spin_lock(&task->block_lock);
 
-    if (task->state != TASK_BLOCKING && task->state != TASK_READING_STDIO &&
-        task->state != TASK_UNINTERRUPTABLE) {
+    if (task->state != TASK_BLOCKING && task->state != TASK_UNINTERRUPTABLE) {
         if (!task->block_preparing) {
             spin_unlock(&task->block_lock);
             goto ret;
@@ -2276,8 +2274,9 @@ ret:
 
 void task_cleanup_fd_info(task_t *task) {
     fd_info_t *fd_info = task_fd_info_detach(task);
-    if (fd_info)
+    if (fd_info) {
         task_fd_info_put(fd_info, task);
+    }
 }
 
 void task_exit_inner(task_t *task, int64_t code) {
@@ -2452,8 +2451,7 @@ uint64_t task_exit(int64_t code) {
 
             task->procfs_thread_path = NULL;
             if (task->state == TASK_BLOCKING ||
-                task->state == TASK_READING_STDIO ||
-                task->state == TASK_UNINTERRUPTABLE) {
+                task->state == TASK_UNINTERRUPTABLE || task->block_preparing) {
                 task_unblock(task, EOK);
             }
         }

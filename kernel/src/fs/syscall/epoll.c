@@ -144,35 +144,40 @@ static void epoll_watch_unlink_file(epoll_watch_t *watch) {
     spin_unlock(&file->epoll_watches_lock);
 }
 
-static void epoll_watch_destroy(epoll_watch_t *watch) {
-    struct vfs_file *file;
-
+static void epoll_watch_detach_locked(epoll_watch_t *watch, bool unlink_file) {
     if (!watch)
         return;
 
     epoll_watch_disarm(watch);
-    epoll_watch_unlink_file(watch);
+    if (unlink_file)
+        epoll_watch_unlink_file(watch);
     if (!llist_empty(&watch->node))
         llist_delete(&watch->node);
 
-    file = watch->file;
     watch->file = NULL;
     watch->owner = NULL;
-    free(watch);
-    if (file)
-        vfs_file_put(file);
 }
 
-void epoll_on_file_close(struct vfs_file *file) {
+static void epoll_watch_destroy(epoll_watch_t *watch) {
+    if (!watch)
+        return;
+
+    epoll_watch_detach_locked(watch, true);
+    free(watch);
+}
+
+int epoll_on_close_file(task_t *task, int fd, struct vfs_file *file) {
     struct llist_header drop_watches;
     struct llist_header *node;
     int watch_count = 0;
 
+    (void)task;
+    (void)fd;
     if (!file)
-        return;
+        return 0;
 
     if (vfs_file_fd_ref_read(file) > 0)
-        return;
+        return 0;
 
     llist_init_head(&drop_watches);
     spin_lock(&epoll_watch_lifecycle_lock);
@@ -187,7 +192,7 @@ void epoll_on_file_close(struct vfs_file *file) {
     if (watch_count <= 0 || vfs_file_fd_ref_read(file) > 0) {
         spin_unlock(&file->epoll_watches_lock);
         spin_unlock(&epoll_watch_lifecycle_lock);
-        return;
+        return 0;
     }
 
     while (!llist_empty(&file->epoll_watches)) {
@@ -206,11 +211,15 @@ void epoll_on_file_close(struct vfs_file *file) {
 
         if (owner)
             spin_lock(&owner->lock);
-        epoll_watch_destroy(drop);
+        epoll_watch_detach_locked(drop, false);
         if (owner)
             spin_unlock(&owner->lock);
+
+        free(drop);
     }
     spin_unlock(&epoll_watch_lifecycle_lock);
+
+    return 0;
 }
 
 static bool epoll_contains_file(epoll_t *epoll, struct vfs_file *needle,
@@ -700,7 +709,12 @@ static size_t epoll_ctl_file(struct vfs_file *epoll_file, int op, int fd,
             ret = -ENOMEM;
             break;
         }
-        new_watch->file = vfs_file_get(target);
+        /*
+         * Keep this as a non-owning pointer. The fd close callback removes
+         * watches before the watched file's final put, so epoll must not keep
+         * sockets alive after userspace has closed the last descriptor.
+         */
+        new_watch->file = target;
         new_watch->owner = epoll;
         new_watch->events = epoll_filter_events(event->events);
         new_watch->data = event->data.u64;
@@ -950,4 +964,5 @@ void epoll_init(void) {
     spin_init(&epollfs_mount_lock);
     spin_init(&epoll_watch_lifecycle_lock);
     vfs_register_filesystem(&epollfs_fs_type);
+    regist_on_close_file_callback(epoll_on_close_file);
 }

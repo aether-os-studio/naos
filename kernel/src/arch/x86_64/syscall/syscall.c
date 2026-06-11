@@ -1000,7 +1000,8 @@ done:
         serial_fprintk("syscall %d accessed a invalid address\n", idx);
     }
 
-    if (self && self->signal && self->signal->signal != 0)
+    if (self && (self->signal->sighand->group_exit ||
+                 (self->signal && self->signal->signal != 0)))
         task_signal(regs);
 
     if (idx != SYS_RT_SIGRETURN) {

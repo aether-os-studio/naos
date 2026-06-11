@@ -34,8 +34,10 @@ static uint64_t x64_error_code_to_fault_flags(uint64_t error_code) {
 }
 
 static void x64_handle_signal_on_user_return(struct pt_regs *regs) {
-    if (regs && (regs->cs & 0x3) == 0x3 && current_task &&
-        current_task->signal && current_task->signal->signal) {
+    task_t *self = current_task;
+    if (regs && (regs->cs & 0x3) == 0x3 && self &&
+        (self->signal->sighand->group_exit ||
+         (self->signal && self->signal->signal != 0))) {
         task_signal(regs);
     }
 }
