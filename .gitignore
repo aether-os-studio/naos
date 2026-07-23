@@ -1,0 +1,7 @@
+/.vscode
+/.nix-store
+/build
+/nix/flake.lock
+/result
+/*.img
+/*.iso
