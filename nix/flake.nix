@@ -66,7 +66,7 @@
             partitionTableType = "legacy";
             installBootLoader = false;
             diskSize = "auto";
-            additionalSpace = "1024M";
+            additionalSpace = "8192M";
             configFile = ./configuration.nix;
           };
           rootfs = lib.overrideDerivation rootfsBase (old: {

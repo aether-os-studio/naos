@@ -6,6 +6,9 @@ BUILD_MODE ?= release
 BOOT_PROTOCOL ?= limine
 MODULE_VERIFY ?= 0
 
+MEM ?= 8G
+CPU ?= 4
+
 KERNEL_DIR := $(CURDIR)/na-kernel
 KERNEL_MAKE := $(CURDIR)/nix/kernel-make.sh
 HOST_COMMAND := $(CURDIR)/nix/host-command.sh
@@ -81,7 +84,8 @@ run: all
 		exit 2; \
 	fi
 	$(HOST_COMMAND) sh -c 'exec qemu-system-x86_64 \
-		-M q35 -cpu max -m 8G -smp 4 -display sdl,gl=on -vga none\
+		-M q35 -cpu host,migratable=off --enable-kvm \
+		-m $(MEM) -smp $(CPU) -display sdl,gl=on -vga none \
 		-device virtio-vga-gl -serial stdio \
 		-drive if=pflash,unit=0,format=raw,file="$$NA_OVMF_CODE",readonly=on \
 		-drive if=none,file="$(BOOT_IMAGE)",format=raw,id=bootdisk \
@@ -89,7 +93,8 @@ run: all
 		-device ahci,id=ahci \
 		-device ide-hd,drive=bootdisk,bus=ahci.0 \
 		-device nvme,drive=rootdisk,serial=na-rootfs \
-		-netdev user,id=net0 -device e1000,netdev=net0'
+		-netdev user,id=net0 \
+		-device e1000,netdev=net0'
 
 clean:
 	$(KERNEL_MAKE) -C $(KERNEL_DIR) clean ARCH=$(ARCH)

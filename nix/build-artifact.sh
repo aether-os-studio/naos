@@ -55,5 +55,34 @@ temporary_output="$output.tmp.$$"
 trap 'rm -f "$temporary_output"' EXIT INT TERM
 cp --reflink=auto --sparse=always "$source_image" "$temporary_output"
 chmod 0644 "$temporary_output"
+
+# A disk image is mostly opaque to the Nix store, so each NixOS configuration
+# change creates another multi-gigabyte output even though the packages inside
+# it are already deduplicated.  Keep the successfully copied current image as
+# the sole cached rootfs output for this architecture.  This only removes old
+# image derivation outputs from this project; their shared package closures
+# remain in the store and continue to be reused by later builds.
+if [ "$artifact" = rootfs ]; then
+  cleanup_failed=0
+  for old_physical in \
+    "$store_root"/nix/store/*-na-kernel-nixos-rootfs-"$nix_system"; do
+    [ -d "$old_physical" ] || continue
+    [ "$old_physical" = "$physical_output" ] && continue
+
+    old_logical=${old_physical#"$store_root"}
+    echo "deleting obsolete rootfs output: $old_logical"
+    if ! nix --extra-experimental-features "nix-command flakes" \
+      --store "local?root=$store_root" \
+      store delete "$old_logical"; then
+      cleanup_failed=1
+    fi
+  done
+
+  if [ "$cleanup_failed" -ne 0 ]; then
+    echo "unable to delete one or more obsolete rootfs outputs" >&2
+    exit 1
+  fi
+fi
+
 mv -f "$temporary_output" "$output"
 trap - EXIT INT TERM
