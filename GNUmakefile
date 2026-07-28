@@ -11,8 +11,12 @@ MEM ?= 8G
 CPU ?= 4
 VOID_ROOTFS_SIZE_MB ?= 8192
 VOID_MIRROR ?= http://mirrors.tuna.tsinghua.edu.cn/voidlinux/current
-ALPINE_MIRROR_ROOT ?= http://mirrors.tuna.tsinghua.edu.cn/alpine
 VOID_PACKAGES ?=
+ALPINE_ROOTFS_SIZE_MB ?= 8192
+ALPINE_MIRROR ?= https://mirrors.tuna.tsinghua.edu.cn/alpine
+ALPINE_VERSION ?= v3.23
+ALPINE_COMPAT_VERSION ?= v3.20
+ALPINE_PACKAGES ?=
 
 SUPPORTED_ROOTFS := nixos voidlinux alpine
 ifeq ($(filter $(ROOTFS),$(SUPPORTED_ROOTFS)),)
@@ -35,6 +39,7 @@ VOID_ROOTFS_INPUTS := $(VOID_ROOTFS_DIR)/build.sh \
 ALPINE_ROOTFS_DIR := $(CURDIR)/rootfs/alpine
 ALPINE_ROOTFS_INPUTS := $(ALPINE_ROOTFS_DIR)/build.sh \
 	$(ALPINE_ROOTFS_DIR)/packages.txt \
+	$(wildcard $(ALPINE_ROOTFS_DIR)/packages-$(ARCH).txt) \
 	$(shell find $(ALPINE_ROOTFS_DIR)/overlay \( -type f -o -type l \) 2>/dev/null)
 
 ifeq ($(ARCH),x86_64)
@@ -89,7 +94,7 @@ $(ROOTFS_IMAGE): $(VOID_ROOTFS_INPUTS)
 	ARCH=$(ARCH) OUTPUT=$@ ROOTFS_SIZE_MB=$(VOID_ROOTFS_SIZE_MB) VOID_MIRROR=$(VOID_MIRROR) VOID_PACKAGES='$(VOID_PACKAGES)' $(VOID_ROOTFS_DIR)/build.sh
 else ifeq ($(ROOTFS), alpine)
 $(ROOTFS_IMAGE): $(ALPINE_ROOTFS_INPUTS)
-	ARCH=$(ARCH) OUTPUT=$@ ROOTFS_SIZE_MB=$(VOID_ROOTFS_SIZE_MB) $(ALPINE_ROOTFS_DIR)/build.sh
+	ARCH=$(ARCH) OUTPUT=$@ ROOTFS_SIZE_MB=$(ALPINE_ROOTFS_SIZE_MB) ALPINE_MIRROR_ROOT=$(ALPINE_MIRROR) ALPINE_VERSION=$(ALPINE_VERSION) ALPINE_COMPAT_VERSION=$(ALPINE_COMPAT_VERSION) ALPINE_PACKAGES='$(ALPINE_PACKAGES)' $(ALPINE_ROOTFS_DIR)/build.sh
 endif
 
 image: $(BOOT_IMAGE)

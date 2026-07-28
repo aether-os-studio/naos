@@ -17,25 +17,25 @@ chmod 01777 /tmp/.X11-unix
 chmod 0777 /tmp/.ICE-unix
 chmod 0700 "$XDG_RUNTIME_DIR"
 
-# Ensure gdk-pixbuf and mime caches exist (Alpine doesn't auto-generate these)
-if [ ! -f /usr/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache ]; then
-    gdk-pixbuf-query-loaders --update-cache
-fi
-if [ ! -f /usr/share/mime/mime.cache ]; then
-    update-mime-database /usr/share/mime
-fi
-
-# Generate icon theme caches (apk.static skips post-install scripts)
-for icondir in /usr/share/icons/hicolor /usr/share/icons/Adwaita; do
-    if [ -d "$icondir" ] && [ ! -f "$icondir/icon-theme.cache" ]; then
-        gtk-update-icon-cache -f "$icondir"
+# apk.static 不运行安装脚本，缓存生成不能阻塞桌面启动。
+(
+    if [ ! -f /usr/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache ]; then
+        gdk-pixbuf-query-loaders --update-cache || true
     fi
-done
+    if [ ! -f /usr/share/mime/mime.cache ]; then
+        update-mime-database /usr/share/mime || true
+    fi
+    for icondir in /usr/share/icons/hicolor /usr/share/icons/Adwaita; do
+        if [ -d "$icondir" ] && [ ! -f "$icondir/icon-theme.cache" ]; then
+            gtk-update-icon-cache -f "$icondir" || true
+        fi
+    done
+) &
 
 dbus-uuidgen --ensure
 dbus-daemon --system --fork
 
-# Alpine uses elogind as a standalone daemon (not via runit service in init)
+# Aether-OS 未运行 OpenRC，直接启动 elogind。
 if [ -x /usr/libexec/elogind/elogind ]; then
     /usr/libexec/elogind/elogind --daemon
 fi

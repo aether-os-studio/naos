@@ -2,3 +2,4 @@ xfsettingsd &
 xfdesktop &
 xfce4-panel &
 thunar --daemon &
+foot &

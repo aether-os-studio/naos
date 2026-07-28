@@ -11,9 +11,12 @@ export SDL_AUDIODRIVER=dummy
 export SEATD_VTBOUND=0
 export XDG_RUNTIME_DIR=/run/user/0
 
-# Software rendering fallback (only needed if virtio-gpu PRIME export fails)
-# export WLR_RENDERER=pixman
-# export WLR_RENDERER_ALLOW_SOFTWARE=1
+# RISC-V 当前没有 virgl，使用已验证的软件渲染路径。
+if [ "$(uname -m)" = riscv64 ]; then
+    export WLR_RENDERER=pixman
+    export WLR_RENDERER_ALLOW_SOFTWARE=1
+fi
+
 if [ ! -d /dev/input ]; then
     export WLR_LIBINPUT_NO_DEVICES=1
 fi
